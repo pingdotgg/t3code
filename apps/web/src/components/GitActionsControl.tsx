@@ -50,6 +50,7 @@ import {
   GitHubIcon,
   GitLabIcon,
   ForgejoIcon,
+  GitCafeIcon,
 } from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
@@ -126,6 +127,7 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
@@ -158,7 +160,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitcafe"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -238,6 +240,14 @@ const PUBLISH_PROVIDER_OPTIONS = [
     host: "dev.azure.com",
     pathPlaceholder: "project/repository",
     Icon: AzureDevOpsIcon,
+  },
+  {
+    value: "gitcafe",
+    label: "GitCafe",
+    description: "git.cafe",
+    host: "git.cafe",
+    pathPlaceholder: "owner/repo",
+    Icon: GitCafeIcon,
   },
 ] as const satisfies ReadonlyArray<{
   readonly value: PublishProviderKind;
@@ -338,13 +348,10 @@ function getMenuActionDisabledReason({
   if (!hasBranch) {
     return `Detached HEAD: check out a branch before creating a ${terminology.singular}.`;
   }
-  if (hasChanges) {
-    return `Commit local changes before creating a ${terminology.singular}.`;
-  }
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
-  if (!isAhead) {
+  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
     return `No local commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
@@ -435,23 +442,25 @@ function GitActionProgressButtonContent({
       aria-live="polite"
       className={cn(
         "grid min-w-0 flex-1 items-center",
-        // Pin the title row to the button's minimum content height (min-height
-        // minus vertical padding and border) so revealing the output row
-        // extends the button downward without re-centering — the title must
-        // not shift. No row gap: the collapsed output row must contribute zero
-        // height so the single-line running button matches the static button
-        // exactly. The panel column gap matches the static row's icon-to-label
-        // distance (gap-2.5 plus the label's ml-0.5). In the panel the elapsed
-        // counter renders outside the button (in the menu-chevron slot), so
-        // there is no trailing column.
+        // Pin the title row to the button's minimum content height so output
+        // expands below it. Panel controls leave 24px after padding and border.
+        // No row gap: collapsed output must not add height. The panel's elapsed
+        // counter uses the menu-chevron slot, so it has no trailing column.
         isPanel
-          ? "grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.75rem] gap-x-3"
+          ? "grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.5rem] gap-x-3"
           : "grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[1.25rem] gap-x-2.5 sm:grid-rows-[1rem]",
       )}
       role="status"
     >
       <Spinner aria-hidden="true" className="row-start-1 -mx-0.5 shrink-0" />
-      <p className="row-start-1 min-w-0 truncate text-left">{progress.status}</p>
+      <p
+        className={cn(
+          "row-start-1 min-w-0 truncate text-left",
+          isPanel && THREAD_DETAILS_PANEL_LABEL_CLASS,
+        )}
+      >
+        {progress.status}
+      </p>
       {!isPanel ? (
         <GitActionElapsedTime
           startedAtMs={progress.startedAtMs}
@@ -490,11 +499,13 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
   return (
     <div
       aria-live="polite"
-      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.75rem] items-center gap-x-3"
+      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.5rem] items-center gap-x-3"
       role="status"
     >
       <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" />
-      <p className="min-w-0 truncate text-left">{success.title}</p>
+      <p className={cn("min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+        {success.title}
+      </p>
       <div
         className={cn(
           "col-start-2 grid min-w-0 transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
@@ -568,6 +579,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       forgejo: null,
       bitbucket: null,
       "azure-devops": null,
+      gitcafe: null,
     };
     for (const provider of sourceControlDiscovery.data?.sourceControlProviders ?? []) {
       if (isPublishProviderKind(provider.kind)) {
@@ -793,9 +805,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     value={option.value}
                     className={cn(
                       "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                      "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                      "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isSelected
-                        ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                        ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
                         : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
                     )}
                   >
@@ -817,7 +829,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               >
                 Repository
               </label>
-              <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-ring">
+              <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
                 <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
                   <currentPublishProvider.Icon className="size-3.5" />
                   {publishHost}/
@@ -879,9 +891,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       value={option.value}
                       className={cn(
                         "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         isSelected
-                          ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                          ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
                           : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
                       )}
                     >
@@ -1697,7 +1709,7 @@ export default function GitActionsControl({
               <PopoverTrigger
                 openOnHover
                 nativeButton={false}
-                render={<span className="block w-max cursor-not-allowed" />}
+                render={<span className="block w-full cursor-not-allowed" />}
               >
                 <MenuItem
                   density={presentation === "menu" ? "touch" : "default"}
@@ -1817,7 +1829,7 @@ export default function GitActionsControl({
           onClick={initializeGit}
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className="ml-0.5">
+          <span className={cn("ml-0.5", isPanel && THREAD_DETAILS_PANEL_LABEL_CLASS)}>
             {initAction.isPending ? "Initializing..." : "Initialize Git"}
           </span>
         </ThreadDetailsControl>
@@ -1875,7 +1887,7 @@ export default function GitActionsControl({
                 <span
                   className={cn(
                     "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    isPanel && "not-sr-only ml-0 truncate",
+                    isPanel && cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                   )}
                 >
                   {quickAction.label}
@@ -1902,7 +1914,7 @@ export default function GitActionsControl({
               <span
                 className={cn(
                   "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                  isPanel && "not-sr-only ml-0 truncate",
+                  isPanel && cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                 )}
               >
                 {quickAction.label}
@@ -1972,7 +1984,7 @@ export default function GitActionsControl({
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className="flex-1 text-left">Changes</span>
+          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
           <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
             <span className="text-success">+{changesTotals?.insertions ?? 0}</span>
             <span className="text-destructive">-{changesTotals?.deletions ?? 0}</span>

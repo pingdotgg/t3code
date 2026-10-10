@@ -65,7 +65,7 @@ import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryServic
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -3211,6 +3211,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           messageId: MessageId.make("restart-automatic-message"),
           text: "Continue where you left off.",
+          notification: {
+            source: { kind: "system" as const },
+            outcome: "updated" as const,
+            summary: "T3 Code restarted and resumed this turn",
+            detail: "Continue where you left off.",
+          },
           attachments: [],
           modelSelection,
           dispatchMode: { type: "start_immediately" as const },
@@ -3221,6 +3227,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const admitted = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(admitted.runs, 2);
         assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        // The timeline shows a work log row; the prompt stays in its detail.
+        const continuationItems = admitted.turnItems.filter(
+          (item) => item.runId === admitted.runs[1]?.id,
+        );
+        assert.isFalse(continuationItems.some((item) => item.type === "user_message"));
+        assert.deepInclude(
+          continuationItems.flatMap((item) =>
+            item.type === "notification" ? [[item.summary, item.detail]] : [],
+          ),
+          ["T3 Code restarted and resumed this turn", "Continue where you left off."],
+        );
         // A differently identified stale delivery still must not create another run.
         yield* orchestrator.dispatch({
           ...command,
@@ -3372,6 +3389,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
 
       assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(error.cause, `Thread ${threadId} is still running. Stop it before settling.`);
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "starting");
       assert.isNull(projection.thread.settledOverride);
@@ -3570,6 +3588,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(
+        error.cause,
+        `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
+      );
     }),
   );
 
@@ -4547,6 +4569,24 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
       assert.deepEqual(thread.snoozedAt, firstSnoozedAt);
       assert.deepEqual(thread.updatedAt, firstUpdatedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-wake"),
+        threadId,
+        reason: "user",
+      });
+      const projections = yield* ProjectionStore.ProjectionStoreV2.pipe(
+        Effect.provide(ProjectionStore.layer),
+      );
+      const [candidate] = yield* projections.getSettlementCandidates(threadId);
+      assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
+        threadId,
+        snoozedUntil,
+      });
 
       yield* orchestrator.dispatch({
         type: "message.dispatch",

@@ -1,4 +1,5 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -339,6 +340,7 @@ import {
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import { observeResize } from "~/lib/observeResize";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -918,10 +920,10 @@ function useComposerRestingTransition(
 
   useLayoutEffect(() => {
     const element = elementRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
+    if (!element) return;
 
     const body = element.querySelector<HTMLElement>('[data-chat-composer-body="true"]');
-    const observer = new ResizeObserver((entries) => {
+    return observeResize(body ? [element, body] : element, (entries) => {
       if (animationRef.current) {
         if (body && entries.some((entry) => entry.target === body)) {
           transitionToCurrentGeometry(false);
@@ -958,9 +960,6 @@ function useComposerRestingTransition(
             ?.getBoundingClientRect().bottom ?? elementRect.bottom) - elementRect.bottom,
       };
     });
-    observer.observe(element);
-    if (body) observer.observe(body);
-    return () => observer.disconnect();
   }, [restingControlsRef, transitionToCurrentGeometry]);
 
   useEffect(() => {
@@ -1037,21 +1036,18 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
 
-    const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updatePosition);
-    if (observer) {
-      // The composer is centered and capped at a max width, so opening a side
-      // panel slides it sideways without ever resizing it. Watching the anchor
-      // alone would leave the menu behind; the ancestors are what shrink, and
-      // they resize on every frame of the panel animation.
-      observer.observe(anchor);
-      for (let element = anchor.parentElement; element; element = element.parentElement) {
-        observer.observe(element);
-      }
+    // The composer is centered and capped at a max width, so opening a side
+    // panel slides it sideways without ever resizing it. Watching the anchor
+    // alone would leave the menu behind; the ancestors are what shrink, and
+    // they resize on every frame of the panel animation.
+    const observed: Element[] = [anchor];
+    for (let element = anchor.parentElement; element; element = element.parentElement) {
+      observed.push(element);
     }
+    const stopObserving = observeResize(observed, updatePosition);
 
     return () => {
-      observer?.disconnect();
+      stopObserving();
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
@@ -1199,16 +1195,19 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
   useEffect(() => {
     const currentHost = useControlsAsHost ? controls : host;
     if (!currentHost || !controls) return;
-    const observer = new ResizeObserver(measure);
+    let stopObserving = () => {};
     const observeControls = () => {
-      observer.disconnect();
-      observer.observe(currentHost);
-      observer.observe(controls);
-      controls
-        .querySelectorAll<HTMLElement>(
-          "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label]",
-        )
-        .forEach((element) => observer.observe(element));
+      stopObserving();
+      stopObserving = observeResize(
+        [
+          currentHost,
+          controls,
+          ...controls.querySelectorAll<HTMLElement>(
+            "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label]",
+          ),
+        ],
+        measure,
+      );
       measure();
     };
     observeControls();
@@ -1216,7 +1215,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     mutations.observe(controls, { childList: true, subtree: true, characterData: true });
     document.fonts.addEventListener("loadingdone", measure);
     return () => {
-      observer.disconnect();
+      stopObserving();
       mutations.disconnect();
       document.fonts.removeEventListener("loadingdone", measure);
     };
@@ -1485,6 +1484,7 @@ export interface ChatComposerHandle {
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
+    answeringPendingUserInput: boolean;
     prompt: string;
     images: ComposerImageAttachment[];
     files: ComposerFileAttachment[];
@@ -1737,12 +1737,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
-    activePendingApproval,
+    activePendingApproval: incomingPendingApproval,
     pendingApprovals,
-    pendingUserInputs,
-    activePendingProgress,
+    pendingUserInputs: incomingPendingUserInputs,
+    activePendingProgress: incomingPendingProgress,
     activePendingResolvedAnswers,
-    activePendingIsResponding,
+    activePendingIsResponding: incomingPendingIsResponding,
     activePendingDraftAnswers,
     activePendingQuestionIndex,
     respondingRequestIds,
@@ -1808,9 +1808,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
   } = props;
-  const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
+  const {
+    heldRequestIds,
+    onDraftChange: onTypingGuardDraftChange,
+    onFocus: onTypingGuardFocus,
+    onBlur: onTypingGuardBlur,
+    onSend: onTypingGuardSend,
+  } = useComposerTypingGuard(composerDraftTargetKey, [
+    ...pendingApprovals.map((request) => request.requestId),
+    ...incomingPendingUserInputs.map((request) => request.requestId),
+  ]);
+  // Hold composer takeover while the user finishes their thread draft.
+  const activePendingApproval =
+    incomingPendingApproval && !heldRequestIds.has(incomingPendingApproval.requestId)
+      ? incomingPendingApproval
+      : null;
+  const holdingUserInput = incomingPendingUserInputs[0]
+    ? heldRequestIds.has(incomingPendingUserInputs[0].requestId)
+    : false;
+  const pendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
+  const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
+  const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
   // the real phase keeps reading `props.threadSyncPhase`.
@@ -3566,8 +3587,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const initialCompactness = measureFooterCompactness();
     setIsComposerPrimaryActionsCompact(initialCompactness.primaryActionsCompact);
     setIsComposerFooterCompact(initialCompactness.footerCompact);
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
+    return observeResize(composerForm, () => {
       const nextCompactness = measureFooterCompactness();
       setIsComposerPrimaryActionsCompact((previous) =>
         previous === nextCompactness.primaryActionsCompact
@@ -3578,11 +3598,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         previous === nextCompactness.footerCompact ? previous : nextCompactness.footerCompact,
       );
     });
-
-    observer.observe(composerForm);
-    return () => {
-      observer.disconnect();
-    };
   }, [
     activeThreadId,
     composerFooterActionLayoutKey,
@@ -3712,6 +3727,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return;
       }
+      onTypingGuardDraftChange();
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       // Any edit ends browsing, even one later undone by hand: typing a
@@ -3818,6 +3834,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activePendingProgress?.activeQuestion,
       expandComposerForEditorChange,
+      onTypingGuardDraftChange,
       pendingUserInputs.length,
       onChangeActivePendingUserInputCustomAnswer,
       promptRef,
@@ -3909,6 +3926,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
       } else {
         setPrompt(next.text);
+        onTypingGuardDraftChange();
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
@@ -3931,6 +3949,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingUserInput,
       isLiteralPendingAnswer,
       onChangeActivePendingUserInputCustomAnswer,
+      onTypingGuardDraftChange,
       promptRef,
       setPrompt,
       setComposerTrigger,
@@ -4269,6 +4288,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       setComposerSubmissionError(submission.validationMessage);
       if (!submission.didDispatch) return;
+      onTypingGuardSend();
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
@@ -4277,6 +4297,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThreadId,
       activePendingProgress,
       attachmentTargetKey,
+      onTypingGuardSend,
       blurMobileComposerAfterSend,
       environmentId,
       isSendDisabled,
@@ -5228,10 +5249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!isComposerResting || !restingActionsElement) return;
     const measure = () => setRestingActionsWidth(restingActionsElement.offsetWidth);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(restingActionsElement);
-    return () => observer.disconnect();
+    return observeResize(restingActionsElement, measure);
   }, [isComposerResting, restingActionsElement]);
   const restingImagePreviewCounts = getRestingComposerImagePreviewCounts(
     standaloneComposerImages.length,
@@ -5285,7 +5303,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         {restingImagePreviewCounts.overflowCount > 0 ? (
           <button
             type="button"
-            className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             aria-label={`Show ${String(restingImagePreviewCounts.overflowCount)} more image attachments`}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
@@ -6532,6 +6550,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       getSendContext: () => ({
+        answeringPendingUserInput: activePendingProgress !== null,
         prompt: promptRef.current,
         images: composerImagesRef.current,
         files: composerFilesRef.current,
@@ -6578,6 +6597,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       foldPastedText,
       composerDraftTarget,
       composerCursor,
+      activePendingProgress,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
       insertComposerText,
@@ -6652,6 +6672,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }}
       onFocusCapture={(event) => {
         const activeElement = event.target;
+        if (
+          activeElement instanceof Element &&
+          activeElement.closest('[data-testid="composer-editor"]')
+        ) {
+          onTypingGuardFocus();
+        }
         if (composerControlsCollapsed && isInsideRestingComposerControlScope(activeElement)) {
           return;
         }
@@ -6670,7 +6696,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         setIsComposerFocused(true);
       }}
-      onBlurCapture={() => {
+      onBlurCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest('[data-testid="composer-editor"]')
+        ) {
+          onTypingGuardBlur();
+        }
         scheduleComposerCollapseCheck();
       }}
       onDragEnterCapture={(event) => {
@@ -6904,8 +6936,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
               "rounded-3xl transition-[background-color] duration-200",
-              "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-primary/70",
-              isDragOverComposer ? "bg-accent/45 ring-1 ring-primary/70" : null,
+              "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
+              isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
             )}
@@ -7062,7 +7094,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
                 (uncommittedSnapShotIds.length > 0 ||
                   composerVideos.length > 0 ||
                   expandedComposerImages.length > 0) && (
@@ -7448,6 +7479,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     literalText={isLiteralPendingAnswer}
+                    isPathQueryActive={() =>
+                      resolveActiveComposerTrigger().trigger?.kind === "path"
+                    }
                     value={
                       isComposerApprovalState
                         ? ""

@@ -29,15 +29,16 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiAdapterV2,
   PiAdapterV2Driver,
@@ -50,7 +51,7 @@ const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -335,7 +336,7 @@ const makeAdapter = Effect.fnUntraced(function* (
       config: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
         ...continuationRequests,
         take: Effect.never,

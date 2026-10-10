@@ -9,6 +9,14 @@ vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
 }));
+vi.mock("../ui/menu", () => ({
+  Menu: "div",
+  MenuCheckboxItem: "div",
+  MenuGroup: "div",
+  MenuGroupLabel: "div",
+  MenuPopup: "div",
+  MenuTrigger: "div",
+}));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ children }: { children: ReactNode }) => children,
@@ -70,7 +78,20 @@ const detail: PullRequestDetailView = {
 };
 
 let renderer: ReactTestRenderer;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const store = new Map<string, string>();
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+      },
+    }),
+  );
+});
 afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
@@ -145,70 +166,80 @@ it("keeps an unsaved description when collapsed and reopened", () => {
   expect(renderer.root.findByType("textarea").props.value).toBe("Unsaved description");
 });
 
-it("opens bot reports in pages without hiding human comments", () => {
+function texts() {
+  return renderer.root
+    .findAllByType("p")
+    .map((p) => p.children.join(""))
+    .filter((text) => text !== detail.body);
+}
+
+function filterItem(label: string) {
+  return renderer.root.find(
+    (node) => typeof node.props.onCheckedChange === "function" && node.children.includes(label),
+  );
+}
+
+it("hides bot and resolved comments until the filter shows them, and remembers the choice", () => {
+  const comment = (index: number, login: string, body: string, isBot = false) => ({
+    id: `comment-${index}`,
+    kind: "issue-comment" as const,
+    author: { login, name: null, avatarUrl: null, isBot },
+    body,
+    createdAt: `2026-09-01T00:00:${String(index).padStart(2, "0")}Z`,
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+  const resolved = {
+    ...comment(13, "reviewer", "Resolved remark"),
+    kind: "review-comment" as const,
+  };
   const value: PullRequestDetailView = {
     ...detail,
-    commentCount: 13,
-    comments: Array.from({ length: 13 }, (_, index) => ({
-      id: `comment-${index}`,
-      kind: "issue-comment",
-      author: {
-        login: index === 12 ? "human" : "review-app",
-        name: null,
-        avatarUrl: null,
-        isBot: index !== 12,
+    commentCount: 14,
+    comments: [
+      ...Array.from({ length: 12 }, (_, index) =>
+        comment(index, "review-app", `Bot report ${index}`, true),
+      ),
+      comment(12, "human", "Human comment"),
+      resolved,
+    ],
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "src/index.ts",
+        line: 1,
+        side: "right",
+        isResolved: true,
+        isOutdated: false,
+        comments: [resolved],
       },
-      body: index === 12 ? "Human comment" : `Bot report ${index}`,
-      createdAt: `2026-09-01T00:00:${String(index).padStart(2, "0")}Z`,
-      url: null,
-      path: null,
-      reviewState: null,
-    })),
+    ],
   };
   act(() => {
     renderer = create(render(value));
   });
-  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
-    "Human comment",
-  );
+  expect(texts()).toEqual(["Human comment"]);
   expect(
-    renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
-  ).toBe(false);
-  const group = renderer.root
-    .findAllByType("button")
-    .find((button) => button.props["aria-label"] === "12 bot comments")!;
-  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
+    renderer.root.findByProps({ "aria-label": "Filter comments" }).children.join(""),
+  ).toContain("13 hidden");
+
+  act(() => filterItem("Bot comments").props.onCheckedChange(true));
+  // Bots now share the human comment's pages: the ten most recent, the oldest left behind.
+  expect(texts().filter((text) => text.startsWith("Bot report"))).toHaveLength(9);
+  expect(texts()).toContain("Human comment");
+  expect(texts()).not.toContain("Bot report 0");
+
+  act(() => filterItem("Resolved or dismissed").props.onCheckedChange(true));
   expect(
-    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
-  ).toHaveLength(10);
-  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).not.toContain(
-    "Bot report 0",
-  );
-  act(() =>
-    renderer.root
-      .findAllByType("button")
-      .find((button) => button.children.includes(" older bot comment"))!
-      .props.onClick(),
-  );
-  expect(
-    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
-  ).toHaveLength(12);
-  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
-  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
-  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
-    "Bot report 0",
-  );
-  act(() =>
-    renderer.root
-      .findAllByType("button")
-      .find((button) => button.children.includes(" recent bot comments"))!
-      .props.onClick(),
-  );
-  expect(
-    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
-  ).toHaveLength(10);
-  act(() => renderer.update(render({ ...value, url: `${value.url}0`, number: 10 })));
-  expect(
-    renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
-  ).toBe(false);
+    renderer.root.findAllByType("button").some((button) => button.children.includes("Resolved")),
+  ).toBe(true);
+
+  // Another pull request, or the same one opened again, keeps the reader's choice.
+  act(() => renderer.unmount());
+  act(() => {
+    renderer = create(render({ ...value, url: `${value.url}0`, number: 10 }));
+  });
+  expect(filterItem("Bot comments").props.checked).toBe(true);
+  expect(texts()).toContain("Bot report 11");
 });

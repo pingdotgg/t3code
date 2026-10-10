@@ -27,7 +27,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
-import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -48,12 +48,12 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -94,7 +94,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
-const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
@@ -705,7 +705,7 @@ describe("AcpAdapterV2", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const selfInvocation = yield* resolveSelfInvocation().pipe(
-        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(HostProcess.IsExecutable, true),
       );
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1150,7 +1150,7 @@ describe("AcpAdapterV2", () => {
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         // Production Devin runs commands through client terminals.
-        clientTerminals: { childProcessSpawner, shellCommands: true },
+        clientTerminals: { shellCommands: true },
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1833,7 +1833,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const fileSystem = yield* FileSystem.FileSystem;
       let published: ReadonlyArray<number> = [];
       const failed = yield* Effect.scoped(
@@ -1947,7 +1947,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("reaps detached native work when the provider exits before explicit teardown", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2026,7 +2026,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("surfaces reduced guarantee when delegated cgroup containment is unavailable", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const selfInvocation = yield* resolveSelfInvocation();
@@ -2190,7 +2190,7 @@ describe("AcpAdapterV2", () => {
           makeRuntime,
         },
         selfInvocation,
-        clientTerminals: { childProcessSpawner },
+        clientTerminals: {},
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
@@ -2476,7 +2476,7 @@ describe("AcpAdapterV2", () => {
             }).pipe(Effect.andThen(makeRuntime(input))),
         },
         selfInvocation,
-        clientTerminals: { childProcessSpawner },
+        clientTerminals: {},
       });
       const threadId = ThreadId.make("thread-acp-unknown-permission-grant");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -3100,7 +3100,7 @@ describe("AcpAdapterV2", () => {
           instanceId,
           settings: DEFAULT_GROK_SETTINGS,
           environment: {},
-          hostPlatform: yield* HostProcessPlatform,
+          hostPlatform: yield* HostProcess.Platform,
           selfInvocation: yield* resolveSelfInvocation(),
           // Production Grok runtimes are wrapped by the x.ai prompt runtime.
           makeRuntime: (input) =>
@@ -3147,7 +3147,7 @@ describe("AcpAdapterV2", () => {
         instanceId,
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
-        hostPlatform: yield* HostProcessPlatform,
+        hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
         // Production Grok runtimes are wrapped by the x.ai prompt runtime.
         makeRuntime: (input) =>
@@ -12045,9 +12045,11 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
         [];
-      yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-        makeTaskkillSpawner({ exitCode: 0, commands }),
-        4321,
+      yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeTaskkillSpawner({ exitCode: 0, commands }),
+        ),
       );
       assert.deepEqual(commands, [{ command: "taskkill", args: ["/PID", "4321", "/T", "/F"] }]);
 
@@ -12058,10 +12060,13 @@ describe("AcpAdapterV2", () => {
         { exitCode: 128, output: "ERROR: Access is denied." },
         { exitCode: 1, output: "generic failure" },
       ]) {
-        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-          makeTaskkillSpawner(fixture),
-          4321,
-        ).pipe(Effect.exit);
+        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeTaskkillSpawner(fixture),
+          ),
+          Effect.exit,
+        );
         if (Exit.isSuccess(failed)) assert.fail(`taskkill ${fixture.exitCode} must fail`);
         const error = Cause.squash(failed.cause);
         assert.instanceOf(error, AcpSessionRuntime.AcpProcessGroupTerminationError);
@@ -12082,10 +12087,13 @@ describe("AcpAdapterV2", () => {
         { outputFailure: true },
         { exitFailure: true },
       ]) {
-        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-          makeTaskkillSpawner(fixture),
-          4321,
-        ).pipe(Effect.exit);
+        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeTaskkillSpawner(fixture),
+          ),
+          Effect.exit,
+        );
         if (Exit.isSuccess(failed)) assert.fail("taskkill infrastructure failure must fail");
         const error = Cause.squash(failed.cause);
         assert.instanceOf(error, AcpSessionRuntime.AcpProcessGroupTerminationError);
@@ -13139,7 +13147,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("direct Stop skips uninterruptible ACP cancel and recovers after native teardown", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -13559,7 +13567,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("restart_active terminates native work and reloads a clean runtime", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;

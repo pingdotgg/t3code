@@ -40,8 +40,9 @@ import type * as Scope from "effect/Scope";
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
 import type { ProviderDriverError } from "./errors.ts";
-import type { ServerProviderShape } from "./snapshot.ts";
+import type { ManagedServerProvider } from "./snapshot.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderUsageReader } from "./usage.ts";
 
 /**
  * Static metadata advertised by a driver. Used for default presentation
@@ -85,7 +86,7 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
-  readonly snapshot: ServerProviderShape;
+  readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
@@ -172,7 +173,7 @@ export interface ProviderDriverCreateInput<Config> {
  * scope closes. Two calls to `create` with different `instanceId` /
  * `config` MUST yield instances with no shared mutable state.
  */
-export interface ProviderDriver<Config, R = never> {
+export interface ProviderDriver<Config, R = never, UsageR = never> {
   readonly driverKind: ProviderDriverKind;
   readonly metadata: ProviderDriverMetadata;
   /**
@@ -207,6 +208,11 @@ export interface ProviderDriver<Config, R = never> {
   readonly create: (
     input: ProviderDriverCreateInput<Config>,
   ) => Effect.Effect<ProviderInstance, ProviderDriverError, R | Scope.Scope>;
+  /**
+   * Where the usage page reads this provider's token history, when it keeps
+   * one. `UsageR` is what the reader needs, usually far less than `R`.
+   */
+  readonly usage?: ProviderUsageReader<Config, UsageR>;
 }
 
 /**
@@ -219,4 +225,8 @@ export interface ProviderDriver<Config, R = never> {
 // needs the original `Config` type. Using `unknown` instead would force
 // `create` callers into casts since `unknown` is not assignable to a
 // concrete `Config` from inside the driver body.
-export type AnyProviderDriver<R = never> = ProviderDriver<any, R>;
+export type AnyProviderDriver<R = never, UsageR = unknown> = ProviderDriver<any, R, UsageR>;
+
+/** The services a driver's usage reader needs. */
+export type ProviderUsageReaderEnv<Driver> =
+  Driver extends ProviderDriver<any, any, infer UsageR> ? UsageR : never;

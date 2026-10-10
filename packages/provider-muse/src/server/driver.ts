@@ -1,12 +1,12 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -69,16 +69,16 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const { cwd } = host.paths;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-      const processEnvironment = mergeProviderInstanceEnvironment(
+      const processEnvironment = yield* mergeProviderInstanceEnvironment(
         environment,
         makeMuseEnvironment(hostEnvironment),
       );
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: expandHomePath(config.binaryPath),
+        binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       } satisfies MuseSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,

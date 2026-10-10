@@ -7,13 +7,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -27,7 +27,7 @@ import {
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -46,13 +46,13 @@ const openCode2Runtime = {
   runOpenCodeCommand: () => Effect.succeed({ stdout: "opencode v2.0.18\n", stderr: "", code: 0 }),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
-} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 
 const layer = Layer.mergeAll(
   IdAllocator.layer,
   McpProviderSessions.layer,
   ProviderLatestVersions.layer,
-  layerTestProviderHost(),
+  TestProviderHost.layer(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
@@ -156,7 +156,7 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
   () =>
     Effect.gen(function* () {
@@ -211,12 +211,12 @@ const changingRuntime = {
     ),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
-} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 const layerUpdate = Layer.mergeAll(
   IdAllocator.layer,
   McpProviderSessions.layer,
   ProviderLatestVersions.layer,
-  layerTestProviderHost(),
+  TestProviderHost.layer(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
@@ -243,7 +243,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {

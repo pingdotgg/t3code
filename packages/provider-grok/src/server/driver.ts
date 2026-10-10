@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -19,6 +19,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "./status.ts";
+import { grokUsageReader } from "./usage.ts";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -82,7 +83,7 @@ export type GrokDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
+export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Grok",
@@ -90,6 +91,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
   },
   configSchema: GrokSettings,
   defaultConfig: (): GrokSettings => decodeGrokSettings({}),
+  usage: grokUsageReader,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
@@ -100,7 +102,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const path = yield* Path.Path;
       const host = yield* ProviderHost.ProviderHost;
       const { cwd } = host.paths;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -191,7 +193,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Grok snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build Grok snapshot.",
               cause,
             }),
         ),

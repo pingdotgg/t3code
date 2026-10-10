@@ -41,6 +41,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
+const HOST_RESPONSE_GRACE_MS = 1_000;
+
 export interface PreviewAutomationInvokeInput {
   /** Preview tabs belong to a thread, so only thread callers reach the broker. */
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
@@ -651,7 +653,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      // The browser starts its operation timer after delivery. Allow its timeout
+      // response to arrive before treating the entire host as unresponsive.
+      const responseTimeoutMs =
+        input.updateCurrentTab === false ? timeoutMs : timeoutMs + HOST_RESPONSE_GRACE_MS;
+      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {

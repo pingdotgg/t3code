@@ -3,7 +3,8 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import {
   enrichProviderSnapshotWithVersionAdvisory,

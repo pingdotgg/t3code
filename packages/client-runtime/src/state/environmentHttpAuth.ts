@@ -14,6 +14,7 @@ import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
   RemoteEnvironmentAuthFetchError,
   RemoteEnvironmentAuthTimeoutError,
   type RemoteEnvironmentRequestError,
@@ -131,7 +132,12 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly method: HttpMethod.HttpMethod;
-  readonly url: (httpBaseUrl: string) => string;
+  /**
+   * The URL to sign, from the group's contract URL builder. It encodes path
+   * params exactly like the request client, so the DPoP proof matches the
+   * URL actually sent.
+   */
+  readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
   readonly timeoutMs: number;
   readonly group: Group;
   readonly request: (input: {
@@ -146,6 +152,8 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
 > {
   let httpBaseUrl = input.prepared.httpBaseUrl;
+  const requestUrlFor = (baseUrl: string) =>
+    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
@@ -179,7 +187,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         authorization = current.httpAuthorization;
       }
 
-      const requestUrl = input.url(httpBaseUrl);
+      const requestUrl = requestUrlFor(httpBaseUrl);
       const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group);
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
@@ -225,7 +233,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
     Effect.timeoutOrElse({
       duration: input.timeoutMs,
       orElse: () =>
-        Effect.fail(new RemoteEnvironmentAuthTimeoutError(input.url(httpBaseUrl), input.timeoutMs)),
+        Effect.fail(
+          new RemoteEnvironmentAuthTimeoutError(requestUrlFor(httpBaseUrl), input.timeoutMs),
+        ),
     }),
   );
 });

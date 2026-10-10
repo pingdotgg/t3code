@@ -10,6 +10,7 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -993,6 +994,60 @@ describe("V2 environment commands", () => {
         },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect(
+    "a native subagent stop targets its owning run rather than holding the parent queue",
+    () =>
+      Effect.gen(function* () {
+        const subagentId = NodeId.make("native-subagent");
+        const runId = RunId.make("settled-owner-run");
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          projection: {
+            ...v2Projection,
+            subagents: [
+              {
+                id: subagentId,
+                threadId: v2ThreadId,
+                runId,
+                parentNodeId: NodeId.make("owner-node"),
+                origin: "provider_native",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("claudeAgent"),
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                providerThreadId: null,
+                childThreadId: ThreadId.make("native-child-thread"),
+                nativeTaskRef: null,
+                prompt: "Work",
+                title: null,
+                model: null,
+                result: null,
+                status: "running",
+                startedAt: v2Now,
+                completedAt: null,
+                updatedAt: v2Now,
+              },
+            ],
+          },
+        });
+        yield* interruptThreadTurn({
+          commandId: CommandId.make("native-stop"),
+          threadId: v2ThreadId,
+          subagentId,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(commands).toEqual([
+          {
+            type: "subagent.stop",
+            commandId: "native-stop",
+            threadId: v2ThreadId,
+            runId,
+            subagentId,
+          },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
   );
 
   it.effect("interrupts a known run without fetching the full projection", () =>

@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "./processGroup.ts";
 
@@ -15,7 +15,7 @@ const errorCode = (run: () => void) => {
   }
 };
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("signalProcessGroup", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("signalProcessGroup", () => {
   // Signal 0 only probes, so this is safe to run unguarded: `kill(-1, 0)` and
   // `kill(0, 0)` succeed, which is how a fake spawner's pid 1 became
   // `kill(-1, SIGKILL)` and took down every process the user owned.

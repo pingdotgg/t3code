@@ -9,7 +9,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "../settings.ts";
@@ -161,7 +162,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
  * are deleted. The snapshot-producing logic they wrapped now lives in the
  * standalone `checkOpenCodeProviderStatus(settings, cwd)` Effect, which
  * drivers call directly when building their per-instance snapshot
- * `ServerProviderShape`. Tests mirror that shape: build a settings payload,
+ * `ManagedServerProvider`. Tests mirror that shape: build a settings payload,
  * invoke the check, assert on the returned snapshot.
  */
 
@@ -202,7 +203,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: ({ serverPassword, environment }) =>
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
@@ -264,7 +265,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<
-      OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
     >;
   },
   loadOpenCodeInventory: () =>
@@ -696,6 +697,47 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
         "full-access",
       ]);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("labels each model with the sub-provider that listed it", () =>
+    Effect.gen(function* () {
+      // Names come from the server's provider list; see openCode2Catalog.test.ts
+      // for reading that list itself.
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings({
+          serverUrl: "http://127.0.0.1:9999",
+          serverPassword: "secret-password",
+        }),
+        process.cwd(),
+        undefined,
+        replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret-password"),
+        Effect.succeed([
+          {
+            providerID: "openai",
+            id: "gpt-5.4",
+            name: "GPT-5.4",
+            providerName: "OpenAI",
+            variants: [],
+          },
+          {
+            providerID: "custom",
+            id: "m1",
+            name: "Custom 1",
+            providerName: "OpenCode",
+            variants: [],
+          },
+          { providerID: "anthropic", id: "claude", name: "Claude", variants: [] },
+        ]),
+      );
+
+      const subProviderFor = (slug: string) =>
+        snapshot.models.find((model) => model.slug === slug)?.subProvider;
+      NodeAssert.equal(subProviderFor("openai/gpt-5.4"), "OpenAI");
+      // A provider called plain "OpenCode" would repeat the instance name.
+      NodeAssert.equal(subProviderFor("custom/m1"), undefined);
+      // The id stands in until the server names its providers.
+      NodeAssert.equal(subProviderFor("anthropic/claude"), "anthropic");
     }),
   );
 
