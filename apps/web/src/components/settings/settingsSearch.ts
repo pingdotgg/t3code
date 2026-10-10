@@ -682,6 +682,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "shared-mcp-servers",
+    title: "Shared MCP servers",
+    to: "/settings/integrations",
+    searchTerms: ["mcp model context protocol gateway tools add server claude codex cursor"],
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/integrations",

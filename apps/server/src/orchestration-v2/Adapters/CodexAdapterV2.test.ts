@@ -677,6 +677,36 @@ describe("CodexAdapterV2 process spawning", () => {
     );
   });
 
+  it("adds shared MCP servers to the thread's MCP table", () => {
+    const threadId = ThreadId.make("thread-codex-shared-mcp");
+    const mcpSession = {
+      environmentId: EnvironmentId.make("environment-codex-shared-mcp"),
+      threadId,
+      providerSessionId: "mcp-session-codex-shared",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-codex-token",
+      browserToolsAvailable: true,
+      sharedServers: [
+        {
+          name: "gateway",
+          url: "http://127.0.0.1:3050/mcp",
+          headers: { Authorization: "Bearer gateway-token" },
+        },
+      ],
+    };
+    assert.deepEqual(CodexAdapterV2.codexThreadRuntimeParams({ mcpSession }).config.mcp_servers, {
+      gateway: {
+        url: "http://127.0.0.1:3050/mcp",
+        http_headers: { Authorization: "Bearer gateway-token" },
+      },
+      "t3-code": {
+        url: "http://127.0.0.1:43123/mcp",
+        http_headers: { Authorization: "Bearer secret-codex-token" },
+      },
+    });
+  });
+
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
       const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({

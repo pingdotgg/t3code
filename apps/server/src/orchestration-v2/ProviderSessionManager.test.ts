@@ -1913,6 +1913,64 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 hands the user's enabled shared MCP servers to the session",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const gateway = {
+        name: "gateway",
+        url: "http://127.0.0.1:3050/mcp",
+        enabled: true,
+        headers: {},
+      };
+      const sharedMcpServers = [gateway, { ...gateway, name: "paused", enabled: false }];
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-shared-mcp");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // Switched-off servers stay out of the session, and agents reach the
+        // others through T3's proxy with the thread's own credential.
+        const config = (yield* Ref.get(mcpConfigs))[0];
+        assert.isDefined(config);
+        assert.deepEqual(config.sharedServers, [
+          {
+            name: "gateway",
+            url: `${config.endpoint}/shared/gateway`,
+            headers: { Authorization: config.authorizationHeader },
+          },
+        ]);
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            serverSettingsLayer: ServerSettings.layerTest({ sharedMcpServers }).pipe(Layer.orDie),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", () =>
   Effect.gen(function* () {
     const captured = yield* runBrowserAccessScenario({

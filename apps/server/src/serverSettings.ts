@@ -32,6 +32,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
+  sharedMcpServerKey,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -164,6 +165,17 @@ function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
+/** Secret holding a shared server's OAuth sign-in (see `SharedMcpProxy`); removed with the server. */
+export function sharedMcpOAuthSecretName(serverKey: string): string {
+  return `shared-mcp-oauth-${Buffer.from(serverKey, "utf8").toString("base64url")}`;
+}
+
+/** Keyed by the server's stable id (see `sharedMcpServerKey`), so a rename keeps its secrets. */
+function sharedMcpHeaderSecretName(serverKey: string, headerName: string): string {
+  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
+  return `shared-mcp-header-${encode(serverKey)}-${encode(headerName.toLowerCase())}`;
+}
+
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
 /** Each host's settings with every secret slot's value replaced by `map(slot, value)`. */
@@ -245,7 +257,20 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   const sourceControlHosts = mapSlotValues(settings.sourceControlHosts, (_slot, value) =>
     redactSecret(value),
   );
-  return { ...settings, providerInstances, usageLimitSources, sourceControlHosts };
+  // Shared MCP header values are usually bearer tokens.
+  const sharedMcpServers = settings.sharedMcpServers.map((server) => ({
+    ...server,
+    headers: Object.fromEntries(
+      Object.entries(server.headers).map(([name, value]) => [name, redactSecret(value)]),
+    ),
+  }));
+  return {
+    ...settings,
+    providerInstances,
+    usageLimitSources,
+    sourceControlHosts,
+    sharedMcpServers,
+  };
 }
 
 export function applyProviderInstanceMutation(
@@ -1053,6 +1078,26 @@ const make = Effect.gen(function* () {
           Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         );
       }
+      const sharedMcpServers: Array<ServerSettings["sharedMcpServers"][number]> = [];
+      for (const server of settings.sharedMcpServers) {
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(server.headers)) {
+          if (value !== SECRET_REDACTED) {
+            headers[name] = value;
+            continue;
+          }
+          const secret = yield* secretStore
+            .get(sharedMcpHeaderSecretName(sharedMcpServerKey(server), name))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+              ),
+            );
+          headers[name] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+        }
+        sharedMcpServers.push({ ...server, headers });
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
@@ -1062,6 +1107,7 @@ const make = Effect.gen(function* () {
             ? (storedSecrets.get(sourceControlHostSecretName(slot)) ?? "")
             : value,
         ),
+        sharedMcpServers,
       };
     });
 
@@ -1203,6 +1249,51 @@ const make = Effect.gen(function* () {
         });
       }
 
+      // Each shared MCP header value is its own secret. The marker keeps the
+      // stored value; a value hand-edited into settings.json is moved into the
+      // store instead of dropped, and a marker with nothing behind it is
+      // dropped rather than saved as an empty header. Headers or servers that
+      // disappear drop their secrets.
+      const currentHeaders = new Map(
+        current.sharedMcpServers.map((server) => [sharedMcpServerKey(server), server.headers]),
+      );
+      const nextHeaderSecrets = new Set<string>();
+      const sharedMcpServers = next.sharedMcpServers.map((server) => {
+        const key = sharedMcpServerKey(server);
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(server.headers)) {
+          const secretName = sharedMcpHeaderSecretName(key, name);
+          const previous = currentHeaders.get(key)?.[name];
+          const stored = value === SECRET_REDACTED ? previous : value;
+          if (stored === undefined || stored.length === 0) {
+            changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+            continue;
+          }
+          nextHeaderSecrets.add(secretName);
+          if (stored !== SECRET_REDACTED) {
+            changes.push({ kind: "write", secretName, value: textEncoder.encode(stored) });
+          }
+          headers[name] = SECRET_REDACTED;
+        }
+        return { ...server, headers };
+      });
+      const nextServerKeys = new Set(next.sharedMcpServers.map(sharedMcpServerKey));
+      for (const server of current.sharedMcpServers) {
+        for (const name of Object.keys(server.headers)) {
+          const secretName = sharedMcpHeaderSecretName(sharedMcpServerKey(server), name);
+          if (nextHeaderSecrets.has(secretName)) continue;
+          changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
+        }
+        // A removed server's OAuth sign-in goes with it.
+        if (!nextServerKeys.has(sharedMcpServerKey(server))) {
+          changes.push({
+            kind: "remove",
+            secretName: sharedMcpOAuthSecretName(sharedMcpServerKey(server)),
+            operation: "remove-stale-secret",
+          });
+        }
+      }
+
       // Hand-edited plaintext not yet in the store, so the redaction marker can move it there.
       const inlineSecrets = new Map(
         sourceControlHostSecretSlots(current.sourceControlHosts).flatMap((slot) =>
@@ -1241,6 +1332,7 @@ const make = Effect.gen(function* () {
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           sourceControlHosts,
+          sharedMcpServers,
         },
         changes,
       };

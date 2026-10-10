@@ -206,6 +206,12 @@ function SettingsIndexSections() {
           disabled={noServerTargets}
         />
         <SettingsRow
+          icon="server.rack"
+          label="Shared MCP servers"
+          target="SettingsSharedMcpServers"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
           icon="arrow.clockwise"
           label="Maintenance"
           target="SettingsEnvironmentMaintenance"

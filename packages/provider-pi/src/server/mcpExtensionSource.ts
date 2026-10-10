@@ -16,6 +16,8 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+/** The thread's shared MCP servers as a JSON array of `{ name, url, headers }`. */
+export const T3_MCP_SHARED_SERVERS_ENV = "T3_MCP_SHARED_SERVERS";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -33,6 +35,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+const SHARED_SERVERS_ENV = ${JSON.stringify(T3_MCP_SHARED_SERVERS_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -56,9 +59,31 @@ type McpTool = {
   readonly outputSchema?: Record<string, unknown>;
 };
 
+type SharedServer = {
+  readonly name: string;
+  readonly url: string;
+  readonly headers: Record<string, string>;
+};
+
 function env(name: string): string | undefined {
   const value = process.env[name];
   return value && value.length > 0 ? value : undefined;
+}
+
+function sharedServers(): SharedServer[] {
+  try {
+    const parsed: unknown = JSON.parse(env(SHARED_SERVERS_ENV) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (server): server is SharedServer =>
+        typeof server?.name === "string" &&
+        typeof server?.url === "string" &&
+        typeof server?.headers === "object" &&
+        server.headers !== null,
+    );
+  } catch {
+    return [];
+  }
 }
 
 function runtimeMode(): RuntimeMode {
@@ -164,14 +189,18 @@ function isMcpToolError(result: unknown): boolean {
   );
 }
 
-function createMcpClient(endpoint: string, token: string) {
+function createMcpClient(endpoint: string, requestHeaders: Record<string, string>) {
   let nextId = 1;
   let sessionId: string | undefined;
 
   const headers = (): Record<string, string> => {
+    // Lowercased, so a shared server's \`Accept\` or \`Content-Type\` is
+    // replaced by the protocol's own instead of merged with it.
     const next: Record<string, string> = {
+      ...Object.fromEntries(
+        Object.entries(requestHeaders).map(([name, value]) => [name.toLowerCase(), value]),
+      ),
       accept: "application/json, text/event-stream",
-      authorization: token.startsWith("Bearer ") ? token : \`Bearer \${token}\`,
       "content-type": "application/json",
       // Effect's HTTP MCP rejects post-initialize requests without this
       // (400). The worktree client in McpHttpServer tests sends the same
@@ -356,70 +385,89 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
   const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
   let deferOptionalTools = supportsExposure;
-  let catalog: ReadonlyArray<McpTool> = [];
 
-  const client = createMcpClient(endpoint, token);
-  let started: Promise<void> | undefined;
+  // Registers one MCP server's tools as \`mcp__<server>__<tool>\`, once it answers.
+  const bridgeServer = (server: string, client: ReturnType<typeof createMcpClient>) => {
+    const isT3 = server === "t3-code";
+    let catalog: ReadonlyArray<McpTool> = [];
+    let started: Promise<void> | undefined;
 
-  const registerTools = () => {
-    // Preserve public names for saved loadouts and tool selectors. Hidden
-    // canonical names reserve ownership against Pi's configured MCP servers.
-    const prefixes = supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : ["mcp__t3-code__"];
-    readOnlyMcpTools.clear();
-    for (const tool of catalog) {
-      const name = tool.name;
-      for (const prefix of prefixes) {
-        if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(\`\${prefix}\${name}\`);
-        const exposure = prefix === "mcp__t3_code__" ? "hidden" :
-          deferOptionalTools && !directTools.has(name) ? "deferred" : "direct";
-        pi.registerTool({
-          name: \`\${prefix}\${name}\`,
-          label: name,
-          description: tool.description ?? name,
-          parameters: jsonSchemaToTypebox(tool.inputSchema),
-          ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
-          ...(supportsExposure ? { exposure } : {}),
-          async execute(_toolCallId, params, signal) {
-            const result = await client.callTool(
-              name,
-              (params ?? {}) as Record<string, unknown>,
-              signal,
-            );
-            const content = mcpModelContent(result);
-            if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
-              content.push({ type: "text", text: "MCP tool t3-code/" + name + " returned an error" });
-            }
-            return {
-              content,
-              structuredContent: mcpScriptResult(result),
-              details: { server: "t3-code", tool: name },
-              ...(isMcpToolError(result) ? { isError: true } : {}),
-            };
-          },
-        });
+    const registerTools = () => {
+      // Preserve public names for saved loadouts and tool selectors. Hidden
+      // canonical names reserve ownership against Pi's configured MCP servers.
+      const prefixes =
+        isT3 && supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : [\`mcp__\${server}__\`];
+      // Only T3's own read-only hints skip approval; a shared server's are its own claim.
+      if (isT3) readOnlyMcpTools.clear();
+      for (const tool of catalog) {
+        const name = tool.name;
+        for (const prefix of prefixes) {
+          if (isT3 && tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(\`\${prefix}\${name}\`);
+          const exposure = prefix === "mcp__t3_code__" ? "hidden" :
+            deferOptionalTools && !(isT3 && directTools.has(name)) ? "deferred" : "direct";
+          pi.registerTool({
+            name: \`\${prefix}\${name}\`,
+            label: name,
+            description: tool.description ?? name,
+            parameters: jsonSchemaToTypebox(tool.inputSchema),
+            ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
+            ...(supportsExposure ? { exposure } : {}),
+            async execute(_toolCallId, params, signal) {
+              const result = await client.callTool(
+                name,
+                (params ?? {}) as Record<string, unknown>,
+                signal,
+              );
+              const content = mcpModelContent(result);
+              if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
+                content.push({ type: "text", text: "MCP tool " + server + "/" + name + " returned an error" });
+              }
+              return {
+                content,
+                structuredContent: mcpScriptResult(result),
+                details: { server, tool: name },
+                ...(isMcpToolError(result) ? { isError: true } : {}),
+              };
+            },
+          });
+        }
       }
-    }
+    };
+
+    const ensureStarted = () => {
+      if (started !== undefined) return started;
+      const attempt = (async () => {
+        const signal = AbortSignal.timeout(10_000);
+        await client.connect(signal);
+        catalog = await client.listTools(signal);
+        registerTools();
+      })();
+      started = attempt;
+      void attempt.catch(() => {
+        if (started === attempt) started = undefined;
+      });
+      return attempt;
+    };
+    return { server, ensureStarted, registerTools };
   };
 
-  const ensureStarted = () => {
-    if (started !== undefined) return started;
-    const attempt = (async () => {
-      const signal = AbortSignal.timeout(10_000);
-      await client.connect(signal);
-      catalog = await client.listTools(signal);
-      registerTools();
-    })();
-    started = attempt;
-    void attempt.catch(() => {
-      if (started === attempt) started = undefined;
-    });
-    return attempt;
-  };
+  // The user's shared servers ride along with t3-code, without its credential.
+  const servers = [
+    bridgeServer(
+      "t3-code",
+      createMcpClient(endpoint, {
+        authorization: token.startsWith("Bearer ") ? token : \`Bearer \${token}\`,
+      }),
+    ),
+    ...sharedServers().map((shared) =>
+      bridgeServer(shared.name, createMcpClient(shared.url, shared.headers)),
+    ),
+  ];
 
   // CLI extensions load before builtins, and Pi keeps the first registration
   // of a tool name. Register now so the bridge owns the T3 namespace even when
   // mcp.json configures it; retry a failed connection at session_start.
-  await ensureStarted().catch(() => undefined);
+  await Promise.all(servers.map((entry) => entry.ensureStarted().catch(() => undefined)));
 
   const reconcileDiscovery = () => {
     if (!supportsExposure) return;
@@ -427,7 +475,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const hasToolSearch = hasBuiltinToolSearch();
     const exposureChanged = deferOptionalTools !== hasToolSearch;
     deferOptionalTools = hasToolSearch;
-    if (exposureChanged) registerTools();
+    if (exposureChanged) for (const entry of servers) entry.registerTools();
     if (hasToolSearch) {
       const active = pi.getActiveTools();
       if (!active.includes("tool_search")) pi.setActiveTools([...active, "tool_search"]);
@@ -438,11 +486,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_tree", reconcileDiscovery);
   pi.on("session_start", async (_event, ctx) => {
     reconcileDiscovery();
-    try {
-      await ensureStarted();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      ctx.ui.notify(\`t3-code MCP unavailable: \${message}\`, "warning");
+    for (const entry of servers) {
+      try {
+        await entry.ensureStarted();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(\`\${entry.server} MCP unavailable: \${message}\`, "warning");
+      }
     }
   });
 

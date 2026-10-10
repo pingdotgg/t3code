@@ -1170,6 +1170,14 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
+    testSharedMcpServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:test-shared-mcp-server",
+      tag: WS_METHODS.serverTestSharedMcpServer,
+    }),
+    signInSharedMcpServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:sign-in-shared-mcp-server",
+      tag: WS_METHODS.serverSignInSharedMcpServer,
+    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,

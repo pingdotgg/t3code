@@ -1059,6 +1059,88 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+/**
+ * An MCP server the user adds once in T3 Code. Every agent session that gets
+ * T3's own `t3-code` server gets these too, so one entry (often a local MCP
+ * gateway) reaches Claude, Codex, Cursor, OpenCode, and ACP agents alike.
+ */
+export const SharedMcpServerName = TrimmedNonEmptyString.check(
+  // Names become TOML keys and tool prefixes, so keep them short and to a
+  // safe charset: providers cap MCP tool names at 64 characters.
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+  Schema.isMaxLength(24),
+  Schema.makeFilter((name: string) => name !== "t3-code" || "t3-code is T3 Code's own server"),
+);
+const SharedMcpServerUrl = TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/\S+$/));
+const SharedMcpServerHeaderName = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9-]+$/));
+
+export const SharedMcpServer = Schema.Struct({
+  /**
+   * Stable identity for the server's header secrets, so renaming keeps them.
+   * Clients assign one when adding a server; entries without one (e.g. hand
+   * edited) are keyed by name.
+   */
+  id: Schema.optionalKey(TrimmedNonEmptyString),
+  name: SharedMcpServerName,
+  url: SharedMcpServerUrl,
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Request headers, typically auth. Values live in the server's secret store
+   * and reach clients redacted; a client sending the redaction marker back
+   * keeps the stored value.
+   */
+  headers: Schema.Record(SharedMcpServerHeaderName, Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type SharedMcpServer = typeof SharedMcpServer.Type;
+
+/** The key a server's header secrets are stored under. */
+export const sharedMcpServerKey = (server: Pick<SharedMcpServer, "id" | "name">) =>
+  server.id ?? server.name;
+
+/**
+ * The list as written through a settings update: names identify servers in
+ * every provider, keys own header secrets, and header names are matched
+ * case-insensitively on the wire, so each must be unique. Enforced on writes
+ * only, so a hand-edited settings file still loads.
+ */
+const SharedMcpServersPatch = Schema.Array(SharedMcpServer).check(
+  Schema.makeFilter((servers: ReadonlyArray<SharedMcpServer>) => {
+    const unique = (values: ReadonlyArray<string>) => new Set(values).size === values.length;
+    if (!unique(servers.map((server) => server.name)))
+      return "Shared MCP server names must be unique";
+    if (!unique(servers.map(sharedMcpServerKey))) return "Shared MCP server ids must be unique";
+    return (
+      servers.every((server) =>
+        unique(Object.keys(server.headers).map((name) => name.toLowerCase())),
+      ) || "A shared MCP server's header names must be unique, ignoring case"
+    );
+  }),
+);
+
+export const SharedMcpServerTestResult = Schema.Struct({
+  serverName: Schema.NullOr(Schema.String),
+  toolCount: Schema.Number,
+});
+export type SharedMcpServerTestResult = typeof SharedMcpServerTestResult.Type;
+
+export class SharedMcpServerTestError extends Schema.TaggedError<SharedMcpServerTestError>()(
+  "SharedMcpServerTestError",
+  {
+    server: Schema.String,
+    message: Schema.String,
+    /** The server needs an OAuth sign-in from Settings before it can be used. */
+    needsSignIn: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  },
+) {}
+
+export const SharedMcpServerSignInResult = Schema.Struct({
+  /** Where to send the user; null when the server needs no sign-in. */
+  authorizationUrl: Schema.NullOr(Schema.String),
+});
+export type SharedMcpServerSignInResult = typeof SharedMcpServerSignInResult.Type;
+
 export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
@@ -1096,6 +1178,9 @@ export const ServerSettings = Schema.Struct({
    * between a desktop window and a phone attached to the same server.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sharedMcpServers: Schema.Array(SharedMcpServer).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1433,6 +1518,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  sharedMcpServers: Schema.optionalKey(SharedMcpServersPatch),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
