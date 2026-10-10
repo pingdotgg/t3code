@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextTransferId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -18,7 +19,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -168,6 +171,11 @@ function makeLocalCommandHarness(input: {
   readonly historyReadFailureAfterFallback?: unknown;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
+  readonly interruptRunBeforeOpen?: boolean;
+  readonly interruptRunDuringOpen?: boolean;
+  readonly policyGate?: Effect.Effect<void>;
+  readonly openGate?: Effect.Effect<void>;
+  readonly nativeLoadMode?: "ensure" | "resume" | "fork";
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
@@ -355,6 +363,49 @@ function makeLocalCommandHarness(input: {
       ),
     };
   }
+  if (input.nativeLoadMode === "resume") {
+    projection = {
+      ...projection,
+      providerThreads: projection.providerThreads.map((candidate) =>
+        candidate.id === providerThreadId
+          ? {
+              ...candidate,
+              nativeThreadRef: {
+                driver: candidate.driver,
+                nativeId: "existing-native-thread",
+                strength: "strong",
+              },
+            }
+          : candidate,
+      ),
+    };
+  }
+  if (input.nativeLoadMode === "fork") {
+    const sourceThreadId = ThreadId.make("native-fork-source");
+    projection = {
+      ...projection,
+      contextTransfers: [
+        {
+          id: ContextTransferId.make("pending-native-fork"),
+          type: "fork",
+          sourceThreadId,
+          targetThreadId: threadId,
+          sourcePoint: { threadId: sourceThreadId, runId: RunId.make("source-run") },
+          basePoint: null,
+          sourceProviderInstanceId: newInstanceId,
+          targetProviderInstanceId: newInstanceId,
+          targetRunId: runId,
+          status: "pending",
+          resolution: null,
+          createdBy: "user",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          consumedAt: null,
+        },
+      ],
+    };
+  }
   const events: Array<OrchestrationV2DomainEvent> = [];
   const interruptRun = () => {
     projection = {
@@ -393,45 +444,61 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const resumeThread = vi.fn(() => Effect.die("A superseded attempt must not resume a thread."));
+  const forkThread = vi.fn(() => Effect.die("A superseded attempt must not fork a thread."));
   const open = vi.fn(() =>
-    input.interruptOpen === true
-      ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
-        ? Effect.succeed(resumeFallbackSession as never)
-        : "ensureThreadFailure" in input
-          ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-          : "openFailure" in input
-            ? Effect.sync(() => {
-                if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-              }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProviderSessionManager.ProviderSessionOpenError({
-                      instanceId: newInstanceId,
-                      providerSessionId,
-                      cause: input.openFailure,
-                    }),
-                  ),
-                ),
-              )
-            : input.failReadsAfterRunning === true
-              ? Effect.succeed({
-                  driver: providerThread.driver,
-                  providerSession: {
-                    id: providerSessionId,
-                    driver: providerThread.driver,
-                    providerInstanceId: newInstanceId,
-                    status: "ready",
-                    cwd: "/tmp/native-account-command",
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
-                  ensureThread: () => Effect.succeed(providerThread),
-                } as never)
-              : Effect.die("A local command must not open a native session."),
+    input.openGate !== undefined
+      ? input.openGate.pipe(
+          Effect.as({
+            driver: providerThread.driver,
+            ensureThread,
+            resumeThread,
+            forkThread,
+          } as never),
+        )
+      : input.interruptOpen === true
+        ? Effect.interrupt
+        : input.interruptRunDuringOpen === true
+          ? Effect.sync(() => {
+              interruptRun();
+              return { driver: providerThread.driver, ensureThread } as never;
+            })
+          : "historyReadFailureAfterFallback" in input
+            ? Effect.succeed(resumeFallbackSession as never)
+            : "ensureThreadFailure" in input
+              ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+              : "openFailure" in input
+                ? Effect.sync(() => {
+                    if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderSessionManager.ProviderSessionOpenError({
+                          instanceId: newInstanceId,
+                          providerSessionId,
+                          cause: input.openFailure,
+                        }),
+                      ),
+                    ),
+                  )
+                : input.failReadsAfterRunning === true
+                  ? Effect.succeed({
+                      driver: providerThread.driver,
+                      providerSession: {
+                        id: providerSessionId,
+                        driver: providerThread.driver,
+                        providerInstanceId: newInstanceId,
+                        status: "ready",
+                        cwd: "/tmp/native-account-command",
+                        model: null,
+                        capabilities: CodexProviderCapabilitiesV2,
+                        createdAt: now,
+                        updatedAt: now,
+                        lastError: null,
+                      },
+                      ensureThread: () => Effect.succeed(providerThread),
+                    } as never)
+                  : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -495,6 +562,14 @@ function makeLocalCommandHarness(input: {
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              ...projection,
+              runs: projection.runs.map((candidate) => ({
+                ...candidate,
+                id: RunId.make("source-run"),
+              })),
+            }),
           getTurnStartContext: () =>
             Effect.succeed({
               ...projection,
@@ -525,13 +600,24 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
-          resolve: () => Effect.succeed({} as never),
+          resolve: () =>
+            (input.policyGate ?? Effect.void).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (input.interruptRunBeforeOpen === true) interruptRun();
+                  return {} as never;
+                }),
+              ),
+            ),
         }),
       ),
     ),
   );
   return {
     open,
+    ensureThread,
+    resumeThread,
+    forkThread,
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -539,6 +625,23 @@ function makeLocalCommandHarness(input: {
     oldInstanceId,
     newInstanceId,
     attemptId,
+    supersedeAttempt: () => {
+      const replacementId = RunAttemptId.make("replacement-starting-attempt");
+      projection = {
+        ...projection,
+        runs: projection.runs.map((candidate) =>
+          candidate.id === runId ? { ...candidate, activeAttemptId: replacementId } : candidate,
+        ),
+        attempts: [
+          ...projection.attempts.map((candidate) =>
+            candidate.id === attemptId
+              ? { ...candidate, status: "interrupted" as const, completedAt: now }
+              : candidate,
+          ),
+          { ...projection.attempts[0]!, id: replacementId, attemptOrdinal: 2 },
+        ],
+      };
+    },
     projection: () => projection,
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
@@ -553,6 +656,85 @@ function makeLocalCommandHarness(input: {
   };
 }
 
+effectIt.effect(
+  "does not open a session for an attempt replaced during suspended policy resolution",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        policyGate: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        ),
+      });
+      const startup = yield* harness.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      harness.supersedeAttempt();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(startup);
+      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+      expect(harness.projection().runs.at(-1)?.activeAttemptId).not.toBe(harness.attemptId);
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+);
+
+effectIt.effect.each(["ensure", "resume", "fork"] as const)(
+  "does not %s a native thread for an attempt replaced during suspended session opening",
+  (nativeLoadMode) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        nativeLoadMode,
+        openGate: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        ),
+      });
+      const startup = yield* harness.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      harness.supersedeAttempt();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(startup);
+      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+      expect(harness.projection().runs.at(-1)?.activeAttemptId).not.toBe(harness.attemptId);
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.ensureThread).not.toHaveBeenCalled();
+      expect(harness.resumeThread).not.toHaveBeenCalled();
+      expect(harness.forkThread).not.toHaveBeenCalled();
+      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.events).toHaveLength(0);
+    }).pipe(Effect.scoped),
+);
+
+effectIt.effect("does not open a session after the attempt stops during policy resolution", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", interruptRunBeforeOpen: true });
+    yield* harness.start;
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
+  }),
+);
+
+effectIt.effect(
+  "does not load a provider thread after the attempt stops while opening its session",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue", interruptRunDuringOpen: true });
+      yield* harness.start;
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.ensureThread).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.events).toHaveLength(0);
+      expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
+    }),
+);
+
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
@@ -563,6 +745,7 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
     yield* harness.start;
 
     expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.ensureThread).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
     expect(harness.writeIfRunCurrent).toHaveBeenCalledWith(
       expect.objectContaining({
