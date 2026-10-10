@@ -1430,6 +1430,26 @@ describe("thread outbox", () => {
       false,
     );
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
+    expect(isQueuedThreadCreationSendable({ ...creationMessage, text: "  " })).toBe(false);
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        text: "",
+        attachments: [
+          {
+            id: "image-1",
+            type: "image",
+            name: "photo.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            fileUri: "file:///documents/t3-composer-attachments/photo.png",
+            previewUri: "file:///documents/t3-composer-attachments/photo.png",
+            uploadedAttachmentId: "pending-photo-png",
+            uploadEnvironmentId: EnvironmentId.make("environment-1"),
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 
   it("retries transport failures but drops deterministic command failures", () => {

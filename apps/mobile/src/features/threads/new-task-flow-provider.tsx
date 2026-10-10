@@ -1105,7 +1105,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
         ) ?? selectedModel;
-      if (text.length === 0 || !draftModelSelection) {
+      // A shared image or file is a task on its own; text is optional.
+      if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
         return null;
       }
       // A saved choice from before the project went no-project must not

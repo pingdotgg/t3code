@@ -1244,7 +1244,7 @@ export function NewTaskDraftScreen(props: {
     if (
       attachmentBlockReason !== null ||
       !modelSelection ||
-      initialMessageText.length === 0 ||
+      (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
@@ -1397,7 +1397,7 @@ export function NewTaskDraftScreen(props: {
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
-    flow.prompt.trim().length > 0 &&
+    (flow.prompt.trim().length > 0 || flow.attachments.length > 0) &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
