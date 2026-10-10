@@ -3994,6 +3994,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* settle("queued", queuedStartedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("late-wake")).id);
       assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedStartedAt));
+
+      // Runs sort in the order they started, including after a wake that ran ahead.
+      const ordinals = yield* Effect.forEach(
+        ["prompt", "early-wake", "queued", "late-wake"],
+        (key) => Effect.map(runFor(key), (run) => run.ordinal),
+      );
+      assert.deepEqual(
+        ordinals,
+        ordinals.toSorted((left, right) => left - right),
+      );
     }),
   );
 
@@ -4183,6 +4193,115 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(after.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
       assert.isTrue(after.runs.find((run) => run.id === queuedRun.id)?.queueHeld);
       assert.isFalse(after.turnItems.some((item) => item.runId === queuedRun.id));
+    }),
+  );
+
+  it.effect("places held queued messages after a continuation that started first", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-continuation-before-queue");
+      const messageId = (key: string) => MessageId.make(`${threadId}:${key}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Continuation before queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const dispatch = (key: string, start: boolean) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${key}`),
+          threadId,
+          messageId: messageId(key),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: start ? "start_immediately" : "queue_after_active" },
+        });
+      const runFor = (key: string) =>
+        Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) => {
+          const run = runs.find((candidate) => candidate.userMessageId === messageId(key));
+          assert.isDefined(run);
+          return run;
+        });
+      yield* dispatch("active", true);
+      yield* dispatch("first-queued", false);
+      yield* dispatch("second-queued", false);
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${threadId}:interrupt`),
+        threadId,
+        runId: (yield* runFor("active")).id,
+        holdQueue: true,
+      });
+      // The continuation starts while the older messages wait in the held queue.
+      yield* dispatch("continue", true);
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume`),
+        threadId,
+      });
+
+      const startedRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+            ? Queue.offer(startedRunIds, stored.event.payload.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const complete = (key: string) =>
+        Effect.gen(function* () {
+          const run = yield* runFor(key);
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:${key}:completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+        });
+
+      yield* complete("continue");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("first-queued")).id);
+      yield* complete("first-queued");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("second-queued")).id);
+
+      const keys = ["active", "continue", "first-queued", "second-queued"];
+      const runs = yield* Effect.forEach(keys, runFor);
+      const ordinals = runs.map((run) => run.ordinal);
+      assert.deepEqual(
+        ordinals,
+        ordinals.toSorted((left, right) => left - right),
+      );
+      const { turnItems } = yield* orchestrator.getThreadProjection(threadId);
+      const userItems = turnItems.filter((item) => item.type === "user_message");
+      assert.deepEqual(
+        userItems.map((item) => item.messageId),
+        keys.map(messageId),
+      );
     }),
   );
 
@@ -5425,8 +5544,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             : 0),
       );
       if (scenario === "queued-resume") {
-        assert.equal(after.runs[1]?.status, "queued");
-        assert.isTrue(after.runs[1]?.queueHeld);
+        const held = after.runs[1]!;
+        assert.equal(held.status, "queued");
+        assert.isTrue(held.queueHeld);
         const continuation = after.runs[2]!;
         const completedAt = yield* DateTime.now;
         yield* events.write({
@@ -5447,8 +5567,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           threadId,
         });
         const resumed = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(resumed.runs[1]?.status, "starting");
-        assert.isFalse(resumed.runs[1]?.queueHeld);
+        // The held message ran after the continuation, so it now sorts after it.
+        assert.deepEqual(
+          resumed.runs.map((run) => run.id),
+          [run.id, continuation.id, held.id],
+        );
+        assert.equal(resumed.runs[2]?.status, "starting");
+        assert.isFalse(resumed.runs[2]?.queueHeld);
       }
     }),
   );
