@@ -39,6 +39,21 @@ const makeEnvironment = (
 ) => DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(layerEnvironment(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect.each([
+    [undefined, Option.none()],
+    ["", Option.none()],
+    ["   ", Option.none()],
+    [" /tmp/T3 Code.AppImage ", Option.some(" /tmp/T3 Code.AppImage ")],
+  ] as const)("keeps exact non-blank AppImage paths: %j", ([APPIMAGE, expected]) =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { platform: "linux", isPackaged: true },
+        { APPIMAGE },
+      );
+      assert.deepEqual(environment.appImagePath, expected);
+    }),
+  );
+
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

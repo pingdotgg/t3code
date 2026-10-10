@@ -55,7 +55,10 @@ export const DesktopConfig = Config.all({
   otlpProtocol: Config.schema(OtlpProtocol, "T3CODE_OTLP_PROTOCOL").pipe(
     Config.withDefault("http/json"),
   ),
-  appImagePath: trimmedString("APPIMAGE"),
+  appImagePath: Config.String("APPIMAGE").pipe(
+    Config.option,
+    Config.map(Option.filter((value) => value.trim().length > 0)),
+  ),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
   mockUpdateServerPort: Config.Port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(

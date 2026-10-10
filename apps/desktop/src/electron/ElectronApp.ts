@@ -1,8 +1,11 @@
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -97,8 +100,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = ElectronApp.of({
+const electronApp = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
       try: () => Electron.app.getVersion(),
@@ -208,4 +210,52 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  const env = yield* HostProcessEnvironment;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const appImagePath = env.APPIMAGE;
+  if (platform !== "linux" || !Electron.app.isPackaged || !appImagePath?.trim()) {
+    return electronApp;
+  }
+
+  return ElectronApp.of({
+    ...electronApp,
+    // Electron's relauncher sets no_new_privs, which prevents fusermount from
+    // mounting the replacement AppImage. Wait on a pipe owned by this process
+    // instead: EOF follows its exit, after the single-instance lock is released.
+    // Close inherited native descriptors first, including the AppImage lifetime
+    // pipe and Chromium listeners. Bash supports variable descriptors via exec {fd}>&-;
+    // POSIX sh cannot close these arbitrary descriptor numbers.
+    relaunch: (options) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make(
+              "bash",
+              [
+                "-c",
+                'for fd in /proc/self/fd/*; do fd=${fd##*/}; if [ "$fd" -gt 2 ]; then exec {fd}>&-; fi; done; while read -r _; do :; done; exec "$@" </dev/null',
+                "t3code-appimage-relaunch",
+                options.execPath ?? appImagePath,
+                ...(options.args ?? process.argv.slice(1)),
+              ],
+              {
+                detached: true,
+                stdin: "pipe",
+                stdout: "ignore",
+                stderr: "ignore",
+                // Noninteractive Bash must not run inherited startup files before waiting.
+                env: { ...env, BASH_ENV: undefined, ENV: undefined },
+              },
+            ),
+          );
+          // The waiting process must survive this scope; its pipe stays open until exit.
+          yield* Effect.asVoid(handle.unref);
+        }),
+      ).pipe(Effect.orDie),
+  });
+});
+
+export const layer = Layer.effect(ElectronApp, make);
