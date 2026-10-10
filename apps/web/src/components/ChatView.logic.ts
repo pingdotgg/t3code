@@ -38,7 +38,7 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@t3tools/shared/codexArtifactTemplates";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   type ChatMessage,
@@ -185,7 +185,10 @@ export function resolveProactiveTurnDiffAction(input: {
   isGitRepo: boolean | undefined;
   activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
-  if (input.activeSurfaceKind === "pull-request") return "ignore";
+  // An open diff already shows the work; reopening it would reset the chosen scope.
+  if (input.activeSurfaceKind === "pull-request" || input.activeSurfaceKind === "diff") {
+    return "ignore";
+  }
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (
@@ -810,22 +813,7 @@ export interface PullRequestDialogState {
   key: number;
 }
 
-export function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error("Could not read image data."));
-    });
-    reader.addEventListener("error", () => {
-      reject(reader.error ?? new Error("Failed to read image."));
-    });
-    reader.readAsDataURL(file);
-  });
-}
+export { readFileAsDataUrl } from "../lib/imageCompression";
 
 export function resolveSendEnvMode(input: {
   requestedEnvMode: DraftThreadEnvMode;

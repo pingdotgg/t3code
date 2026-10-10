@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ThreadId, type VcsError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,19 +19,19 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
 
-const ServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const VcsProcessTestLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
-const VcsDriverTestLayer = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcessTestLayer));
-const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
-  Layer.provideMerge(VcsDriverTestLayer),
+const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
+const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
+  Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(NodeServices.layer),
 );
-const TestLayer = CheckpointStoreTestLayer.pipe(
-  Layer.provideMerge(VcsProcessTestLayer),
-  Layer.provideMerge(VcsDriverTestLayer),
-  Layer.provideMerge(ServerConfigLayer),
+const layerTest = layerCheckpointStoreTest.pipe(
+  Layer.provideMerge(layerVcsProcessTest),
+  Layer.provideMerge(layerVcsDriverTest),
+  Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -94,7 +94,7 @@ function buildLargeText(lineCount = 5_000): string {
     .concat("\n");
 }
 
-it.layer(TestLayer)("CheckpointStore.layer", (it) => {
+it.layer(layerTest)("CheckpointStore.layer", (it) => {
   describe("isGitRepository", () => {
     it.effect("returns false when no Git repository is detected", () =>
       Effect.gen(function* () {
@@ -329,7 +329,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         const copiedText = Array.from({ length: 20 }, (_, index) => `copy line ${index}\n`).join(
           "",
         );
-        const platform = yield* HostProcessPlatform;
+        const platform = yield* HostProcess.Platform;
         const renamedPath = platform === "win32" ? "renamed café.txt" : "renamed\tcafé\nname.txt";
         const addedPath = platform === "win32" ? "new café.txt" : "new\tfile\n名.txt";
         for (const [path, contents] of Object.entries({

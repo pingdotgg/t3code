@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
@@ -10,16 +11,17 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Stdio from "effect/Stdio";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import * as RpcMessage from "effect/unstable/rpc/RpcMessage";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcClientError from "effect/rpc/RpcClientError";
+import * as RpcMessage from "effect/rpc/RpcMessage";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as RpcServer from "effect/rpc/RpcServer";
 
 import * as AcpSchema from "./schema.ts";
 import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
+import { isolateNotificationHandler } from "./_internal/shared.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
 
 export interface AcpProtocolLogEvent {
@@ -144,6 +146,25 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.CompleteElicitationNotification,
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
+// ndJsonRpc skips lines that are not JSON. A malformed agent line has to end the
+// session, so frames are split here and each one goes through the strict codec.
+const makeStrictNdJsonRpcParser = () => {
+  const codec = RpcSerialization.jsonRpc().makeUnsafe();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  return {
+    decode: (bytes: Uint8Array | string): ReadonlyArray<unknown> => {
+      buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      return lines.flatMap((line) => codec.decode(line));
+    },
+    encode: (response: Parameters<typeof codec.encode>[0]) => {
+      const encoded = codec.encode(response);
+      return encoded === undefined ? undefined : `${encoded}\n`;
+    },
+  };
+};
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
 // Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
 const encodeJsonRpcNotification = Schema.encodeUnknownExit(
@@ -189,7 +210,7 @@ function normalizeAcpJsonRpcError(
 export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(function* (
   options: AcpPatchedProtocolOptions,
 ): Effect.fn.Return<AcpPatchedProtocol, never, Scope.Scope> {
-  const parser = parserFactory.makeUnsafe();
+  const parser = makeStrictNdJsonRpcParser();
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
   const notificationQueue = yield* Queue.sliding<AcpIncomingNotification>(
@@ -366,8 +387,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const dispatchNotification = (notification: AcpIncomingNotification) =>
     Queue.offer(notificationQueue, notification).pipe(
       Effect.andThen(
+        // A failing or dying handler must not stop the reader, or every later
+        // message on the connection goes unanswered.
         options.onNotification
-          ? options.onNotification(notification).pipe(Effect.ignore)
+          ? isolateNotificationHandler(options.onNotification(notification))
           : Effect.void,
       ),
       Effect.asVoid,
@@ -439,12 +462,38 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         method: message.tag,
       })
       .pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            respondWithError(
-              message.id,
-              AcpError.AcpRequestError.fromExtensionHandlerError(error, message.tag),
-            ),
+        Effect.matchCauseEffect({
+          // A dying handler answers its own request, like a core handler, and
+          // leaves the reader running. A defect wins over a typed failure in
+          // the same cause, so it is never hidden behind an expected error.
+          onFailure: (cause) => {
+            const failure = Cause.hasDies(cause) ? Option.none() : Cause.findErrorOption(cause);
+            if (Option.isSome(failure)) {
+              return respondWithError(
+                message.id,
+                AcpError.AcpRequestError.fromExtensionHandlerError(failure.value, message.tag),
+              );
+            }
+            return Effect.logError(
+              `ACP extension request handler failed for '${message.tag}'`,
+              cause,
+            ).pipe(
+              Effect.andThen(
+                respondWithError(
+                  message.id,
+                  AcpError.AcpRequestError.internalError(
+                    `ACP extension request handler failed for method '${message.tag}'`,
+                    undefined,
+                    {
+                      method: message.tag,
+                      operation: "handle-extension-request",
+                      cause: Cause.squash(cause),
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
           onSuccess: (value) => respondWithSuccess(message.id, value),
         }),
       );
@@ -666,8 +715,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         ),
       ),
     ),
-    Effect.matchEffect({
-      onFailure: (error) => {
+    // Anything that ends the reader, including a defect in a callback it runs,
+    // terminates the connection so pending requests fail instead of hanging.
+    Effect.matchCauseEffect({
+      onFailure: (cause) => {
+        // The reader's own interruption never gets here: an interrupted fiber
+        // skips failure handlers. An interrupt raised inside it ends it too.
+        const failure = Cause.findErrorOption(cause);
+        const error = Option.isSome(failure) ? failure.value : Cause.squash(cause);
         const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({

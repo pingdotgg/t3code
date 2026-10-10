@@ -33,43 +33,49 @@ const implementation = {
   ],
 };
 
-it.effect("auth providers expose their declared environment contract", () =>
-  Effect.gen(function* () {
-    yield* AuthProvider<{ method: "custom" }, void>()(
-      "CustomProvider",
-      implementation,
-    );
-    const provider = yield* getAuthProvider("CustomProvider");
+it.effect(
+  "auth providers expose their declared environment contract",
+  () =>
+    Effect.gen(function* () {
+      yield* AuthProvider<{ method: "custom" }, void>()(
+        "CustomProvider",
+        implementation,
+      );
+      const provider = yield* getAuthProvider("CustomProvider");
 
-    expect(provider.environment).toEqual(implementation.environment);
-    expect(describeEnvironment(provider.environment)).toBe(
-      "CUSTOM_PROVIDER_TOKEN, [CUSTOM_PROVIDER_REGION | CUSTOM_PROVIDER_DEFAULT_REGION]",
-    );
-  }).pipe(
-    Effect.provideService(AuthProviders, {}),
-    Effect.provide(NodeServices.layer),
-  ),
+      expect(provider.environment).toEqual(implementation.environment);
+      expect(describeEnvironment(provider.environment)).toBe(
+        "CUSTOM_PROVIDER_TOKEN, [CUSTOM_PROVIDER_REGION | CUSTOM_PROVIDER_DEFAULT_REGION]",
+      );
+    }).pipe(
+      Effect.provideService(AuthProviders, {}),
+      Effect.provide(NodeServices.layer),
+    ),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("providers without environment credentials declare nothing", () =>
-  Effect.gen(function* () {
-    const {
-      readEnvironment: _,
-      environment: __,
-      ...profileOnly
-    } = implementation;
-    yield* AuthProvider<{ method: "custom" }, void>()(
-      "ProfileOnlyProvider",
-      profileOnly,
-    );
-    const provider = yield* getAuthProvider("ProfileOnlyProvider");
+it.effect(
+  "providers without environment credentials declare nothing",
+  () =>
+    Effect.gen(function* () {
+      const {
+        readEnvironment: _,
+        environment: __,
+        ...profileOnly
+      } = implementation;
+      yield* AuthProvider<{ method: "custom" }, void>()(
+        "ProfileOnlyProvider",
+        profileOnly,
+      );
+      const provider = yield* getAuthProvider("ProfileOnlyProvider");
 
-    expect(provider.readEnvironment).toBeUndefined();
-    expect(provider.environment).toEqual([]);
-  }).pipe(
-    Effect.provideService(AuthProviders, {}),
-    Effect.provide(NodeServices.layer),
-  ),
+      expect(provider.readEnvironment).toBeUndefined();
+      expect(provider.environment).toEqual([]);
+    }).pipe(
+      Effect.provideService(AuthProviders, {}),
+      Effect.provide(NodeServices.layer),
+    ),
+  { tags: ["unit", "local"] },
 );
 
 it.effect(
@@ -92,6 +98,7 @@ it.effect(
       Effect.provideService(AuthProviders, {}),
       Effect.provide(NodeServices.layer),
     ),
+  { tags: ["unit", "local"] },
 );
 
 it.effect(
@@ -146,4 +153,5 @@ it.effect(
       Effect.provideService(AuthProviders, {}),
       Effect.provide(NodeServices.layer),
     ),
+  { tags: ["unit", "local"] },
 );

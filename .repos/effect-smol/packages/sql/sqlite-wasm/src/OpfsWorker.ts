@@ -16,7 +16,7 @@ import * as WaSqlite from "@effect/wa-sqlite"
 import SQLiteESMFactory from "@effect/wa-sqlite/dist/wa-sqlite.mjs"
 import { AccessHandlePoolVFS } from "@effect/wa-sqlite/src/examples/AccessHandlePoolVFS.js"
 import * as Effect from "effect/Effect"
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError"
+import { classifySqliteError, SqlError } from "effect/sql/SqlError"
 import type { OpfsWorkerMessage } from "./internal/opfsWorker.ts"
 
 const classifyError = (cause: unknown, message: string, operation: string) =>

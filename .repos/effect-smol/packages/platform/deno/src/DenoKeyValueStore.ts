@@ -5,7 +5,7 @@
  */
 
 import type * as Layer from "effect/Layer"
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
 
 /**
  * Creates a `KeyValueStore` layer backed by `localStorage`, with values stored between sessions.

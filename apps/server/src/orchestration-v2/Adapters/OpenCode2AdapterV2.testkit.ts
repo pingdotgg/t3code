@@ -15,27 +15,24 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 
-import * as ServerConfig from "../../config.ts";
-import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";
-import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
+import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
-import {
-  makeReplayServerConfig,
-  type OrchestratorV2ProviderReplayHarness,
-} from "../testkit/ProviderReplayHarness.ts";
-import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
 } from "./OpenCodeAdapterV2.testkit.ts";
-import * as OpenCode2AdapterV2 from "./OpenCode2AdapterV2.ts";
+import * as OpenCode2Adapter from "@t3tools/provider-opencode/server/v2/adapter";
 
 export const OPENCODE2_HTTP_PROTOCOL = "opencode2-http.sse" as const;
 const BASE_URL = "http://opencode2.replay";
@@ -265,25 +262,22 @@ const makeReplayAdapter = (
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
-    return yield* OpenCode2AdapterV2.make(ProviderInstanceId.make("opencode")).pipe(
+    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode")).pipe(
       Effect.provideService(OpenCode2Server.OpenCode2Server, server),
     );
   });
 
-const replayServerConfig = (scenario: string) =>
-  Layer.effect(ServerConfig.ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
-    Layer.provide(NodeServices.layer),
-  );
+const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
-function makeRegistryLayer(
+function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
   options?: { readonly replayGate?: ProviderReplayGate },
 ) {
   return Layer.unwrap(
     makeReplayAdapter(transcript, { external: true, ...options }).pipe(
-      Effect.map((adapter) => ProviderAdapterRegistry.makeLayer([adapter])),
+      Effect.map((adapter) => ProviderAdapterRegistry.layerFromAdapters([adapter])),
     ),
-  ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), IdAllocator.layer)));
+  ).pipe(Layer.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
 }
 
 /**
@@ -319,9 +313,7 @@ export const openCode2ReplayRuntime = (
         cwd: "/work/opencode2",
       },
     });
-  }).pipe(
-    Effect.provide(Layer.mergeAll(replayServerConfig("opencode2_adapter"), IdAllocator.layer)),
-  );
+  }).pipe(Effect.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,
@@ -340,5 +332,5 @@ export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHar
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: makeRegistryLayer,
+  makeProviderAdapterRegistryLayer: layerRegistry,
 };

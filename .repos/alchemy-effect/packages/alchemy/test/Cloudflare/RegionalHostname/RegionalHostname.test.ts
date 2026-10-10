@@ -195,7 +195,17 @@ test.provider(
 
       yield* purgeDnsRecord(zoneId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:addressing",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:regionalhostname",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): `list()` fans out over
@@ -283,5 +293,15 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_REGIONAL_HOSTNAME_LIST)(
       yield* deleteRegionalHostname(zoneId, HOSTNAME);
       yield* purgeDnsRecord(zoneId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:addressing",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:regionalhostname",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

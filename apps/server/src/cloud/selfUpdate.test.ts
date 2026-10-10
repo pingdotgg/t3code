@@ -1,15 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
@@ -84,7 +84,6 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
                 launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
               };
         return {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
           stderr: "",
           code: ChildProcessSpawner.ExitCode(0),
@@ -121,8 +120,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       },
     ),
     Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order)),
-    Effect.provideService(HostProcessPlatform, "linux"),
-    Effect.provideService(HostProcessArchitecture, "x64"),
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
   return { selfUpdate, order };

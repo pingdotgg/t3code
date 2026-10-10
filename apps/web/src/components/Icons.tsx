@@ -158,70 +158,166 @@ export const GitLabIcon = ({
   </svg>
 );
 
+// Microsoft Azure DevOps mark via selfhst/icons (CC BY 4.0): https://github.com/selfhst/icons/blob/main/svg/azure-devops.svg
 export const AzureDevOpsIcon: Icon = (props) => {
   const id = useId().replaceAll(":", "");
-  const gradientA = `${id}-azure-a`;
-  const gradientB = `${id}-azure-b`;
-  const gradientC = `${id}-azure-c`;
+  const gradientId = `${id}-azure`;
 
   return (
-    <svg {...props} viewBox="0 0 96 96">
+    <svg {...props} viewBox="0 0 512 512">
       <defs>
         <linearGradient
-          id={gradientA}
-          x1="-1032.17"
-          x2="-1059.21"
-          y1="145.31"
-          y2="65.43"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
+          id={`${gradientId}-a`}
+          x1="58.027"
+          x2="58.027"
+          y1="356.668"
+          y2="100.668"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop offset="0" stopColor="#114a8b" />
-          <stop offset="1" stopColor="#0669bc" />
+          <stop offset="0" stopColor="#163697" />
+          <stop offset=".276" stopColor="#2052cb" />
+          <stop offset=".518" stopColor="#2764e7" />
+          <stop offset=".879" stopColor="#367af2" />
         </linearGradient>
         <linearGradient
-          id={gradientB}
-          x1="-1023.73"
-          x2="-1029.98"
-          y1="108.08"
-          y2="105.97"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
+          id={`${gradientId}-b`}
+          x1="58.027"
+          x2="58.027"
+          y1="351.334"
+          y2="292.668"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop offset="0" stopOpacity=".3" />
-          <stop offset=".07" stopOpacity=".2" />
-          <stop offset=".32" stopOpacity=".1" />
-          <stop offset=".62" stopOpacity=".05" />
-          <stop offset="1" stopOpacity="0" />
+          <stop offset="0" stopColor="#102784" />
+          <stop offset="1" stopColor="#2052cb" stopOpacity="0" />
         </linearGradient>
         <linearGradient
-          id={gradientC}
-          x1="-1027.16"
-          x2="-997.48"
-          y1="147.64"
-          y2="68.56"
-          gradientTransform="matrix(1 0 0 -1 1075 158)"
+          id={`${gradientId}-c`}
+          x1="389.98"
+          x2="107.314"
+          y1="57.935"
+          y2="193.935"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop offset="0" stopColor="#3ccbf4" />
-          <stop offset="1" stopColor="#2892df" />
+          <stop offset="0" stopColor="#163697" />
+          <stop offset=".301" stopColor="#2052cb" />
+          <stop offset=".626" stopColor="#2764e7" />
+          <stop offset=".926" stopColor="#367af2" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-d`}
+          x1="391.996"
+          x2="341.385"
+          y1="76.552"
+          y2="78.224"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#102784" />
+          <stop offset="1" stopColor="#2052cb" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-e`}
+          x1="442.24"
+          x2="442.24"
+          y1="54.769"
+          y2="419.38"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset=".043" stopColor="#2052cb" />
+          <stop offset=".489" stopColor="#367af2" />
+          <stop offset=".943" stopColor="#16bbda" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-f`}
+          x1="435.596"
+          x2="425.732"
+          y1="270.413"
+          y2="385.266"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset=".134" stopColor="#16bbda" stopOpacity="0" />
+          <stop offset=".932" stopColor="#6be7a0" stopOpacity=".8629" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-g`}
+          x1="437.081"
+          x2="507.893"
+          y1="204.362"
+          y2="119.081"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#2c68e0" stopOpacity="0" />
+          <stop offset=".898" stopColor="#66c0ff" stopOpacity=".5" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-h`}
+          x1="99.399"
+          x2="352.75"
+          y1="279.26"
+          y2="498.676"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset=".005" stopColor="#367af2" />
+          <stop offset=".507" stopColor="#0fafff" />
+          <stop offset="1" stopColor="#26cfe8" />
+        </linearGradient>
+        <linearGradient
+          id={`${gradientId}-i`}
+          x1="184.342"
+          x2="338.581"
+          y1="356.795"
+          y2="480.642"
+          gradientTransform="matrix(1 0 0 -1 0 514)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset=".443" stopColor="#26cfe8" stopOpacity="0" />
+          <stop offset=".897" stopColor="#6be7a0" stopOpacity=".8629" />
         </linearGradient>
       </defs>
       <path
-        fill={`url(#${gradientA})`}
-        d="M33.34 6.54h26.04l-27.03 80.1a4.15 4.15 0 0 1-3.94 2.81H8.15a4.14 4.14 0 0 1-3.93-5.47L29.4 9.38a4.15 4.15 0 0 1 3.94-2.83z"
+        d="M116.1 73.4c-5.8 5.8-13.7 13.8-13.7 22.6v216.4c0 8.9-3.3 17.3-9 23.4s-13.3 9.2-21.1 8.5l-42.7-3.1c-7.9-.5-15-3.9-20.3-9.3-5.7-5.7-9.3-13.7-9.3-22.6V202.7c0-8.9 3.6-16.9 9.4-22.6l2-1.9z"
+        fill={`url(#${gradientId}-a)`}
       />
       <path
-        fill="#0078d4"
-        d="M71.17 60.26H29.88a1.91 1.91 0 0 0-1.3 3.31l26.53 24.76a4.17 4.17 0 0 0 2.85 1.13h23.38z"
+        d="M116.1 73.4c-5.8 5.8-13.7 13.8-13.7 22.6v216.4c0 8.9-3.3 17.3-9 23.4s-13.3 9.2-21.1 8.5l-42.7-3.1c-7.9-.5-15-3.9-20.3-9.3-5.7-5.7-9.3-13.7-9.3-22.6V202.7c0-8.9 3.6-16.9 9.4-22.6l2-1.9z"
+        fill={`url(#${gradientId}-b)`}
       />
       <path
-        fill={`url(#${gradientB})`}
-        d="M33.34 6.54a4.12 4.12 0 0 0-3.95 2.88L4.25 83.92a4.14 4.14 0 0 0 3.91 5.54h20.79a4.44 4.44 0 0 0 3.4-2.9l5.02-14.78 17.91 16.7a4.24 4.24 0 0 0 2.67.97h23.29L71.02 60.26H41.24L59.47 6.55z"
+        d="m500.5 366-128 106.7c-5.5 4.6-12.7 7.4-20.5 7.4q-2.4 0-4.8-.3l-112.5-16.9v27.8c0 11.7-9.6 21.3-21.3 21.3-7.3 0-13.5-3.6-17.5-9.1l-36.2-51.4-5.4-7.6-36.6-51.9-7-10c-2.6-3.5-3.9-7.8-3.9-12.3 0-6 2.5-11.6 6.8-15.7 3.8-3.7 9.1-5.8 14.5-5.8.4 0 1 .1 1.5.1l105.2 7.5L384 366.5l93.7 6.7c.7.1 1.6.1 2.3.1 7.8 0 14.9-2.7 20.5-7.3"
+        fill={`url(#${gradientId}-c)`}
       />
       <path
-        fill={`url(#${gradientC})`}
-        d="M66.6 9.36a4.14 4.14 0 0 0-3.93-2.82H33.65a4.15 4.15 0 0 1 3.93 2.82l25.18 74.62a4.15 4.15 0 0 1-3.93 5.48h29.02a4.15 4.15 0 0 0 3.93-5.48z"
+        d="m500.5 366-128 106.7c-5.5 4.6-12.7 7.4-20.5 7.4q-2.4 0-4.8-.3l-112.5-16.9v27.8c0 11.7-9.6 21.3-21.3 21.3-7.3 0-13.5-3.6-17.5-9.1l-36.2-51.4-5.4-7.6-36.6-51.9-7-10c-2.6-3.5-3.9-7.8-3.9-12.3 0-6 2.5-11.6 6.8-15.7 3.8-3.7 9.1-5.8 14.5-5.8.4 0 1 .1 1.5.1l105.2 7.5L384 366.5l93.7 6.7c.7.1 1.6.1 2.3.1 7.8 0 14.9-2.7 20.5-7.3"
+        fill={`url(#${gradientId}-d)`}
+      />
+      <path
+        d="M512 170.7v170.7c0 9.9-4.5 18.8-11.5 24.6l-128 106.7c7-5.9 11.5-14.7 11.5-24.6V175.3c0-16.7 13-30.7 29.8-31.9l63.9-4.6c.7-.1 1.6-.1 2.3-.1 7.8 0 14.9 2.8 20.5 7.4 7 5.8 11.5 14.6 11.5 24.6"
+        fill={`url(#${gradientId}-e)`}
+      />
+      <path
+        d="M512 170.7v170.7c0 9.9-4.5 18.8-11.5 24.6l-128 106.7c7-5.9 11.5-14.7 11.5-24.6V175.3c0-16.7 13-30.7 29.8-31.9l63.9-4.6c.7-.1 1.6-.1 2.3-.1 7.8 0 14.9 2.8 20.5 7.4 7 5.8 11.5 14.6 11.5 24.6"
+        fill={`url(#${gradientId}-f)`}
+        fillOpacity=".7"
+      />
+      <path
+        d="M512 170.7v170.7c0 9.9-4.5 18.8-11.5 24.6l-128 106.7c7-5.9 11.5-14.7 11.5-24.6V175.3c0-16.7 13-30.7 29.8-31.9l63.9-4.6c.7-.1 1.6-.1 2.3-.1 7.8 0 14.9 2.8 20.5 7.4 7 5.8 11.5 14.6 11.5 24.6"
+        fill={`url(#${gradientId}-g)`}
+      />
+      <path
+        d="M384 125.5c0 11.2-8.6 20.5-19.8 21.3-.5 0-1.1.1-1.6.1l-127.9 9.2-132.3 9.1-72.7 5.5c-6.9.4-13.2 3.1-18.2 7.4L116.1 73.4c4.7-4.7 10.9-8 17.8-9.1l100.8-15.1V21.3C234.7 9.6 244.3 0 256 0c5.8 0 11.1 2.3 14.9 6.1l33.4 32.6 16.9 16.5 40.3 39.3 16.1 15.8c4.1 3.9 6.4 9.4 6.4 15.2"
+        fill={`url(#${gradientId}-h)`}
+      />
+      <path
+        d="M384 125.5c0 11.2-8.6 20.5-19.8 21.3-.5 0-1.1.1-1.6.1l-127.9 9.2-132.3 9.1-72.7 5.5c-6.9.4-13.2 3.1-18.2 7.4L116.1 73.4c4.7-4.7 10.9-8 17.8-9.1l100.8-15.1V21.3C234.7 9.6 244.3 0 256 0c5.8 0 11.1 2.3 14.9 6.1l33.4 32.6 16.9 16.5 40.3 39.3 16.1 15.8c4.1 3.9 6.4 9.4 6.4 15.2"
+        fill={`url(#${gradientId}-i)`}
+        fillOpacity=".5"
       />
     </svg>
   );
@@ -265,18 +361,6 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
     className={cn("fill-[#26251E] dark:fill-[#EDECEC]", className)}
   >
     <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
-  </svg>
-);
-
-export const GrokIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path d="M9.26905 15.284L17.2479 9.36086C17.6391 9.07047 18.1981 9.18374 18.3845 9.63478C19.3655 12.0135 18.9272 14.8721 16.9755 16.8349C15.0238 18.7976 12.3082 19.228 9.8261 18.2477L7.1146 19.5102C11.0037 22.1834 15.7263 21.5223 18.6774 18.5525C21.0182 16.1985 21.7432 12.9897 21.0653 10.0961L21.0714 10.1023C20.0884 5.85143 21.3131 4.15233 23.8218 0.677913C23.8812 0.595532 23.9406 0.513151 24 0.428711L20.6987 3.74866V3.73836L9.267 15.2861" />
-    <path d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257" />
   </svg>
 );
 
@@ -585,32 +669,6 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
-export const OpenCodeIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <g clipPath="url(#opencode__clip0_1311_94969)">
-      <path
-        data-opencode-hole="true"
-        className="dark:hidden"
-        d="M24 32H8V16H24V32Z"
-        fill="#CFCECD"
-      />
-      <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
-      <path
-        data-opencode-hole="true"
-        className="hidden dark:block"
-        d="M24 32H8V16H24V32Z"
-        fill="#4B4646"
-      />
-      <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
-    </g>
-    <defs>
-      <clipPath id="opencode__clip0_1311_94969">
-        <rect width="32" height="40" fill="white" />
-      </clipPath>
-    </defs>
-  </svg>
-);
-
 export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
@@ -619,21 +677,6 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
     className={cn("fill-black dark:fill-white", className)}
   >
     <path d="M568.003 115.821L517.278 27.9661C507.183 10.4816 489.084 0.0227367 468.894 0.0227367C448.727 0.0227367 430.674 10.4361 420.556 27.8752L343.251 161.749H242.755C236.23 161.749 230.386 158.384 227.135 152.745C223.861 147.106 223.861 140.376 227.135 134.715L277.861 46.8603C281.112 41.2216 286.955 37.8338 293.481 37.8338C300.006 37.8338 305.827 41.1988 309.101 46.8603L312.125 52.0897C313.353 54.2042 315.604 55.5002 318.036 55.5002C320.469 55.5002 322.743 54.1815 323.948 52.067L337.385 28.5118C338.795 26.0335 338.522 22.9413 336.703 20.7586C325.699 7.57131 309.874 0 293.322 0C292.662 0 292.003 0 291.321 0.0454733C272.04 0.75031 254.76 11.1864 245.074 27.9434L200.215 105.657L155.81 29.1484C145.465 11.2092 126.594 0.0227367 106.608 0.0227367C105.949 0.0227367 105.289 0.0227367 104.607 0.06821C85.3265 0.773047 68.0467 11.2092 58.3608 27.9661L7.65806 115.821C-6.25678 139.899 -0.868187 168.82 21.05 187.759C29.8945 195.422 41.6039 199.628 54.0181 199.628H148.648C151.081 199.628 153.332 198.332 154.56 196.217L168.52 172.026C169.748 169.911 169.748 167.319 168.52 165.205C167.292 163.09 165.041 161.794 162.608 161.794H56.0417C49.5163 161.794 43.6729 158.429 40.4216 152.79C37.1475 147.152 37.1475 140.422 40.4216 134.76L91.1471 46.9057C94.3985 41.2671 100.242 37.8793 106.767 37.8793C113.293 37.8793 119.113 41.2443 122.387 46.9057L194.826 172.526C195.031 172.89 195.258 173.208 195.531 173.526C198.76 178.665 202.83 183.485 207.786 187.782C216.631 195.444 228.34 199.651 240.754 199.651H321.424L315.581 209.769C314.353 211.883 314.353 214.475 315.581 216.59C316.809 218.704 319.059 220 321.492 220H349.436C351.868 220 354.119 218.704 355.347 216.59L364.396 200.901L367.17 196.468C367.17 196.468 367.261 196.331 367.284 196.263L453.274 46.9285C456.525 41.2898 462.369 37.902 468.894 37.902C475.42 37.902 481.263 41.2671 484.514 46.9285L535.24 134.783C538.491 140.422 538.514 147.174 535.24 152.813C531.988 158.452 526.145 161.84 519.62 161.84H418.669C416.236 161.84 413.985 163.136 412.757 165.25L398.774 189.442C397.546 191.556 397.546 194.148 398.774 196.263C400.002 198.377 402.253 199.673 404.686 199.673H518.21C539.81 199.673 559.295 188.237 569.026 169.843C578.053 152.79 577.666 132.623 567.981 115.843L568.003 115.821Z" />
-  </svg>
-);
-
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="165.29 165.29 469.43 469.43"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path
-      fillRule="evenodd"
-      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-    />
-    <path d="M517.36 400H634.72V634.72H517.36Z" />
   </svg>
 );
 

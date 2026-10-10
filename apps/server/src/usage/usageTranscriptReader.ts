@@ -19,22 +19,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type {
+  SelectedFields,
+  TranscriptUsageFormat,
+  UsageRecord,
+} from "@t3tools/provider-core/server/usage";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
-
-import {
-  initialCodexScanState,
-  mightCarryUsage,
-  parseClaudeLine,
-  parseClaudeRecord,
-  parseCodexLine,
-  parseCodexRecord,
-  parseGrokLine,
-  parseGrokRecord,
-  type CodexScanState,
-  type UsageRecord,
-} from "./usageTranscripts.ts";
 
 export interface TranscriptFile {
   readonly path: string;
@@ -60,8 +53,11 @@ export interface TranscriptParsePosition {
   readonly guardLength: number;
   /** FNV-1a hash of that window. */
   readonly guardHash: number;
-  /** Codex reducer state as of `resumeOffset`; `null` for stateless providers. */
-  readonly codexState: CodexScanState | null;
+  /**
+   * The format's reducer state as of `resumeOffset`, encoded by its schema;
+   * `null` for stateless formats.
+   */
+  readonly state: unknown;
 }
 
 export interface TranscriptParseResult {
@@ -85,46 +81,11 @@ export const GUARD_LENGTH = 64;
 // readers; it never discards a record because of its size.
 const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
 const NEWLINE = 0x0a;
+/** `stat` calls one transcript walk keeps in flight. The libuv pool has 4 threads. */
+const STAT_CONCURRENCY = 32;
 const CARRIAGE_RETURN = 0x0d;
 
-type SelectedFields = { readonly [key: string]: true | SelectedFields };
-
-// Keep the fields consumed by usageTranscripts, including reducer state and
-// dedupe/cost metadata. A selected subtree (usage) keeps future token fields.
-const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
-  claude: {
-    type: true,
-    timestamp: true,
-    requestId: true,
-    sessionId: true,
-    costUSD: true,
-    message: { id: true, model: true, usage: true },
-  },
-  codex: {
-    type: true,
-    timestamp: true,
-    payload: {
-      type: true,
-      id: true,
-      session_id: true,
-      model: true,
-      forked_from_id: true,
-      source: { subagent: { thread_spawn: { parent_thread_id: true } } },
-      info: { last_token_usage: true },
-    },
-  },
-  grok: {
-    timestamp: true,
-    params: {
-      sessionId: true,
-      _meta: { agentTimestampMs: true },
-      update: { sessionUpdate: true, prompt_id: true, usage: true },
-    },
-  },
-};
-
-function selectUsageFields(provider: UsageProviderKind) {
-  const fields = USAGE_FIELDS[provider === "codex" || provider === "grok" ? provider : "claude"];
+function selectUsageFields(fields: SelectedFields) {
   return (path: ReadonlyArray<string | number | null>): boolean => {
     let selected: true | SelectedFields = fields;
     for (const key of path) {
@@ -155,15 +116,19 @@ function fnv1a(buffer: Buffer): number {
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
  * never carry usage, so the basename filter keeps a cold scan off those files.
+ *
+ * Directories are listed depth-first, one at a time, then the candidates are
+ * stat'd by a fixed pool of workers: a warm scan stats thousands of files, and
+ * one at a time each waits its own trip through the thread pool. Results keep
+ * `readdir` order, which the aggregator's first-seen dedupe relies on.
  */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
 ): Promise<readonly TranscriptFile[]> {
-  const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
-
+  const candidates: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
@@ -173,28 +138,33 @@ export async function listTranscriptFiles(
     }
     for (const entry of entries) {
       const child = NodePath.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(child);
-        continue;
+      if (entry.isDirectory()) await walk(child);
+      else if (fileName !== undefined ? entry.name === fileName : entry.name.endsWith(".jsonl")) {
+        candidates.push(child);
       }
-      if (fileName !== undefined) {
-        if (entry.name !== fileName) continue;
-      } else if (!entry.name.endsWith(".jsonl")) {
-        continue;
-      }
+    }
+  };
+  await walk(root);
+
+  const found: Array<TranscriptFile | undefined> = Array.from({ length: candidates.length });
+  // Each worker pulls the next candidate from one shared iterator.
+  const queue = candidates.entries();
+  const statQueued = async (): Promise<void> => {
+    for (const [index, path] of queue) {
       try {
-        const stats = await NodeFSP.stat(child);
+        const stats = await NodeFSP.stat(path);
         if (stats.mtimeMs >= sinceMs) {
-          found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
+          found[index] = { path, size: stats.size, mtimeMs: stats.mtimeMs };
         }
       } catch {
         // Vanished between readdir and stat.
       }
     }
   };
-
-  await walk(root);
-  return found;
+  await Promise.all(
+    Array.from({ length: Math.min(STAT_CONCURRENCY, candidates.length) }, statQueued),
+  );
+  return found.filter((file) => file !== undefined);
 }
 
 /**
@@ -245,13 +215,12 @@ async function guardMatches(
  * still match, so only appended lines are read; otherwise the whole file is
  * re-parsed from the start and `resumed` reports `false`.
  *
- * Codex carries the active model on `turn_context` lines that hold no usage of
- * their own, so those still have to pass through the reducer to keep model
- * attribution correct.
+ * A stateful format resumes with the state saved at that position; a saved
+ * state its schema rejects re-parses the file whole.
  */
-export async function readTranscriptRecords(
+export async function readTranscriptRecords<State>(
   filePath: string,
-  provider: UsageProviderKind,
+  format: TranscriptUsageFormat<State>,
   resumeFrom?: TranscriptParsePosition,
   options?: { readonly streamingThresholdBytes?: number },
 ): Promise<TranscriptParseResult | null> {
@@ -264,40 +233,31 @@ export async function readTranscriptRecords(
   }
 
   try {
-    let codexState = initialCodexScanState();
+    const codec = format.state;
+    const decodeState = codec === undefined ? undefined : Schema.decodeUnknownOption(codec.schema);
+    const encodeState = codec === undefined ? undefined : Schema.encodeSync(codec.schema);
+    // Stateless formats never read their state argument.
+    let state = codec === undefined ? (undefined as State) : codec.initial();
     let resumed = false;
     let start = 0;
+    const savedState =
+      resumeFrom === undefined || decodeState === undefined || resumeFrom.state === null
+        ? Option.none()
+        : decodeState(resumeFrom.state);
     if (
       resumeFrom !== undefined &&
       resumeFrom.resumeOffset > 0 &&
-      (provider !== "codex" || resumeFrom.codexState !== null) &&
+      (codec === undefined || Option.isSome(savedState)) &&
       (await guardMatches(handle, resumeFrom))
     ) {
-      if (resumeFrom.codexState !== null) codexState = { ...resumeFrom.codexState };
+      if (Option.isSome(savedState)) state = savedState.value;
       start = resumeFrom.resumeOffset;
       resumed = true;
     }
 
-    const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
-      if (provider === "codex") {
-        if (
-          !mightCarryUsage(line, provider) &&
-          !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
-        ) {
-          return;
-        }
-        const record = parseCodexLine(line, state);
-        if (record !== null) out.push(record);
-        return;
-      }
-      if (!mightCarryUsage(line, provider)) return;
-      if (provider === "grok") {
-        for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
-        return;
-      }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+    const parseLine = (line: string, lineState: State, out: UsageRecord[]): void => {
+      if (!format.mightCarryUsage(line)) return;
+      for (const record of format.parseLine(line, lineState)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {
@@ -317,7 +277,7 @@ export async function readTranscriptRecords(
     let pendingBytes = 0;
     let streaming: ReturnType<typeof createTranscriptJsonReader> | undefined;
     let decoder: NodeStringDecoder.StringDecoder | undefined;
-    const selectPath = selectUsageFields(provider);
+    const selectPath = selectUsageFields(format.selectFields);
 
     const append = (segment: Buffer) => {
       if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
@@ -336,25 +296,17 @@ export async function readTranscriptRecords(
       }
       streaming.write(decoder!.write(segment));
     };
-    const finish = (state: CodexScanState, out: UsageRecord[]) => {
+    const finish = (lineState: State, out: UsageRecord[]) => {
       if (streaming) {
         streaming.write(decoder!.end());
         const projected = streaming.finish();
-        if (provider === "grok") {
-          out.push(...parseGrokRecord(projected));
-        } else {
-          const record =
-            provider === "codex"
-              ? parseCodexRecord(projected, state)
-              : parseClaudeRecord(projected);
-          if (record !== null) out.push(record);
-        }
+        for (const record of format.parseProjected(projected, lineState)) out.push(record);
       } else if (pendingBytes > 0) {
         const line =
           pendingChunks.length === 1
             ? pendingChunks[0]!
             : Buffer.concat(pendingChunks, pendingBytes);
-        parseLine(toLineString(line), state, out);
+        parseLine(toLineString(line), lineState, out);
       }
       pendingChunks = [];
       pendingBytes = 0;
@@ -377,10 +329,10 @@ export async function readTranscriptRecords(
         // Most lines fit in the current chunk. Avoid buffering/streaming
         // machinery on this hot path.
         if (!streaming && pendingBytes === 0) {
-          parseLine(toLineString(chunk.subarray(lineStart, newlineIndex)), codexState, records);
+          parseLine(toLineString(chunk.subarray(lineStart, newlineIndex)), state, records);
         } else {
           append(chunk.subarray(lineStart, newlineIndex));
-          finish(codexState, records);
+          finish(state, records);
         }
         lineStart = newlineIndex + 1;
         resumeOffset = scanOffset + lineStart;
@@ -388,8 +340,14 @@ export async function readTranscriptRecords(
       scanOffset += chunk.length;
     }
 
+    // The unfinished tail parses against a copy, so the saved state stays at
+    // `resumeOffset` and the next scan replays the tail from it.
+    const encodedState = encodeState === undefined ? null : encodeState(state);
     const tailRecords: UsageRecord[] = [];
-    finish({ ...codexState }, tailRecords);
+    finish(
+      decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState)),
+      tailRecords,
+    );
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
@@ -406,7 +364,7 @@ export async function readTranscriptRecords(
         resumeOffset,
         guardLength,
         guardHash,
-        codexState: provider === "codex" ? codexState : null,
+        state: encodedState,
       },
       resumed,
     };

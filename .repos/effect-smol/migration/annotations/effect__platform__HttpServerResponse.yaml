@@ -42,7 +42,7 @@
   note: "Moved unchanged."
 "@effect/platform/HttpServerResponse#toWeb":
   replacement: "HttpServerResponse.toWeb"
-  note: "Retained, but the optional Runtime became an optional Context for stream execution."
+  note: "Retained, but the optional Runtime became an optional Context for stream execution. For a raw Web Response, outer headers override native headers and cookies append, including when the body is omitted. With withoutBody, the raw status and statusText are preserved unless the outer status is 204, 205, or 304, which takes precedence."
 "@effect/platform/HttpServerResponse#TypeId":
   replacement: "HttpServerResponse.isHttpServerResponse"
   note: "The response brand is private in v4; use the public runtime refinement."

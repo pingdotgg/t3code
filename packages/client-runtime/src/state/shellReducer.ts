@@ -1,8 +1,48 @@
-import type {
-  OrchestrationProjectShell,
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ShellStreamItem,
+import {
+  OrchestrationV2ThreadShell,
+  ThreadPullRequestLink,
+  type OrchestrationProjectShell,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
+const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
+
+/** Whether two rows' pull request links are equal, including both absent. */
+export function sameThreadPullRequests(
+  left: OrchestrationV2ThreadShell["pullRequests"],
+  right: OrchestrationV2ThreadShell["pullRequests"],
+): boolean {
+  return left === right || sameLinks(left, right);
+}
+
+/**
+ * Keep the previous object for each row a full snapshot left unchanged, so the list only
+ * re-renders rows that changed. Links are compared apart from the rest of the row because a
+ * deferred snapshot arrives without them; such a row keeps its links until they fill in.
+ */
+export function reuseUnchangedThreadShells(
+  previous: OrchestrationV2ShellSnapshot | null,
+  next: OrchestrationV2ShellSnapshot,
+): OrchestrationV2ShellSnapshot {
+  if (previous === null || previous.threads.length === 0) return next;
+  const previousById = new Map(previous.threads.map((thread) => [thread.id, thread] as const));
+  let reused = 0;
+  const threads = next.threads.map((thread) => {
+    const prior = previousById.get(thread.id);
+    if (prior === undefined) return thread;
+    const candidate =
+      thread.pullRequests === undefined && prior.pullRequests !== undefined
+        ? { ...thread, pullRequests: prior.pullRequests }
+        : thread;
+    if (!sameThreadShell(prior, candidate)) return thread;
+    reused += 1;
+    return prior;
+  });
+  return reused === 0 ? next : { ...next, threads };
+}
 
 function upsertById<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
@@ -123,6 +163,15 @@ export function applyShellStreamEvent(
         snapshotSequence: event.sequence,
       };
     case "thread.updated": {
+      // An unchanged shell keeps its object and the list, so subscribers that
+      // compare by reference skip the update. Only the cursor moves.
+      const existing =
+        event.location === "active"
+          ? snapshot.threads.find((thread) => thread.id === event.thread.id)
+          : undefined;
+      if (existing !== undefined && sameThreadShell(existing, event.thread)) {
+        return { ...snapshot, snapshotSequence: event.sequence };
+      }
       const withoutThread = (threads: OrchestrationV2ShellSnapshot["threads"]) =>
         threads.filter((thread) => thread.id !== event.thread.id);
       return {

@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import {
   ProviderDriverKind,
   UsageLimitSourceError,
@@ -7,15 +5,17 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { codexPlanLabel } from "../provider/Layers/CodexProvider.ts";
-import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts";
-import { claudeUsageResponseToLimits } from "../provider/Layers/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
+import { codexPlanLabel } from "../provider/CodexProvider.ts";
+import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
+import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -99,21 +99,31 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
+// 6f1c2a9e-2d4b-4c1e-9a7f-3b8d5e0c1a42
+const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
+  0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
+]);
+
 // UUIDv5 per account and credit also deduplicates retries across T3 environments.
-export function creditRedeemRequestId(accountId: string, creditId: string): string {
-  const bytes = NodeCrypto.createHash("sha1")
-    .update(Buffer.from("6f1c2a9e2d4b4c1e9a7f3b8d5e0c1a42", "hex"))
-    .update(`${accountId}:${creditId}`)
-    .digest()
-    .subarray(0, 16);
+const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(function* (
+  accountId: string,
+  creditId: string,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const name = new TextEncoder().encode(`${accountId}:${creditId}`);
+  const input = new Uint8Array(CREDIT_REDEEM_NAMESPACE.length + name.length);
+  input.set(CREDIT_REDEEM_NAMESPACE);
+  input.set(name, CREDIT_REDEEM_NAMESPACE.length);
+  const bytes = (yield* crypto.digest("SHA-1", input).pipe(Effect.orDie)).slice(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
+  const hex = Hex.encode(bytes);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+});
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
+  const crypto = yield* Crypto.Crypto;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     config: UsageLimitSourceConfig,
@@ -323,10 +333,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
         });
       }
       const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
-        redeem_request_id: creditRedeemRequestId(
+        redeem_request_id: yield* creditRedeemRequestId(
           account.id_token?.chatgpt_account_id ?? account.id,
           creditId,
-        ),
+        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         credit_id: creditId,
       });
       const response = yield* decodeConsumeResponse(body);

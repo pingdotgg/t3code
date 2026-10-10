@@ -86,6 +86,19 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
+/**
+ * A model the model manifest announces that the installed provider version is
+ * too old to run. It is never selectable; clients show it so users learn that
+ * updating the provider unlocks it.
+ */
+export const ServerProviderUpdateRequiredModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  badge: Schema.optional(Schema.Literal("new")),
+  minVersion: TrimmedNonEmptyString,
+});
+export type ServerProviderUpdateRequiredModel = typeof ServerProviderUpdateRequiredModel.Type;
+
 export const ServerProviderSlashCommandInput = Schema.Struct({
   hint: TrimmedNonEmptyString,
 });
@@ -125,9 +138,25 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
+  /** Skills are available, but command discovery still needs a retry. */
+  slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
+
+/**
+ * How long a workspace's skill and command scan stays current. Nothing watches
+ * skill directories, so a composer opened after this rescans on use, and the
+ * server answers repeat requests inside the window from its cache.
+ */
+export const PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS = 5 * 60_000;
+
+export function isProviderWorkspaceSnapshotCurrent(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "checkedAt">,
+  nowMs: number,
+): boolean {
+  return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
 
 /**
  * Availability of a configured provider instance from the runtime's POV.
@@ -269,6 +298,8 @@ export const ServerProvider = Schema.Struct({
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  // Kept apart from `models` so clients that predate it never offer them.
+  updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -601,6 +632,19 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
+/**
+ * "tailnet" when the address is on this machine's Tailscale interface, "lan"
+ * for any other private address, including other VPNs in 100.64.0.0/10.
+ */
+export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
+export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
+
+export const ServerDirectEndpoint = Schema.Struct({
+  kind: ServerDirectEndpointKind,
+  httpBaseUrl: TrimmedNonEmptyString,
+});
+export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -618,6 +662,13 @@ export const ServerConfig = Schema.Struct({
    * sshd or no advertisable name.
    */
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
+  /**
+   * Direct addresses this server listens on right now (LAN and tailnet), so a
+   * client connected one way can learn the others. Hints only: the client
+   * checks each address answers as this environment before using it. Absent on
+   * servers that predate the feature; empty when bound to loopback only.
+   */
+  directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
@@ -637,6 +688,8 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
+  threadFind: Schema.optionalKey(Schema.Boolean),
+  threadFindProgressive: Schema.optionalKey(Schema.Boolean),
   /**
    * Folder behind this environment's Scratch project, for threads that need
    * no repository. Present only on servers that answer projects.ensureScratch

@@ -182,7 +182,7 @@ const compactAll = (
     return packIds;
   });
 
-describe("compaction is blob-only", () => {
+describe("compaction is blob-only", { tags: ["unit", "local"] }, () => {
   test("shouldCompact ignores commits/trees; runCompactJob leaves them as rows", async () => {
     await run(
       Effect.gen(function* () {
@@ -227,7 +227,7 @@ describe("compaction is blob-only", () => {
   });
 });
 
-describe("packEntries", () => {
+describe("packEntries", { tags: ["unit", "local"] }, () => {
   test(
     "rows + multi-window pack (with straddling objects) emit a pack the parser accepts",
     async () => {
@@ -325,7 +325,7 @@ describe("packEntries", () => {
   });
 });
 
-describe("readContentBatch", () => {
+describe("readContentBatch", { tags: ["unit", "local"] }, () => {
   test("returns inflated content for rows and packed objects alike", async () => {
     await run(
       Effect.gen(function* () {
@@ -345,7 +345,7 @@ describe("readContentBatch", () => {
   });
 });
 
-describe("window cache", () => {
+describe("window cache", { tags: ["unit", "local"] }, () => {
   test(
     "is bounded by WINDOW_CACHE_BYTES: re-reading the first of nine windows refetches",
     async () => {
@@ -405,7 +405,7 @@ describe("window cache", () => {
   );
 });
 
-describe("insertStagedBatch", () => {
+describe("insertStagedBatch", { tags: ["unit", "local"] }, () => {
   test("stages a batch with multi-row inserts; staged rows are invisible to live reads", async () => {
     await run(
       Effect.gen(function* () {
@@ -530,141 +530,151 @@ describe("insertStagedBatch", () => {
   });
 });
 
-describe("promoted wire packs (DESIGN §22.5)", () => {
-  /** Lays fixtures out the way a wire pack does: typeSize header + zdata per entry. */
-  const layout = (fixtures: ReadonlyArray<Fixture>, base: number) => {
-    const pieces: Array<Uint8Array> = [new Uint8Array(base)];
-    const offsets = new Map<Oid, number>();
-    let at = base;
-    for (const f of fixtures) {
-      const head = encodeTypeSize(f.type as 3, f.content.length);
-      pieces.push(head, f.zdata);
-      offsets.set(f.oid, at + head.length);
-      at += head.length + f.zdata.length;
-    }
-    return { bytes: concat(pieces), offsets };
-  };
+describe(
+  "promoted wire packs (DESIGN §22.5)",
+  { tags: ["unit", "local"] },
+  () => {
+    /** Lays fixtures out the way a wire pack does: typeSize header + zdata per entry. */
+    const layout = (fixtures: ReadonlyArray<Fixture>, base: number) => {
+      const pieces: Array<Uint8Array> = [new Uint8Array(base)];
+      const offsets = new Map<Oid, number>();
+      let at = base;
+      for (const f of fixtures) {
+        const head = encodeTypeSize(f.type as 3, f.content.length);
+        pieces.push(head, f.zdata);
+        offsets.set(f.oid, at + head.length);
+        at += head.length + f.zdata.length;
+      }
+      return { bytes: concat(pieces), offsets };
+    };
 
-  test("rows staged as pack references read back through the wire key on every path", async () => {
-    await run(
-      Effect.gen(function* () {
-        const sql = makeTestSqlClient();
-        const blobs = makeMemoryBlobStore();
-        const store = makeObjectStore({ sql, blobs, repoId: REPO });
-        const fixtures: Array<Fixture> = [];
-        for (let i = 0; i < 40; i++)
-          fixtures.push(yield* makeFixture(3, bytes(3000, i + 1)));
-        const packId = wirePackId("01RECEIVE00000000000000000");
-        const { bytes: wire, offsets } = layout(fixtures, 137); // 137 bytes of pkt-line commands first
-        yield* blobs.put(packKeyOf(REPO, packId), wire);
-        expect(packKeyOf(REPO, packId)).toContain("/incoming/");
-        yield* store.insertStagedBatch(
-          "push-P",
-          fixtures.map((f) => ({
-            oid: f.oid,
-            type: f.type,
-            size: f.content.length,
-            zdata: f.zdata,
-            pack: { packId, offset: offsets.get(f.oid)! },
-          })),
-        );
-        const staged = yield* sql.all<{
-          location: string;
-          n: number;
-          withBlob: number;
-        }>(
-          `SELECT location, COUNT(*) AS n, SUM(zdata IS NOT NULL) AS withBlob FROM objects GROUP BY location`,
-        );
-        expect(staged).toEqual([{ location: "pack", n: 40, withBlob: 0 }]);
-        yield* sql.run(
-          `UPDATE objects SET staged_push = NULL WHERE staged_push = 'push-P'`,
-        );
-        // Single reads, batched reads, and pack emission all resolve the wire key.
-        const one = yield* store.readContent(fixtures[7]!.oid);
-        expect(Array.from(one)).toEqual(Array.from(fixtures[7]!.content));
-        const many = yield* store.readContentBatch(fixtures.map((f) => f.oid));
-        expect(many.size).toBe(40);
-        const pack = yield* buildPack(store, manifestOf(fixtures, "pack"));
-        expect(verifyPack(pack).error).toBeUndefined();
-        const parsed = yield* parsePack(
-          pack,
-          makeObjectStore({
-            sql: makeTestSqlClient(),
-            blobs: makeMemoryBlobStore(),
-            repoId: "X",
-          }),
-        );
-        expect(parsed.seen.size).toBe(40);
-      }),
-    );
-  });
+    test("rows staged as pack references read back through the wire key on every path", async () => {
+      await run(
+        Effect.gen(function* () {
+          const sql = makeTestSqlClient();
+          const blobs = makeMemoryBlobStore();
+          const store = makeObjectStore({ sql, blobs, repoId: REPO });
+          const fixtures: Array<Fixture> = [];
+          for (let i = 0; i < 40; i++)
+            fixtures.push(yield* makeFixture(3, bytes(3000, i + 1)));
+          const packId = wirePackId("01RECEIVE00000000000000000");
+          const { bytes: wire, offsets } = layout(fixtures, 137); // 137 bytes of pkt-line commands first
+          yield* blobs.put(packKeyOf(REPO, packId), wire);
+          expect(packKeyOf(REPO, packId)).toContain("/incoming/");
+          yield* store.insertStagedBatch(
+            "push-P",
+            fixtures.map((f) => ({
+              oid: f.oid,
+              type: f.type,
+              size: f.content.length,
+              zdata: f.zdata,
+              pack: { packId, offset: offsets.get(f.oid)! },
+            })),
+          );
+          const staged = yield* sql.all<{
+            location: string;
+            n: number;
+            withBlob: number;
+          }>(
+            `SELECT location, COUNT(*) AS n, SUM(zdata IS NOT NULL) AS withBlob FROM objects GROUP BY location`,
+          );
+          expect(staged).toEqual([{ location: "pack", n: 40, withBlob: 0 }]);
+          yield* sql.run(
+            `UPDATE objects SET staged_push = NULL WHERE staged_push = 'push-P'`,
+          );
+          // Single reads, batched reads, and pack emission all resolve the wire key.
+          const one = yield* store.readContent(fixtures[7]!.oid);
+          expect(Array.from(one)).toEqual(Array.from(fixtures[7]!.content));
+          const many = yield* store.readContentBatch(
+            fixtures.map((f) => f.oid),
+          );
+          expect(many.size).toBe(40);
+          const pack = yield* buildPack(store, manifestOf(fixtures, "pack"));
+          expect(verifyPack(pack).error).toBeUndefined();
+          const parsed = yield* parsePack(
+            pack,
+            makeObjectStore({
+              sql: makeTestSqlClient(),
+              blobs: makeMemoryBlobStore(),
+              repoId: "X",
+            }),
+          );
+          expect(parsed.seen.size).toBe(40);
+        }),
+      );
+    });
 
-  test("compaction leaves promoted rows alone; geometric merge REWRITES a wire pack into the merged pack", async () => {
-    await run(
-      Effect.gen(function* () {
-        const { sql, blobs, store, fixtures } = yield* seedRepo({
-          blobs: 30,
-          blobSize: 2000,
-          trees: 3,
-        });
-        const promotedFixtures: Array<Fixture> = [];
-        for (let i = 0; i < 12; i++)
-          promotedFixtures.push(yield* makeFixture(3, bytes(2000, i + 500)));
-        const packId = wirePackId("01RECEIVE00000000000000001");
-        // The wire object carries junk around the referenced spans (a real
-        // one carries trees, commits and delta entries): only spans move.
-        const { bytes: wire, offsets } = layout(promotedFixtures, 333);
-        const withJunk = concat([wire, bytes(5000, 9)]);
-        yield* blobs.put(packKeyOf(REPO, packId), withJunk);
-        yield* store.insertStagedBatch(
-          "push-Q",
-          promotedFixtures.map((f) => ({
-            oid: f.oid,
-            type: f.type,
-            size: f.content.length,
-            zdata: f.zdata,
-            pack: { packId, offset: offsets.get(f.oid)! },
-          })),
-        );
-        yield* sql.run(`UPDATE objects SET staged_push = NULL`);
-        const p1 = yield* runCompactJob({
-          repoId: REPO,
-          sql,
-          blobs,
-          maxObjects: 15,
-          maxBytes: 1 << 30,
-        });
-        const p2 = yield* runCompactJob({
-          repoId: REPO,
-          sql,
-          blobs,
-          maxObjects: 15,
-          maxBytes: 1 << 30,
-        });
-        expect(p1.moved + p2.moved).toBe(30);
-        const merge = yield* runGeometricMergeJob({ repoId: REPO, sql, blobs });
-        expect(merge.packs).toBe(3);
-        expect(merge.pendingDelete).toContain(packKeyOf(REPO, packId));
-        const packs = yield* sql.all<{ pack_id: string; n: number }>(
-          `SELECT pack_id, COUNT(*) AS n FROM objects WHERE location = 'pack' GROUP BY pack_id`,
-        );
-        expect(packs).toEqual([{ pack_id: merge.packId, n: 42 }]);
-        // The merged pack is a clean packfile the parser accepts, and every
-        // object — promoted ones included — reads back through it.
-        const merged = blobs.objects.get(packKey(REPO, merge.packId!))!;
-        expect(verifyPack(merged)).toEqual({ objects: 42 });
-        const all = yield* store.readContentBatch(
-          [...fixtures, ...promotedFixtures].map((f) => f.oid),
-        );
-        expect(all.size).toBe(45);
-        for (const f of promotedFixtures)
-          expect(Array.from(all.get(f.oid)!)).toEqual(Array.from(f.content));
-      }),
-    );
-  });
-});
+    test("compaction leaves promoted rows alone; geometric merge REWRITES a wire pack into the merged pack", async () => {
+      await run(
+        Effect.gen(function* () {
+          const { sql, blobs, store, fixtures } = yield* seedRepo({
+            blobs: 30,
+            blobSize: 2000,
+            trees: 3,
+          });
+          const promotedFixtures: Array<Fixture> = [];
+          for (let i = 0; i < 12; i++)
+            promotedFixtures.push(yield* makeFixture(3, bytes(2000, i + 500)));
+          const packId = wirePackId("01RECEIVE00000000000000001");
+          // The wire object carries junk around the referenced spans (a real
+          // one carries trees, commits and delta entries): only spans move.
+          const { bytes: wire, offsets } = layout(promotedFixtures, 333);
+          const withJunk = concat([wire, bytes(5000, 9)]);
+          yield* blobs.put(packKeyOf(REPO, packId), withJunk);
+          yield* store.insertStagedBatch(
+            "push-Q",
+            promotedFixtures.map((f) => ({
+              oid: f.oid,
+              type: f.type,
+              size: f.content.length,
+              zdata: f.zdata,
+              pack: { packId, offset: offsets.get(f.oid)! },
+            })),
+          );
+          yield* sql.run(`UPDATE objects SET staged_push = NULL`);
+          const p1 = yield* runCompactJob({
+            repoId: REPO,
+            sql,
+            blobs,
+            maxObjects: 15,
+            maxBytes: 1 << 30,
+          });
+          const p2 = yield* runCompactJob({
+            repoId: REPO,
+            sql,
+            blobs,
+            maxObjects: 15,
+            maxBytes: 1 << 30,
+          });
+          expect(p1.moved + p2.moved).toBe(30);
+          const merge = yield* runGeometricMergeJob({
+            repoId: REPO,
+            sql,
+            blobs,
+          });
+          expect(merge.packs).toBe(3);
+          expect(merge.pendingDelete).toContain(packKeyOf(REPO, packId));
+          const packs = yield* sql.all<{ pack_id: string; n: number }>(
+            `SELECT pack_id, COUNT(*) AS n FROM objects WHERE location = 'pack' GROUP BY pack_id`,
+          );
+          expect(packs).toEqual([{ pack_id: merge.packId, n: 42 }]);
+          // The merged pack is a clean packfile the parser accepts, and every
+          // object — promoted ones included — reads back through it.
+          const merged = blobs.objects.get(packKey(REPO, merge.packId!))!;
+          expect(verifyPack(merged)).toEqual({ objects: 42 });
+          const all = yield* store.readContentBatch(
+            [...fixtures, ...promotedFixtures].map((f) => f.oid),
+          );
+          expect(all.size).toBe(45);
+          for (const f of promotedFixtures)
+            expect(Array.from(all.get(f.oid)!)).toEqual(Array.from(f.content));
+        }),
+      );
+    });
+  },
+);
 
-describe("prepared object view", () => {
+describe("prepared object view", { tags: ["unit", "local"] }, () => {
   test("reads only its own staged objects and live objects, with a size cap", () =>
     run(
       Effect.gen(function* () {

@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
+import { TEST_FORMATS } from "./usageTestFormats.ts";
 import {
   readTranscriptRecords as readWithDefaultThreshold,
   type TranscriptParsePosition,
@@ -16,7 +17,10 @@ const readTranscriptRecords = (
   path: string,
   provider: "claude" | "codex" | "grok",
   position?: TranscriptParsePosition,
-) => readWithDefaultThreshold(path, provider, position, { streamingThresholdBytes: 256 * 1024 });
+) =>
+  readWithDefaultThreshold(path, TEST_FORMATS[provider], position, {
+    streamingThresholdBytes: 256 * 1024,
+  });
 
 let dir: string;
 beforeEach(async () => {
@@ -122,7 +126,7 @@ describe("large usage records", () => {
           reasoningTokens: 0,
         },
         reportedCostUsd: 0.25,
-        fast: true,
+        speed: "fast",
         dedupeKey: "m1:r-m1",
       },
     ]);
@@ -144,7 +148,7 @@ describe("large usage records", () => {
         );
         const actual = await scan(large, provider);
         expect(actual.records).toEqual(expected.records);
-        expect(actual.position.codexState).toEqual(expected.position.codexState);
+        expect(actual.position.state).toEqual(expected.position.state);
       }
     },
   );

@@ -1,7 +1,8 @@
 import * as Fly from "@/Fly";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Redacted from "effect/Redacted";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const REDIS_PORT = 3000;
 export const REDIS_KEY = "alchemy-marker";
@@ -33,6 +34,8 @@ export default class RedisApi extends Fly.Service<RedisApi>()(
   },
   Effect.gen(function* () {
     const cache = yield* Fly.ReadWriteRedis(Cache);
+    const resource = yield* Cache;
+    const url = yield* resource.url;
 
     return {
       fetch: Effect.gen(function* () {
@@ -44,7 +47,14 @@ export default class RedisApi extends Fly.Service<RedisApi>()(
             Effect.map((body) => /pong/i.test(body)),
             Effect.orElseSucceed(() => false),
           );
-          return yield* HttpServerResponse.json({ pong });
+          const resolvedUrl = yield* url;
+          return yield* HttpServerResponse.json({
+            pong,
+            hasOutputUrl:
+              resolvedUrl !== undefined &&
+              Redacted.isRedacted(resolvedUrl) &&
+              Redacted.value(resolvedUrl).length > 0,
+          });
         }
 
         if (path === "/set") {

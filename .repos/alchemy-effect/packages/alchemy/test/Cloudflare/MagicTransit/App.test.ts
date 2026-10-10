@@ -90,7 +90,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -139,7 +142,10 @@ test.provider.skipIf(!entitled)(
 
       yield* expectGone(accountId, app.appId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Read-only list assertion. Always safe: on an unentitled account the
@@ -164,7 +170,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Entitled-account variant: deploy a real app and assert it appears in the
@@ -192,5 +201,8 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 120_000,
+  },
 );

@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
-import type { ConnectionCatalogEntry } from "./catalog.ts";
+import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
@@ -30,15 +30,28 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import {
+  connectionRouteId,
+  connectionRoutes,
+  entryWithRoutes,
+  type ReportedEndpoint,
+} from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
 // the user is waiting, or the network may be gone.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// While connected over a fallback route, how often to look for a better one.
+// Network changes and returning to the app also trigger a check.
+const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
+// A better route that answered the check but then failed to connect is not
+// tried again for this long, so a flaky LAN cannot bounce the connection.
+const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -50,7 +63,8 @@ type SupervisorSignal =
   | { readonly _tag: "DisconnectRequested" }
   | { readonly _tag: "RetryRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
-  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup };
+  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
+  | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -104,6 +118,15 @@ function exitUnlessInterrupted<A, E, R>(
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
+  /**
+   * Saves the direct addresses the server reports once a session is ready and
+   * returns the entry with its updated routes, which later attempts use. The
+   * live session is left alone: it already works.
+   */
+  readonly learnRoutes?: (input: {
+    readonly activeRoute: ConnectionRoute;
+    readonly reported: ReadonlyArray<ReportedEndpoint>;
+  }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 /**
@@ -236,8 +259,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   | ConnectionWakeups.ConnectionWakeups
 > {
   const target = entry.target;
+  // Relay-specific handling applies when any route is T3 Connect, since the
+  // attempt or the live session may be using it.
+  const usesRelay = connectionRoutes(entry).some(
+    (route) => route.target._tag === "RelayConnectionTarget",
+  );
   const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
-    target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : ""
+    usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
   }`;
   yield* annotateTarget(target);
 
@@ -265,6 +293,98 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
+  // Learned routes arrive while a session is live, so the route list is read
+  // fresh by each attempt and check instead of being fixed at creation.
+  const currentEntry = yield* Ref.make(entry);
+  const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
+  // Set when a better route answered while connected over a worse one; the
+  // replacement attempt tries it first. Cleared once an attempt starts.
+  const preferredRouteId = yield* Ref.make(Option.none<string>());
+  // Monotonic deadline per route that answered a check but failed to connect.
+  const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
+
+  const attemptEntry = Effect.gen(function* () {
+    const latest = yield* Ref.get(currentEntry);
+    const routes = connectionRoutes(latest);
+    const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
+    if (Option.isNone(preferred)) return latest;
+    const route = routes.find(
+      (candidate) => connectionRouteId(candidate.target) === preferred.value,
+    );
+    return route === undefined
+      ? latest
+      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+  });
+
+  const learnRoutesFrom = Effect.fnUntraced(function* (
+    learn: NonNullable<EnvironmentSupervisorOptions["learnRoutes"]>,
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
+    const config = yield* lease.session.initialConfig.pipe(Effect.option);
+    const reported = Option.getOrUndefined(config)?.directEndpoints;
+    if (reported === undefined) return;
+    const activeId = connectionRouteId(lease.prepared.target);
+    const activeRoute = (yield* currentRoutes).find(
+      (route) => connectionRouteId(route.target) === activeId,
+    );
+    if (activeRoute === undefined) return;
+    const updated = yield* learn({ activeRoute, reported });
+    if (Option.isSome(updated)) {
+      yield* Ref.set(currentEntry, updated.value);
+      // A learned route may rank above the one in use.
+      yield* requestBetterRouteCheck(lease);
+    }
+  });
+
+  const routeIndex = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+    currentRoutes.pipe(
+      Effect.map((routes) =>
+        routes.findIndex(
+          (route) => connectionRouteId(route.target) === connectionRouteId(lease.prepared.target),
+        ),
+      ),
+    );
+
+  /**
+   * Preflights the routes ranked above the one in use and signals the best
+   * that would connect. Routes without a cheap check (T3 Connect, SSH) never
+   * pass, so they are fallbacks, not destinations.
+   */
+  const checkBetterRoutes = Effect.fnUntraced(function* (
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
+    const latest = yield* Ref.get(currentEntry);
+    const current = yield* routeIndex(lease);
+    if (current <= 0) return;
+    const now = yield* Clock.monotonicTimeNanos;
+    const cooldowns = yield* Ref.get(routeCooldowns);
+    const better = connectionRoutes(latest)
+      .slice(0, current)
+      .filter((route) => (cooldowns.get(connectionRouteId(route.target)) ?? 0n) <= now);
+    const passed = yield* Effect.forEach(
+      better,
+      (route: ConnectionRoute) => driver.preflight(latest, route),
+      { concurrency: "unbounded" },
+    );
+    const index = passed.indexOf(true);
+    if (index === -1) return;
+    // The check may outlive the session it was asked about.
+    const live = yield* SubscriptionRef.get(session);
+    if (Option.isNone(live) || live.value !== lease.session) return;
+    yield* signal({
+      _tag: "BetterRouteAvailable",
+      routeId: connectionRouteId(better[index]!.target),
+    });
+  });
+
+  // One check at a time; a trigger during a check is dropped, not queued.
+  const betterRouteChecks = yield* Queue.dropping<ConnectionDriver.EnvironmentConnectionLease>(1);
+  const requestBetterRouteCheck = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+    routeIndex(lease).pipe(
+      Effect.flatMap((index) =>
+        index > 0 ? Queue.offer(betterRouteChecks, lease).pipe(Effect.asVoid) : Effect.void,
+      ),
+    );
 
   const clearLease = Effect.all(
     [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
@@ -309,7 +429,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
   ) {
-    return yield* driver.connect(entry, (progress) =>
+    return yield* driver.connect(yield* attemptEntry, (progress) =>
       reportProgress(attempt, generation, lastFailure, progress),
     );
   });
@@ -362,7 +482,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     pendingRetry: Option.Option<PendingRetryTrace>,
   ) {
-    if (target._tag === "RelayConnectionTarget") {
+    if (usesRelay) {
       return yield* traceRelayEstablishment(
         establishConnection(attempt, generation, lastFailure),
         attempt,
@@ -395,12 +515,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }
           break;
         case "ConnectRequested":
+        case "BetterRouteAvailable":
           break;
         case "Wakeup":
           if (next.reason === "application-active-reconnect") {
             return true;
           }
-          if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+          if (next.reason === "credentials-changed" && usesRelay) {
             yield* logManagedRelayAccountChange;
             return false;
           }
@@ -411,9 +532,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   // Signals that end a connected lease whatever its health: "reset" ends it
   // and restarts the retry ladder, "end" ends it, undefined keeps it.
-  const connectedLeaseEnd = Effect.fnUntraced(function* (next: SupervisorSignal) {
+  const isRelayLease = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+    lease.prepared.target._tag === "RelayConnectionTarget";
+
+  const connectedLeaseEnd = Effect.fnUntraced(function* (
+    next: SupervisorSignal,
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
     if (next._tag === "DisconnectRequested") {
       return "end" as const;
+    }
+    if (next._tag === "BetterRouteAvailable") {
+      // Replaced like a long resume: the new attempt prefers the better route
+      // and its session takes over the durable subscriptions.
+      yield* Ref.set(preferredRouteId, Option.some(next.routeId));
+      return "reset" as const;
     }
     if (next._tag !== "Wakeup") {
       return undefined;
@@ -424,7 +557,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // out, so a long background resume replaces the session at once.
       return "reset" as const;
     }
-    if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+    // Only a session over T3 Connect holds the old account's credential.
+    if (next.reason === "credentials-changed" && isRelayLease(lease)) {
       yield* logManagedRelayAccountChange;
       return "end" as const;
     }
@@ -443,11 +577,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (next.reason === "application-active") {
           return CONNECTION_PROBE_TIMEOUT;
         }
-        return next.reason === "application-active-probe"
+        // A socket opened on the previous network may now be unroutable.
+        return next.reason === "application-active-probe" || next.reason === "network-changed"
           ? QUICK_CONNECTION_PROBE_TIMEOUT
           : undefined;
       case "ConnectRequested":
       case "DisconnectRequested":
+      case "BetterRouteAvailable":
         return undefined;
     }
   };
@@ -469,11 +605,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),
     );
+    // Ticks always run: the check skips the preferred route itself, and the
+    // route list can grow while connected (learned routes).
+    yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
+      Stream.drop(1),
+      Stream.runForEach(() => requestBetterRouteCheck(lease)),
+      Effect.forkScoped,
+    );
     for (;;) {
       const next = yield* takeSignal;
-      const end = yield* connectedLeaseEnd(next);
+      const end = yield* connectedLeaseEnd(next, lease);
       if (end !== undefined) {
         return end === "reset";
+      }
+      // A new network or a return to the app may have brought a better route back.
+      if (
+        (next._tag === "NetworkChanged" && next.network !== "offline") ||
+        (next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason))
+      ) {
+        yield* requestBetterRouteCheck(lease);
       }
       const probeTimeout = probeTimeoutFor(next);
       if (probeTimeout === undefined) {
@@ -508,7 +658,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* probeEvent.exit;
           break;
         }
-        const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal);
+        const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal, lease);
         if (endDuringProbe !== undefined) {
           yield* Fiber.interrupt(probe);
           return endDuringProbe === "reset";
@@ -532,6 +682,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     pendingRetry: Option.Option<PendingRetryTrace>,
     ignoreOffline: boolean,
   ) {
+    const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
@@ -548,9 +699,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetry,
         })),
       ),
-      Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
-        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
-      ),
+      // Each route may use the full setup time before the next is tried.
+      Effect.sleep(
+        Duration.times(establishmentTimeout, connectionRoutes(yield* Ref.get(currentEntry)).length),
+      ).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
     ]);
 
     if (establishment._tag === "Interrupted") {
@@ -595,6 +747,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
 
     const active = establishment.exit.value;
+    if (Option.isSome(switchingTo)) {
+      const landed = connectionRouteId(active.lease.prepared.target);
+      if (landed !== switchingTo.value) {
+        const until =
+          (yield* Clock.monotonicTimeNanos) + BigInt(BETTER_ROUTE_COOLDOWN_MS) * 1_000_000n;
+        yield* Ref.update(routeCooldowns, (current) =>
+          new Map(current).set(switchingTo.value, until),
+        );
+      }
+    }
     const currentIntent = yield* Ref.get(intent);
     if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
       return {
@@ -608,6 +770,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    if (options?.learnRoutes !== undefined) {
+      yield* learnRoutesFrom(options.learnRoutes, active.lease).pipe(Effect.forkScoped);
+    }
     yield* setState({
       desired: true,
       network: currentIntent.network,
@@ -642,7 +807,30 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
-    return failureFromExit(target, connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
+    const outcome = failureFromExit(
+      target,
+      connectedExit,
+      true,
+      connectedForMs >= BACKOFF_RESET_AFTER_MS,
+    );
+    if (outcome._tag === "Failure") {
+      // A live session ending is otherwise invisible in the client trace, so
+      // record why, and how long it lasted, as its own root span.
+      yield* Effect.void.pipe(
+        Effect.withSpan("EnvironmentSupervisor.connectionLost", {
+          root: true,
+          attributes: {
+            "environment.id": target.environmentId,
+            "environment.label": target.label,
+            "environment.target.kind": target._tag,
+            "connection.connected_ms": connectedForMs,
+            "connection.failure.reason": outcome.failure.error.reason,
+            "connection.failure.detail": outcome.failure.error.detail,
+          },
+        }),
+      );
+    }
+    return outcome;
   }, Effect.ensuring(clearLease));
 
   const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {
@@ -654,21 +842,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           const next = yield* Queue.take(signals);
           switch (next._tag) {
             case "Wakeup":
-              return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
+              return ConnectionWakeups.resetsRetryBackoff(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
             case "RetryRequested":
             case "NetworkChanged":
               return false;
+            case "BetterRouteAvailable":
+              break;
           }
         }
       }),
     );
   });
 
+  // A better route only matters to a live session, so idle states ignore it.
   const waitForSignal = Queue.take(signals).pipe(
+    Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
     Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.isApplicationActiveWakeup(next.reason),
+      (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
     ),
   );
 
@@ -808,6 +1000,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
   yield* wakeups.changes.pipe(
     Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
+    Effect.forkScoped,
+  );
+  yield* Queue.take(betterRouteChecks).pipe(
+    Effect.flatMap(checkBetterRoutes),
+    Effect.forever,
     Effect.forkScoped,
   );
   yield* run().pipe(Effect.forkScoped);

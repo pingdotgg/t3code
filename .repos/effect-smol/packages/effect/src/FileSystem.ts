@@ -813,6 +813,11 @@ export const isFile = (u: unknown): u is File => hasProperty(u, FileTypeId)
  * and retrieving file information. File handles are automatically managed
  * within scoped operations to ensure proper cleanup.
  *
+ * Each handle tracks its own cursor, which can differ from the POSIX file
+ * offset. In append mode, writes go to the end of the file without moving the
+ * cursor. Outside append mode, `truncate` clamps a cursor past the new length
+ * to that length.
+ *
  * **Example** (Working with file handles)
  *
  * ```ts import.meta.vitest

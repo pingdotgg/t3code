@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
 import {

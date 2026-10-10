@@ -14,20 +14,12 @@ import {
 } from "react";
 import { useParams } from "@tanstack/react-router";
 import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CopyIcon,
-  InfoIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy } from "lucide";
 
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
@@ -106,7 +98,7 @@ const toastCornerDismissClass = "absolute z-20 -top-1.5 -right-1.5";
 const toastCornerOrbClass = cn(
   "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
   "transition-[color,background-color,box-shadow] hover:bg-popover hover:text-foreground",
-  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
 );
 
 function handleToastDismissClick(
@@ -135,7 +127,10 @@ function CopyErrorButton({ text }: { text: string }) {
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+        <MorphIcon
+          className={cn("size-3", isCopied && "text-success")}
+          icon={isCopied ? Check : Copy}
+        />
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
@@ -165,11 +160,11 @@ function ToastExpandableSection({
         onClick={() => setOpen((prev) => !prev)}
         type="button"
       >
-        {open ? (
-          <ChevronUpIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
-        ) : (
-          <ChevronDownIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
-        )}
+        <MorphIcon
+          className="size-3.5 shrink-0 opacity-80"
+          icon={open ? ChevronUp : ChevronDown}
+          strokeWidth={2.25}
+        />
         {open ? collapseLabel : expandLabel}
       </button>
       {open ? <div className={toastExpandablePanelClassName}>{children}</div> : null}
@@ -230,7 +225,7 @@ function ToastDescriptionAndExpandable({
               className={cn(
                 "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none ring-offset-background",
                 "transition-colors hover:bg-muted/40",
-                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               )}
               onClick={toggle}
               onKeyDown={onKeyDown}
@@ -249,19 +244,12 @@ function ToastDescriptionAndExpandable({
               data-slot="toast-description"
             />
           </div>
-          {open ? (
-            <ChevronUpIcon
-              aria-hidden
-              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
-              strokeWidth={2.25}
-            />
-          ) : (
-            <ChevronDownIcon
-              aria-hidden
-              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
-              strokeWidth={2.25}
-            />
-          )}
+          <MorphIcon
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
+            icon={open ? ChevronUp : ChevronDown}
+            strokeWidth={2.25}
+          />
         </TooltipTrigger>
         <TooltipPopup side="top">{open ? collapseLabel : expandLabel}</TooltipPopup>
       </Tooltip>

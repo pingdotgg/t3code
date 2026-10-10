@@ -6,6 +6,8 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
+import { forkParked } from "../serverActivation.ts";
+
 /** Sources load due work from their durable state; registration owns its execution lifetime. */
 export class Scheduler extends Context.Service<
   Scheduler,
@@ -47,14 +49,15 @@ const make = Effect.gen(function* () {
           return next;
         }),
     );
-    yield* run;
+    // Due work waits for startup recovery, which would cancel runs it started.
+    yield* forkParked(run);
   });
   const tick = Ref.get(sources).pipe(
     Effect.flatMap((current) => Effect.forEach(current.values(), (run) => run, { discard: true })),
   );
   // One clock for all due-work sources. A slow source cannot block another
   // source or overlap itself, and no extra missed-tick backlog is queued.
-  yield* Effect.sleep("5 seconds").pipe(Effect.andThen(tick), Effect.forever, Effect.forkScoped);
+  yield* forkParked(Effect.sleep("5 seconds").pipe(Effect.andThen(tick), Effect.forever));
   return Scheduler.of({ register });
 });
 

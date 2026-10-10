@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   Clock3Icon,
+  CopyIcon,
+  InboxIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlayIcon,
@@ -17,9 +19,13 @@ import type {
   ScheduledTaskId,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
+  ScheduledTaskWebhookDeliveryOutcome,
+  ScheduledTaskWebhookDeliverySummary,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_WEBHOOK_PROMPT } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
+  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -37,19 +43,33 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import { useEnvironment, type EnvironmentPresentation } from "../../state/environments";
+import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
+import { requestConfirmDialog } from "../../confirmDialog";
+import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import { Link } from "@tanstack/react-router";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import {
+  useEnvironment,
+  useEnvironmentHttpBaseUrl,
+  type EnvironmentPresentation,
+} from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  WEBHOOK_SIGNATURE_DEFAULTS,
   matchesScheduledTaskScope,
+  scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
   type DraftState,
+  type ScheduleMode,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
 import { Label } from "../ui/label";
@@ -112,6 +132,10 @@ const EMPTY_DRAFT: DraftState = {
   runtimeMode: "full-access",
   interactionMode: "default",
   baseModelSelection: null,
+  signatureEnabled: false,
+  ...WEBHOOK_SIGNATURE_DEFAULTS,
+  signatureSecret: "",
+  maxDeliveryAgeMinutes: "",
 };
 
 /** Labelled field: a caption sitting above its control. */
@@ -148,20 +172,8 @@ function splitModelKey(value: string): ModelSelection | null {
   };
 }
 
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-  };
-}
-
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -199,6 +211,23 @@ export function relativeLabel(value: string | null): string {
   return `in ${Math.round(hours / 24)}d`;
 }
 
+const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
+  accepted: "Ran",
+  dispatch_failed: "Run failed",
+  rejected_signature: "Bad signature",
+  disabled: "Task paused",
+  rate_limited: "Rate limited",
+  expired: "Too old",
+};
+
+function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
+  if (outcome === "accepted") return "success";
+  if (outcome === "disabled" || outcome === "rate_limited" || outcome === "expired") {
+    return "warning";
+  }
+  return "error";
+}
+
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   if (status === "failed") return "error";
   if (status === "succeeded") return "success";
@@ -219,6 +248,9 @@ export function ScheduledTasksSettings(target: {
     setEditor({ environmentId, task });
   }, []);
   const defaultEnvironment = environment ?? connectedEnvironments[0];
+  const canCreate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
+  );
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -228,7 +260,7 @@ export function ScheduledTasksSettings(target: {
           <Button
             size="xs"
             variant="ghost-muted"
-            disabled={!defaultEnvironment}
+            disabled={!defaultEnvironment || !canCreate}
             onClick={() =>
               defaultEnvironment &&
               setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
@@ -377,7 +409,12 @@ function ScheduledTaskRow({
   readonly task: ScheduledTask;
   readonly onEdit: () => void;
 }) {
+  const canOperate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
+  );
   const [busy, setBusy] = useState(false);
+  const [deliveriesOpen, setDeliveriesOpen] = useState(false);
+  const isWebhook = task.schedule.type === "webhook";
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
   });
@@ -388,7 +425,7 @@ function ScheduledTaskRow({
     label: "scheduled task delete",
   });
   const act = async (action: "toggle" | "run" | "delete") => {
-    if (busy) return;
+    if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     setBusy(true);
     const result =
       action === "toggle"
@@ -415,11 +452,13 @@ function ScheduledTaskRow({
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {scheduleLabel(task.schedule)} ·{" "}
-            {task.enabled
-              ? task.nextRunAt
-                ? `Next run ${relativeLabel(task.nextRunAt)}`
-                : "Not scheduled"
-              : "Paused"}
+            {!task.enabled
+              ? "Paused"
+              : isWebhook
+                ? "Listening"
+                : task.nextRunAt
+                  ? `Next run ${relativeLabel(task.nextRunAt)}`
+                  : "Not scheduled"}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
@@ -431,7 +470,7 @@ function ScheduledTaskRow({
         <div className="flex items-center gap-2">
           <Switch
             checked={task.enabled}
-            disabled={busy}
+            disabled={busy || !canOperate}
             aria-label={`Enable ${task.title}`}
             onCheckedChange={() => void act("toggle")}
           />
@@ -441,7 +480,7 @@ function ScheduledTaskRow({
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  disabled={busy}
+                  disabled={busy || !canOperate}
                   aria-label={`Actions for ${task.title}`}
                 />
               }
@@ -453,10 +492,17 @@ function ScheduledTaskRow({
                 <PencilIcon />
                 Edit
               </MenuItem>
-              <MenuItem onClick={() => void act("run")}>
-                <PlayIcon />
-                Run now
-              </MenuItem>
+              {isWebhook ? (
+                <MenuItem onClick={() => setDeliveriesOpen(true)}>
+                  <InboxIcon />
+                  Deliveries
+                </MenuItem>
+              ) : (
+                <MenuItem onClick={() => void act("run")}>
+                  <PlayIcon />
+                  Run now
+                </MenuItem>
+              )}
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
@@ -464,9 +510,261 @@ function ScheduledTaskRow({
               </MenuItem>
             </MenuPopup>
           </Menu>
+          {deliveriesOpen ? (
+            <WebhookDeliveriesDialog
+              environmentId={environmentId}
+              task={task}
+              onClose={() => setDeliveriesOpen(false)}
+            />
+          ) : null}
         </div>
       }
     />
+  );
+}
+
+function WebhookDeliveriesDialog({
+  environmentId,
+  task,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask;
+  readonly onClose: () => void;
+}) {
+  const deliveriesQuery = useEnvironmentQuery(
+    serverEnvironment.scheduledTaskWebhookDeliveries({ environmentId, input: { id: task.id } }),
+  );
+  const [selectedId, setSelectedId] = useState<ScheduledTaskWebhookDeliverySummary["id"] | null>(
+    null,
+  );
+  const selectedQuery = useEnvironmentQuery(
+    selectedId === null
+      ? null
+      : serverEnvironment.scheduledTaskWebhookDelivery({
+          environmentId,
+          input: { id: task.id, deliveryId: selectedId },
+        }),
+  );
+  const deliveries = deliveriesQuery.data?.deliveries ?? null;
+  const selected = selectedQuery.data?.delivery ?? null;
+  const error = selectedId === null ? deliveriesQuery.error : selectedQuery.error;
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogPopup className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Deliveries · {task.title}</DialogTitle>
+          <DialogDescription>Recent requests to this task's webhook URL.</DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {selectedId !== null && selected === null && selectedQuery.error === null ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Loading delivery…
+            </p>
+          ) : selected ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge variant={deliveryOutcomeVariant(selected.outcome)}>
+                  {DELIVERY_OUTCOME_LABELS[selected.outcome]}
+                </Badge>
+                <span>
+                  {selected.method} · {relativeLabel(selected.receivedAt)}
+                </span>
+                {selected.signatureVerified ? (
+                  <span className="text-muted-foreground">Signature verified</span>
+                ) : null}
+              </div>
+              {selected.error ? <p className="text-sm text-destructive">{selected.error}</p> : null}
+              <DeliveryBlock title="Prompt sent to the agent">
+                {selected.renderedPrompt ?? "No run was started for this request."}
+              </DeliveryBlock>
+              {selected.missingFields.length > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Empty placeholders: {selected.missingFields.join(", ")}
+                </p>
+              ) : null}
+              <DeliveryBlock title="Headers">
+                {Object.entries(selected.headers)
+                  .map(([name, value]) => `${name}: ${value}`)
+                  .join("\n")}
+              </DeliveryBlock>
+              {selected.query ? (
+                <DeliveryBlock title="Query">{selected.query}</DeliveryBlock>
+              ) : null}
+              <DeliveryBlock title={selected.bodyTruncated ? "Body (truncated)" : "Body"}>
+                {selected.body || "(empty)"}
+              </DeliveryBlock>
+            </div>
+          ) : selectedId !== null ? null : deliveries === null ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Loading deliveries…
+            </p>
+          ) : deliveries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No requests yet.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {deliveries.map((delivery) => (
+                <li key={delivery.id}>
+                  <button
+                    type="button"
+                    className="flex w-full flex-wrap items-center gap-2 py-2 text-left text-sm hover:bg-accent/40"
+                    onClick={() => setSelectedId(delivery.id)}
+                  >
+                    <Badge variant={deliveryOutcomeVariant(delivery.outcome)}>
+                      {DELIVERY_OUTCOME_LABELS[delivery.outcome]}
+                    </Badge>
+                    <span>{delivery.method}</span>
+                    <span className="text-muted-foreground">
+                      {relativeLabel(delivery.receivedAt)}
+                    </span>
+                    {delivery.missingFields.length > 0 ? (
+                      <span className="text-muted-foreground">
+                        {delivery.missingFields.length} empty placeholder
+                        {delivery.missingFields.length === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </DialogPanel>
+        <DialogFooter>
+          {selectedId !== null ? (
+            <Button variant="outline" size="sm" onClick={() => setSelectedId(null)}>
+              Back
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={deliveriesQuery.isPending}
+              onClick={deliveriesQuery.refresh}
+            >
+              Refresh
+            </Button>
+          )}
+          <DialogClose render={<Button size="sm" />}>Done</DialogClose>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function DeliveryBlock({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <Label>{title}</Label>
+      <pre className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all">
+        {children}
+      </pre>
+    </div>
+  );
+}
+
+function WebhookEndpointField({
+  environmentId,
+  task,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask | null;
+}) {
+  const canRotate = useAtomValue(
+    serverEnvironment.rotateScheduledTaskWebhookToken.permissionAtom(environmentId),
+  );
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "webhook URL" });
+  const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
+    label: "scheduled task rotate webhook token",
+  });
+  const [rotating, setRotating] = useState(false);
+  const endpoint = task?.webhook;
+  if (!task || !endpoint) {
+    return <p className="text-sm text-muted-foreground">The URL appears after you save.</p>;
+  }
+  const { address: url, copyable, note } = webhookAddress(endpoint, httpBaseUrl);
+  const rotateUrl = async () => {
+    const confirmed =
+      (await requestConfirmDialog("Rotate this webhook URL?\nThe current URL stops working.", {
+        variant: "destructive",
+      })) ??
+      // No themed dialog host is mounted; fall back to the native prompt
+      // rather than rotating unasked.
+      window.confirm("Rotate this webhook URL? The current URL stops working.");
+    if (!confirmed) return;
+    setRotating(true);
+    const result = await rotate({ environmentId, input: { id: task.id } });
+    setRotating(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not rotate webhook URL",
+          description: String(squashAtomCommandFailure(result)),
+        }),
+      );
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <Input
+          readOnly
+          aria-label="Webhook URL"
+          value={url}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          type="button"
+          // A bare path is not a URL a sender can call.
+          disabled={!copyable}
+          onClick={() => copyToClipboard(url, undefined)}
+        >
+          <CopyIcon />
+          {isCopied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          type="button"
+          disabled={rotating || !canRotate}
+          onClick={() => void rotateUrl()}
+        >
+          Rotate
+        </Button>
+      </div>
+      {note !== null ? <p className="text-xs text-muted-foreground">{note}</p> : null}
+      {endpoint.url !== null ? <WebhookDeliveryMode environmentId={environmentId} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Whether T3 Connect forwards requests live or holds them while the
+ * environment is offline. The setting is per environment and only readable
+ * for this machine's own environment, so other environments show nothing.
+ */
+function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const cloudLink = usePrimaryCloudLinkState();
+  if (cloudLink.target?.environmentId !== environmentId || cloudLink.data === null) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {cloudLink.data.holdWebhooksWhileOffline
+        ? "Held for up to 24 hours while this environment is offline. "
+        : "Forwarded live. Requests fail while this environment is offline. "}
+      <Link to="/settings/connections" className="underline underline-offset-2">
+        Change in Connections
+      </Link>
+    </p>
   );
 }
 
@@ -500,6 +798,9 @@ function ScheduledTaskEditorDialog({
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+  const canOperate = useAtomValue(
+    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
+  );
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
@@ -519,6 +820,11 @@ function ScheduledTaskEditorDialog({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
+  // The live row, so a rotated URL shows up without reopening the dialog.
+  // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+  const liveTask = tasksQuery.data
+    ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
+    : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
@@ -548,6 +854,7 @@ function ScheduledTaskEditorDialog({
 
   const submit = async () => {
     if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       submissionPending.current ||
       saving ||
       editingTaskMissing ||
@@ -566,6 +873,23 @@ function ScheduledTaskEditorDialog({
       return;
     }
     const schedule = scheduleFromDraft(draft);
+    if (schedule === null) {
+      reportFailure(
+        "Invalid age limit",
+        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (
+      schedule.type === "webhook" &&
+      schedule.signature &&
+      (!schedule.signature.header ||
+        (!schedule.signature.secret &&
+          !(liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret)))
+    ) {
+      reportFailure("Signing secret is required", "Enter the signature header and secret.");
+      return;
+    }
     if (
       schedule.type === "interval" &&
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
@@ -635,7 +959,8 @@ function ScheduledTaskEditorDialog({
         <DialogHeader>
           <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
           <DialogDescription>
-            Run a prompt automatically — on an interval or at a fixed time.
+            Run a prompt automatically — on an interval, at a fixed time, or when a webhook is
+            called.
           </DialogDescription>
         </DialogHeader>
 
@@ -825,17 +1150,137 @@ function ScheduledTaskEditorDialog({
                   aria-label="Schedule type"
                   value={[draft.scheduleMode]}
                   onValueChange={(values) => {
-                    const mode = values[0];
-                    if (mode === "fixed" || mode === "interval")
-                      setDraft((current) => ({ ...current, scheduleMode: mode }));
+                    const mode = values[0] as ScheduleMode | undefined;
+                    if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                      setDraft((current) => ({
+                        ...current,
+                        scheduleMode: mode,
+                        prompt:
+                          mode === "webhook" && !current.prompt.trim()
+                            ? DEFAULT_WEBHOOK_PROMPT
+                            : current.prompt,
+                      }));
                   }}
                 >
                   <Toggle value="fixed">At a time</Toggle>
                   <Toggle value="interval">Every interval</Toggle>
+                  <Toggle value="webhook">On webhook</Toggle>
                 </ToggleGroup>
               </div>
 
-              {draft.scheduleMode === "fixed" ? (
+              {draft.scheduleMode === "webhook" ? (
+                <div className="space-y-4">
+                  <WebhookEndpointField environmentId={environmentId} task={liveTask} />
+                  <p className="text-xs text-muted-foreground">
+                    {
+                      "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
+                    }
+                  </p>
+                  <Field
+                    label="Skip requests older than"
+                    hint="minutes, optional"
+                    htmlFor="scheduled-task-max-age"
+                  >
+                    <Input
+                      id="scheduled-task-max-age"
+                      type="number"
+                      nativeInput
+                      min={1}
+                      max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
+                      placeholder="Run every request"
+                      value={draft.maxDeliveryAgeMinutes}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          maxDeliveryAgeMinutes: event.target.value,
+                        }))
+                      }
+                    />
+                  </Field>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor="scheduled-task-signature">Require signature</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Reject requests without a valid HMAC-SHA256 signature of the body.
+                      </p>
+                    </div>
+                    <Switch
+                      id="scheduled-task-signature"
+                      checked={draft.signatureEnabled}
+                      onCheckedChange={(signatureEnabled) =>
+                        setDraft((current) => ({ ...current, signatureEnabled }))
+                      }
+                    />
+                  </div>
+                  {draft.signatureEnabled ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Header" htmlFor="scheduled-task-signature-header">
+                        <Input
+                          id="scheduled-task-signature-header"
+                          value={draft.signatureHeader}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureHeader: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Prefix" htmlFor="scheduled-task-signature-prefix">
+                        <Input
+                          id="scheduled-task-signature-prefix"
+                          value={draft.signaturePrefix}
+                          placeholder="None"
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signaturePrefix: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Encoding" htmlFor="scheduled-task-signature-encoding">
+                        <Select
+                          value={draft.signatureEncoding}
+                          onValueChange={(value) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureEncoding: value === "base64" ? "base64" : "hex",
+                            }))
+                          }
+                        >
+                          <SelectTrigger size="sm" id="scheduled-task-signature-encoding">
+                            <SelectValue>{draft.signatureEncoding}</SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup>
+                            <SelectItem value="hex">hex</SelectItem>
+                            <SelectItem value="base64">base64</SelectItem>
+                          </SelectPopup>
+                        </Select>
+                      </Field>
+                      <Field label="Secret" htmlFor="scheduled-task-signature-secret">
+                        <Input
+                          id="scheduled-task-signature-secret"
+                          type="password"
+                          autoComplete="off"
+                          value={draft.signatureSecret}
+                          placeholder={
+                            liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret
+                              ? "Unchanged"
+                              : "Shared secret"
+                          }
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureSecret: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+                </div>
+              ) : draft.scheduleMode === "fixed" ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="scheduled-task-time">Run at</Label>
@@ -918,7 +1363,7 @@ function ScheduledTaskEditorDialog({
           </DialogClose>
           <Button
             size="sm"
-            disabled={saving || editingTaskMissing || !connected || !tasksQuery.data}
+            disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
             onClick={() => void submit()}
           >
             {draft.editingId ? "Save task" : "Create task"}

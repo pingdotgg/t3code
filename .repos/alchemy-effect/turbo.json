@@ -6,6 +6,9 @@
     "tsconfig.base.json",
     "tsconfig.cloudflare.json"
   ],
+  // tsgo is a Go program, so its heap is tuned with GOMEMLIMIT/GOGC rather
+  // than NODE_OPTIONS. Tasks run in strict env mode and would not see them.
+  "globalPassThroughEnv": ["GOMEMLIMIT", "GOGC"],
   "ui": "tui",
   "tasks": {
     "build": {

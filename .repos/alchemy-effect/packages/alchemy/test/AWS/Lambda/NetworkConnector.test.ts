@@ -140,5 +140,14 @@ test.provider.skipIf(!process.env.LAMBDA_TEST_NETWORK_CONNECTOR)(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 1_500_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 1_500_000,
+  },
 );

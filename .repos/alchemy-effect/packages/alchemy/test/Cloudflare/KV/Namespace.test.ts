@@ -18,96 +18,107 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create and delete namespace with default props", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete namespace with default props",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const namespace = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* KV.Namespace("DefaultNamespace");
-      }),
-    );
+      const namespace = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* KV.Namespace("DefaultNamespace");
+        }),
+      );
 
-    expect(namespace.title).toBeDefined();
-    expect(namespace.namespaceId).toBeDefined();
+      expect(namespace.title).toBeDefined();
+      expect(namespace.namespaceId).toBeDefined();
 
-    const actualNamespace = yield* kv.getNamespace({
-      accountId,
-      namespaceId: namespace.namespaceId,
-    });
-    expect(actualNamespace.id).toEqual(namespace.namespaceId);
+      const actualNamespace = yield* kv.getNamespace({
+        accountId,
+        namespaceId: namespace.namespaceId,
+      });
+      expect(actualNamespace.id).toEqual(namespace.namespaceId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForNamespaceToBeDeleted(namespace.namespaceId, accountId);
-  }).pipe(logLevel),
+      yield* waitForNamespaceToBeDeleted(namespace.namespaceId, accountId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:kv", "live"] },
 );
 
-test.provider("create, update, delete namespace", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, delete namespace",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const namespace = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* KV.Namespace("TestNamespace");
-      }),
-    );
+      const namespace = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* KV.Namespace("TestNamespace");
+        }),
+      );
 
-    const actualNamespace = yield* kv.getNamespace({
-      accountId,
-      namespaceId: namespace.namespaceId,
-    });
-    expect(actualNamespace.id).toEqual(namespace.namespaceId);
-    expect(actualNamespace.title).toEqual(namespace.title);
+      const actualNamespace = yield* kv.getNamespace({
+        accountId,
+        namespaceId: namespace.namespaceId,
+      });
+      expect(actualNamespace.id).toEqual(namespace.namespaceId);
+      expect(actualNamespace.title).toEqual(namespace.title);
 
-    const updatedNamespace = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* KV.Namespace("TestNamespace", {
-          title: namespace.title + "-updated",
-        });
-      }),
-    );
+      const updatedNamespace = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* KV.Namespace("TestNamespace", {
+            title: namespace.title + "-updated",
+          });
+        }),
+      );
 
-    const actualUpdatedNamespace = yield* kv.getNamespace({
-      accountId,
-      namespaceId: updatedNamespace.namespaceId,
-    });
-    expect(actualUpdatedNamespace.title).toEqual(namespace.title + "-updated");
-    expect(actualUpdatedNamespace.id).toEqual(updatedNamespace.namespaceId);
+      const actualUpdatedNamespace = yield* kv.getNamespace({
+        accountId,
+        namespaceId: updatedNamespace.namespaceId,
+      });
+      expect(actualUpdatedNamespace.title).toEqual(
+        namespace.title + "-updated",
+      );
+      expect(actualUpdatedNamespace.id).toEqual(updatedNamespace.namespaceId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForNamespaceToBeDeleted(namespace.namespaceId, accountId);
-  }).pipe(logLevel),
+      yield* waitForNamespaceToBeDeleted(namespace.namespaceId, accountId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:kv", "live"] },
 );
 
 // Canonical `list()` test (account-scoped collection): deploy a real
 // namespace, resolve the provider from context via `findProviderByType`,
 // call `list()`, and assert the deployed namespace appears in the
 // exhaustively-paginated result.
-test.provider("list enumerates the deployed namespace", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed namespace",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const namespace = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* KV.Namespace("ListNamespace");
-      }),
-    );
+      const namespace = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* KV.Namespace("ListNamespace");
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(KV.Namespace);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(KV.Namespace);
+      const all = yield* provider.list();
 
-    expect(all.some((ns) => ns.namespaceId === namespace.namespaceId)).toBe(
-      true,
-    );
+      expect(all.some((ns) => ns.namespaceId === namespace.namespaceId)).toBe(
+        true,
+      );
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:kv", "live"] },
 );
 
 // Engine-level adoption: KV namespaces have no ownership signal (Cloudflare
@@ -177,6 +188,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForNamespaceToBeDeleted(initialId, accountId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:kv", "live"] },
 );
 
 const waitForNamespaceToBeDeleted = Effect.fn(function* (

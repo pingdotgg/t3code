@@ -6,14 +6,21 @@ import {
   PreviewTabId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
   failure: Schema.Union([OrchestratorMcpFailure, PreviewAutomationUnavailableError]),
   failureMode: "return" as const,
-  dependencies: [McpInvocationContext.McpInvocationContext, PreviewManager.PreviewManager],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    PreviewManager.PreviewManager,
+    PreviewAutomationBroker.PreviewAutomationBroker,
+  ],
 };
 const PreviewListTool = Tool.make("t3_preview_list", {
   ...shared,

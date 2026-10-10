@@ -2,8 +2,8 @@ import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Neon from "@/Neon/index.ts";
 import * as SQL from "@/SQL/Postgres.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Hyperdrive Connection for the local-emulation test: the `dev` origin

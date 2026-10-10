@@ -2,16 +2,15 @@ import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
-import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
-const DIRTY_WORKTREE_SECTION_ID = "git:working-tree";
-const DIRTY_WORKTREE_TITLE = "Dirty worktree";
-const DIRTY_WORKTREE_SUBTITLE = "Tracked, staged, and untracked worktree changes";
+const CHANGES_SECTION_ID = "git:branch-range";
+const CHANGES_TITLE = "Changes";
+const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -124,7 +123,7 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
 
 function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   if (section.kind === "working-tree") {
-    return DIRTY_WORKTREE_SUBTITLE;
+    return UNCOMMITTED_SUBTITLE;
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
@@ -374,8 +373,8 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
 }
 
 function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
-  const path = unquoteGitPatchPath(file.name || file.prevName || "");
-  const previousPath = file.prevName ? unquoteGitPatchPath(file.prevName) : null;
+  const path = file.name || file.prevName || "";
+  const previousPath = file.prevName || null;
   const additions = file.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
   const deletions = file.hunks.reduce((total, hunk) => total + hunk.deletionLines, 0);
   const cacheKey = file.cacheKey ?? `${previousPath ?? "none"}:${path}:${file.type}`;
@@ -443,15 +442,16 @@ export function buildReviewSectionItems(input: {
     truncated: section.truncated,
     isLoading: false,
   }));
-  const hasDirtyWorktreeItem = gitItems.some((item) => item.id === DIRTY_WORKTREE_SECTION_ID);
+  // Changes is the default section, so it holds the place while git sources load.
+  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
-    input.loadingGitSections && !hasDirtyWorktreeItem
+    input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: DIRTY_WORKTREE_SECTION_ID,
-            kind: "working-tree",
-            title: DIRTY_WORKTREE_TITLE,
-            subtitle: DIRTY_WORKTREE_SUBTITLE,
+            id: CHANGES_SECTION_ID,
+            kind: "branch-range",
+            title: CHANGES_TITLE,
+            subtitle: null,
             diff: null,
             isLoading: true,
           } satisfies ReviewSectionItem,
@@ -462,10 +462,11 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
+/** Prefers Changes, then the first section (a turn when the project is not a git repo). */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return sections[0]?.id ?? null;
+  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
 }
 
 export function buildReviewParsedDiff(

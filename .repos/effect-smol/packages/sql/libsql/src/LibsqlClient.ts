@@ -16,15 +16,15 @@ import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import * as Redacted from "effect/Redacted"
 import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
+import * as Client from "effect/sql/SqlClient"
+import type { Connection } from "effect/sql/SqlConnection"
+import { classifySqliteError, SqlError } from "effect/sql/SqlError"
+import * as Statement from "effect/sql/Statement"
 import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError"
-import * as Statement from "effect/unstable/sql/Statement"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
 
@@ -159,6 +159,7 @@ export declare namespace LibsqlClientConfig {
   /**
    * Configuration that uses an existing libSQL client. The supplied `liveClient` is caller-owned and is not closed by the Effect client.
    *
+   * @stability unstable
    * @category models
    * @since 4.0.0
    */
@@ -320,6 +321,7 @@ export const make = (
       })),
       begin: () => Effect.void, // already begun in acquireConnection
       savepoint: (conn, id) => conn.executeRaw(`SAVEPOINT effect_sql_${id};`, []),
+      releaseSavepoint: (conn, id) => conn.executeRaw(`RELEASE SAVEPOINT effect_sql_${id};`, []),
       commit: (conn) => conn.commit,
       rollback: (conn) => conn.rollback,
       rollbackSavepoint: (conn, id) => conn.executeRaw(`ROLLBACK TO SAVEPOINT effect_sql_${id};`, [])
@@ -336,6 +338,7 @@ export const make = (
     return Object.assign(
       yield* Client.make({
         acquirer,
+        transactionService: LibsqlTransaction as any,
         compiler,
         spanAttributes,
         transformRows

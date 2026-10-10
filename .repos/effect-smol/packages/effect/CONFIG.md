@@ -115,7 +115,7 @@ The same rule applies when a `Config` is yielded as an `Effect`: the config uses
 
 ### `Config.withDefault` — Fallback for Absent Input
 
-Triggers when the config cannot resolve and none of its relevant provider input is present. Validation errors and partially supplied groups still propagate.
+Triggers when the config is absent. For `Config.all`, any absent child makes the group absent unless another child fails. A group default replaces the entire group; apply defaults to individual children to keep other supplied values. Validation and source errors still propagate.
 
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
@@ -151,7 +151,7 @@ const upperHost = Config.String("HOST").pipe(
 
 ### `Config.orElse` — Fallback on Any Error
 
-Unlike `withDefault`, this catches **all** `ConfigError`s:
+Unlike `withDefault`, this handles absence and **all** `ConfigError`s. The fallback's result replaces the original failure. If the fallback is absent, a later `withDefault` or `option` can recover it. If the fallback fails, only its error propagates:
 
 ```ts
 import { Config } from "effect"
@@ -218,7 +218,7 @@ Effect.runSync(config.parse(provider)) // "localhost"
 
 ### `Config.all` — Combine Multiple Configs
 
-Accepts a record or a tuple. A wholly absent group can be handled by `Config.withDefault` or `Config.option`. If any child reads provider input, every other required child must also resolve; partial groups fail instead of silently replacing user input with a whole-group default.
+Accepts a record, a tuple, or an iterable. A group is absent when any child is absent and no child fails. `Config.withDefault` replaces the entire absent group, and `Config.option` returns `None`. Validation and source errors propagate even when another child is absent.
 
 ```ts
 import { Config } from "effect"
@@ -234,7 +234,7 @@ const appConfig = Config.all({
 const pair = Config.all([Config.String("a"), Config.Int("b")])
 ```
 
-For example, providing only `host` is an error here:
+For example, providing only `host` selects the default for the entire group here:
 
 ```ts
 import { Config } from "effect"
@@ -247,7 +247,9 @@ const database = Config.all({
 )
 ```
 
-The default applies when both keys are absent, but not when only one key is present. Defaults on individual children do not count as provider input:
+If the provider contains `{ host: "db.internal" }`, the result is `{ host: "localhost", port: 5432 }`. To keep the supplied host and default only the port, put `Config.withDefault(5432)` on the `port` child instead.
+
+Child defaults resolve missing children before the group decides whether it is absent:
 
 ```ts
 const listener = Config.all({
@@ -256,17 +258,17 @@ const listener = Config.all({
 }).pipe(Config.option)
 ```
 
-`listener` is `None` when both keys are absent, `Some` when `host` is present, and fails when only `port` is present.
+`listener` is `None` when `host` is absent, including when a valid `port` is present. It is `Some` when `host` is present and `port` resolves to either a supplied value or its default. An invalid `port` fails even if `host` is absent.
 
 ### How Absence Is Decided
 
 Configuration evaluation distinguishes three situations before producing the public `Effect`:
 
 1. **Resolved** — decoding succeeded. The value may legitimately be `undefined`, `{}`, or `[]`.
-2. **Absent** — the config could not resolve and no relevant provider representation was found.
-3. **Failed** — the provider failed, input was invalid, or a combined config was only partially supplied.
+2. **Absent** — a schema could not resolve because its relevant provider representation was unavailable, or a combined config has an absent child and no failed children.
+3. **Failed** — the provider failed, input was invalid, or an effectful transformation failed.
 
-`Config.withDefault` and `Config.option` handle only the second case. `Config.orElse` handles both absence and failures.
+`Config.withDefault` and `Config.option` handle only the second case. `Config.orElse` handles both absence and failures and adopts the fallback's result. Once a failure is recovered, it does not influence enclosing groups or later defaults.
 
 At the lookup path of a `Config.schema`, an unavailable representation is passed to the schema decoder as `undefined`. This includes a missing node and a present node whose shape cannot represent the schema: for example, an array node cannot represent a struct. Missing properties inside an object remain omitted so the schema's property semantics still apply. The decoder runs before absence is decided. Consequently:
 
@@ -274,10 +276,10 @@ At the lookup path of a `Config.schema`, an unavailable representation is passed
 - An explicitly present empty object can decode to `{}` when the schema permits it.
 - Wrapping either successful result in `Config.option` produces `Some`, because decoding succeeded.
 - If the schema rejects `undefined` and no relevant representation was found, `Config.withDefault` uses its fallback and `Config.option` returns `None`.
-- Present invalid data and partially supplied `Config.all` groups are failures.
+- Present invalid data is a failure. A `Config.all` group with missing children is absent unless another child fails.
 - `SourceError` is always a failure and is never replaced by `withDefault` or `option`.
 
-`Config.schema(Schema.Struct(...))` and `Config.all(...)` share the same decoder-first rule but describe different lookup models. A struct schema owns one structured input, so an explicitly present empty object is relevant input and its required fields are validated. `Config.all` evaluates independent child configs; an empty parent object does not make the group present when every child is absent. Field optionality in `Config.all` is expressed on each child with `Config.option` or `Config.withDefault`.
+`Config.schema(Schema.Struct(...))` and `Config.all(...)` describe different lookup models. A struct schema validates one structured input. An existing object, including an empty object, fails validation if required fields are missing. `Config.all` evaluates independent child configs and can recover a partially supplied group through `Config.withDefault` or `Config.option`. Field optionality in `Config.all` is expressed on each child with `Config.option` or `Config.withDefault`.
 
 ### How Schema Input Is Loaded
 
@@ -730,7 +732,7 @@ const program = Config.Int("PORT").parse(
 )
 ```
 
-**Important**: `Config.withDefault` and `Config.option` recover only from semantic absence. They do not classify `SchemaIssue` values as “missing.” Validation errors, source failures, and partially supplied groups still propagate.
+**Important**: `Config.withDefault` and `Config.option` recover only from semantic absence. They do not classify `SchemaIssue` values as “missing.” Validation and source errors still propagate unless explicitly recovered with `Config.orElse`.
 
 ## Practical Example: Web Server Config
 

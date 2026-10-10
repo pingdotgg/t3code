@@ -14,12 +14,12 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpServer from "effect/http/HttpServer";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { fileURLToPath } from "node:url";
 import { pipedColorEnv } from "../Util/Terminal.ts";
 import { nodeLoaderArgs } from "../Util/Node.ts";
@@ -171,7 +171,8 @@ export const make = Effect.fn(function* ({
     // This scope is the child handle's sole owner. Graceful shutdown runs this
     // finalizer; abrupt parent loss closes the RPC parent connection and the
     // child self-terminates (both paths are covered by RpcSpawnerCleanup).
-    const kill = handle.kill({ forceKillAfter: "500 millis" });
+    // Command cleanup allows 1s for TERM and 1s for KILL; reserve 1s for sidecar teardown.
+    const kill = handle.kill({ forceKillAfter: "3 seconds" });
     yield* Effect.addFinalizer(() => kill.pipe(Effect.ignore));
     const url = yield* getRpcAddress(handle.stdout, (line) =>
       publish({ channel: "stdout", line }),

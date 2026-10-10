@@ -12,7 +12,7 @@
  * Callers fetch a fresh one each time they (re)connect a stream.
  */
 import * as Effect from "effect/Effect";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -46,7 +46,7 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
       remoteAuthorization,
       group: "auth",
       method: "POST",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/websocket-ticket"),
+      url: (urls) => urls.webSocketTicket(),
       timeoutMs: TICKET_TIMEOUT_MS,
       request: ({ client, headers }) => client.webSocketTicket({ headers }),
     });

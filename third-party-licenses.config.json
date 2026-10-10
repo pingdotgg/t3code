@@ -280,6 +280,27 @@
     },
     {
       "license": "MIT",
+      "repositoryUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "@electron-webauthn/types",
+      "sourceUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "objc-js"
+    },
+    {
+      "license": "MIT",
       "name": "map-stream",
       "generatedNotice": {
         "licenseId": "MIT",
@@ -598,6 +619,33 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2015-present 650 Industries, Inc. (aka Expo)"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "fastdom",
+      "sourceUrl": "https://github.com/wilsonpage/fastdom",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2016 Wilson Page"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "strictdom",
+      "sourceUrl": "https://github.com/wilsonpage/strictdom",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2013 Wilson Page"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "khroma",
+      "sourceUrl": "https://github.com/fabiospampinato/khroma",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
     }
   ]

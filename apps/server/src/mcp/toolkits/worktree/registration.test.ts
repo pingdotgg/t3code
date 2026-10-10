@@ -9,7 +9,7 @@ import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
@@ -17,15 +17,24 @@ import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdap
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
-import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as PreviewManager from "../../../preview/Manager.ts";
+import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
-const StubServicesLive = Layer.mergeAll(
+const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(DeviceService.DeviceService)({}),
@@ -33,11 +42,19 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
   Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+  Layer.mock(PreviewManager.PreviewManager)({}),
+  Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadSearch.ThreadSearch)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -64,8 +81,8 @@ const decodeToolsListPayload = Schema.decodeUnknownEffect(ToolsListPayload);
 it.effect("production mcp layer lists worktree tools over http", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const routes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
-      yield* HttpRouter.serve(routes, {
+      const layerRoutes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
+      yield* HttpRouter.serve(layerRoutes, {
         disableListenLog: true,
         disableLogger: true,
       }).pipe(
@@ -75,7 +92,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
           }),
         ),
         Layer.provide(PreviewAutomationBroker.layer),
-        Layer.provide(StubServicesLive),
+        Layer.provide(PreviewBrowser.layer),
+        Layer.provide(layerStubServices),
         Layer.build,
       );
 

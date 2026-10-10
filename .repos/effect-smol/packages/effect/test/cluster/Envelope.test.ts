@@ -1,8 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
-import { EntityAddress, EntityId, EntityType, Envelope, Reply, ShardId, Snowflake } from "effect/unstable/cluster"
-import { SchemaBinary } from "effect/unstable/encoding"
-import { Headers } from "effect/unstable/http"
+import { EntityAddress, EntityId, EntityType, Envelope, Reply, ShardId, Snowflake } from "effect/cluster"
+import { SchemaBinary } from "effect/encoding"
+import { Headers } from "effect/http"
 
 const request = {
   _tag: "Request",

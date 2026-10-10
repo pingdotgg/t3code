@@ -65,4 +65,14 @@ describe("resolveSubagentRowPresentation", () => {
     expect(row.detail).toBeNull();
     expect(row.statusLabel).toBe("Working");
   });
+
+  it("bounds long result previews without dropping the agent's status", () => {
+    const row = resolveSubagentRowPresentation({
+      ...base,
+      status: "failed",
+      result: "x".repeat(400),
+    });
+    expect(row.detail).toBe(`${"x".repeat(280)}…`);
+    expect(row.statusLabel).toBe("Failed");
+  });
 });
