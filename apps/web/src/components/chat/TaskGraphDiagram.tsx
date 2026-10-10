@@ -21,6 +21,8 @@ export function TaskGraphDiagram(props: {
   readonly environmentId: EnvironmentId;
   readonly nodes: ReadonlyArray<TaskGraphNode>;
   readonly onOpenPullRequest: (url: string) => void;
+  /** Opens the editor on a task; bound to double-click and Enter on its box. */
+  readonly onEditNode: (key: string) => void;
 }) {
   const layout = taskGraphDiagramLayout(taskGraphLayers(props.nodes));
   const titles = new Map(props.nodes.map((node) => [node.key, node.title]));
@@ -53,6 +55,7 @@ export function TaskGraphDiagram(props: {
           y={y + 8}
           onOpenPullRequest={props.onOpenPullRequest}
           titleOf={titleOf}
+          onEdit={() => props.onEditNode(node.key)}
         />
       ))}
     </div>
@@ -66,30 +69,22 @@ function TaskGraphDiagramNode(props: {
   readonly y: number;
   readonly onOpenPullRequest: (url: string) => void;
   readonly titleOf: (key: string) => string;
+  readonly onEdit: () => void;
 }) {
   const { node } = props;
   const pullRequestUrl = node.pullRequestResult?.url ?? null;
-  const title =
-    node.threadId === null ? (
-      <span className="min-w-0 truncate text-foreground/85">{node.title}</span>
-    ) : (
-      <Link
-        to="/$environmentId/$threadId"
-        params={{
-          environmentId: node.assignedEnvironmentId ?? props.environmentId,
-          threadId: node.threadId,
-        }}
-        className="min-w-0 truncate text-foreground/85 hover:underline"
-      >
-        {node.title}
-      </Link>
-    );
+  const title = <span className="min-w-0 truncate text-foreground/85">{node.title}</span>;
   const box = (
     <div
-      role="group"
-      aria-label={`${node.title}: ${TASK_GRAPH_NODE_STATUS_LABEL[node.status]}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`${node.title}: ${TASK_GRAPH_NODE_STATUS_LABEL[node.status]}. Double-click to edit.`}
+      onDoubleClick={props.onEdit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target === event.currentTarget) props.onEdit();
+      }}
       className={cn(
-        "absolute flex flex-col justify-center gap-0.5 rounded-md border bg-background px-2 text-xs",
+        "absolute flex cursor-default select-none flex-col justify-center gap-0.5 rounded-md border bg-background px-2 text-xs outline-none hover:border-ring/60 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
         node.status === "failed" ? "border-destructive/50" : "border-border",
         (node.status === "skipped" || node.status === "cancelled") && "opacity-60",
       )}
@@ -131,7 +126,11 @@ function TaskGraphDiagramNode(props: {
     <PreviewCard>
       <PreviewCardTrigger delay={250} render={box} />
       <PreviewCardPopup side="top" align="center" className="w-96 max-w-[calc(100vw-2rem)]">
-        <TaskGraphNodeDetails node={node} titleOf={props.titleOf} />
+        <TaskGraphNodeDetails
+          environmentId={props.environmentId}
+          node={node}
+          titleOf={props.titleOf}
+        />
       </PreviewCardPopup>
     </PreviewCard>
   );
@@ -139,6 +138,7 @@ function TaskGraphDiagramNode(props: {
 
 /** What a hovered box expands to: the task itself, what it waits on, and how it went. */
 function TaskGraphNodeDetails(props: {
+  readonly environmentId: EnvironmentId;
   readonly node: TaskGraphNode;
   readonly titleOf: (key: string) => string;
 }) {
@@ -186,6 +186,21 @@ function TaskGraphNodeDetails(props: {
           Pull request failed: {pullRequestError}
         </p>
       ) : null}
+      <div className="flex items-center justify-between gap-2 text-2xs text-muted-foreground">
+        <span>Double-click to edit</span>
+        {node.threadId !== null ? (
+          <Link
+            to="/$environmentId/$threadId"
+            params={{
+              environmentId: node.assignedEnvironmentId ?? props.environmentId,
+              threadId: node.threadId,
+            }}
+            className="text-foreground/85 hover:underline"
+          >
+            Open thread
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

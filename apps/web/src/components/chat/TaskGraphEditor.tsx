@@ -147,9 +147,13 @@ export default function TaskGraphEditor(props: {
   readonly environmentId: EnvironmentId;
   readonly graph: TaskGraph;
   readonly commands: TaskGraphCommands;
+  /** Task to select on open, such as the box double-clicked in the chat diagram. */
+  readonly initialNodeKey?: string | null;
 }) {
   const { graph, commands } = props;
-  const [selectionState, setSelection] = useState<Selection>(NO_SELECTION);
+  const [selectionState, setSelection] = useState<Selection>(() =>
+    props.initialNodeKey == null ? NO_SELECTION : { kind: "node", key: props.initialNodeKey },
+  );
   const layout = graphLayout(graph.nodes);
   const selection = resolveSelection(selectionState, graph);
   const { nodes, edges } = taskGraphCanvasElements(graph.nodes, layout.positions, {

@@ -81,6 +81,11 @@ function TaskGraphCard(props: {
   // Expanded by default, finished or not: a graph that ran on its own should still show its shape.
   const [expanded, setExpanded] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorNodeKey, setEditorNodeKey] = useState<string | null>(null);
+  const openEditor = (nodeKey: string | null) => {
+    setEditorNodeKey(nodeKey);
+    setEditorOpen(true);
+  };
   const commands = useTaskGraphCommands(props.environmentId, graph);
   const listId = useId();
   const pullRequests = taskGraphPullRequestLinks(graph.nodes);
@@ -139,7 +144,7 @@ function TaskGraphCard(props: {
                     aria-label="Open graph editor"
                     onPointerEnter={() => void loadTaskGraphEditor()}
                     onFocus={() => void loadTaskGraphEditor()}
-                    onClick={() => setEditorOpen(true)}
+                    onClick={() => openEditor(null)}
                   />
                 }
               >
@@ -195,6 +200,10 @@ function TaskGraphCard(props: {
               environmentId={props.environmentId}
               nodes={graph.nodes}
               onOpenPullRequest={openExternal}
+              onEditNode={(key) => {
+                void loadTaskGraphEditor();
+                openEditor(key);
+              }}
             />
           ) : null}
         </ComposerBanner.Scroll>
@@ -213,6 +222,7 @@ function TaskGraphCard(props: {
                 environmentId={props.environmentId}
                 graph={graph}
                 commands={commands}
+                initialNodeKey={editorNodeKey}
               />
             </Suspense>
           ) : null}
