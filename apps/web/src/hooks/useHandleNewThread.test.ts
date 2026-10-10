@@ -45,6 +45,10 @@ const testState = vi.hoisted(() => {
     get targetSettings() {
       return targetSettings;
     },
+    routeTarget: null as null | {
+      readonly kind: "server";
+      readonly threadRef: { readonly environmentId: string; readonly threadId: string };
+    },
     reset(
       nextStoredDraft: typeof storedDraft,
       workspaceDefaults = {
@@ -53,6 +57,7 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      this.routeTarget = null;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -173,7 +178,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => testState.routeTarget }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -231,6 +236,28 @@ describe.each([
     expect(testState.router.state.location.href).toBe("/usage");
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("remembers the thread the draft was opened from on the history entry", async () => {
+    testState.reset(draft);
+    testState.routeTarget = {
+      kind: "server",
+      threadRef: { environmentId: "environment-ssh", threadId: "thread-origin" },
+    };
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.router.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: {
+          draftOrigin: { environmentId: "environment-ssh", threadId: "thread-origin" },
+        },
+      }),
+    );
   });
 
   it.each([true, false])(
