@@ -648,7 +648,8 @@ it.effect("validates a fork service destination against the source project's wor
         workspaceStrategy: { type: "existing_worktree", worktreePath: "/outside" },
       })
       .pipe(Effect.flip);
-    assert.include(String(error.cause), "must be one of the project's git worktrees");
+    assert.instanceOf(error, ThreadLaunch.ThreadForkWorkspaceInvalidError);
+    assert.include(error.message, "must be one of the project's git worktrees");
     assert.isNull(yield* threads.getThreadShell(input.targetThreadId));
     const result = yield* launches.fork({
       ...input,

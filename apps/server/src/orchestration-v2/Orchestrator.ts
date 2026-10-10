@@ -266,6 +266,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
+export const isOrchestratorV2Error = Schema.is(OrchestratorV2Error);
 
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;

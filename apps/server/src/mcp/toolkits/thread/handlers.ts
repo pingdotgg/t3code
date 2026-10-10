@@ -20,6 +20,7 @@ import {
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -136,16 +137,24 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           creationSource: "mcp",
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new OrchestratorMcpFailure({
-                code:
-                  error.operation === "validate-workspace"
-                    ? "invalid_request"
-                    : "orchestration_error",
-                message: typeof error.cause === "string" ? error.cause : error.message,
-              }),
-          ),
+          Effect.catchTags({
+            ThreadForkWorkspaceInvalidError: (error) =>
+              Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: error.message,
+                }),
+              ),
+            ThreadLaunchError: (error) =>
+              Effect.fail(
+                Orchestrator.isOrchestratorV2Error(error.cause)
+                  ? dispatchFailure(error.cause)
+                  : new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: error.message,
+                    }),
+              ),
+          }),
         );
     }),
   ),
