@@ -3,6 +3,7 @@ package expo.modules.t3terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -91,6 +92,8 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private val gestureDetector = GestureDetector(context, TerminalGestureListener())
   private val contentPadding = 8f * density
   private var frame: TerminalFrame? = null
+  private var rowBitmaps = arrayOfNulls<Bitmap>(0)
+  private var rowsToPaint = BooleanArray(0)
   private var scrollRemainder = 0f
   private val scroller = OverScroller(context)
   private var flingLastY = 0
@@ -173,7 +176,18 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   fun setFrame(value: TerminalFrame) {
+    val previous = frame
     frame = value
+    if (rowBitmaps.size != value.rows) resetRowCache(value.rows)
+    if (value.full || previous == null) {
+      rowsToPaint.fill(true)
+    } else if (previous.cols != value.cols ||
+      previous.background != value.background || previous.cursorColor != value.cursorColor
+    ) {
+      rowsToPaint.fill(true)
+    } else {
+      for (row in value.dirtyRows) rowsToPaint[row] = true
+    }
     cursorOn = true
     updateSelectionEndpoints()
     removeCallbacks(cursorBlink)
@@ -211,34 +225,21 @@ internal class TerminalCanvasView(context: Context) : View(context) {
       height - contentPadding,
     )
 
+    val bitmapHeight = ceil(cellHeightPx).toInt().coerceAtLeast(1)
     for (row in 0 until currentFrame.rows) {
-      val top = contentPadding + row * cellHeightPx
-      val bottom = top + cellHeightPx
-      for (column in 0 until currentFrame.cols) {
-        val index = row * currentFrame.cols + column
-        val left = contentPadding + column * cellWidthPx
-        val right = left + cellWidthPx
-        val background = currentFrame.cellBackgrounds[index]
-        val flags = currentFrame.cellFlags[index]
-        paint.style = Paint.Style.FILL
-        paint.color = if (flags and FLAG_SELECTED != 0) {
-          blend(currentFrame.cursorColor, background, 0.32f)
-        } else {
-          background
-        }
-        if (paint.color != currentFrame.background || flags and FLAG_SELECTED != 0) {
-          canvas.drawRect(left, top, right + 0.5f, bottom + 0.5f, paint)
-        }
-
-        val text = currentFrame.cellText[index]
-        if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
-          configureTextPaint(flags, currentFrame.cellForegrounds[index])
-          canvas.drawText(text, left, top + baselineOffsetPx, paint)
-          if (flags and FLAG_OVERLINE != 0) {
-            canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
-          }
-        }
+      var bitmap = rowBitmaps[row]
+      if (bitmap == null || bitmap.width != width || bitmap.height != bitmapHeight) {
+        bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), bitmapHeight, Bitmap.Config.ARGB_8888)
+        rowBitmaps[row] = bitmap
+        rowsToPaint[row] = true
       }
+      if (rowsToPaint[row]) {
+        val rowCanvas = Canvas(bitmap)
+        rowCanvas.drawColor(currentFrame.background)
+        paintRow(rowCanvas, currentFrame, row)
+        rowsToPaint[row] = false
+      }
+      canvas.drawBitmap(bitmap, 0f, contentPadding + row * cellHeightPx, null)
     }
 
     if (currentFrame.cursorVisible && cursorOn &&
@@ -249,6 +250,45 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     }
     canvas.restore()
     drawSelectionHandles(canvas)
+  }
+
+  private fun paintRow(canvas: Canvas, currentFrame: TerminalFrame, row: Int) {
+    val top = 0f
+    val bottom = top + cellHeightPx
+    for (column in 0 until currentFrame.cols) {
+      val left = contentPadding + column * cellWidthPx
+      val right = left + cellWidthPx
+      val background = currentFrame.cells[row].backgrounds[column]
+      val flags = currentFrame.cells[row].flags[column]
+      paint.style = Paint.Style.FILL
+      paint.color = if (flags and FLAG_SELECTED != 0) {
+        blend(currentFrame.cursorColor, background, 0.32f)
+      } else {
+        background
+      }
+      if (paint.color != currentFrame.background || flags and FLAG_SELECTED != 0) {
+        canvas.drawRect(left, top, right + 0.5f, bottom + 0.5f, paint)
+      }
+
+      val text = currentFrame.cells[row].text[column]
+      if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
+        configureTextPaint(flags, currentFrame.cells[row].foregrounds[column])
+        canvas.drawText(text, left, top + baselineOffsetPx, paint)
+        if (flags and FLAG_OVERLINE != 0) {
+          canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
+        }
+      }
+    }
+  }
+
+  private fun resetRowCache(rows: Int = rowBitmaps.size) {
+    rowBitmaps = arrayOfNulls(rows)
+    rowsToPaint = BooleanArray(rows) { true }
+  }
+
+  override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+    super.onSizeChanged(width, height, oldWidth, oldHeight)
+    if (width != oldWidth || height != oldHeight) resetRowCache()
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -280,6 +320,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   override fun onDetachedFromWindow() {
+    resetRowCache()
     removeCallbacks(cursorBlink)
     removeCallbacks(flingRunnable)
     actionMode?.finish()
@@ -294,6 +335,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     val glyphHeight = metrics.descent - metrics.ascent
     cellHeightPx = ceil((glyphHeight * 1.12f).toDouble()).toFloat().coerceAtLeast(1f)
     baselineOffsetPx = (cellHeightPx - glyphHeight) / 2f - metrics.ascent
+    resetRowCache()
     onCellMetricsChanged?.invoke()
     invalidate()
   }
@@ -333,10 +375,12 @@ internal class TerminalCanvasView(context: Context) : View(context) {
       else -> {
         paint.style = Paint.Style.FILL
         canvas.drawRect(left, top, right, bottom, paint)
-        val index = currentFrame.cursorY * currentFrame.cols + currentFrame.cursorX
-        val text = currentFrame.cellText[index]
+        val text = currentFrame.cells[currentFrame.cursorY].text[currentFrame.cursorX]
         if (text.isNotEmpty()) {
-          configureTextPaint(currentFrame.cellFlags[index], currentFrame.background)
+          configureTextPaint(
+            currentFrame.cells[currentFrame.cursorY].flags[currentFrame.cursorX],
+            currentFrame.background
+          )
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
         }
       }
@@ -476,7 +520,10 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     var first = -1
     var last = -1
     for (index in 0 until totalCells) {
-      if (currentFrame.cellFlags[index] and FLAG_SELECTED != 0) {
+      if (currentFrame.cells[index / currentFrame.cols].flags[index % currentFrame.cols] and
+        FLAG_SELECTED !=
+        0
+      ) {
         if (first < 0) first = index
         last = index
       }

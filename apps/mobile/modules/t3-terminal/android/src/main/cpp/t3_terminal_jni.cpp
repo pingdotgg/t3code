@@ -11,7 +11,7 @@
 namespace {
 
 constexpr uint32_t kSnapshotMagic = 0x54563354;  // "T3VT" in little endian.
-constexpr uint16_t kSnapshotVersion = 1;
+constexpr uint16_t kSnapshotVersion = 2;
 constexpr size_t kMaxScrollbackRows = 10000;
 
 enum CellFlag : uint16_t {
@@ -32,6 +32,7 @@ struct Session {
   GhosttyRenderStateRowIterator row_iterator = nullptr;
   GhosttyRenderStateRowCells row_cells = nullptr;
   std::vector<uint8_t> responses;
+  bool snapshot_full = true;
   std::mutex mutex;
 };
 
@@ -219,6 +220,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                        reinterpret_cast<const void*>(OnWritePty));
   ApplyTheme(session, foreground, background, cursor, env, palette);
+  session->snapshot_full = true;
   ghostty_terminal_resize(session->terminal, options.cols, options.rows,
                           static_cast<uint32_t>(std::max(cell_width, 1)),
                           static_cast<uint32_t>(std::max(cell_height, 1)));
@@ -251,6 +253,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeResize(
   auto* session = FromHandle(handle);
   if (session == nullptr) return env->NewByteArray(0);
   std::lock_guard<std::mutex> lock(session->mutex);
+  session->snapshot_full = true;
   ghostty_terminal_resize(session->terminal,
                           static_cast<uint16_t>(std::clamp(cols, 1, 65535)),
                           static_cast<uint16_t>(std::clamp(rows, 1, 65535)),
@@ -269,6 +272,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeScroll(JNIEnv*, jclass, jlong h
       .tag = GHOSTTY_SCROLL_VIEWPORT_DELTA,
       .value = {.delta = rows},
   };
+  session->snapshot_full = true;
   ghostty_terminal_scroll_viewport(session->terminal, scroll);
 }
 
@@ -280,6 +284,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSetTheme(
   if (session == nullptr) return;
   std::lock_guard<std::mutex> lock(session->mutex);
   ApplyTheme(session, foreground, background, cursor, env, palette);
+  session->snapshot_full = true;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -298,6 +303,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSelectWordAt(JNIEnv*, jclass,
       GHOSTTY_SUCCESS) {
     return JNI_FALSE;
   }
+  session->snapshot_full = true;
   return ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION,
                               &selection) == GHOSTTY_SUCCESS
              ? JNI_TRUE
@@ -314,6 +320,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeExtendSelection(
   selection.size = sizeof(selection);
   if (!ViewportGridRef(session, anchor_x, anchor_y, &selection.start)) return;
   if (!ViewportGridRef(session, x, y, &selection.end)) return;
+  session->snapshot_full = true;
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, &selection);
 }
 
@@ -328,6 +335,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSelectAll(JNIEnv*, jclass,
   if (ghostty_terminal_select_all(session->terminal, &selection) != GHOSTTY_SUCCESS) {
     return JNI_FALSE;
   }
+  session->snapshot_full = true;
   return ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION,
                               &selection) == GHOSTTY_SUCCESS
              ? JNI_TRUE
@@ -340,6 +348,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeClearSelection(JNIEnv*, jclass,
   auto* session = FromHandle(handle);
   if (session == nullptr) return;
   std::lock_guard<std::mutex> lock(session->mutex);
+  session->snapshot_full = true;
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
 }
 
@@ -417,7 +426,10 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
   }
   const auto cursor_color = colors.cursor_has_value ? colors.cursor : colors.foreground;
 
-  ByteWriter writer(32 + static_cast<size_t>(cols) * rows * 14);
+  GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+  ghostty_render_state_get(session->render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+  const bool full = session->snapshot_full || dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
+  ByteWriter writer(full ? 34 + static_cast<size_t>(cols) * rows * 14 : 34);
   writer.U32(kSnapshotMagic);
   writer.U16(kSnapshotVersion);
   writer.U16(cols);
@@ -427,7 +439,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
   writer.U8(cursor_visible && cursor_in_viewport ? 1 : 0);
   writer.U8(static_cast<uint8_t>(cursor_style));
   writer.U8(cursor_blinking ? 1 : 0);
-  writer.U8(0);
+  writer.U8(full ? 1 : 0);
   writer.U32(ArgbFromRgb(colors.foreground));
   writer.U32(ArgbFromRgb(colors.background));
   writer.U32(ArgbFromRgb(cursor_color));
@@ -438,14 +450,25 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
     return env->NewByteArray(0);
   }
 
+  ByteWriter cells(full ? static_cast<size_t>(cols) * rows * 14 : 0);
+  uint16_t changed_rows = 0;
   uint16_t written_rows = 0;
   while (written_rows < rows &&
          ghostty_render_state_row_iterator_next(session->row_iterator)) {
+    bool row_dirty = true;
+    ghostty_render_state_row_get(session->row_iterator, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &row_dirty);
+    if (!full && !row_dirty) {
+      ++written_rows;
+      continue;
+    }
     if (ghostty_render_state_row_get(session->row_iterator,
                                      GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                                      &session->row_cells) != GHOSTTY_SUCCESS) {
-      break;
+      session->snapshot_full = true;
+      return env->NewByteArray(0);
     }
+    cells.U16(written_rows);
+    ++changed_rows;
 
     uint16_t written_cols = 0;
     while (written_cols < cols && ghostty_render_state_row_cells_next(session->row_cells)) {
@@ -485,32 +508,47 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
       }
 
       const auto text_length = static_cast<uint16_t>(std::min<size_t>(utf8.size(), 65535));
-      writer.U32(ArgbFromRgb(foreground));
-      writer.U32(ArgbFromRgb(background));
-      writer.U16(StyleFlags(style, selected));
-      writer.U16(text_length);
+      cells.U32(ArgbFromRgb(foreground));
+      cells.U32(ArgbFromRgb(background));
+      cells.U16(StyleFlags(style, selected));
+      cells.U16(text_length);
       if (text_length != utf8.size()) utf8.resize(text_length);
-      writer.Bytes(utf8);
+      cells.Bytes(utf8);
       ++written_cols;
     }
 
     while (written_cols++ < cols) {
-      writer.U32(ArgbFromRgb(colors.foreground));
-      writer.U32(ArgbFromRgb(colors.background));
-      writer.U16(0);
-      writer.U16(0);
+      cells.U32(ArgbFromRgb(colors.foreground));
+      cells.U32(ArgbFromRgb(colors.background));
+      cells.U16(0);
+      cells.U16(0);
     }
+    bool clean = false;
+    ghostty_render_state_row_set(session->row_iterator, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean);
     ++written_rows;
   }
 
-  while (written_rows++ < rows) {
+  while (written_rows < rows) {
+    cells.U16(written_rows++);
+    ++changed_rows;
     for (uint16_t column = 0; column < cols; ++column) {
-      writer.U32(ArgbFromRgb(colors.foreground));
-      writer.U32(ArgbFromRgb(colors.background));
-      writer.U16(0);
-      writer.U16(0);
+      cells.U32(ArgbFromRgb(colors.foreground));
+      cells.U32(ArgbFromRgb(colors.background));
+      cells.U16(0);
+      cells.U16(0);
     }
   }
 
-  return ToJavaBytes(env, writer.Take());
+  writer.U16(changed_rows);
+  writer.Bytes(cells.Take());
+  const auto bytes = writer.Take();
+  auto result = ToJavaBytes(env, bytes);
+  if (result != nullptr) {
+    const auto clean = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+    ghostty_render_state_set(session->render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean);
+    session->snapshot_full = false;
+  } else {
+    session->snapshot_full = true;
+  }
+  return result;
 }

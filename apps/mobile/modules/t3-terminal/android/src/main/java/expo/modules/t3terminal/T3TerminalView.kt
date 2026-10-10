@@ -31,22 +31,20 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       val frame = if (terminalHandle !=
         0L
       ) {
-        TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle))
+        snapshotFrame()
       } else {
         null
       }
       val text = frame?.let { snapshot ->
         (0 until snapshot.rows).joinToString("\n") { row ->
           (0 until snapshot.cols).joinToString("") { col ->
-            snapshot.cellText[
-              row * snapshot.cols +
-                col
-            ]
+            snapshot.cells[row].text[col]
           }.trimEnd()
         }
       } ?: ""
       onCapture(mapOf("text" to text))
     }
+  private var terminalFrame: TerminalFrame? = null
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0
@@ -370,6 +368,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     if (terminalHandle == 0L) return
     GhosttyBridge.nativeDestroy(terminalHandle)
     terminalHandle = 0L
+    terminalFrame = null
     fedBuffer = ""
     terminalCanvas.resetSelectionState()
   }
@@ -396,9 +395,16 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
   private fun renderSnapshot() {
     if (terminalHandle == 0L) return
-    TerminalFrame.decode(
-      GhosttyBridge.nativeSnapshot(terminalHandle)
-    )?.let(terminalCanvas::setFrame)
+    snapshotFrame()
+  }
+
+  private fun snapshotFrame(): TerminalFrame? {
+    val next =
+      TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle), terminalFrame)
+        ?: return null
+    terminalFrame = next
+    terminalCanvas.setFrame(next)
+    return next
   }
 
   private fun emitResponse(response: ByteArray) {
