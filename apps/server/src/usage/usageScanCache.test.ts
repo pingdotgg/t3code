@@ -161,6 +161,16 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous)), TEST_FORMAT_MAP).size).toBe(0);
   });
 
+  it("drops Claude's locally generated messages from entries cached with them", () => {
+    const kept = record();
+    const encoded = encodeScanCache(
+      cacheWith([["/a.jsonl", 100, [kept, record({ model: "<synthetic>", dedupeKey: "msg_2:" })]]]),
+    );
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encoded)), TEST_FORMAT_MAP);
+    expect(restored.get("/a.jsonl")?.records).toEqual([kept]);
+  });
+
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([
