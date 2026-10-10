@@ -1,6 +1,7 @@
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
   type ModelSelection,
@@ -1088,6 +1089,42 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
           beforeOpen,
         }),
       ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 opens a session without the last agent's OOM kill", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const threadId = ThreadId.make("thread-provider-session-manager-oom-clear");
+    // The thread's previous agent was OOM-killed. The next session may run
+    // without a scope (Cursor, OpenCode), so it must not inherit that answer.
+    const oomKilledThreads = new Set<string>([threadId]);
+    const agentScope = {
+      ...AgentScope.defaultValue(),
+      oomKilled: (id: string) => Effect.sync(() => oomKilledThreads.has(id)),
+      clear: (id: string) => Effect.sync(() => void oomKilledThreads.delete(id)),
+    };
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.isFalse(yield* agentScope.oomKilled(threadId));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+      Effect.provideService(AgentScope, agentScope),
     );
   }),
 );

@@ -634,21 +634,21 @@ export const layerQueryRunner: Layer.Layer<
         // The SDK spawns a native binary as `path ...executableArgs ...sdkArgs`,
         // which lets the agent scope wrapper go in front of the CLI while the
         // SDK keeps its own stderr capture and exit reporting. The SDK runs a
-        // script entry through node instead, so those launch unwrapped. So
-        // does the SDK's bundled binary when no path is set.
+        // script entry through node instead, so those launch unwrapped.
         const binaryPath = input.options.pathToClaudeCodeExecutable;
-        const launch = yield* agentScope.wrap({
-          command: binaryPath ?? "claude",
-          args: [],
-          name: "claude",
-          threadId: input.threadId,
-          env: input.options.env,
-          unscoped:
-            binaryPath === undefined ||
-            CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext)),
-        });
+        const launch =
+          binaryPath === undefined ||
+          CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
+            ? undefined
+            : yield* agentScope.wrap({
+                command: binaryPath,
+                args: [],
+                name: "claude",
+                threadId: input.threadId,
+                env: input.options.env,
+              });
         const options =
-          launch.args.length === 0
+          launch === undefined || launch.args.length === 0
             ? input.options
             : {
                 ...input.options,

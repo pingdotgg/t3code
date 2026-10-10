@@ -18,8 +18,6 @@ export interface AgentScopeShape {
    * scope unit, for example "claude" or "terminal". `env` is the environment
    * the command will run with, used to resolve it on PATH. A command that does
    * not resolve stays unwrapped, so a missing binary still fails at spawn.
-   * Set `unscoped` for a launch that cannot be wrapped: the command comes back
-   * unchanged, and the thread's older scope no longer answers `oomKilled`.
    */
   readonly wrap: (input: {
     readonly command: string;
@@ -27,7 +25,6 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
-    readonly unscoped?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   /**
    * Whether the latest agent scope of this thread was killed because the
@@ -35,6 +32,12 @@ export interface AgentScopeShape {
    * thread launches its next agent, so a retried failure reads the same.
    */
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
+  /**
+   * Forgets the thread's scope. The session manager calls it before it opens
+   * a provider session, so a scope only answers for the session that launched
+   * it, even when the next session runs without one (Cursor, OpenCode).
+   */
+  readonly clear: (threadId: string) => Effect.Effect<void>;
 }
 
 export interface AgentScopeCommand {
@@ -46,6 +49,7 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
     oomKilled: () => Effect.succeed(false),
+    clear: () => Effect.void,
   }),
 });
 

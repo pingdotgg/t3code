@@ -2,7 +2,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeProcess from "node:process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -21,7 +20,6 @@ const running: ScopeState = {
   result: "success",
   oomKills: 0,
   populated: true,
-  changedMsAgo: 0,
 };
 
 describe("classifyScope", () => {
@@ -33,12 +31,6 @@ describe("classifyScope", () => {
     expect(classifyScope({ ...running, oomKills: 1 })).toBe("stopping");
     expect(classifyScope({ ...running, populated: false })).toBe("stopping");
     expect(classifyScope({ ...running, activeState: "deactivating" })).toBe("stopping");
-  });
-
-  it("ignores an OOM kill too old to explain the failure", () => {
-    const killed = { ...running, activeState: "failed", result: "oom-kill" };
-    expect(classifyScope({ ...killed, changedMsAgo: 5_000 })).toBe("oom-killed");
-    expect(classifyScope({ ...killed, changedMsAgo: 120_000 })).toBe("gone");
   });
 
   it("does not wait on a live agent or a scope that ended for another reason", () => {
@@ -63,12 +55,11 @@ describe("agentSliceMemoryLimits", () => {
 });
 
 // Runs the real service against a fake user manager. `units` holds the
-// ActiveState and Result that `systemctl show` reports for each scope, and
-// how long ago the scope changed state.
+// ActiveState and Result that `systemctl show` reports for each scope.
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
-    readonly units: Map<string, { activeState: string; result: string; changedMsAgo?: number }>;
+    readonly units: Map<string, { activeState: string; result: string }>;
   }) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
@@ -76,7 +67,7 @@ const withFakeSystemd = <A, E>(
     for (const name of ["systemd-run", "systemctl", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
-    const units = new Map<string, { activeState: string; result: string; changedMsAgo?: number }>();
+    const units = new Map<string, { activeState: string; result: string }>();
     const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -97,8 +88,7 @@ const withFakeSystemd = <A, E>(
           return output(
             state === undefined
               ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
-                  `StateChangeTimestampMonotonic=${monotonicUs() - (state.changedMsAgo ?? 0) * 1000}\n`,
+              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
           );
         }),
     });
@@ -112,46 +102,28 @@ const withFakeSystemd = <A, E>(
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-const monotonicUs = () => Number(NodeProcess.hrtime.bigint() / 1000n);
-
 const unitOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--unit="))?.slice("--unit=".length) ?? "";
 
 describe("AgentScope service", () => {
-  it.effect("labels a thread from its newest launch, even one without a scope", () =>
+  it.effect("labels a thread from its newest scope until its next session clears it", () =>
     withFakeSystemd(({ scope, units }) =>
       Effect.gen(function* () {
         const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
         units.set(unitOf(first), { activeState: "failed", result: "oom-kill" });
+        const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        units.set(unitOf(second), { activeState: "active", result: "success" });
+        // The older scope was OOM-killed, but the newest one is still running.
+        expect(yield* scope.oomKilled("a")).toBe(false);
+
+        units.set(unitOf(second), { activeState: "failed", result: "oom-kill" });
+        expect(yield* scope.oomKilled("a")).toBe(true);
+        // A retried failure reads the same, even after the failed unit is reset.
+        units.delete(unitOf(second));
         expect(yield* scope.oomKilled("a")).toBe(true);
 
-        const unscoped = yield* scope.wrap({
-          command: "agent",
-          args: ["x"],
-          name: "t",
-          threadId: "a",
-          unscoped: true,
-        });
-        expect(unscoped).toEqual({ command: "agent", args: ["x"] });
-        expect(yield* scope.oomKilled("a")).toBe(false);
-
-        const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        units.set(unitOf(second), { activeState: "failed", result: "oom-kill" });
-        yield* scope.wrap({ command: "missing", args: [], name: "t", threadId: "a" });
-        expect(yield* scope.oomKilled("a")).toBe(false);
-      }),
-    ),
-  );
-
-  it.effect("ignores an old OOM kill when the thread fails later without a new scope", () =>
-    withFakeSystemd(({ scope, units }) =>
-      Effect.gen(function* () {
-        const idle = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        units.set(unitOf(idle), {
-          activeState: "failed",
-          result: "oom-kill",
-          changedMsAgo: 10 * 60_000,
-        });
+        // The next session may run without a scope, for example on Cursor.
+        yield* scope.clear("a");
         expect(yield* scope.oomKilled("a")).toBe(false);
       }),
     ),
