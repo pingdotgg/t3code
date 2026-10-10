@@ -180,8 +180,8 @@ function resolveCompletionShell(
  * block and the block closes on its own line, so a trailing `# comment` or a
  * heredoc terminator in the command cannot swallow the sentinel. The shell
  * reads the whole block before running any of it, so a script that reads
- * stdin cannot consume the sentinel line either. Lines are separated by `\r`
- * because that is the Enter key for every shell's line editor.
+ * stdin cannot consume the sentinel line either. POSIX shells receive one
+ * input line so line editors cannot submit an incomplete block.
  */
 function wrapCommandForCompletion(
   command: string,
@@ -194,8 +194,15 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
-    case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+    case "posix": {
+      const escaped = command
+        .replace(/\r\n/g, "\n")
+        .replaceAll("\\", "\\\\")
+        .replaceAll("\r", "\\r")
+        .replaceAll("\n", "\\n")
+        .replaceAll("'", "'\\''");
+      return `( eval "$(printf '%b' '${escaped}')" ); printf '\\n${sentinel}%s\\n' "$?"`;
+    }
   }
 }
 
