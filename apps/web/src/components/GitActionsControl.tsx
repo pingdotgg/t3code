@@ -49,8 +49,13 @@ import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import {
   buildMenuItems,
+  resolveLinkedPullRequestForActions,
+  withLinkedPullRequest,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
   type GitActionProgressPresentation,
@@ -1152,7 +1157,33 @@ export default function GitActionsControl({
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = gitStatus;
+  // A thread's linked change request may live on a different ref than the checkout, so the
+  // ref-derived status misses it. Treat it as the open request so the menu does not offer to
+  // create a second one.
+  const linkedPullRequestStatus = useLinkedThreadPullRequest(
+    activeThreadRef?.environmentId ?? null,
+    activeServerThread?.linkedPullRequest,
+    true,
+    activeServerThread?.pullRequests,
+    activeServerThread?.branchPullRequest,
+  );
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(
+    activeThreadRef?.environmentId ?? null,
+  );
+  const gitStatusForActions = useMemo(() => {
+    const currentLink = supportsMultiplePullRequests
+      ? resolveThreadCurrentPullRequestLink(activeServerThread?.pullRequests ?? [])
+      : null;
+    return withLinkedPullRequest(
+      gitStatus,
+      resolveLinkedPullRequestForActions(linkedPullRequestStatus?.pr ?? null, currentLink),
+    );
+  }, [
+    gitStatus,
+    linkedPullRequestStatus,
+    supportsMultiplePullRequests,
+    activeServerThread?.pullRequests,
+  ]);
   // Matches the diff panel's Changes view. Older servers only report uncommitted totals.
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 

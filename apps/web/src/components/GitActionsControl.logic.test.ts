@@ -14,6 +14,8 @@ import {
   resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
+  resolveLinkedPullRequestForActions,
+  withLinkedPullRequest,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -1243,5 +1245,79 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+describe("withLinkedPullRequest", () => {
+  const linkedPr = {
+    number: 17521,
+    title: "Linked PR",
+    url: "https://example.com/pr/17521",
+    baseRef: "main",
+    headRef: "other/branch",
+    state: "open",
+  } as const;
+
+  it("hides the create-PR entry when the thread links a PR from another ref", () => {
+    const items = buildMenuItems(
+      withLinkedPullRequest(status({ aheadCount: 2, pr: null }), linkedPr),
+      false,
+    );
+    assert.deepEqual(
+      items.map((item) => item.id),
+      ["commit", "push"],
+    );
+  });
+
+  it("keeps an open ref-derived PR over the linked one", () => {
+    const own = { ...linkedPr, number: 1 };
+    assert.equal(withLinkedPullRequest(status({ pr: own }), linkedPr)?.pr?.number, 1);
+  });
+
+  it("prefers an open linked PR over a closed or merged ref-derived one", () => {
+    const stale = { ...linkedPr, number: 1, state: "merged" } as const;
+    assert.equal(withLinkedPullRequest(status({ pr: stale }), linkedPr)?.pr?.number, 17521);
+  });
+
+  it("ignores a closed linked PR", () => {
+    const base = status({ pr: null });
+    assert.equal(withLinkedPullRequest(base, { ...linkedPr, state: "closed" }), base);
+  });
+
+  it("passes status through without a linked PR or status", () => {
+    const base = status({ pr: null });
+    assert.equal(withLinkedPullRequest(base, null), base);
+    assert.equal(withLinkedPullRequest(null, linkedPr), null);
+  });
+});
+
+describe("resolveLinkedPullRequestForActions", () => {
+  const unsyncedLink = {
+    number: 17521,
+    url: "https://example.com/pr/17521",
+    snapshot: null,
+  } as unknown as Parameters<typeof resolveLinkedPullRequestForActions>[1];
+
+  it("treats a link that has not synced yet as open", () => {
+    const pr = resolveLinkedPullRequestForActions(null, unsyncedLink);
+    assert.equal(pr?.state, "open");
+    assert.equal(pr?.number, 17521);
+  });
+
+  it("prefers the synced status, and ignores synced links with no status", () => {
+    const synced = {
+      number: 2,
+      url: "u",
+      title: "t",
+      baseRef: "a",
+      headRef: "b",
+      state: "open",
+    } as const;
+    assert.equal(resolveLinkedPullRequestForActions(synced, unsyncedLink), synced);
+    assert.equal(
+      resolveLinkedPullRequestForActions(null, { ...unsyncedLink, snapshot: {} } as never),
+      null,
+    );
+    assert.equal(resolveLinkedPullRequestForActions(null, null), null);
   });
 });

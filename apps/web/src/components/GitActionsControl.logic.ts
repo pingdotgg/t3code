@@ -1,6 +1,7 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  ThreadPullRequestLink,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -153,6 +154,41 @@ export function buildGitActionProgressStages(input: {
     return [...branchStages, ...commitStages, pushStage];
   }
   return [...branchStages, ...commitStages, pushStage, ...prStages];
+}
+
+/**
+ * The thread's linked request as the action menu should see it. A link that has not synced yet
+ * has no snapshot; like the sidebar, treat it as open rather than offering to create another.
+ */
+export function resolveLinkedPullRequestForActions(
+  synced: VcsStatusResult["pr"],
+  currentLink: ThreadPullRequestLink | null,
+): VcsStatusResult["pr"] {
+  if (synced) return synced;
+  if (currentLink === null || currentLink.snapshot !== null) return null;
+  return {
+    number: currentLink.number,
+    url: currentLink.url,
+    title: `#${currentLink.number}`,
+    baseRef: "unknown",
+    headRef: "unknown",
+    state: "open",
+  };
+}
+
+/**
+ * Falls back to the thread's linked change request when the ref-derived status has no open one.
+ * The server reports the latest closed or merged request for a ref when none is open, so only an
+ * open ref-derived request takes precedence over an open linked one.
+ */
+export function withLinkedPullRequest(
+  gitStatus: VcsStatusResult | null,
+  linkedPr: VcsStatusResult["pr"],
+): VcsStatusResult | null {
+  if (!gitStatus || gitStatus.pr?.state === "open" || linkedPr?.state !== "open") {
+    return gitStatus;
+  }
+  return { ...gitStatus, pr: linkedPr };
 }
 
 export function buildMenuItems(
