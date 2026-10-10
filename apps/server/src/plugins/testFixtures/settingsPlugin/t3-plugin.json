@@ -1,0 +1,38 @@
+{
+  "id": "test.settings",
+  "name": "Settings fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "proposedApi": true,
+  "capabilities": ["settings"],
+  "settings": [
+    { "type": "text", "key": "apiUrl", "label": "API URL", "default": "https://api.example.com" },
+    {
+      "type": "secret",
+      "key": "token",
+      "label": "API token",
+      "description": "Sent with every request."
+    },
+    { "type": "boolean", "key": "verbose", "label": "Verbose logging", "default": false },
+    {
+      "type": "number",
+      "key": "retries",
+      "label": "Retries",
+      "default": 2,
+      "min": 0,
+      "max": 5,
+      "integer": true
+    },
+    {
+      "type": "select",
+      "key": "mode",
+      "label": "Mode",
+      "default": "safe",
+      "options": [
+        { "value": "safe", "label": "Safe" },
+        { "value": "fast", "label": "Fast" }
+      ]
+    }
+  ]
+}

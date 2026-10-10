@@ -26,6 +26,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ContributionStatusSnapshot } from "./contributionStatus.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -343,6 +344,43 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
+  PluginAddInput,
+  PluginCatalogError,
+  PluginCatalogSnapshot,
+  PluginConsentInput,
+  PluginInstallationInput,
+  PluginInstallationResult,
+  PluginRefreshInput,
+  PluginRemoveResult,
+} from "./pluginCatalog.ts";
+import {
+  PluginSettingsInput,
+  PluginSettingsUpdateInput,
+  PluginSettingsValues,
+} from "./pluginSettings.ts";
+import {
+  PluginActionError,
+  PluginActionInvokeInput,
+  PluginActionInvokeResult,
+  PluginActionsSnapshot,
+} from "./pluginActions.ts";
+import {
+  PluginViewBundle,
+  PluginViewBundleInput,
+  PluginViewCallInput,
+  PluginViewCallResult,
+  PluginViewError,
+  PluginViewsSnapshot,
+} from "./pluginViews.ts";
+import {
+  PluginNpmAddInput,
+  PluginNpmApplyUpdateInput,
+  PluginNpmInstallationResult,
+  PluginNpmListResult,
+  PluginNpmPackageResult,
+  PluginNpmStageUpdateInput,
+} from "./pluginNpm.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -515,6 +553,36 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
+  // Trusted local plugins (gated on the `plugins` environment capability)
+  pluginsList: "plugins.list",
+  pluginsSubscribe: "plugins.subscribe",
+  pluginsAdd: "plugins.add",
+  pluginsRefresh: "plugins.refresh",
+  pluginsConsent: "plugins.consent",
+  pluginsEnable: "plugins.enable",
+  pluginsDisable: "plugins.disable",
+  pluginsRemove: "plugins.remove",
+  pluginsResume: "plugins.resume",
+  // Plugin setting values (gated on the `pluginSettings` environment capability)
+  pluginsSettingsSubscribe: "plugins.settings.subscribe",
+  pluginsSettingsUpdate: "plugins.settings.update",
+
+  // Plugin actions (gated on the `pluginActions` environment capability)
+  pluginActionsSubscribe: "pluginActions.subscribe",
+  pluginActionsInvoke: "pluginActions.invoke",
+
+  // Isolated plugin views (gated on the `pluginViews` environment capability)
+  pluginViewsSubscribe: "pluginViews.subscribe",
+  pluginViewsReadBundle: "pluginViews.readBundle",
+  pluginViewsCall: "pluginViews.call",
+
+  // npm installs (gated on the `pluginNpm` environment capability)
+  pluginsNpmList: "plugins.npm.list",
+  pluginsNpmAdd: "plugins.npm.add",
+  pluginsNpmStageUpdate: "plugins.npm.stageUpdate",
+  pluginsNpmApplyUpdate: "plugins.npm.applyUpdate",
+  pluginsNpmDiscardUpdate: "plugins.npm.discardUpdate",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -574,6 +642,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeContributionStatus: "subscribeContributionStatus",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1803,6 +1872,160 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
     error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
   },
 );
+const pluginRpcError = Schema.Union([PluginCatalogError, EnvironmentAuthorizationError]);
+
+const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+/** One snapshot on subscribe, then a fresh one after every catalogue or plugin state change. */
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+  stream: true,
+});
+
+/** Reads the manifest and digests the directory; runs nothing. */
+const WsPluginsAddRpc = Rpc.make(WS_METHODS.pluginsAdd, {
+  payload: PluginAddInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Inspects the bytes again; an enabled installation whose bytes changed is stopped. */
+const WsPluginsRefreshRpc = Rpc.make(WS_METHODS.pluginsRefresh, {
+  payload: PluginRefreshInput,
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+const WsPluginsConsentRpc = Rpc.make(WS_METHODS.pluginsConsent, {
+  payload: PluginConsentInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsEnableRpc = Rpc.make(WS_METHODS.pluginsEnable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsDisableRpc = Rpc.make(WS_METHODS.pluginsDisable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/**
+ * Disables and forgets the installation and deletes its saved settings and
+ * storage. A directory added by path is left untouched; the server's copy of
+ * an npm installation is deleted.
+ */
+const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
+  payload: PluginInstallationInput,
+  success: PluginRemoveResult,
+  error: pluginRpcError,
+});
+
+/** Clears backoff, quarantine, or incompatibility; the next use starts a fresh process. */
+const WsPluginsResumeRpc = Rpc.make(WS_METHODS.pluginsResume, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** The installation's saved values now, then after every change; fails `not-found` once it is removed. */
+const WsPluginsSettingsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSettingsSubscribe, {
+  payload: PluginSettingsInput,
+  success: PluginSettingsValues,
+  error: pluginRpcError,
+  stream: true,
+});
+
+/** Saves or clears values; all changes are checked before any is saved. Never echoes a secret. */
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsValues,
+  error: pluginRpcError,
+});
+
+const pluginActionRpcError = Schema.Union([PluginActionError, EnvironmentAuthorizationError]);
+
+/** The actions of every enabled plugin now, then a fresh list after every change. */
+const WsPluginActionsSubscribeRpc = Rpc.make(WS_METHODS.pluginActionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginActionsSnapshot,
+  error: pluginActionRpcError,
+  stream: true,
+});
+
+/** Runs one listed action against its target; starts the plugin if it is not running. */
+const WsPluginActionsInvokeRpc = Rpc.make(WS_METHODS.pluginActionsInvoke, {
+  payload: PluginActionInvokeInput,
+  success: PluginActionInvokeResult,
+  error: pluginActionRpcError,
+});
+
+const pluginViewRpcError = Schema.Union([PluginViewError, EnvironmentAuthorizationError]);
+
+/** The views enabled plugins offer now, then a fresh snapshot after every change. */
+const WsPluginViewsSubscribeRpc = Rpc.make(WS_METHODS.pluginViewsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginViewsSnapshot,
+  error: pluginViewRpcError,
+  stream: true,
+});
+
+/** The consented bytes of one view of the given installation generation. */
+const WsPluginViewsReadBundleRpc = Rpc.make(WS_METHODS.pluginViewsReadBundle, {
+  payload: PluginViewBundleInput,
+  success: PluginViewBundle,
+  error: pluginViewRpcError,
+});
+
+/** A mounted view's call into its own plugin's `view:<viewId>:<handler>` handler. */
+const WsPluginViewsCallRpc = Rpc.make(WS_METHODS.pluginViewsCall, {
+  payload: PluginViewCallInput,
+  success: PluginViewCallResult,
+  error: pluginViewRpcError,
+});
+
+const WsPluginsNpmListRpc = Rpc.make(WS_METHODS.pluginsNpmList, {
+  payload: Schema.Struct({}),
+  success: PluginNpmListResult,
+  error: pluginRpcError,
+});
+
+/** Downloads, verifies, and unpacks one exact version, then adds it like a directory; runs nothing. */
+const WsPluginsNpmAddRpc = Rpc.make(WS_METHODS.pluginsNpmAdd, {
+  payload: PluginNpmAddInput,
+  success: PluginNpmInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Downloads a version next to the installed one; the installed one keeps running. */
+const WsPluginsNpmStageUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmStageUpdate, {
+  payload: PluginNpmStageUpdateInput,
+  success: PluginNpmPackageResult,
+  error: pluginRpcError,
+});
+
+/** Consents to the staged digest and swaps it in, restoring the old version on failure. */
+const WsPluginsNpmApplyUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmApplyUpdate, {
+  payload: PluginNpmApplyUpdateInput,
+  success: PluginNpmInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsNpmDiscardUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmDiscardUpdate, {
+  payload: PluginInstallationInput,
+  success: PluginNpmPackageResult,
+  error: pluginRpcError,
+});
 
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
@@ -1821,6 +2044,14 @@ const WsSubscribeBackgroundPolicyRpc = Rpc.make(WS_METHODS.subscribeBackgroundPo
 const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTelemetry, {
   payload: Schema.Struct({}),
   success: ResourceTelemetrySnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+/** Streams every live thread status in the environment: one snapshot on subscribe, then a full replacement after each change. Gated by the `contributionStatus` capability. */
+const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributionStatus, {
+  payload: Schema.Struct({}),
+  success: ContributionStatusSnapshot,
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -1895,6 +2126,27 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsPluginsListRpc,
+  WsPluginsSubscribeRpc,
+  WsPluginsAddRpc,
+  WsPluginsRefreshRpc,
+  WsPluginsConsentRpc,
+  WsPluginsEnableRpc,
+  WsPluginsDisableRpc,
+  WsPluginsRemoveRpc,
+  WsPluginsResumeRpc,
+  WsPluginsSettingsSubscribeRpc,
+  WsPluginsSettingsUpdateRpc,
+  WsPluginActionsSubscribeRpc,
+  WsPluginActionsInvokeRpc,
+  WsPluginViewsSubscribeRpc,
+  WsPluginViewsReadBundleRpc,
+  WsPluginViewsCallRpc,
+  WsPluginsNpmListRpc,
+  WsPluginsNpmAddRpc,
+  WsPluginsNpmStageUpdateRpc,
+  WsPluginsNpmApplyUpdateRpc,
+  WsPluginsNpmDiscardUpdateRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
@@ -2010,6 +2262,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeContributionStatusRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnItemRpc,
