@@ -21,6 +21,37 @@ const weekly = {
 const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
+  it("updates a balance without a quota change and preserves it across window-only events", () => {
+    const credits = { hasCredits: true, unlimited: false, balance: "42" };
+    const next = applyUsageLimitsUpdate({
+      previous: published,
+      checkedAt,
+      update: { windows: [], credits },
+    });
+    expect(next?.credits).toEqual(credits);
+    expect(next?.windows).toEqual(published.windows);
+    const windowUpdate = applyUsageLimitsUpdate({
+      previous: next,
+      checkedAt,
+      update: { windows: [{ ...session, usedPercent: 80 }] },
+    });
+    expect(windowUpdate?.credits).toEqual(credits);
+    expect(
+      applyUsageLimitsUpdate({
+        previous: windowUpdate,
+        checkedAt,
+        update: { windows: [], credits: { ...credits } },
+      }),
+    ).toBe(windowUpdate);
+    expect(
+      applyUsageLimitsUpdate({
+        previous: windowUpdate,
+        checkedAt,
+        update: { windows: [], credits: null },
+      })?.credits,
+    ).toBeNull();
+  });
+
   it("returns the published object itself when no window moved", () => {
     // Codex repeats the same numbers beside every token-usage tick; the
     // ingestion path relies on identity to skip the publish.
@@ -86,4 +117,13 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
   });
+});
+
+it("replaces the old account balance after a successful full probe", () => {
+  const previous = { ...published, credits: { hasCredits: true, unlimited: false, balance: "42" } };
+  expect(
+    resolveUsageLimitsAfterProbe({ published: previous, probed: published })?.credits,
+  ).toBeUndefined();
+  const next = { ...published, credits: { hasCredits: false, unlimited: false, balance: "0" } };
+  expect(resolveUsageLimitsAfterProbe({ published: previous, probed: next })).toBe(next);
 });

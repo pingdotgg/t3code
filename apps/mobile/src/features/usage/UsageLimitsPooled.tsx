@@ -7,6 +7,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   cursorUsageWindowDetails,
+  creditBalanceLabel,
   displayLimitWindows,
   formatDuration,
   formatResetsIn,
@@ -274,6 +275,36 @@ export function UsageLimitsSection({
                   />
                 );
               })}
+              {pool.driver === "codex"
+                ? pool.accounts.map((account) =>
+                    account.limits.credits ? (
+                      <View
+                        key={account.key}
+                        className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4"
+                      >
+                        <View className="flex-row flex-wrap items-center gap-2">
+                          <Text className="text-sm font-t3-medium text-foreground">
+                            ChatGPT credits
+                          </Text>
+                          {pool.accounts.length > 1 ? (
+                            <Text className="text-xs text-foreground-muted">
+                              {accountName(account)}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Text
+                          selectable
+                          className="text-xl font-t3-medium tabular-nums text-foreground"
+                        >
+                          {creditBalanceLabel(account.limits.credits)}
+                        </Text>
+                        <Text className="text-xs text-foreground-muted">
+                          Separate from your plan allowance and reset credits.
+                        </Text>
+                      </View>
+                    ) : null,
+                  )
+                : null}
             </View>
           </Fragment>
         );

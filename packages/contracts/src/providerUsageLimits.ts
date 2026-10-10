@@ -40,6 +40,15 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
+/** Spendable account credits, separate from subscription windows and earned resets. */
+export const ServerProviderCredits = Schema.Struct({
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  /** Decimal credit units as reported by the provider, not a currency amount. */
+  balance: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderCredits = typeof ServerProviderCredits.Type;
+
 /**
  * Subscription usage the provider knows about the signed-in account.
  *
@@ -53,6 +62,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
   /** Provider-owned usage settings when quota windows are not available to the client. */
   externalUsage: Schema.optional(
     Schema.Struct({
@@ -77,6 +87,8 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
  */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  /** Omitted means unchanged; null clears a previously reported balance. */
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 

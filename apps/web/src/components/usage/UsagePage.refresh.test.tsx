@@ -286,3 +286,57 @@ it("keeps manual refresh busy until the already-running automatic check settles"
   }
   expect(button().props["aria-busy"]).toBe(false);
 });
+
+it("refreshes the account credit balance independently of an exhausted allowance", async () => {
+  const [id, presentation] = [...state.presentations][0]!;
+  const provider = presentation.serverConfig.providers[0];
+  const presentBalance = (balance: string | null) => {
+    state.presentations = new Map([
+      [
+        id,
+        {
+          ...presentation,
+          serverConfig: {
+            providers: [
+              {
+                ...provider,
+                usageLimits: {
+                  ...provider.usageLimits,
+                  windows: [{ ...provider.usageLimits.windows[0], usedPercent: 100 }],
+                  credits:
+                    balance === null ? null : { hasCredits: true, unlimited: false, balance },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+  };
+  const text = () =>
+    JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value));
+  presentBalance("12345.67");
+  await act(() => {
+    renderer = create(<UsagePage />);
+  });
+  expect(text()).toContain("ChatGPT credits");
+  expect(text()).toContain(
+    `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(12345.67)} remaining`,
+  );
+  state.refreshProviders.mockImplementationOnce(async () => {
+    presentBalance("42");
+  });
+  await act(async () => {
+    renderer.root
+      .findAllByProps({ "aria-label": "Refresh limits" })
+      .find((node) => node.type === "button")!
+      .props.onClick();
+  });
+  expect(text()).toContain("42 remaining");
+  expect(text()).not.toContain("12,345.67");
+  presentBalance(null);
+  await act(() => {
+    renderer.update(<UsagePage />);
+  });
+  expect(text()).not.toContain("ChatGPT credits");
+});

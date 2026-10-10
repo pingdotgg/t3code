@@ -8,6 +8,7 @@
  */
 import type {
   ProviderUsageLimitsUpdate,
+  ServerProviderCredits,
   ServerProviderResetCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
@@ -31,6 +32,23 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+  readonly credits?: {
+    readonly hasCredits: boolean;
+    readonly unlimited: boolean;
+    readonly balance?: string | null;
+  } | null;
+}
+
+function codexCredits(credits: CodexRateLimitSnapshot["credits"]): ServerProviderCredits | null {
+  if (!credits) return null;
+  const balance = credits.balance?.trim();
+  return {
+    hasCredits: credits.hasCredits,
+    unlimited: credits.unlimited,
+    ...(balance && /^\d+(?:\.\d+)?$/.test(balance) && Number.isFinite(Number(balance))
+      ? { balance }
+      : {}),
+  };
 }
 
 /** Structural view of the read response's `rateLimitResetCredits`. */
@@ -124,21 +142,31 @@ export function codexRateLimitsToLimits(input: {
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
   // Select the main bucket explicitly; the legacy snapshot can name another limit.
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(snapshot);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...((!snapshot.limitId || snapshot.limitId === "codex") && snapshot.credits !== undefined
+      ? { credits: codexCredits(snapshot.credits) }
+      : {}),
   };
 }
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
+  if (snapshot.limitId && snapshot.limitId !== "codex") return undefined;
   const windows = codexRateLimitsToWindows(snapshot);
-  return windows.length > 0 ? { windows } : undefined;
+  return windows.length > 0 || snapshot.credits !== undefined
+    ? {
+        windows,
+        ...(snapshot.credits !== undefined ? { credits: codexCredits(snapshot.credits) } : {}),
+      }
+    : undefined;
 }
 
 /**
@@ -182,6 +210,7 @@ export function mergeCodexRateLimits(
       : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
+    ...(update.credits !== undefined ? { credits: update.credits } : {}),
   };
 }
 

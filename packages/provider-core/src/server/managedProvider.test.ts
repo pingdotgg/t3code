@@ -657,4 +657,58 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+  it.effect("does not retain another account's credit balance after a failed usage probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const auth = {
+          status: "authenticated",
+          type: "chatgpt",
+          email: "first@example.com",
+        } as const;
+        const old = {
+          ...refreshedSnapshot,
+          auth,
+          usageLimits: {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            credits: { hasCredits: true, unlimited: false, balance: "42" },
+          },
+        };
+        const failed = {
+          ...old,
+          auth: { ...auth, email: " FIRST@example.com " },
+          usageLimits: {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" as const },
+          },
+        };
+        const next = yield* Ref.make<ServerProvider>(failed);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, current) => previous.enabled !== current.enabled,
+          initialSnapshot: () => Effect.succeed(old),
+          checkProvider: Ref.get(next),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        assert.strictEqual((yield* provider.getSnapshot).usageLimits?.credits?.balance, "42");
+        yield* Ref.set(next, { ...failed, auth: { status: "unknown" } });
+        assert.isUndefined((yield* provider.refresh).usageLimits?.credits);
+        yield* Ref.set(next, old);
+        yield* provider.refresh;
+        yield* Ref.set(next, { ...failed, auth: { ...auth, workspaceId: "different-workspace" } });
+        assert.isUndefined((yield* provider.refresh).usageLimits?.credits);
+        yield* Ref.set(next, old);
+        yield* provider.refresh;
+        yield* Ref.set(next, { ...failed, auth: { ...auth, email: "second@example.com" } });
+        const switched = yield* provider.refresh;
+        assert.strictEqual(switched.auth.email, "second@example.com");
+        assert.isUndefined(switched.usageLimits?.credits);
+        assert.strictEqual(switched.usageLimits?.unavailable?.reason, "probeFailed");
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });

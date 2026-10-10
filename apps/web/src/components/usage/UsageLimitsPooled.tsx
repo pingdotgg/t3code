@@ -5,6 +5,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   cursorUsageWindowDetails,
+  creditBalanceLabel,
   displayLimitWindows,
   formatResetsIn,
   type LimitAccount,
@@ -560,6 +561,31 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+      {pool.driver === "codex"
+        ? pool.accounts.map((account) =>
+            account.limits.credits ? (
+              <div
+                key={account.key}
+                className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-lg border border-border/60 p-4"
+              >
+                <div className="min-w-0 space-y-1">
+                  <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    ChatGPT credits
+                    {pool.accounts.length > 1 ? (
+                      <AccountName account={account} className="text-muted-foreground" />
+                    ) : null}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Separate from your plan allowance and reset credits.
+                  </p>
+                </div>
+                <span className="text-lg font-medium text-foreground tabular-nums">
+                  {creditBalanceLabel(account.limits.credits)}
+                </span>
+              </div>
+            ) : null,
+          )
+        : null}
     </section>
   );
 }

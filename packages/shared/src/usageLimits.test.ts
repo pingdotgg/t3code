@@ -25,6 +25,7 @@ import {
   providersWithLimits,
   remainingPercent,
   usesChatGptSharing,
+  creditBalanceLabel,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -81,6 +82,28 @@ describe("pace", () => {
 });
 
 describe("limitsNotice", () => {
+  it("keeps credit-only accounts visible without inventing a quota bar", () => {
+    const limits = {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [],
+      credits: { hasCredits: true, unlimited: false, balance: "42" },
+    };
+    expect(limitsNotice(limits)).toBeNull();
+    const presentations = new Map([
+      [
+        EnvironmentId.make("credits"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [provider({ usageLimits: limits })] },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(presentations);
+    expect(accounts).toHaveLength(1);
+    expect(collectLimitPools(accounts, now)[0]?.windows).toEqual([]);
+    expect(accounts[0]?.limits.credits?.balance).toBe("42");
+  });
+
   it("explains empty bars and passes provider messages through", () => {
     const checkedAt = "2026-09-03T11:00:00.000Z";
     expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
@@ -96,6 +119,160 @@ describe("limitsNotice", () => {
       }),
     ).toBe("Codex timed out.");
   });
+});
+
+describe("credit balances", () => {
+  it("formats finite credit units separately from unknown and unlimited balances", () => {
+    const credits = { hasCredits: true, unlimited: false };
+    expect(creditBalanceLabel({ ...credits, balance: "12345.6789" })).toBe(
+      `${(12345.68).toLocaleString(undefined, { maximumFractionDigits: 2 })} remaining`,
+    );
+    expect(creditBalanceLabel({ ...credits, balance: "0.001" })).toBe(
+      `<${(0.01).toLocaleString()} remaining`,
+    );
+    expect(creditBalanceLabel({ ...credits, balance: "0" })).toBe("0 remaining");
+    expect(creditBalanceLabel(credits)).toBe("Available · balance not reported");
+    expect(creditBalanceLabel({ ...credits, balance: "invalid" })).toBe(
+      "Available · balance not reported",
+    );
+    expect(creditBalanceLabel({ ...credits, hasCredits: false })).toBe("No credits remaining");
+    expect(creditBalanceLabel({ ...credits, unlimited: true, balance: "0" })).toBe("Unlimited");
+  });
+
+  it("shows one balance per account, keeps a known value when another source omits it, and honors a later clear", () => {
+    const oldLimits = {
+      checkedAt: "2026-09-03T10:00:00.000Z",
+      windows: [window],
+      credits: { hasCredits: true, unlimited: false, balance: "42" },
+    };
+    const newerLimits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+    const makePresentations = (credits?: typeof oldLimits.credits | null) =>
+      new Map([
+        [
+          EnvironmentId.make("desktop"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "test@example.com" },
+                  usageLimits: oldLimits,
+                }),
+              ],
+            },
+          },
+        ],
+        [
+          EnvironmentId.make("laptop"),
+          {
+            entry: { target: { label: "Laptop" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "test@example.com" },
+                  usageLimits: { ...newerLimits, ...(credits !== undefined ? { credits } : {}) },
+                }),
+              ],
+            },
+          },
+        ],
+      ]);
+    const accounts = collectLimitAccounts(makePresentations());
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.credits?.balance).toBe("42");
+    expect(
+      collectLimitAccounts(makePresentations({ ...oldLimits.credits, balance: "20" }))[0]?.limits
+        .credits?.balance,
+    ).toBe("20");
+    expect(collectLimitAccounts(makePresentations(null))[0]?.limits.credits).toBeNull();
+  });
+  it.each([
+    ["native", null],
+    ["source", null],
+    ["native", { hasCredits: true, unlimited: false, balance: "20" }],
+    ["source", { hasCredits: true, unlimited: false, balance: "20" }],
+  ] as const)(
+    "honors a newer %s credit-only snapshot and retains the freshest quota windows",
+    (kind, credits) => {
+      const oldLimits = {
+        checkedAt: "2026-09-03T10:00:00.000Z",
+        windows: [window],
+        credits: { hasCredits: true, unlimited: false, balance: "42" },
+      };
+      const cleared = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [], credits };
+      const auth = { status: "authenticated", email: "test@example.com" } as const;
+      const newer = {
+        entry: { target: { label: "Laptop" } },
+        serverConfig: {
+          providers: kind === "native" ? [provider({ auth, usageLimits: cleared })] : [],
+          usageLimitSources:
+            kind === "source"
+              ? [
+                  {
+                    id: UsageLimitSourceId.make("hub"),
+                    kind: "cliproxy" as const,
+                    label: "hub",
+                    checkedAt: cleared.checkedAt,
+                    accounts: [
+                      {
+                        id: "account",
+                        driver: ProviderDriverKind.make("codex"),
+                        email: auth.email,
+                        usageLimits: cleared,
+                      },
+                    ],
+                  },
+                ]
+              : [],
+        },
+      };
+      const older = {
+        entry: { target: { label: "Desktop" } },
+        serverConfig: {
+          providers: [provider({ auth, usageLimits: oldLimits })],
+          usageLimitSources: [],
+        },
+      };
+      const middle = {
+        entry: { target: { label: "Tablet" } },
+        serverConfig: {
+          providers: [
+            provider({
+              auth,
+              usageLimits: {
+                checkedAt: "2026-09-03T10:30:00.000Z",
+                windows: [{ ...window, usedPercent: 60 }],
+              },
+            }),
+          ],
+          usageLimitSources: [],
+        },
+      };
+      const entries = [
+        [EnvironmentId.make("desktop"), older],
+        [EnvironmentId.make("laptop"), newer],
+        [EnvironmentId.make("tablet"), middle],
+      ] as const;
+      for (const order of [entries, entries.toReversed()]) {
+        const accounts = collectLimitAccounts(new Map(order));
+        expect(accounts).toHaveLength(1);
+        expect(accounts[0]?.limits.credits).toEqual(credits);
+        expect(accounts[0]?.limits.windows).toEqual([{ ...window, usedPercent: 60 }]);
+      }
+      const lone = collectLimitAccounts(new Map([[EnvironmentId.make("laptop"), newer]]));
+      expect(lone).toHaveLength(credits === null ? 0 : 1);
+      if (credits !== null) {
+        expect(lone[0]?.limits.credits).toEqual(credits);
+        expect(lone[0]?.limits.windows).toEqual([]);
+      }
+      older.serverConfig.providers = [
+        provider({ auth, usageLimits: { ...oldLimits, windows: [] } }),
+      ];
+      const withoutWindows = collectLimitAccounts(new Map(entries.slice(0, 2)));
+      expect(withoutWindows).toHaveLength(credits === null ? 0 : 1);
+      expect(withoutWindows[0]?.limits.windows ?? []).toEqual([]);
+    },
+  );
 });
 
 describe("providersWithLimits", () => {
@@ -501,7 +678,11 @@ describe("pools", () => {
       provider({
         instanceId: ProviderInstanceId.make(instanceId),
         auth: { status: "authenticated", email: "same@example.com", workspaceId },
-        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+        usageLimits: {
+          checkedAt,
+          windows: [{ ...weekly, usedPercent }],
+          credits: { hasCredits: true, unlimited: false, balance: String(usedPercent) },
+        },
       });
     const hubAccount = (id: string, workspaceId?: string) => ({
       id,
@@ -540,6 +721,11 @@ describe("pools", () => {
       "hub:x.json",
     ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
+    expect(accounts.map((account) => account.limits.credits?.balance)).toEqual([
+      "8",
+      "26",
+      undefined,
+    ]);
     // One hub file name in two workspaces stays two accounts, even without an
     // email to tell them apart.
     const withoutEmail = (id: string, workspaceId: string) => {
