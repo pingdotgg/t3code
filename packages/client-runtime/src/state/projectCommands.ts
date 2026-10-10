@@ -13,7 +13,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import { type EnvironmentRpcInput, request, requestGuarded } from "../rpc/client.ts";
+import {
+  type EnvironmentRpcInput,
+  type EnvironmentRpcSuccess,
+  request,
+  requestGuarded,
+} from "../rpc/client.ts";
 import type { EnvironmentProject } from "./models.ts";
 import {
   createAtomCommandScheduler,
@@ -52,6 +57,17 @@ export interface OptimisticProjectFileTarget {
 
 function optimisticProjectFileKey(target: OptimisticProjectFileTarget): string {
   return JSON.stringify([target.environmentId, target.cwd, target.relativePath]);
+}
+
+function writtenFilePaths(
+  input: EnvironmentRpcInput<typeof WS_METHODS.projectsWriteFile>,
+  result: EnvironmentRpcSuccess<typeof WS_METHODS.projectsWriteFile>,
+) {
+  return new Set(
+    [result.relativePath, input.relativePath].map((path) =>
+      resolveWorkspaceFilePath(path, input.cwd),
+    ),
+  );
 }
 
 /** The Scratch project was created, but its event never reached this client. */
@@ -195,17 +211,14 @@ export function createProjectEnvironmentAtoms<R, E>(
       },
       execute: (input) =>
         requestGuarded(WS_METHODS.projectsWriteFile, input).pipe(
-          Effect.tap(() =>
-            fileMetadata.invalidate(resolveWorkspaceFilePath(input.relativePath, input.cwd)),
+          Effect.tap((result) =>
+            Effect.forEach(writtenFilePaths(input, result), fileMetadata.invalidate),
           ),
         ),
-      onSuccess: ({ environmentId, input }, registry) =>
+      onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
-          fileMetadata.refreshPath(
-            environmentId,
-            resolveWorkspaceFilePath(input.relativePath, input.cwd),
-            registry,
-          );
+          for (const path of writtenFilePaths(input, result))
+            fileMetadata.refreshPath(environmentId, path, registry);
         }),
     }),
   };
