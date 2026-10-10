@@ -81,6 +81,7 @@ import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
+  composerStateForReturningDraft,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
@@ -1830,9 +1831,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const holdingUserInput = incomingPendingUserInputs[0]
     ? heldRequestIds.has(incomingPendingUserInputs[0].requestId)
     : false;
-  const pendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
-  const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
-  const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  // The panel shows a question once it is no longer held. The editor, Send and
+  // attachments belong to it unless the user went Back to message.
+  const [backToMessageRequestId, setBackToMessageRequestId] = useState<string | null>(null);
+  const shownPendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
+  const shownPendingUserInput = shownPendingUserInputs[0] ?? null;
+  const shownPendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  const answeringUserInput =
+    shownPendingUserInput !== null && shownPendingUserInput.requestId !== backToMessageRequestId;
+  const pendingUserInputs = answeringUserInput ? shownPendingUserInputs : [];
+  const activePendingProgress = answeringUserInput ? incomingPendingProgress : null;
+  const activePendingIsResponding = answeringUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
@@ -2876,7 +2885,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
     isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
+    shownPendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
@@ -3493,16 +3502,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     requestId: string | null;
     questionId: string | null;
   } | null>(null);
+  // Where the message caret was while the editor last showed the message, so
+  // the effect below can put it back after a question had the editor.
+  const messageCaretRef = useRef<{ text: string; cursor: number } | null>(null);
+  useEffect(() => {
+    if (activePendingProgress !== null || lastSyncedPendingInputRef.current !== null) return;
+    messageCaretRef.current = { text: prompt, cursor: composerCursor };
+  }, [activePendingProgress, composerCursor, prompt]);
 
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
-      // The question is gone and the editor shows the thread draft again. The
-      // ref still holds the last answer text, and Send reads the ref. Place
-      // the caret at the end so the next keystroke appends.
+      // The editor shows the thread draft again: the user went back to it, or
+      // the question is gone. The ref still holds the last answer text, and
+      // Send reads the ref. Return the caret to where the message was left.
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateForReturningDraft(prompt, messageCaretRef.current);
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -3540,6 +3556,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     resetComposerTrigger,
   ]);
+
+  const toggleAnsweringPendingUserInput = useCallback(() => {
+    if (!shownPendingUserInput) return;
+    setBackToMessageRequestId(answeringUserInput ? shownPendingUserInput.requestId : null);
+    // Focus once the editor shows the other draft, at the caret it brings back.
+    window.requestAnimationFrame(() => composerEditorRef.current?.focus());
+  }, [answeringUserInput, shownPendingUserInput]);
 
   // ------------------------------------------------------------------
   // Reset compositor state on thread/draft change
@@ -4347,7 +4370,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       compactDisabled ||
       noProviderAvailable ||
       activePendingApproval !== null ||
-      pendingUserInputs.length > 0 ||
+      incomingPendingUserInputs.length > 0 ||
       phase === "running" ||
       isSendBusy ||
       isConnecting ||
@@ -4362,11 +4385,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compactDisabled,
     composerDraftTarget,
     environmentId,
+    incomingPendingUserInputs.length,
     isConnecting,
     isSendBusy,
     noProviderAvailable,
     onCompactContext,
-    pendingUserInputs.length,
     phase,
   ]);
   const expandMobileComposer = useCallback(() => {
@@ -5181,7 +5204,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, []);
   const hasBannerItems = props.bannerItems.length > 0;
   const hasBlockingComposerTopDrawer =
-    activePendingApproval !== null || pendingUserInputs.length > 0;
+    activePendingApproval !== null || shownPendingUserInputs.length > 0;
   const showInlineTasksBadge =
     activeTasksProgress !== null &&
     activeTaskSteps !== null &&
@@ -6802,17 +6825,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </ComposerBanner.Actions>
                   </ComposerBanner.Row>
-                ) : !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
+                ) : shownPendingUserInput && (!isComposerCollapsedMobile || !answeringUserInput) ? (
                   <ComposerPendingUserInputPanel
-                    pendingUserInputs={pendingUserInputs}
+                    pendingUserInputs={shownPendingUserInputs}
                     disabled={!canOperateThread}
                     respondingRequestIds={
-                      activePendingIsResponding && activePendingUserInput
-                        ? [...respondingRequestIds, activePendingUserInput.requestId]
+                      shownPendingIsResponding
+                        ? [...respondingRequestIds, shownPendingUserInput.requestId]
                         : respondingRequestIds
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    isAnswering={answeringUserInput}
+                    onToggleAnswering={toggleAnsweringPendingUserInput}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
@@ -6834,6 +6859,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       answers={activePendingDraftAnswers}
                       questionIndex={activePendingQuestionIndex}
+                      isAnswering
+                      onToggleAnswering={toggleAnsweringPendingUserInput}
                       onToggleOption={onSelectActivePendingUserInputOption}
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}

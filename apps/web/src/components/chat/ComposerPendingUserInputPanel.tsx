@@ -8,6 +8,7 @@ import {
 import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
@@ -16,6 +17,9 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  /** Whether the composer holds the answer rather than the user's message. */
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -27,6 +31,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   respondingRequestIds,
   answers,
   questionIndex,
+  isAnswering,
+  onToggleAnswering,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -43,6 +49,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
+      isAnswering={isAnswering}
+      onToggleAnswering={onToggleAnswering}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
@@ -56,6 +64,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
+  isAnswering,
+  onToggleAnswering,
   onToggleOption,
   onAdvance,
   onDismiss,
@@ -65,6 +75,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
@@ -303,6 +315,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </button>
                 );
               })}
+            </div>
+            <div className="mt-2">
+              {/* Back to message stays available when the question cannot be answered. */}
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={isAnswering ? disabled : responseDisabled}
+                onClick={onToggleAnswering}
+              >
+                {isAnswering ? "Back to message" : "Answer question"}
+              </Button>
             </div>
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>

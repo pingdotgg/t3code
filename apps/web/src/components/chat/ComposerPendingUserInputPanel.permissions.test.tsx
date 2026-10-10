@@ -47,6 +47,8 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
+      isAnswering
+      onToggleAnswering={() => {}}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
