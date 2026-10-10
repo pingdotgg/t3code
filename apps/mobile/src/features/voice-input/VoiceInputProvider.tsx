@@ -1,4 +1,4 @@
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomMount } from "@effect/atom-react";
 import {
   AudioModule,
   RecordingPresets,
@@ -24,9 +24,9 @@ import { AppState, Platform } from "react-native";
 import { AsyncResult } from "effect/reactivity";
 import { useSharedValue } from "react-native-reanimated";
 
-import { preferredMicrophoneInput, resolveMicrophonePriority } from "../../lib/microphonePriority";
+import { preferredMicrophoneInput, rememberMicrophones } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -96,6 +96,9 @@ export function useGlobalVoiceInput() {
 
 function useVoiceInputRuntime() {
   const registry = use(RegistryContext);
+  // Dictation reads and records microphones without subscribing the provider to preferences.
+  useAtomMount(mobilePreferencesAtom);
+  useAtomMount(updateMobilePreferencesAtom);
   const [{ state, ownerKey, label }, setState] = useState({
     state: INITIAL_STATE,
     ownerKey: null as string | null,
@@ -134,12 +137,17 @@ function useVoiceInputRuntime() {
       // Read when recording starts so preference changes do not re-render every composer.
       selectInput: (inputs) => {
         const preferences = registry.get(mobilePreferencesAtom);
-        return preferredMicrophoneInput(
-          inputs,
-          resolveMicrophonePriority(
-            AsyncResult.isSuccess(preferences) ? preferences.value.microphonePriority : undefined,
-          ),
-        );
+        if (!AsyncResult.isSuccess(preferences)) return null;
+        const known = preferences.value.microphones ?? [];
+        const microphones = rememberMicrophones(known, inputs);
+        if (microphones !== known) {
+          registry.set(updateMobilePreferencesAtom, {
+            transform: (current) => ({
+              microphones: rememberMicrophones(current.microphones ?? [], inputs),
+            }),
+          });
+        }
+        return preferredMicrophoneInput(inputs, microphones);
       },
     });
     recorderRef.current = recorder;

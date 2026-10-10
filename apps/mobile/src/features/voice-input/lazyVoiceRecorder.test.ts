@@ -31,8 +31,8 @@ function createNativeRecorder(uri: string) {
       return { remove: () => listeners.delete(listener) };
     }),
     getAvailableInputs: vi.fn((): ReadonlyArray<VoiceRecordingInput> => [
-      { uid: "car", type: "CarAudio" },
-      { uid: "built-in", type: "MicrophoneBuiltIn" },
+      { uid: "car", name: "CarPlay", type: "CarAudio" },
+      { uid: "built-in", name: "iPhone Microphone", type: "MicrophoneBuiltIn" },
     ]),
     setInput: vi.fn((_uid: string) => undefined),
     release: vi.fn(),

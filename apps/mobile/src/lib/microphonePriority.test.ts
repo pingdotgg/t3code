@@ -1,43 +1,64 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  DEFAULT_MICROPHONE_PRIORITY,
-  preferredMicrophoneInput,
-  resolveMicrophonePriority,
-} from "./microphonePriority";
+import { preferredMicrophoneInput, rememberMicrophones } from "./microphonePriority";
 
-const builtIn = { uid: "built-in", type: "MicrophoneBuiltIn" };
-const airPods = { uid: "airpods", type: "BluetoothHFP" };
-const carPlay = { uid: "car", type: "CarAudio" };
-const usb = { uid: "usb", type: "USBAudio" };
+const iPhone = { uid: "Built-In Microphone", name: "iPhone Microphone", type: "MicrophoneBuiltIn" };
+const airPods = { uid: "airpods", name: "Dak’s AirPods Pro", type: "BluetoothHFP" };
+const bluetoothCar = { uid: "civic", name: "Honda Civic", type: "BluetoothHFP" };
+const carPlay = { uid: "carplay", name: "CarPlay", type: "CarAudio" };
+const usb = { uid: "usb", name: "Shure MV7", type: "USBAudio" };
 
-describe("resolveMicrophonePriority", () => {
-  it("keeps the saved order and appends kinds it does not mention", () => {
-    expect(resolveMicrophonePriority(["builtIn", "carPlay", "builtIn"])).toEqual([
-      "builtIn",
-      "carPlay",
-      "wired",
-      "bluetooth",
+const uids = (microphones: ReadonlyArray<{ readonly uid: string }>) =>
+  microphones.map((microphone) => microphone.uid);
+
+describe("rememberMicrophones", () => {
+  it("remembers new microphones in the default order, CarPlay below the iPhone", () => {
+    expect(uids(rememberMicrophones([], [carPlay, iPhone, airPods]))).toEqual([
+      "airpods",
+      "Built-In Microphone",
+      "carplay",
     ]);
-    expect(resolveMicrophonePriority(undefined)).toEqual(DEFAULT_MICROPHONE_PRIORITY);
+  });
+
+  it("files a new device after the last one of its kind, keeping the user's order", () => {
+    const reordered = rememberMicrophones([], [iPhone, airPods]).toReversed();
+    expect(uids(reordered)).toEqual(["Built-In Microphone", "airpods"]);
+
+    expect(uids(rememberMicrophones(reordered, [bluetoothCar, iPhone]))).toEqual([
+      "Built-In Microphone",
+      "airpods",
+      "civic",
+    ]);
+    expect(uids(rememberMicrophones(reordered, [usb]))).toEqual([
+      "usb",
+      "Built-In Microphone",
+      "airpods",
+    ]);
+  });
+
+  it("updates a renamed device in place and returns the same list when nothing changed", () => {
+    const remembered = rememberMicrophones([], [iPhone, airPods]);
+    expect(rememberMicrophones(remembered, [iPhone, airPods])).toBe(remembered);
+    expect(rememberMicrophones(remembered, [{ uid: "virtual", name: "x", type: "Virtual" }])).toBe(
+      remembered,
+    );
+
+    const renamed = rememberMicrophones(remembered, [{ ...airPods, name: "AirPods Max" }]);
+    expect(renamed.map((microphone) => microphone.name)).toEqual([
+      "AirPods Max",
+      "iPhone Microphone",
+    ]);
   });
 });
 
 describe("preferredMicrophoneInput", () => {
-  it("records from the device instead of CarPlay by default", () => {
-    const priority = resolveMicrophonePriority(undefined);
-    expect(preferredMicrophoneInput([carPlay, builtIn], priority)).toBe(builtIn);
-    expect(preferredMicrophoneInput([builtIn, airPods], priority)).toBe(airPods);
+  it("records from the first connected remembered microphone", () => {
+    const remembered = rememberMicrophones([], [iPhone, airPods, bluetoothCar]).toReversed();
+    expect(preferredMicrophoneInput([airPods, iPhone], remembered)).toBe(iPhone);
+    expect(preferredMicrophoneInput([airPods, bluetoothCar], remembered)).toBe(bluetoothCar);
   });
 
-  it("follows the saved order", () => {
-    const priority = resolveMicrophonePriority(["builtIn"]);
-    expect(preferredMicrophoneInput([airPods, usb, builtIn], priority)).toBe(builtIn);
-    expect(preferredMicrophoneInput([airPods, usb], priority)).toBe(usb);
-  });
-
-  it("leaves unknown inputs to iOS", () => {
-    const priority = resolveMicrophonePriority(undefined);
-    expect(preferredMicrophoneInput([{ uid: "x", type: "Virtual" }], priority)).toBeNull();
+  it("leaves microphones it does not know to iOS", () => {
+    expect(preferredMicrophoneInput([usb], rememberMicrophones([], [iPhone]))).toBeNull();
   });
 });

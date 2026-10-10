@@ -4,6 +4,7 @@ type Subscription = { remove(): void };
 
 export interface VoiceRecordingInput {
   readonly uid: string;
+  readonly name: string;
   readonly type: string;
 }
 

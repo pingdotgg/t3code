@@ -165,8 +165,10 @@ recording and preserves your existing draft. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
 Voice input records from the first connected microphone in **Settings → Microphone**.
-Drag the list to choose, for example, the iPhone microphone over AirPods or your car.
-By default, CarPlay comes after the iPhone microphone.
+A microphone joins that list the first time you use voice input with it connected,
+such as your AirPods or your car. Drag the list to prefer, for example, the iPhone
+microphone over either. New Bluetooth devices start below the ones you already
+ranked, and CarPlay starts below the iPhone microphone.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
