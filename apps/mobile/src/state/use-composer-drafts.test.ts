@@ -195,6 +195,7 @@ import {
   undoComposerDraftMergeState,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
+import { threadComposerContext } from "../lib/composerContext";
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -315,6 +316,26 @@ describe("mobile composer drafts", () => {
       );
     }
   });
+  it("restores an agent-spawned thread chip after a restart", () => {
+    const record = threadComposerContext(
+      {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread:mcp:3f2b9c1e-8d4a-4b6f-9e2a-7c5d1f0a8b3e:review:0"),
+      },
+      "Review",
+    );
+    const draft = {
+      text: `Compare ${formatComposerContextReference(record)} `,
+      attachments: [],
+      context: { version: 1 as const, records: [record] },
+    };
+    expect(
+      decodePersistedComposerState(
+        JSON.parse(JSON.stringify({ schemaVersion: 1, drafts: { thread: draft } })),
+      ).drafts.thread,
+    ).toEqual(draft);
+  });
+
   it.each([false, true])(
     "restores deleted file chips and releases undo history (uploaded: %s)",
     async (uploaded) => {

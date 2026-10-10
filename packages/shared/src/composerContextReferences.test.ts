@@ -10,6 +10,7 @@ import {
   projectComposerContextForProvider,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
 
 const ctx = (value: string) => value as ComposerContextId;
@@ -36,6 +37,22 @@ describe("href codec", () => {
     ]) {
       expect(parseComposerContextHref(bad), bad).toBeNull();
     }
+  });
+});
+
+describe("thread context ids", () => {
+  it("mints the id every client and already-persisted draft agrees on", () => {
+    // Web and mobile both key a thread chip by this id; changing the folding would orphan
+    // persisted drafts and stop re-attaching the same thread from reusing its chip.
+    const contextId = toKindScopedComposerContextId(
+      "thread",
+      "thread:mcp:3f2b9c1e-8d4a-4b6f-9e2a-7c5d1f0a8b3e:review:0",
+    );
+    expect(contextId).toBe("thread_thread-mcp-3f2b9c1e-8d4a-4b6f-9e2a-7c5d1f-eb08d08e203412f1");
+    const link = formatComposerContextReference({ kind: "thread", contextId, label: "Review" });
+    expect(collectComposerContextReferences(`see ${link}`)).toEqual([
+      expect.objectContaining({ kind: "thread", contextId, label: "Review" }),
+    ]);
   });
 });
 

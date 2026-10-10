@@ -4,13 +4,17 @@ import {
   ProjectId,
   ProviderInstanceId,
   ComposerContextId,
-  type OrchestrationMessageContext,
+  EnvironmentId,
+  ThreadId,
+  OrchestrationMessageContext,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
   projectComposerContextForProvider,
+  replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -23,6 +27,7 @@ import {
   uploadedComposerContext,
   serializeComposerMessageForServer,
   pullRequestComposerContext,
+  threadComposerContext,
 } from "./composerContext";
 
 const terminal = {
@@ -269,5 +274,73 @@ describe("host context compatibility", () => {
     expect(message.text).toContain(pr.pullRequest!.url);
     expect(serializeComposerMessageForServer(text, context, true)).toEqual({ text, context });
     expect(context.records).toEqual([terminal, review, pr]);
+  });
+});
+
+describe("threadComposerContext", () => {
+  const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+  const environmentId = EnvironmentId.make("env-1");
+  const agentThreadIds = [
+    "thread:mcp:3f2b9c1e-8d4a-4b6f-9e2a-7c5d1f0a8b3e:review:0",
+    `thread:delegated-task:${encodeURIComponent(
+      "command:mcp:3f2b9c1e-8d4a-4b6f-9e2a-7c5d1f0a8b3e:delegate_task:9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d:attempt:1",
+    )}`,
+  ];
+
+  it.each(agentThreadIds)("mints a schema-valid, stable id for agent-spawned thread %s", (id) => {
+    const ref = { environmentId, threadId: ThreadId.make(id) };
+    const record = threadComposerContext(ref, "Review");
+
+    expect(record.contextId).toMatch(/^[a-z0-9_-]{1,128}$/i);
+    expect(() => ComposerContextId.make(record.contextId)).not.toThrow();
+    expect(record.threadId).toBe(id);
+    // Attaching the same thread again reuses the chip instead of adding a second one.
+    expect(threadComposerContext(ref, "Renamed").contextId).toBe(record.contextId);
+  });
+
+  it.each(agentThreadIds)(
+    "carries an agent-spawned thread chip from picker to agent (%s)",
+    (id) => {
+      const ref = { environmentId, threadId: ThreadId.make(id) };
+      const record = threadComposerContext(ref, "Review [draft]");
+      // Picking the same thread twice inserts a second chip backed by the one record.
+      const chip = formatComposerContextReference(record);
+      const text = `Compare ${chip} with ${chip} `;
+      const draft: OrchestrationMessageContext = { version: 1, records: [record] };
+
+      expect(referencedComposerContext(text, draft)).toBe(draft);
+      expect(
+        composerContextEditorTokens(text, collectComposerInlineTokens(text)).map((token) => ({
+          type: token.type,
+          value: token.value,
+        })),
+      ).toEqual([
+        { type: "context", value: "Review draft" },
+        { type: "context", value: "Review draft" },
+      ]);
+      // The outbox and the wire decode with this schema, which drops an invalid record
+      // silently instead of failing the send.
+      const sent = serializeComposerMessageForServer(text, draft, true);
+      expect(sent.context && decodeMessageContext(sent.context).records).toEqual([record]);
+      expect(composerContextSendBlockReason(sent.context)).toBeNull();
+
+      const provider = projectComposerContextForProvider({ text, records: [record] });
+      expect(provider).toContain(`threadId: ${id}`);
+      expect(provider).not.toContain('unavailable="true"');
+      expect(provider.match(/<context kind="thread"/g)).toHaveLength(1);
+
+      const removed = replaceComposerContextReferences(text, () => "");
+      expect(referencedComposerContext(removed, draft)).toBeUndefined();
+    },
+  );
+
+  it("keeps distinct threads distinct and plain ids readable", () => {
+    const [first, second] = agentThreadIds.map(
+      (id) => threadComposerContext({ environmentId, threadId: ThreadId.make(id) }, "t").contextId,
+    );
+    expect(first).not.toBe(second);
+    expect(
+      threadComposerContext({ environmentId, threadId: ThreadId.make("abc-123") }, "t").contextId,
+    ).toBe("thread_abc-123");
   });
 });
