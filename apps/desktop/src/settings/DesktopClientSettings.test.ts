@@ -27,7 +27,7 @@ const clientSettings: ClientSettings = {
   browserRecordingFrameRate: 60,
   browserLinkTarget: "app",
   browserAutoShowFloatingPreview: false,
-  browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
+  browserProfiles: [{ id: "work", name: "Work", kind: "persistent", userAgentMode: "chrome" }],
   browserDefaultProfileId: "work",
   confirmQuit: "double-click",
   confirmThreadArchive: true,

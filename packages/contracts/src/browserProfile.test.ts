@@ -10,10 +10,12 @@ import {
   findBrowserProfile,
   isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
-  type BrowserProfile,
+  browserProfileUserAgent,
+  BrowserProfile,
 } from "./browserProfile.ts";
 
 const work: BrowserProfile = { id: "profile-work", name: "Work", kind: "persistent" };
+const isBrowserProfile = Schema.is(BrowserProfile);
 
 describe("resolveBrowserProfiles", () => {
   it("lists built-ins ahead of the user's own profiles", () => {
@@ -107,5 +109,46 @@ describe("BrowserProfileId", () => {
     // carrying the delimiter would resolve to another profile's partition.
     expect(Schema.is(BrowserProfileId)("profile-a\u0000b")).toBe(false);
     expect(Schema.is(BrowserProfileId)("profile-a")).toBe(true);
+  });
+});
+
+describe("browser profile User-Agent", () => {
+  const native =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Nightly)/0.0.46 Chrome/152.0.7977.130 Electron/44.4.2 Safari/537.36";
+  const chrome =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.130 Safari/537.36";
+
+  it("leaves existing profiles and built-in identities untouched", () => {
+    expect(browserProfileUserAgent(native, undefined)).toBeUndefined();
+    const profiles = resolveBrowserProfiles([
+      { id: "default", name: "Override", kind: "persistent", userAgentMode: "chrome" },
+      { id: "teams", name: "Teams", kind: "persistent", userAgentMode: "chrome" },
+    ]);
+    expect(profiles[0]?.userAgentMode).toBeUndefined();
+    expect(profiles.find((profile) => profile.id === "teams")?.userAgentMode).toBe("chrome");
+  });
+
+  it("uses the running Chromium version and restores the exact native identity", () => {
+    expect(browserProfileUserAgent(native, "chrome")).toBe(chrome);
+    expect(browserProfileUserAgent(native, "native")).toBe(native);
+  });
+
+  it.each([
+    "X11; Linux x86_64",
+    "Windows NT 10.0; Win64; x64",
+    "Macintosh; Intel Mac OS X 10_15_7",
+  ])("preserves the platform and engine tokens on %s", (platform) => {
+    const agent = native.replace("Macintosh; Intel Mac OS X 10_15_7", platform);
+    expect(browserProfileUserAgent(agent, "chrome")).toBe(
+      chrome.replace("Macintosh; Intel Mac OS X 10_15_7", platform),
+    );
+  });
+
+  it("accepts only the supported modes while retaining old saved profiles", () => {
+    const profile = { id: "teams", name: "Teams", kind: "persistent" };
+    expect(isBrowserProfile(profile)).toBe(true);
+    expect(isBrowserProfile({ ...profile, userAgentMode: "chrome" })).toBe(true);
+    expect(isBrowserProfile({ ...profile, userAgentMode: "native" })).toBe(true);
+    expect(isBrowserProfile({ ...profile, userAgentMode: "firefox" })).toBe(false);
   });
 });

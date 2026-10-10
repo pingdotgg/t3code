@@ -1,16 +1,19 @@
 "use client";
 
-import type {
-  DesktopPreviewColorScheme,
-  PreviewViewportSetting,
-  ScopedThreadRef,
+import {
+  browserProfileUserAgent,
+  findBrowserProfile,
+  resolveBrowserProfiles,
+  type DesktopPreviewColorScheme,
+  type PreviewViewportSetting,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
-import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
@@ -84,6 +87,11 @@ export function HostedBrowserWebview(props: {
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
+  const userAgentMode = useClientSettings(
+    (settings) =>
+      findBrowserProfile(resolveBrowserProfiles(settings.browserProfiles), profileId)
+        ?.userAgentMode,
+  );
   const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
@@ -342,6 +350,8 @@ export function HostedBrowserWebview(props: {
           {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
           src={webviewGeneration === 0 ? initialSrc : recoverySrc}
           partition={config.partition}
+          // Electron reads the identity at attach; reopening applies profile changes.
+          useragent={browserProfileUserAgent(navigator.userAgent, userAgentMode)}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
           data-preview-tab={runtimeTabId}

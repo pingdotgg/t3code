@@ -41,10 +41,15 @@ export const BrowserProfileName = TrimmedNonEmptyString.check(
 export const BrowserProfileKind = Schema.Literals(["persistent", "incognito"]);
 export type BrowserProfileKind = typeof BrowserProfileKind.Type;
 
+export const BrowserProfileUserAgentMode = Schema.Literals(["native", "chrome"]);
+export type BrowserProfileUserAgentMode = typeof BrowserProfileUserAgentMode.Type;
+
 export const BrowserProfile = Schema.Struct({
   id: BrowserProfileId,
   name: BrowserProfileName,
   kind: BrowserProfileKind,
+  /** Optional compatibility override for this profile's Electron guests. */
+  userAgentMode: Schema.optionalKey(BrowserProfileUserAgentMode),
 });
 export type BrowserProfile = typeof BrowserProfile.Type;
 
@@ -96,4 +101,20 @@ export function findBrowserProfile(
   id: string | undefined,
 ): BrowserProfile | undefined {
   return id === undefined ? undefined : profiles.find((profile) => profile.id === id);
+}
+
+/**
+ * Omitted modes keep Electron's native identity untouched (#5002). An explicit
+ * native choice restores the exact string after a Chrome override. The Chrome
+ * variant retains the running engine and platform; it only removes app tokens.
+ */
+export function browserProfileUserAgent(
+  nativeUserAgent: string,
+  mode: BrowserProfileUserAgentMode | undefined,
+): string | undefined {
+  if (mode === undefined) return undefined;
+  if (mode === "native") return nativeUserAgent;
+  return nativeUserAgent
+    .replace(/( \(KHTML, like Gecko\)) .*?( Chrome\/\S+)/, "$1$2")
+    .replace(/ Electron\/\S+/, "");
 }

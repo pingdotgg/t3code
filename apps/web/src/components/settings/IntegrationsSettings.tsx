@@ -17,6 +17,7 @@ import {
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserLinkTarget,
   type BrowserProfile,
+  type BrowserProfileUserAgentMode,
   type EnvironmentId,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
@@ -72,7 +73,13 @@ import {
   MenuGroupLabel,
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
 import { readLocalApi } from "~/localApi";
@@ -1019,6 +1026,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     });
   };
 
+  const setProfileUserAgent = (id: string, userAgentMode: BrowserProfileUserAgentMode) => {
+    if (!settingsHydrated || importInFlightRef.current) return;
+    updateSettings({
+      browserProfiles: getClientSettings().browserProfiles.map((profile) =>
+        profile.id === id ? { ...profile, userAgentMode } : profile,
+      ),
+    });
+  };
+
   const clearProfileData = (id: string, name: string) => {
     if (!settingsHydrated || importInFlightRef.current) return;
     if (!removalAvailable) {
@@ -1355,6 +1371,37 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   <MoreVertical />
                 </MenuTrigger>
                 <MenuPopup align="end">
+                  {!builtIn && previewBridge ? (
+                    <MenuSub>
+                      <MenuSubTrigger>User-Agent</MenuSubTrigger>
+                      <MenuSubPopup>
+                        <MenuGroup>
+                          <MenuGroupLabel>Reopen tabs to apply</MenuGroupLabel>
+                          <MenuRadioGroup
+                            value={profile.userAgentMode ?? "native"}
+                            onValueChange={(value) =>
+                              setProfileUserAgent(profile.id, value as BrowserProfileUserAgentMode)
+                            }
+                          >
+                            <MenuRadioItem value="native">
+                              <span className="flex items-center gap-2">
+                                <span className="flex-1">Native (default)</span>
+                                <MenuRadioItemIndicator />
+                              </span>
+                            </MenuRadioItem>
+                            <MenuRadioItem value="chrome">
+                              <span className="flex items-center gap-2">
+                                <span className="flex-1">Chrome compatibility</span>
+                                <MenuRadioItemIndicator />
+                              </span>
+                            </MenuRadioItem>
+                          </MenuRadioGroup>
+                          <MenuSeparator />
+                          <MenuItem disabled>Some sign-in pages require Native</MenuItem>
+                        </MenuGroup>
+                      </MenuSubPopup>
+                    </MenuSub>
+                  ) : null}
                   <MenuItem
                     disabled={!settingsHydrated || isDefault}
                     onClick={() => {
