@@ -39,6 +39,29 @@ export class ServerBrowserOperationError extends Error {
   }
 }
 
+const ANSI_STYLE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+/** Call log lines that narrate retries rather than say what blocked the action. */
+const CALL_LOG_PROGRESS =
+  /^(?:waiting \d+ms|(?:attempting|retrying) .+ action(?: \(trial run\))?|scrolling into view if needed|done scrolling)$/;
+
+/**
+ * Playwright's last call log finding for a timed-out action, such as
+ * `<div class="overlay"> intercepts pointer events`, which tells the agent what
+ * to change. Its first line only repeats the timeout.
+ */
+const timeoutFinding = (message: string): string | undefined =>
+  message
+    .replace(ANSI_STYLE, "")
+    .split("\nCall log:\n")[1]
+    ?.split("\n")
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^-\s*/, "")
+        .replace(/^\d+ × /, ""),
+    )
+    .findLast((line) => line !== "" && !CALL_LOG_PROGRESS.test(line));
+
 export const toOperationError = (cause: unknown): ServerBrowserOperationError => {
   if (cause instanceof BrowserControlInterrupted)
     return new ServerBrowserOperationError(
@@ -50,7 +73,10 @@ export const toOperationError = (cause: unknown): ServerBrowserOperationError =>
   const message = cause instanceof Error ? cause.message : String(cause);
   const firstLine = message.split("\n")[0] ?? message;
   if (cause instanceof Error && cause.name === "TimeoutError") {
-    return new ServerBrowserOperationError("PreviewAutomationTimeoutError", firstLine);
+    return new ServerBrowserOperationError(
+      "PreviewAutomationTimeoutError",
+      timeoutFinding(message) ?? firstLine,
+    );
   }
   if (
     /while parsing selector|Unknown engine|Unexpected token|strict mode violation/i.test(message)
@@ -64,6 +90,15 @@ export const toOperationError = (cause: unknown): ServerBrowserOperationError =>
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * The time left of one action's budget. Its steps share it, so the page's own
+ * timeout, which says what blocked the action, lands before the broker's.
+ */
+const remainingTime = (timeoutMs: number | undefined) => {
+  const deadline = Date.now() + (timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  return () => Math.max(1, deadline - Date.now());
+};
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
 // A compact runtime namespace prevents old refs from aliasing after a server restart.
@@ -130,11 +165,11 @@ const targetPoint = async (
   page: Page,
   locator: Locator | null,
   input: { readonly x?: number | undefined; readonly y?: number | undefined },
-  timeout: number,
+  remaining: () => number,
 ) => {
   if (locator === null) return { x: input.x ?? 0, y: input.y ?? 0 };
-  await locator.scrollIntoViewIfNeeded({ timeout });
-  const box = await locator.boundingBox({ timeout });
+  await locator.scrollIntoViewIfNeeded({ timeout: remaining() });
+  const box = await locator.boundingBox({ timeout: remaining() });
   if (box) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const viewport = page.viewportSize();
   return { x: (viewport?.width ?? 0) / 2, y: (viewport?.height ?? 0) / 2 };
@@ -175,6 +210,28 @@ export const captureViewport = async (
   return data;
 };
 
+/**
+ * Fails work that outlives its deadline. The work itself keeps running; this
+ * only frees the tab's control queue and capture lock for the next request.
+ */
+const withinDeadline = <A>(
+  work: Promise<A>,
+  timeoutMs: number,
+  message: string,
+  onExpire: () => void = constVoid,
+) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onExpire();
+      reject(new ServerBrowserOperationError("PreviewAutomationTimeoutError", message));
+    }, timeoutMs);
+  });
+  // A late failure belongs to nobody once the deadline has answered.
+  void work.catch(constVoid);
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+};
+
 export const snapshot = async (input: {
   readonly page: Page;
   readonly cdp: CDPSession;
@@ -188,16 +245,20 @@ export const snapshot = async (input: {
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
-  const [page, tree, data] = await Promise.all([
-    input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-      Pick<
-        PreviewAutomationSnapshot,
-        "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-      >
-    >,
-    input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
-  ]);
+  const [page, tree, data] = await withinDeadline(
+    Promise.all([
+      input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
+        Pick<
+          PreviewAutomationSnapshot,
+          "url" | "title" | "loading" | "visibleText" | "interactiveElements"
+        >
+      >,
+      input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
+      captureViewport(input.page, input.cdp, { format: "png", scale }),
+    ]),
+    DEFAULT_TIMEOUT_MS,
+    "The page did not answer while its snapshot was captured; its main thread may be busy.",
+  );
   if (state.generation !== generation) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",
@@ -235,15 +296,15 @@ export const click = async (
   input: PreviewAutomationClickInput,
   pointer: PointerReporter = noPointer,
 ): Promise<{ readonly x: number; readonly y: number }> => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const remaining = remainingTime(input.timeoutMs);
   const locator = targetLocator(page, input);
-  const point = await targetPoint(page, locator, input, timeout);
+  const point = await targetPoint(page, locator, input, remaining);
   await pointer(point, "click");
   const options = { button: input.button ?? "left", clickCount: input.clickCount ?? 1 } as const;
   const clicked =
     locator === null
       ? page.mouse.click(point.x, point.y, options)
-      : locator.click({ ...options, timeout });
+      : locator.click({ ...options, timeout: remaining() });
   let onDialog = constVoid;
   const dialogOpened = new Promise<"dialog">((resolve) => {
     onDialog = () => resolve("dialog");
@@ -325,14 +386,14 @@ export const hover = async (
   input: PreviewAutomationHoverInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const remaining = remainingTime(input.timeoutMs);
   const locator = targetLocator(page, input);
-  await pointer(await targetPoint(page, locator, input, timeout), "move");
+  await pointer(await targetPoint(page, locator, input, remaining), "move");
   if (locator === null) {
     await page.mouse.move(input.x ?? 0, input.y ?? 0);
     return;
   }
-  await locator.hover({ timeout });
+  await locator.hover({ timeout: remaining() });
 };
 
 export const select = async (
@@ -340,7 +401,7 @@ export const select = async (
   input: PreviewAutomationSelectInput,
 ): Promise<PreviewAutomationSelectResult> => {
   const locator = targetLocator(page, input)!;
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const remaining = remainingTime(input.timeoutMs);
   // Each entry matches an option by value first, then by its visible label.
   const options = await locator.evaluate(
     (element) =>
@@ -352,7 +413,7 @@ export const select = async (
           )
         : null,
     undefined,
-    { timeout },
+    { timeout: remaining() },
   );
   const values =
     options &&
@@ -368,7 +429,7 @@ export const select = async (
       "PreviewAutomationTargetNotEditableError",
       "This element is not a <select>. Click a custom dropdown, then click its option.",
     );
-  return { selected: await locator.selectOption(values, { timeout }) };
+  return { selected: await locator.selectOption(values, { timeout: remaining() }) };
 };
 
 export const drag = async (
@@ -376,17 +437,17 @@ export const drag = async (
   input: PreviewAutomationDragInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const remaining = remainingTime(input.timeoutMs);
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
-  await pointer(await targetPoint(page, source, {}, timeout), "move");
+  await pointer(await targetPoint(page, source, {}, remaining), "move");
   // The cursor travels with the drag; the page sees one continuous gesture. Observe the drag's
   // outcome as it starts: a rejection nobody handles while the cursor moves exits the server.
-  const dragFailure = source.dragTo(target, { timeout }).then(
+  const dragFailure = source.dragTo(target, { timeout: remaining() }).then(
     () => null,
     (error: unknown) => ({ error }),
   );
-  const end = await target.boundingBox({ timeout }).catch(() => null);
+  const end = await target.boundingBox({ timeout: remaining() }).catch(() => null);
   if (end) await pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
   const failure = await dragFailure;
   if (failure) throw failure.error;
@@ -425,26 +486,17 @@ export const evaluate = async (
   input: PreviewAutomationEvaluateInput,
   timeoutMs: number,
 ) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      // Stops a busy script; an awaited promise is abandoned and settles unread.
-      void cdp.send("Runtime.terminateExecution").catch(constVoid);
-      reject(
-        new ServerBrowserOperationError(
-          "PreviewAutomationTimeoutError",
-          `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
-        ),
-      );
-    }, timeoutMs);
-  });
-  const evaluation = cdp.send("Runtime.evaluate", {
-    expression: input.expression,
-    awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
-  });
-  void evaluation.catch(constVoid);
-  const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
+  const result = await withinDeadline(
+    cdp.send("Runtime.evaluate", {
+      expression: input.expression,
+      awaitPromise: input.awaitPromise ?? true,
+      returnByValue: input.returnByValue ?? true,
+    }),
+    timeoutMs,
+    `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
+    // Stops a busy script; an awaited promise is abandoned and settles unread.
+    () => void cdp.send("Runtime.terminateExecution").catch(constVoid),
+  );
   if (result.exceptionDetails) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",

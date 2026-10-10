@@ -1242,6 +1242,34 @@ it.live("an agent's tabs stop at the limit until an unwatched idle tab closes", 
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("an idle agent tab the desktop renders stays open for the person browsing it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* Effect.yieldNow;
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      desktopRendersNext = true;
+      const desktopTab = yield* open;
+      const headlessTab = yield* open;
+      const later = (yield* Clock.currentTimeMillis) + 31 * 60 * 1000;
+      const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      // Opening sweeps idle tabs first: only the unwatched headless one closes.
+      const reopened = yield* open;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      const openTabIds = sessions.map((session) => session.tabId);
+      expect(openTabIds).toContain(desktopTab.tabId);
+      expect(openTabIds).toContain(reopened.tabId);
+      expect(openTabIds).not.toContain(headlessTab.tabId);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("an agent answers the page's file picker or sets files on a file input", () =>
   Effect.scoped(
     Effect.gen(function* () {
