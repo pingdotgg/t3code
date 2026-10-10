@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -47,7 +48,6 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
-        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -61,7 +61,6 @@ const layerSourceControlProviderRegistryTest = (input: {
           Layer.provide(
             Layer.mergeAll(
               Layer.mock(VcsProcess.VcsProcess)(input.process),
-              ServerSettings.ServerSettingsService.layerTest(),
               Layer.mock(GitVcsDriver.GitVcsDriver)({}),
               Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
             ),
@@ -69,6 +68,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         ),
       ),
     ),
+    Layer.provideMerge(ServerSettings.layerTest()),
   );
 
 const processOutput = (
@@ -87,6 +87,69 @@ const processOutput = (
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+it.effect("observes GitHub host settings changes on rescan", () => {
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) =>
+      Effect.succeed(
+        processOutput(
+          input.command === "gh" && input.args[0] === "auth"
+            ? encodeJson({
+                hosts: {
+                  "github.com": [
+                    {
+                      state: "success",
+                      active: true,
+                      host: "github.com",
+                      login: "octocat",
+                      tokenSource: "keyring",
+                      gitProtocol: "ssh",
+                    },
+                  ],
+                },
+              })
+            : `${input.command} version test\n`,
+        ),
+      ),
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const layerTest = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provideMerge(
+      layerSourceControlProviderRegistryTest({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("bitbucket.org"),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provide(Layer.succeed(HostProcess.Environment, {})),
+    Layer.provide(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const before = yield* discovery.discover;
+    const githubBefore = before.sourceControlProviders.find((item) => item.kind === "github");
+    assert.strictEqual(githubBefore?.auth.status, "authenticated");
+    assert.deepStrictEqual(githubBefore?.auth.account, Option.some("octocat"));
+
+    yield* settings.updateSettings({ github: { hosts: { "github.com": { enabled: false } } } });
+
+    const after = yield* discovery.discover;
+    const githubAfter = after.sourceControlProviders.find((item) => item.kind === "github");
+    assert.strictEqual(githubAfter?.auth.status, "unauthenticated");
+    assert.deepStrictEqual(githubAfter?.auth.account, Option.none());
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("reports implemented tools separately from locally available executables", () => {
   const processMock = {

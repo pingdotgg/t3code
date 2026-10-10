@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -51,8 +52,10 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly githubApi?: Partial<GitHubApi.GitHubApi["Service"]>;
+  readonly bitbucket?: Partial<BitbucketApi.BitbucketApi["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly settings?: ServerSettings.ServerSettingsService["Service"];
 }) {
   const driver = {
     listRemotes: () =>
@@ -104,19 +107,13 @@ function makeRegistry(input: {
         layerProcess,
         ServerSourceControlHost.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(
-              layerProcess,
-              layerRegistry,
-              ServerSettings.ServerSettingsService.layerTest(),
-              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-            ),
+            Layer.mergeAll(layerProcess, layerRegistry, Layer.mock(GitVcsDriver.GitVcsDriver)({})),
           ),
         ),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
-        Layer.mock(BitbucketApi.BitbucketApi)({}),
+        Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket ?? {}),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
-        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
@@ -131,10 +128,71 @@ function makeRegistry(input: {
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
+      ).pipe(
+        Layer.provideMerge(
+          input.settings
+            ? Layer.succeed(ServerSettings.ServerSettingsService, input.settings)
+            : ServerSettings.layerTest(),
+        ),
       ),
     ),
   );
 }
+
+it.effect("observes GitHub host settings changes through the supplied settings service", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      settings,
+      bitbucket: {
+        probeAuth: Effect.succeed({
+          status: "unauthenticated",
+          account: Option.none(),
+          host: Option.some("bitbucket.org"),
+          detail: Option.none(),
+        }),
+      },
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "gh" && input.args[0] === "auth"
+                ? JSON.stringify({
+                    hosts: {
+                      "github.com": [
+                        {
+                          state: "success",
+                          active: true,
+                          host: "github.com",
+                          login: "octocat",
+                          tokenSource: "keyring",
+                          gitProtocol: "ssh",
+                        },
+                      ],
+                    },
+                  })
+                : `${input.command} version test\n`,
+            ),
+          ),
+      },
+    });
+    const before = yield* registry.discover;
+    const githubBefore = before.find((item) => item.kind === "github");
+    assert.strictEqual(githubBefore?.auth.status, "authenticated");
+    assert.deepStrictEqual(githubBefore?.auth.account, Option.some("octocat"));
+
+    yield* settings.updateSettings({ github: { hosts: { "github.com": { enabled: false } } } });
+
+    const after = yield* registry.discover;
+    const githubAfter = after.find((item) => item.kind === "github");
+    assert.strictEqual(githubAfter?.auth.status, "unauthenticated");
+    assert.deepStrictEqual(githubAfter?.auth.account, Option.none());
+  }).pipe(
+    Effect.provide(ServerSettings.layerTest()),
+    Effect.provideService(HostProcess.Environment, {}),
+  ),
+);
 
 it.effect("routes GitHub remotes to the GitHub provider", () =>
   Effect.gen(function* () {
