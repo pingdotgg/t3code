@@ -11,13 +11,16 @@ import {
   type ChangeRequest,
 } from "@t3tools/contracts";
 import {
+  probeSourceControlProvider,
   providerAuth,
   type SourceControlCliDiscoverySpec,
+  type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
+import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
 
 /** Discovery reports the production account; repository operations pick their own host. */
@@ -58,7 +61,7 @@ const cliFailure = (output: string) =>
     .map((line) => decodeFailure(line.trim()))
     .find(Result.isSuccess)?.success.error;
 
-export const discovery = {
+const cliDiscovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("gitcafe"),
   label: "GitCafe",
@@ -90,8 +93,34 @@ export const discovery = {
       detail: `GitCafe authentication status could not be read. Run \`cafe auth login --host https://${AUTH_HOST}/api\`.`,
     });
   },
-  installHint: `Install the GitCafe CLI with \`bun install -g @gitcafe/cli\`, then run \`cafe auth login --host https://${AUTH_HOST}/api\`, or set CAFE_TOKEN on the server.`,
+  installHint: `Install the GitCafe CLI with \`bun install -g @gitcafe/cli\`, then run \`cafe auth login --host https://${AUTH_HOST}/api\`, save a token in Settings, or set CAFE_TOKEN on the server.`,
 } satisfies SourceControlCliDiscoverySpec;
+
+/** `cafe auth status`'s reading, exposed for tests. */
+export const parseAuth = cliDiscovery.parseAuth;
+
+/** Probes `cafe` as the CLI spec does, with a token saved in Settings handed to it. */
+export const makeDiscovery = Effect.gen(function* () {
+  const { process } = yield* SourceControlHost.SourceControlHost;
+  const credentials = yield* GitCafeCredentials.GitCafeCredentials;
+  return {
+    type: "managed-cli",
+    kind: cliDiscovery.kind,
+    label: cliDiscovery.label,
+    installHint: cliDiscovery.installHint,
+    probe: (cwd: string) =>
+      credentials.cliEnv(AUTH_HOST).pipe(
+        Effect.flatMap((env) =>
+          probeSourceControlProvider({
+            cwd,
+            spec: cliDiscovery,
+            process: { run: (input) => process.run({ ...input, env: { ...input.env, ...env } }) },
+          }),
+        ),
+      ),
+    refineUnknownRemote: () => Effect.succeed(null),
+  } satisfies SourceControlManagedCliDiscoverySpec;
+});
 
 const Repository = Schema.Struct({
   name: TrimmedNonEmptyString,
@@ -148,6 +177,7 @@ const pullUrlPattern = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pulls\/(\d+)\/?(?:[?
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
   const host = yield* SourceControlHost.SourceControlHost;
+  const credentials = yield* GitCafeCredentials.GitCafeCredentials;
 
   const error = (operation: string, cwd: string, detail: string, cause?: unknown) =>
     new SourceControlProviderError({
@@ -174,15 +204,20 @@ export const make = Effect.gen(function* () {
       ),
     );
   const cafe = (operation: string, cwd: string, target: Target, args: ReadonlyArray<string>) =>
-    host.process
-      .run({
-        operation: `GitCafeSourceControlProvider.${operation}`,
-        command: "cafe",
-        cwd,
-        args: [...cliArgs(target.host), ...args],
-        env: { CAFE_OUTPUT: "json" },
-        timeoutMs: 30_000,
-      })
+    credentials
+      .cliEnv(target.host)
+      .pipe(
+        Effect.flatMap((env) =>
+          host.process.run({
+            operation: `GitCafeSourceControlProvider.${operation}`,
+            command: "cafe",
+            cwd,
+            args: [...cliArgs(target.host), ...args],
+            env: { CAFE_OUTPUT: "json", ...env },
+            timeoutMs: 30_000,
+          }),
+        ),
+      )
       .pipe(
         Effect.mapError((cause) =>
           error(

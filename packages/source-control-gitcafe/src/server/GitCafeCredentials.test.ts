@@ -78,6 +78,44 @@ describe("GitCafeCredentials", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("uses a token saved in Settings for git.cafe only, ahead of CAFE_TOKEN", () => {
+    const calls: Array<SourceControlHost.SourceControlProcessInput> = [];
+    const layer = GitCafeCredentials.layer.pipe(
+      Layer.provideMerge(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              calls.push(input);
+              return Effect.succeed(processOutput("password=gct_staging\n"));
+            },
+          },
+        }),
+      ),
+      Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+      Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+    );
+    return Effect.gen(function* () {
+      const credentials = yield* GitCafeCredentials.GitCafeCredentials;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+      yield* settings.update({ sourceControlHosts: { gitcafe: { token: "saved-token" } } });
+
+      const saved = yield* credentials.get("git.cafe");
+      assert.strictEqual(Redacted.value(saved.token), "saved-token");
+      assert.strictEqual(saved.source, "settings");
+      assert.deepStrictEqual(yield* credentials.cliEnv("git.cafe"), { CAFE_TOKEN: "saved-token" });
+      // Staging never receives the production token saved in Settings.
+      assert.deepStrictEqual(yield* credentials.cliEnv("staging.git.cafe"), {});
+      assert.strictEqual(
+        Redacted.value((yield* credentials.get("staging.git.cafe")).token),
+        "gct_staging",
+      );
+
+      // Removing it applies at once: the environment token takes over again.
+      yield* settings.update({ sourceControlHosts: { gitcafe: { token: "" } } });
+      assert.strictEqual((yield* credentials.get("git.cafe")).source, "env");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("asks cafe's Git credential helper over stdin and reuses the token", () => {
     const { layer, calls } = harness(() =>
       Effect.succeed(
