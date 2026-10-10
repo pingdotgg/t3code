@@ -194,6 +194,24 @@ describe("GitHubApi", () => {
       );
       expect(error._tag).toBe("GitHubApiResponseError");
       expect(error.message).toContain("Resource not accessible");
+      expect(error).toMatchObject({ githubErrorTypes: ["FORBIDDEN"] });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("leaves out the error types when one of GitHub's errors has none", () => {
+    const { layer } = harness(() =>
+      json({
+        data: null,
+        errors: [{ type: "FORBIDDEN", message: "Resource not accessible" }, { message: "Oops" }],
+      }),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      const error = yield* Effect.flip(
+        api.graphql({ host: "github.com", operation: "detail", query: "query { viewer { id } }" }),
+      );
+      expect(error._tag).toBe("GitHubApiResponseError");
+      expect(error).not.toHaveProperty("githubErrorTypes");
     }).pipe(Effect.provide(layer));
   });
 

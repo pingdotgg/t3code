@@ -423,6 +423,7 @@ export function ThreadDetailsPrRow({
               <PullRequestChecksPopover
                 checksState={checksRollup}
                 checks={detail.checks}
+                checksUnreadable={detail.checksUnreadable === true}
                 variant="count"
                 render={<ThreadDetailsControl part="meta" />}
               />

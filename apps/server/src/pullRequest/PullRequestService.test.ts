@@ -395,6 +395,55 @@ it.effect("uses full detail for hosts without a narrow preview", () =>
   }),
 );
 
+it.effect("passes on the head's check state only with checks the host would not show", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Effect.succeed({
+              ...hostedChangeRequest("Description"),
+              checksState: "passing" as const,
+              checksUnreadable: true,
+            }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.strictEqual(detail.checksUnreadable, true);
+    assert.strictEqual(detail.checksRollupState, "passing");
+  }),
+);
+
+it.effect("sends no separate check state with checks the host showed", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Effect.succeed({
+              ...hostedChangeRequest("Description"),
+              checksState: "passing" as const,
+            }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.ok(!("checksRollupState" in detail));
+    assert.ok(!("checksUnreadable" in detail));
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,

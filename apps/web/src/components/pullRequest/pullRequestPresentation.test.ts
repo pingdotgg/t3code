@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolvePullRequestConflict, resolvePullRequestState } from "./pullRequestPresentation";
+import {
+  detailSummaryChecksState,
+  resolvePullRequestConflict,
+  resolvePullRequestState,
+} from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 describe("resolvePullRequestState", () => {
@@ -135,5 +139,54 @@ describe("resolvePullRequestConflict", () => {
       label: "Has conflicts",
       toneClassName: "text-destructive",
     });
+  });
+});
+
+describe("detailSummaryChecksState", () => {
+  const passed = { name: "CI", status: "success", description: null, url: null } as const;
+
+  it("passes on the head commit's rollup when the detail could not read checks", () => {
+    expect(
+      detailSummaryChecksState({
+        checks: [],
+        checksUnreadable: true,
+        checksRollupState: "failing",
+      }),
+    ).toBe("failing");
+    // Without one it clears, rather than keeping an older rollup as current.
+    expect(detailSummaryChecksState({ checks: [], checksUnreadable: true })).toBe(null);
+  });
+
+  it("holds an unreadable detail pending while a workflow awaits approval", () => {
+    const awaiting = {
+      name: "CI",
+      status: "action-required",
+      description: null,
+      url: null,
+    } as const;
+    expect(
+      detailSummaryChecksState({
+        checks: [awaiting],
+        checksUnreadable: true,
+        checksRollupState: "passing",
+      }),
+    ).toBe("pending");
+    expect(detailSummaryChecksState({ checks: [awaiting], checksUnreadable: true })).toBe(
+      "pending",
+    );
+    expect(
+      detailSummaryChecksState({
+        checks: [awaiting],
+        checksUnreadable: true,
+        checksRollupState: "failing",
+      }),
+    ).toBe("failing");
+  });
+
+  it("works the rollup out from checks the detail could read", () => {
+    expect(detailSummaryChecksState({ checks: [passed], checksRollupState: "failing" })).toBe(
+      "passing",
+    );
+    expect(detailSummaryChecksState({ checks: [] })).toBe(null);
   });
 });

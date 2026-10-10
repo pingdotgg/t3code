@@ -1291,6 +1291,13 @@ export const make = Effect.gen(function* () {
       : Effect.fail(readError(cwd, operation, decoded.failure));
   };
 
+  /** Every error GitHub returned was a permission refusal, so a narrower read may still succeed. */
+  const isRefusedForPermission = (error: GitHubPullRequestApiError) =>
+    error._tag === "GitHubApiResponseError" &&
+    error.githubErrorTypes !== undefined &&
+    error.githubErrorTypes.length > 0 &&
+    error.githubErrorTypes.every((type) => type === "FORBIDDEN");
+
   /** A GraphQL read whose answer is decoded, reporting a failure against the read that made it. */
   const graphqlRead = <A>(input: {
     readonly cwd: string;
@@ -1526,22 +1533,24 @@ export const make = Effect.gen(function* () {
 
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
+    const readCore = (allowReserve: boolean, query: string) =>
+      graphqlRead({
+        allowReserve,
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestDetail",
+        variables: {
+          owner,
+          name,
+          number: input.number,
+          headRef: `refs/pull/${input.number}/head`,
+        },
+        query,
+        decode: decodePullRequestCoreJson,
+      });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        graphqlRead({
-          allowReserve,
-          cwd: input.cwd,
-          host: input.host,
-          operation: "getPullRequestDetail",
-          variables: {
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-          },
-          query: pullRequestCoreGraphQlQuery(input.host),
-          decode: decodePullRequestCoreJson,
-        }).pipe(
+        readCore(allowReserve, pullRequestCoreGraphQlQuery(input.host)).pipe(
           // Past a hundred checks the first page would let the rest imply success, so the whole
           // rollup is walked instead.
           Effect.filterOrElse(
@@ -1563,6 +1572,20 @@ export const make = Effect.gen(function* () {
                   checksTruncated: all.truncated,
                 })),
               ),
+          ),
+          // GitHub refuses check runs to a fine-grained token, on the first page or a later one.
+          // The head commit's overall state usually still reads, and the rest of the detail
+          // always does.
+          Effect.catchIf(isRefusedForPermission, () =>
+            readCore(
+              allowReserve,
+              pullRequestCoreGraphQlQuery(input.host, { checks: "rollup" }),
+            ).pipe(
+              Effect.catchIf(isRefusedForPermission, () =>
+                readCore(allowReserve, pullRequestCoreGraphQlQuery(input.host, { checks: false })),
+              ),
+              Effect.map((core): GitHubPullRequestCore => ({ ...core, checksUnreadable: true })),
+            ),
           ),
         ),
       ),

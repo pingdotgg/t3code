@@ -1784,6 +1784,14 @@ export const make = Effect.gen(function* () {
             reviewers: changeRequest.reviewers,
             labels: changeRequest.labels,
             checks: changeRequest.checks,
+            ...(changeRequest.checksUnreadable === true
+              ? {
+                  checksUnreadable: true,
+                  ...(changeRequest.checksState == null
+                    ? {}
+                    : { checksRollupState: changeRequest.checksState }),
+                }
+              : {}),
             mergeCapabilities: changeRequest.mergeCapabilities,
             viewerPermissions: changeRequest.viewerPermissions,
             ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),

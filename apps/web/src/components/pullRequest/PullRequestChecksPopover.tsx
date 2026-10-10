@@ -24,6 +24,7 @@ import {
   pullRequestCheckStatusLabel,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
+  UNREADABLE_CHECKS_EXPLANATION,
 } from "./pullRequestPresentation";
 
 /**
@@ -53,14 +54,23 @@ function LazyChecksBody({
       </p>
     );
   }
-  return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
+  return (
+    <ChecksBody
+      checks={detailQuery.data.checks}
+      checksUnreadable={detailQuery.data.checksUnreadable === true}
+      threadRef={threadRef}
+    />
+  );
 }
 
 function ChecksBody({
   checks,
+  checksUnreadable,
   threadRef,
 }: {
   checks: ReadonlyArray<PullRequestCheck>;
+  /** The host would not show the checks; any rows are workflow approvals read on their own. */
+  checksUnreadable: boolean;
   threadRef: ScopedThreadRef | null;
 }) {
   const openLink = useOpenLink(threadRef);
@@ -69,10 +79,17 @@ function ChecksBody({
   const canCollapse = attention.length + running.length > 0 && completed.length > 0;
   const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return (
+      <p className="text-muted-foreground text-xs">
+        {checksUnreadable ? UNREADABLE_CHECKS_EXPLANATION : "No checks reported"}
+      </p>
+    );
   }
   return (
     <>
+      {checksUnreadable ? (
+        <p className="mb-2 text-muted-foreground text-xs">{UNREADABLE_CHECKS_EXPLANATION}</p>
+      ) : null}
       <ScrollArea className="max-h-64">
         <ul className="flex flex-col gap-1">
           {/* Keyed by position as well as by name: the host is the one that decides how many runs
@@ -132,6 +149,7 @@ function ChecksBody({
 export function PullRequestChecksPopover({
   checksState,
   checks,
+  checksUnreadable = false,
   stale = false,
   environmentId,
   reference,
@@ -143,6 +161,8 @@ export function PullRequestChecksPopover({
   checksState: PullRequestChecksState;
   /** The checks already in hand, for the detail header. Absent on a listing row. */
   checks?: ReadonlyArray<PullRequestCheck>;
+  /** The host would not show this reader the checks in hand. */
+  checksUnreadable?: boolean;
   stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
@@ -158,7 +178,8 @@ export function PullRequestChecksPopover({
   const failedCount =
     checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
     0;
-  const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
+  const summary =
+    checks === undefined || stale || checksUnreadable ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -205,7 +226,7 @@ export function PullRequestChecksPopover({
             Check details are out of date. Refresh the pull request to update them.
           </p>
         ) : checks !== undefined ? (
-          <ChecksBody checks={checks} threadRef={threadRef} />
+          <ChecksBody checks={checks} checksUnreadable={checksUnreadable} threadRef={threadRef} />
         ) : environmentId !== undefined && reference !== undefined ? (
           <LazyChecksBody
             environmentId={environmentId}

@@ -78,6 +78,7 @@ export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFound
  * GitHub answered with a failure that is none of the above. `githubErrors` carries GitHub's own
  * error messages, from a GraphQL `errors` list or a REST `message`/`errors` body: they name the
  * field and the reason ("A pull request already exists for acme:feature"), never a token.
+ * `githubErrorTypes` carries the GraphQL error types, such as `FORBIDDEN`.
  */
 export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponseError>()(
   "GitHubApiResponseError",
@@ -86,6 +87,7 @@ export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponse
     operation: Schema.String,
     status: Schema.Int,
     githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
+    githubErrorTypes: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 ) {
   override get message(): string {
@@ -280,7 +282,10 @@ type Answer = Data.TaggedEnum<{
   RateLimited: {};
   Unauthorized: {};
   NotFound: {};
-  Failed: { readonly messages: ReadonlyArray<string> | undefined };
+  Failed: {
+    readonly messages: ReadonlyArray<string> | undefined;
+    readonly types?: ReadonlyArray<string>;
+  };
 }>;
 const Answer = Data.taggedEnum<Answer>();
 
@@ -325,7 +330,11 @@ function classify(input: {
   ) {
     return Answer.NotFound();
   }
-  if (errors !== undefined) return Answer.Failed({ messages });
+  if (errors !== undefined) {
+    // Types are passed on only when every error has one, so they describe the whole failure.
+    const typed = errors.every((error) => error.type !== undefined);
+    return Answer.Failed({ messages, ...(typed ? { types } : {}) });
+  }
   if ((status >= 200 && status < 300) || (status === 304 && input.acceptNotModified)) {
     return Answer.Ok();
   }
@@ -485,12 +494,13 @@ export const make = Effect.gen(function* () {
               .invalidate(host)
               .pipe(Effect.andThen(Effect.fail(new GitHubApiAuthenticationError(context)))),
           NotFound: () => Effect.fail(new GitHubApiNotFoundError(context)),
-          Failed: ({ messages }) =>
+          Failed: ({ messages, types }) =>
             Effect.fail(
               new GitHubApiResponseError({
                 ...context,
                 status,
                 ...(messages === undefined ? {} : { githubErrors: messages }),
+                ...(types === undefined || types.length === 0 ? {} : { githubErrorTypes: types }),
               }),
             ),
         },

@@ -47,6 +47,7 @@ import {
   pullRequestReviewOutcomeLabel,
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
+  UNREADABLE_CHECKS_EXPLANATION,
 } from "./pullRequestPresentation";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
@@ -809,6 +810,9 @@ export function PullRequestSummaryTab({
       </Section>
 
       <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+        {detail.checksUnreadable === true ? (
+          <p className="text-xs text-muted-foreground">{UNREADABLE_CHECKS_EXPLANATION}</p>
+        ) : null}
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>
@@ -817,7 +821,9 @@ export function PullRequestSummaryTab({
             </Button>
           </div>
         ) : detail.checks.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No checks reported.</p>
+          detail.checksUnreadable === true ? null : (
+            <p className="text-xs text-muted-foreground">No checks reported.</p>
+          )
         ) : (
           detail.checks.map((check, index) => {
             const finding = { kind: "check", check } as const;

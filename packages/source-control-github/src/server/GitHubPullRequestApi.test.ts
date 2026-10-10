@@ -272,6 +272,15 @@ function threadCommentsPage(
   });
 }
 
+/** GitHub's answer when a fine-grained token asks for check runs. */
+const checksRefused = new GitHubApi.GitHubApiResponseError({
+  host: "github.com",
+  operation: "getPullRequestDetail",
+  status: 200,
+  githubErrors: ["Resource not accessible by personal access token"],
+  githubErrorTypes: ["FORBIDDEN"],
+});
+
 /** What GitHub answers for a pull request it will not serve a whole diff for. */
 const diffRefused = new GitHubApi.GitHubApiResponseError({
   host: "github.com",
@@ -3743,6 +3752,161 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
+    }),
+  );
+
+  it.effect(
+    "reads the detail with only the head's check state when GitHub refuses the checks",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.fail(checksRefused)).mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                coreResponse({
+                  body: "Body",
+                  commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+                }),
+              ),
+            ),
+          ),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const detail = yield* cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        });
+
+        expect(queryAt(0)).toContain("contexts(first: 100)");
+        expect(queryAt(1)).toContain("statusCheckRollup { state }");
+        expect(queryAt(1)).not.toContain("contexts");
+        assert.strictEqual(mockedExecute.mock.calls.length, 2);
+        expect(detail.body).toBe("Body");
+        expect(detail.checks).toEqual([]);
+        expect(detail.checksState).toBe("failing");
+        expect(detail.checksUnreadable).toBe(true);
+        expect(detail.comparison).toEqual({ behindBy: 2, viewerCanUpdate: true });
+      }),
+  );
+
+  it.effect("reads the detail without checks when GitHub refuses a later page of them", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                coreResponse({
+                  commits: {
+                    nodes: [
+                      {
+                        commit: {
+                          statusCheckRollup: {
+                            contexts: {
+                              nodes: [{ context: "status", state: "SUCCESS" }],
+                              pageInfo: { hasNextPage: true },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                }),
+              ),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.fail(checksRefused))
+        .mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ commits: undefined })))),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      expect(queryAt(2)).toContain("statusCheckRollup { state }");
+      expect(detail.checks).toEqual([]);
+      expect(detail.checksState).toBeNull();
+      expect(detail.checksUnreadable).toBe(true);
+    }),
+  );
+
+  it.effect("reads the detail without any checks when GitHub refuses the check state too", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.fail(checksRefused))
+        .mockReturnValueOnce(Effect.fail(checksRefused))
+        .mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ commits: undefined })))),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      expect(queryAt(2)).not.toContain("statusCheckRollup");
+      expect(detail.checksState).toBeNull();
+      expect(detail.checksUnreadable).toBe(true);
+    }),
+  );
+
+  it.effect("returns the refusal when the detail without checks is refused too", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.fail(checksRefused))
+        .mockReturnValueOnce(Effect.fail(checksRefused))
+        .mockReturnValueOnce(Effect.fail(checksRefused));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      expect(error._tag).toBe("GitHubApiResponseError");
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+    }),
+  );
+
+  it.effect("does not retry a detail read GitHub refused for another reason", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubApi.GitHubApiResponseError({
+            host: "github.com",
+            operation: "getPullRequestDetail",
+            status: 200,
+            githubErrors: ["Something went wrong"],
+            githubErrorTypes: ["FORBIDDEN", "INTERNAL"],
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      expect(error._tag).toBe("GitHubApiResponseError");
+      expect(mockedExecute).toHaveBeenCalledOnce();
     }),
   );
 
