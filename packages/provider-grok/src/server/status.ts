@@ -16,11 +16,13 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -355,11 +357,9 @@ const discoverGrokMetadataViaAcpInitialize = (
   environment: NodeJS.ProcessEnv,
 ) =>
   Effect.gen(function* () {
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acp = yield* makeGrokAcpRuntime({
       grokSettings,
       environment,
-      childProcessSpawner,
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
@@ -567,14 +567,16 @@ export const enrichGrokSnapshot = (input: {
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
-  readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
+}): Effect.Effect<
+  void,
+  never,
+  HttpClient.HttpClient | ProviderLatestVersions.ProviderLatestVersions
+> => {
   const { snapshot, publishSnapshot } = input;
 
   return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
   }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
     Effect.catchCause((cause) =>
       Effect.logWarning("Grok version advisory enrichment failed", {

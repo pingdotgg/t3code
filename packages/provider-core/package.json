@@ -23,10 +23,6 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
-    "./server/continuationRequests": {
-      "types": "./src/server/continuationRequests.ts",
-      "import": "./src/server/continuationRequests.ts"
-    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
@@ -67,6 +63,10 @@
       "types": "./src/server/managedProvider.ts",
       "import": "./src/server/managedProvider.ts"
     },
+    "./server/McpProviderSessions": {
+      "types": "./src/server/McpProviderSessions.ts",
+      "import": "./src/server/McpProviderSessions.ts"
+    },
     "./server/mcpSession": {
       "types": "./src/server/mcpSession.ts",
       "import": "./src/server/mcpSession.ts"
@@ -74,6 +74,10 @@
     "./server/mcpToolPresentation": {
       "types": "./src/server/mcpToolPresentation.ts",
       "import": "./src/server/mcpToolPresentation.ts"
+    },
+    "./server/ModelCatalog": {
+      "types": "./src/server/ModelCatalog.ts",
+      "import": "./src/server/ModelCatalog.ts"
     },
     "./server/nativeProtocolLogging": {
       "types": "./src/server/nativeProtocolLogging.ts",
@@ -99,9 +103,13 @@
       "types": "./src/server/ProviderAdapter.ts",
       "import": "./src/server/ProviderAdapter.ts"
     },
-    "./server/ProviderAuthFlow": {
-      "types": "./src/server/ProviderAuthFlow.ts",
-      "import": "./src/server/ProviderAuthFlow.ts"
+    "./server/providerAuthFlow": {
+      "types": "./src/server/providerAuthFlow.ts",
+      "import": "./src/server/providerAuthFlow.ts"
+    },
+    "./server/ProviderContinuationRequests": {
+      "types": "./src/server/ProviderContinuationRequests.ts",
+      "import": "./src/server/ProviderContinuationRequests.ts"
     },
     "./server/ProviderEventLoggers": {
       "types": "./src/server/ProviderEventLoggers.ts",
@@ -110,6 +118,10 @@
     "./server/ProviderHost": {
       "types": "./src/server/ProviderHost.ts",
       "import": "./src/server/ProviderHost.ts"
+    },
+    "./server/ProviderLatestVersions": {
+      "types": "./src/server/ProviderLatestVersions.ts",
+      "import": "./src/server/ProviderLatestVersions.ts"
     },
     "./server/randomUuid": {
       "types": "./src/server/randomUuid.ts",
@@ -162,6 +174,10 @@
     "./server/threadTitleContext": {
       "types": "./src/server/threadTitleContext.ts",
       "import": "./src/server/threadTitleContext.ts"
+    },
+    "./server/usage": {
+      "types": "./src/server/usage.ts",
+      "import": "./src/server/usage.ts"
     },
     "./server/usageLimits": {
       "types": "./src/server/usageLimits.ts",

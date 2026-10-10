@@ -32,7 +32,10 @@ import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
 import { MuseDriver, type MuseDriverEnv } from "@t3tools/provider-muse/server";
 import { PiDriver, type PiDriverEnv } from "@t3tools/provider-pi/server";
-import type { AnyProviderDriver } from "@t3tools/provider-core/server/driver";
+import type {
+  AnyProviderDriver,
+  ProviderUsageReaderEnv,
+} from "@t3tools/provider-core/server/driver";
 
 /**
  * Union of infrastructure services required to construct any built-in
@@ -66,3 +69,21 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   MuseDriver,
   AcpRegistryDriver,
 ];
+
+/** Services the built-in usage readers need. */
+export type BuiltInUsageReadersEnv =
+  | ProviderUsageReaderEnv<typeof ClaudeDriver>
+  | ProviderUsageReaderEnv<typeof CodexDriver>
+  | ProviderUsageReaderEnv<typeof GrokDriver>
+  | ProviderUsageReaderEnv<typeof OpenCodeDriver>
+  | ProviderUsageReaderEnv<typeof AntigravityDriver>
+  | ProviderUsageReaderEnv<typeof CursorDriver>;
+
+/**
+ * The drivers that keep usage history, in the order the usage page reads
+ * them: transcript readers first, then scan readers. Aggregation keeps the
+ * first copy of a duplicate record, so the order is part of the result.
+ */
+export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
+  AnyProviderDriver<BuiltInDriversEnv, BuiltInUsageReadersEnv>
+> = [ClaudeDriver, CodexDriver, GrokDriver, OpenCodeDriver, AntigravityDriver, CursorDriver];

@@ -42,8 +42,11 @@ it("disables the hit strip for detached rows and observes their mounted replacem
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(callback: () => void) {
-        measure = callback;
+      constructor(callback: (entries: readonly ResizeObserverEntry[]) => void) {
+        measure = () =>
+          callback([
+            { target: viewport, contentRect: { width: 1400, height: 0 } },
+          ] as unknown as ResizeObserverEntry[]);
       }
       observe = observe;
       unobserve = unobserve;

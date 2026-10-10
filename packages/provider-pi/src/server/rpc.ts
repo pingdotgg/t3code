@@ -26,8 +26,9 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -214,7 +215,7 @@ const terminatePiProcess = (kill: (signal: NodeJS.Signals) => boolean, hasExited
 
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const scope = yield* Effect.scope;
 
   const spawnCommand = yield* resolveSpawnCommand(options.command, [...options.args], {

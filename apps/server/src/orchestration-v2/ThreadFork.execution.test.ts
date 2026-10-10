@@ -21,15 +21,15 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
   const driver = ProviderDriverKind.make(driverName);
   const instanceId = ProviderInstanceId.make(driver);
   const modelSelection = { instanceId, model: "test-model" };
-  const adapter: ProviderAdapterV2Shape = {
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
     getCapabilities: () =>

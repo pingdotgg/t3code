@@ -69,6 +69,12 @@ export const ServerProviderAuth = Schema.Struct({
   canLogout: Schema.optional(Schema.Boolean),
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The workspace or organization whose quota the login draws on, such as a
+   * ChatGPT workspace or Claude organization id. One email can belong to
+   * several, each with its own quota.
+   */
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -632,6 +638,10 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
+/**
+ * "tailnet" when the address is on this machine's Tailscale interface, "lan"
+ * for any other private address, including other VPNs in 100.64.0.0/10.
+ */
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
 
