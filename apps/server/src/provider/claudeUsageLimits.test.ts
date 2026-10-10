@@ -95,6 +95,42 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
   });
 
+  it("omits an unstarted session when the weekly allowance is exhausted", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 0, resets_at: null },
+          seven_day: { utilization: 100, resets_at: "2026-07-24T08:59:00Z" },
+        },
+      },
+    });
+    expect(limits.windows).toEqual([
+      {
+        id: "seven_day",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 100,
+        windowDurationMins: 10080,
+        resetsAt: "2026-07-24T08:59:00.000Z",
+      },
+    ]);
+  });
+
+  it.each([
+    { utilization: 0, resets_at: "2026-07-18T14:39:00Z" },
+    { utilization: 54, resets_at: null },
+  ])("keeps a session with usage or a reset time: %j", (five_hour) => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: { rate_limits_available: true, rate_limits: { five_hour } },
+    });
+    expect(limits.windows).toMatchObject([
+      { id: "five_hour", kind: "session", usedPercent: five_hour.utilization },
+    ]);
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
