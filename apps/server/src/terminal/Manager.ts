@@ -48,6 +48,7 @@ import { mergePathEntries } from "@t3tools/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -97,6 +98,9 @@ export {
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
+const MAX_UNANSWERED_QUERIES_LENGTH = 4096;
+/** fish waits 10 s for a DA1 reply; nothing still waits on a query older than that. */
+const UNANSWERED_QUERY_TTL_MS = 10_000;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
@@ -290,6 +294,10 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
+  /** Query traffic stripped from history that no client reply has answered yet. */
+  unansweredQueries: string;
+  /** When the oldest of `unansweredQueries` arrived. */
+  unansweredQueriesAt: number;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -394,6 +402,14 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   };
 }
 
+/** Replays pending queries and an unfinished control sequence after query-free history. */
+function attachState(session: TerminalSessionState, now: number) {
+  return {
+    snapshot: snapshot(session),
+    replay: `${pendingQueries(session, now)}${session.pendingHistoryControlSequence}`,
+  };
+}
+
 function summary(session: TerminalSessionState): TerminalSummary {
   return {
     threadId: session.threadId,
@@ -453,16 +469,6 @@ function isDuplicateAttachSnapshotEvent(
         event.snapshot.threadId === initialSnapshot.threadId &&
         event.snapshot.terminalId === initialSnapshot.terminalId &&
         event.snapshot.updatedAt <= initialSnapshot.updatedAt;
-}
-
-function advanceEventSequence(session: TerminalSessionState): {
-  readonly updatedAt: string;
-  readonly sequence: number;
-} {
-  const updatedAt = DateTime.formatIso(DateTime.nowUnsafe());
-  session.eventSequence += 1;
-  session.updatedAt = updatedAt;
-  return { updatedAt, sequence: session.eventSequence };
 }
 
 function cleanupProcessHandles(session: TerminalSessionState): void {
@@ -1061,16 +1067,33 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   return false;
 }
 
-// DECRQSS ($q) and XTGETTCAP (+q) queries plus their replies ([01]$r / [01]+r):
-// pure request/response traffic with no visual value, and replaying a stored
-// query triggers a fresh reply.
+// DECRQSS ($q) and XTGETTCAP (+q) queries plus their replies ([01]$r / [01]+r),
+// and XTVERSION replies (>|): pure request/response traffic with no visual value,
+// and replaying a stored query triggers a fresh reply.
 function shouldStripDcsSequence(content: string): boolean {
-  return /^[01]?[$+][qr]/.test(content);
+  return /^(?:[01]?[$+][qr]|>\|)/.test(content);
 }
 
 function shouldStripOscSequence(content: string): boolean {
   return /^(10|11|12);(?:\?|rgb:)/.test(content);
 }
+
+/** History removes both requests and replies; only complete replies retire queries. */
+// oxlint-disable no-control-regex -- Replies intentionally match terminal control bytes.
+function isTerminalReplySequence(sequence: string): boolean {
+  return (
+    // DSR/CPR (including color scheme), DA1/DA2, DECRPM and kitty keyboard flags.
+    /^(?:\u001b\[|\u009b)(?:[0-4]?n|\?(?:10|11|13|20|21|27|50|53|57|58|70|71|73|83)(?:;[0-9]+)*n|\?997;[12]n|\??[0-9]+;[0-9]+(?:;[0-9]+)?R|\?[0-9]+(?:;[0-9]+)*c|>[0-9]+;[0-9]+;[0-9]+c|\??[0-9]+;[0-4]\$y|\?[0-9]+u)$/.test(
+      sequence,
+    ) ||
+    // DECRQSS/XTGETTCAP and XTVERSION replies require ST; OSC colors also allow BEL.
+    /^(?:\u001bP|\u0090)(?:[01][$+]r|>\|)[\s\S]*(?:\u001b\\|\u009c)$/.test(sequence) ||
+    /^(?:\u001b\]|\u009d)(?:10|11|12);rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\u0007|\u001b\\|\u009c)$/i.test(
+      sequence,
+    )
+  );
+}
+// oxlint-enable no-control-regex
 
 function stripStringTerminator(value: string): string {
   if (value.endsWith("\u001b\\")) {
@@ -1115,17 +1138,24 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-function sanitizeTerminalHistoryChunk(
-  pendingControlSequence: string,
-  data: string,
-): { visibleText: string; pendingControlSequence: string } {
+/** `printedAt` counts stripped sequences preceding the last printable text, or is null. */
+function sanitizeTerminalHistoryChunk(pendingControlSequence: string, data: string) {
   const input = `${pendingControlSequence}${data}`;
   let visibleText = "";
+  const strippedSequences: string[] = [];
+  let printedAt: number | null = null;
   let index = 0;
 
-  const append = (value: string) => {
-    visibleText += value;
+  const append = (value: string, strip = false) => {
+    if (strip) strippedSequences.push(value);
+    else visibleText += value;
   };
+  const finish = (pendingControlSequence: string) => ({
+    visibleText,
+    strippedSequences,
+    printedAt,
+    pendingControlSequence,
+  });
 
   while (index < input.length) {
     const codePoint = input.charCodeAt(index);
@@ -1133,7 +1163,7 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x1b) {
       const nextCodePoint = input.charCodeAt(index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return finish(input.slice(index));
       }
 
       if (nextCodePoint === 0x5b) {
@@ -1142,16 +1172,14 @@ function sanitizeTerminalHistoryChunk(
           if (isCsiFinalByte(input.charCodeAt(cursor))) {
             const sequence = input.slice(index, cursor + 1);
             const body = input.slice(index + 2, cursor);
-            if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
-            }
+            append(sequence, shouldStripCsiSequence(body, input[cursor] ?? ""));
             index = cursor + 1;
             break;
           }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return finish(input.slice(index));
         }
         continue;
       }
@@ -1164,23 +1192,21 @@ function sanitizeTerminalHistoryChunk(
       ) {
         const terminatorIndex = findStringTerminatorIndex(input, index + 2);
         if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return finish(input.slice(index));
         }
         const sequence = input.slice(index, terminatorIndex);
         const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
-        if (!strip) {
-          append(sequence);
-        }
+        append(sequence, strip);
         index = terminatorIndex;
         continue;
       }
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return finish(input.slice(index));
       }
       append(input.slice(index, escapeSequenceEndIndex));
       index = escapeSequenceEndIndex;
@@ -1193,16 +1219,14 @@ function sanitizeTerminalHistoryChunk(
         if (isCsiFinalByte(input.charCodeAt(cursor))) {
           const sequence = input.slice(index, cursor + 1);
           const body = input.slice(index + 1, cursor);
-          if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-            append(sequence);
-          }
+          append(sequence, shouldStripCsiSequence(body, input[cursor] ?? ""));
           index = cursor + 1;
           break;
         }
         cursor += 1;
       }
       if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return finish(input.slice(index));
       }
       continue;
     }
@@ -1210,25 +1234,49 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
       const terminatorIndex = findStringTerminatorIndex(input, index + 1);
       if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return finish(input.slice(index));
       }
       const sequence = input.slice(index, terminatorIndex);
       const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
       const strip =
         (codePoint === 0x9d && shouldStripOscSequence(content)) ||
         (codePoint === 0x90 && shouldStripDcsSequence(content));
-      if (!strip) {
-        append(sequence);
-      }
+      append(sequence, strip);
       index = terminatorIndex;
       continue;
     }
 
+    if ((codePoint >= 0x20 && codePoint !== 0x7f && codePoint < 0x80) || codePoint >= 0xa0) {
+      printedAt = strippedSequences.length;
+    }
     append(input[index] ?? "");
     index += 1;
   }
 
-  return { visibleText, pendingControlSequence: "" };
+  return finish("");
+}
+
+/** Overflow keeps the newest whole queries across reads, with the original expiry. */
+function appendUnansweredQueries(current: string, queries: ReadonlyArray<string>): string {
+  const added = queries.join("");
+  if (current.length + added.length <= MAX_UNANSWERED_QUERIES_LENGTH) {
+    return `${current}${added}`;
+  }
+  let kept = "";
+  const retained = sanitizeTerminalHistoryChunk("", current).strippedSequences;
+  for (const query of [...retained, ...queries].toReversed()) {
+    if (query.length > MAX_UNANSWERED_QUERIES_LENGTH) continue;
+    if (kept.length + query.length > MAX_UNANSWERED_QUERIES_LENGTH) break;
+    kept = `${query}${kept}`;
+  }
+  return kept;
+}
+
+/** Stored queries a shell may still be waiting on. */
+function pendingQueries(session: TerminalSessionState, now: number): string {
+  return now - session.unansweredQueriesAt <= UNANSWERED_QUERY_TTL_MS
+    ? session.unansweredQueries
+    : "";
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -1583,6 +1631,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
+
+  // One counter for every session, so a terminal's sequences keep growing when it
+  // closes and reopens, and an attach can tell covered events apart by sequence.
+  let lastEventSequence = 0;
+  const advanceEventSequence = (session: TerminalSessionState) => {
+    const updatedAt = DateTime.formatIso(DateTime.nowUnsafe());
+    lastEventSequence += 1;
+    session.eventSequence = lastEventSequence;
+    session.updatedAt = updatedAt;
+    return { updatedAt, sequence: lastEventSequence };
+  };
 
   const publishEvent = (event: TerminalEvent) =>
     Effect.gen(function* () {
@@ -2014,6 +2073,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     expectedPid: number,
   ) {
     while (true) {
+      const now = yield* Clock.currentTimeMillis;
       const action: DrainProcessEventAction = yield* Effect.sync(() => {
         if (session.pid !== expectedPid || !session.process || session.status !== "running") {
           session.pendingProcessEvents = [];
@@ -2042,6 +2102,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             nextEvent.data,
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+          // A program blocked on a reply prints nothing more, so text means whatever
+          // asked before it has moved on.
+          if (sanitized.printedAt !== null) session.unansweredQueries = "";
+          const queries = sanitized.strippedSequences.slice(sanitized.printedAt ?? 0);
+          if (queries.length > 0) {
+            const pending = pendingQueries(session, now);
+            // Expiry runs from the oldest stored query, so newer ones never extend it.
+            if (pending.length === 0) session.unansweredQueriesAt = now;
+            session.unansweredQueries = appendUnansweredQueries(pending, queries);
+          }
           if (sanitized.visibleText.length > 0) {
             session.history.append(sanitized.visibleText);
           }
@@ -2065,6 +2135,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.childCommandLabel = null;
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
+        session.unansweredQueries = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -2137,6 +2208,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.childCommandLabel = null;
       session.status = "exited";
       session.pendingHistoryControlSequence = "";
+      session.unansweredQueries = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2611,6 +2683,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         pid: null,
         history,
         pendingHistoryControlSequence: "",
+        unansweredQueries: "",
+        unansweredQueriesAt: 0,
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -2650,7 +2724,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         },
         "started",
       );
-      return snapshot(session);
+      return session;
     }
 
     const liveSession = existing.value;
@@ -2673,6 +2747,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
+      liveSession.unansweredQueries = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2682,6 +2757,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
+      liveSession.unansweredQueries = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2702,7 +2778,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         },
         "started",
       );
-      return snapshot(liveSession);
+      return liveSession;
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -2712,7 +2788,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.updatedAt = yield* nowIso;
     }
 
-    return snapshot(liveSession);
+    return liveSession;
   });
 
   const openLocked = (input: TerminalOpenInput) =>
@@ -2724,13 +2800,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked), Effect.map(snapshot)),
     );
 
   const openOrAttachForStream = (input: TerminalAttachInput) =>
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
         const terminalId = input.terminalId;
         const existing = yield* getSession(input.threadId, terminalId);
 
@@ -2747,7 +2824,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId,
             cwd: input.cwd,
           });
-          return yield* openLocked(resolvedInput);
+          return attachState(yield* openLocked(resolvedInput), now);
         }
 
         const session = existing.value;
@@ -2760,7 +2837,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId,
             cwd: input.cwd,
           });
-          return yield* openLocked(resolvedInput);
+          return attachState(yield* openLocked(resolvedInput), now);
         }
 
         if (
@@ -2775,7 +2852,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           session.updatedAt = yield* nowIso;
         }
 
-        return snapshot(session);
+        return attachState(session, now);
       }),
     );
 
@@ -2811,22 +2888,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const streamSession = (
     input: TerminalObserveInput,
-    initial: Effect.Effect<TerminalSessionSnapshot, TerminalError>,
+    initial: Effect.Effect<ReturnType<typeof attachState>, TerminalError>,
     listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
   ) => {
     let unsubscribe: (() => void) | null = null;
 
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
-      let deliverLive = false;
+      // Set once the stream goes live. Events committed before the snapshot can
+      // still be mid-publish then, so live events it covers are dropped too.
+      let liveSnapshot: TerminalSessionSnapshot | null = null;
 
       unsubscribe = yield* subscribe((event) => {
         if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
           return Effect.void;
         }
 
-        if (!deliverLive) {
+        if (liveSnapshot === null) {
           bufferedEvents.push(event);
+          return Effect.void;
+        }
+
+        if (isDuplicateAttachSnapshotEvent(event, liveSnapshot)) {
           return Effect.void;
         }
 
@@ -2834,12 +2917,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
-      const initialSnapshot = yield* initial;
+      const { snapshot: initialSnapshot, replay } = yield* initial;
 
       yield* listener({
         type: "snapshot",
         snapshot: initialSnapshot,
       });
+
+      // History drops query traffic, but a shell may still be waiting on queries it
+      // printed before any client attached, as fish 4.1+ does on DA1. It also holds
+      // back an unfinished escape sequence, which later output completes.
+      if (replay.length > 0) {
+        yield* listener({
+          type: "output",
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          data: replay,
+        });
+      }
 
       for (const event of bufferedEvents) {
         if (isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
@@ -2852,7 +2947,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
       }
 
-      deliverLive = true;
+      liveSnapshot = initialSnapshot;
       return () => {
         unsubscribe?.();
         unsubscribe = null;
@@ -2873,12 +2968,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) =>
     streamSession(input, openOrAttachForStream(input), listener);
 
+  // Observers can't write, so stored queries stay for a client that can answer them.
   const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
     streamSession(
       input,
       withThreadLock(
         input.threadId,
-        requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
+        requireSession(input.threadId, input.terminalId).pipe(
+          Effect.map((session) => ({
+            snapshot: snapshot(session),
+            replay: session.pendingHistoryControlSequence,
+          })),
+        ),
       ),
       listener,
     );
@@ -2978,7 +3079,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
     session.inputCount += 1;
     yield* Effect.try({
-      try: () => process.write(input.data),
+      try: () => {
+        process.write(input.data);
+        // Only a successful reply retires queries; ordinary commands leave them pending.
+        if (
+          session.unansweredQueries.length > 0 &&
+          sanitizeTerminalHistoryChunk("", input.data).strippedSequences.some(
+            isTerminalReplySequence,
+          )
+        ) {
+          session.unansweredQueries = "";
+        }
+      },
       catch: (cause) =>
         new TerminalWriteError({
           threadId: input.threadId,
@@ -3051,6 +3163,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
           pendingHistoryControlSequence: "",
+          unansweredQueries: "",
+          unansweredQueriesAt: 0,
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
           processEventDrainRunning: false,
@@ -3088,6 +3202,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       session.history.clear();
       session.pendingHistoryControlSequence = "";
+      session.unansweredQueries = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;

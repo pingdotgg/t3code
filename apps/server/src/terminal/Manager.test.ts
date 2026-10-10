@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -197,6 +198,45 @@ function restartInput(overrides: Partial<TerminalRestartInput> = {}): TerminalRe
     ...overrides,
   };
 }
+
+/** What an attach stream showed: snapshot history, output data, or else the event type. */
+function attachTranscript(events: ReadonlyArray<TerminalAttachStreamEvent>) {
+  return events.map((event) =>
+    event.type === "snapshot"
+      ? event.snapshot.history
+      : event.type === "output"
+        ? event.data
+        : event.type,
+  );
+}
+
+/** Emits shell output and waits until the manager has published it. */
+const makePrinter = Effect.fnUntraced(function* (
+  manager: TerminalManager.TerminalManager["Service"],
+  ptyAdapter: FakePtyAdapter,
+) {
+  const printed = yield* Queue.unbounded<void>();
+  const unsubscribe = yield* manager.subscribe((event) =>
+    event.type === "output" ? Queue.offer(printed, undefined).pipe(Effect.asVoid) : Effect.void,
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+  return (data: string, shellIndex = 0) =>
+    Effect.sync(() => ptyAdapter.processes[shellIndex]?.emitData(data)).pipe(
+      Effect.andThen(Queue.take(printed)),
+    );
+});
+
+/** Attaches, detaches once the stream is live, and returns what it showed. */
+const attachOnce = Effect.fnUntraced(function* (
+  manager: TerminalManager.TerminalManager["Service"],
+) {
+  const events: TerminalAttachStreamEvent[] = [];
+  const detach = yield* manager.attachStream(openInput(), (event) =>
+    Effect.sync(() => events.push(event)),
+  );
+  detach();
+  return attachTranscript(events);
+});
 
 const historyLogPath = (logsDir: string, threadId = "thread-1") =>
   Effect.service(Path.Path).pipe(
@@ -466,11 +506,27 @@ it.layer(
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const print = yield* makePrinter(manager, ptyAdapter);
+      // Raise the old process's sequence above a reopened process's initial value.
+      for (const data of ["a", "b", "c"]) yield* print(data);
+      const snapshotted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
       const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
-      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
-        Ref.update(attachEvents, (events) => [...events, event]),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const attaching = yield* manager
+        .attachStream(openInput(), (event) =>
+          Ref.update(attachEvents, (events) => [...events, event]).pipe(
+            Effect.andThen(
+              event.type === "snapshot" && event.snapshot.history === "abc"
+                ? Deferred.succeed(snapshotted, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  )
+                : Effect.void,
+            ),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(snapshotted);
 
       yield* manager.close({
         threadId: "thread-1",
@@ -478,13 +534,170 @@ it.layer(
         deleteHistory: true,
       });
       yield* manager.open(openInput());
+      yield* print("new", 1);
+      yield* Deferred.succeed(release, undefined);
+      const unsubscribe = yield* Fiber.join(attaching);
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* print("live", 1);
 
       const events = yield* Ref.get(attachEvents);
-      expect(events.map((event) => event.type)).toEqual(["snapshot", "closed", "snapshot"]);
+      expect(attachTranscript(events)).toEqual(["abc", "closed", "", "new", "live"]);
       expect(
         events.filter((event) => event.type === "snapshot").map((event) => event.snapshot.status),
       ).toEqual(["running", "running"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("forwards unanswered terminal queries to later attaches until answered", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const print = yield* makePrinter(manager, ptyAdapter);
+      const shell = ptyAdapter.processes[0];
+      expect(shell).toBeDefined();
+      if (!shell) return;
+      const reply = {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\u001b[?62;22c",
+      };
+
+      // A shell prints startup queries before any client attaches, then waits for
+      // the replies (fish 4.1+ blocks on DA1).
+      yield* print("prompt \u001b[0c");
+      expect(yield* attachOnce(manager)).toEqual(["prompt ", "\u001b[0c"]);
+
+      // A reply that never reached the shell, or input that is not a reply, leaves
+      // them pending.
+      shell.writeFailure = new Error("PTY input handle is unavailable");
+      yield* Effect.flip(manager.write(reply));
+      shell.writeFailure = undefined;
+      yield* manager.write({ ...reply, data: "ls\r" });
+      expect(yield* attachOnce(manager)).toEqual(["prompt ", "\u001b[0c"]);
+
+      // A client's reply answers them.
+      yield* manager.write(reply);
+      expect(yield* attachOnce(manager)).toEqual(["prompt "]);
+
+      // History strips both requests and replies; only replies answer pending queries.
+      for (const [request, response] of [
+        ["\u001b[5n", "\u001b[0n"],
+        ["\u001b[6n", "\u001b[1;2R"],
+        ["\u001b[?6n", "\u001b[?1;2;1R"],
+        ["\u001b[?15n", "\u001b[?11n"],
+        ["\u001b[?996n", "\u001b[?997;1n"],
+        ["\u001b[0c", "\u001b[?62;22c"],
+        ["\u001b[>0c", "\u001b[>1;10;0c"],
+        ["\u001b[?2026$p", "\u001b[?2026;2$y"],
+        ["\u001b[?u", "\u001b[?1u"],
+        ["\u001b[>q", "\u001bP>|ghostty 1.3.0\u001b\\"],
+        ["\u001bP$qm\u001b\\", "\u001bP1$r0m\u001b\\"],
+        ["\u001bP+q544e\u001b\\", "\u001bP0+r\u001b\\"],
+        ["\u001b]10;?\u0007", "\u001b]10;rgb:ffff/ffff/ffff\u0007"],
+        ["\u009b5n", "\u009b0n"],
+        ["\u0090$qm\u009c", "\u00901$r0m\u009c"],
+        ["\u009d11;?\u009c", "\u009d11;rgb:0000/0000/0000\u009c"],
+        ["\u001bP1$r0m\u0007", "\u001bP1$r0m\u001b\\"],
+        ["\u001b]12;rgb:invalid\u0007", "\u001b]12;rgb:ffff/0000/0000\u001b\\"],
+        ["\u001b_\u001b[0n\u001b\\", "\u001b[4n"],
+        ["\u001b[0", "\u001b[n"],
+      ] as const) {
+        yield* print("\u001b[0c");
+        yield* manager.write({ ...reply, data: request });
+        expect(yield* attachOnce(manager), JSON.stringify(request)).toEqual([
+          "prompt ",
+          "\u001b[0c",
+        ]);
+        yield* manager.write({ ...reply, data: response });
+        expect(yield* attachOnce(manager), JSON.stringify(response)).toEqual(["prompt "]);
+      }
+
+      // Text means whatever asked before it stopped waiting, however reads split it.
+      yield* print("\u001b[0c");
+      yield* print("gave up\r\n$ \u001b[5n");
+      expect(yield* attachOnce(manager)).toEqual(["prompt gave up\r\n$ ", "\u001b[5n"]);
+
+      // Clearing history does not answer a query the shell is still waiting on.
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(yield* attachOnce(manager)).toEqual(["", "\u001b[5n"]);
+
+      // A restarted shell never sent the old shell's queries.
+      yield* print("\u001b[0c");
+      yield* manager.restart(restartInput());
+      expect(yield* attachOnce(manager)).toEqual([""]);
+
+      // Overflow retains whole queries; DA2's extra byte cannot split an older query.
+      yield* print(`${"\u001b[5n".repeat(1024)}\u001b[>0c`, 1);
+      expect(yield* attachOnce(manager)).toEqual(["", `${"\u001b[5n".repeat(1022)}\u001b[>0c`]);
+      // The same traffic in two reads must keep the same whole-sequence suffix.
+      yield* manager.write(reply);
+      yield* print("\u001b[5n".repeat(1023), 1);
+      yield* print("\u001b[5n\u001b[>0c", 1);
+      expect(yield* attachOnce(manager)).toEqual(["", `${"\u001b[5n".repeat(1022)}\u001b[>0c`]);
+    }),
+  );
+
+  it.effect("stops forwarding queries nothing can still be waiting on", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      // An exited shell needs no kill timer at teardown, which this clock never fires.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 })),
+      );
+      const print = yield* makePrinter(manager, ptyAdapter);
+
+      yield* print("prompt \u001b[0c");
+      // A shell waits at most 10 s for a reply; a newer query doesn't extend that.
+      yield* TestClock.adjust("9 seconds");
+      // An unretainable query cannot evict pending queries or restart their expiry.
+      yield* print(`\u001bP$q${"x".repeat(4096)}\u001b\\`);
+      yield* print("\u001b[5n");
+      yield* TestClock.adjust("1 seconds");
+      expect(yield* attachOnce(manager)).toEqual(["prompt ", "\u001b[0c\u001b[5n"]);
+      yield* TestClock.adjust("1 millis");
+      expect(yield* attachOnce(manager)).toEqual(["prompt "]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("drops live output that its attach snapshot already covers", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      // Hold the output's publish after the drain has committed it to the session.
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const stopHolding = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopHolding));
+      // It ends mid-sequence, which history holds back for the next output to finish.
+      ptyAdapter.processes[0]?.emitData("prompt \u001b[0c\u001b[");
+      yield* Deferred.await(held);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const detach = yield* manager.attachStream(openInput(), (event) =>
+        Effect.sync(() => events.push(event)),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(detach));
+      // A newer event reaching the stream first does not make the held output new.
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      const published = yield* Deferred.make<void>();
+      const stopWatching = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(published, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWatching));
+      // The held publish is still looping over listeners, so it reaches this
+      // stream, which subscribed meanwhile, after the stream has gone live.
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(published);
+
+      expect(attachTranscript(events)).toEqual(["prompt ", "\u001b[0c\u001b[", "cleared"]);
     }),
   );
 
@@ -1548,8 +1761,9 @@ it.layer(
       process.emitData("prompt ");
       // DECRQM/DECRPM, XTVERSION, and kitty-keyboard CSI query/reply traffic.
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
-      // DECRQSS and XTGETTCAP query/reply traffic in 7-bit DCS form.
+      // DECRQSS and XTGETTCAP query/reply traffic, and an XTVERSION reply, in 7-bit DCS form.
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
+      process.emitData("\u001bP>|xterm(400)\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
       // The same DCS traffic in 8-bit form.
       process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
@@ -2657,6 +2871,12 @@ it.layer(
         const { manager, ptyAdapter } = yield* createManager(5, {
           ptyAdapter: new FakePtyAdapter("async"),
         });
+        const stopStartup = yield* manager.subscribe((event) =>
+          event.type === "started"
+            ? Effect.sync(() => ptyAdapter.processes[0]?.emitData("prompt \u001b[0c"))
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(stopStartup));
         const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
         const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
           Ref.update(attachEvents, (events) => [...events, event]),
@@ -2673,20 +2893,17 @@ it.layer(
             snapshot: {
               threadId: "thread-1",
               terminalId: DEFAULT_TERMINAL_ID,
+              history: "prompt ",
             },
           },
+          { type: "output", data: "\u001b[0c" },
         ]);
 
-        process.emitData("hello from attach\n");
-
-        yield* waitFor(
-          Effect.map(Ref.get(attachEvents), (events) =>
-            events.some((event) => event.type === "output" && event.data === "hello from attach\n"),
-          ),
-          "1200 millis",
-        );
+        const print = yield* makePrinter(manager, ptyAdapter);
+        yield* print("hello from attach\n");
 
         const events = yield* Ref.get(attachEvents);
+        expect(attachTranscript(events)).toEqual(["prompt ", "\u001b[0c", "hello from attach\n"]);
         expect(events.filter((event) => event.type === "snapshot")).toHaveLength(1);
       }),
   );
@@ -2702,7 +2919,7 @@ it.layer(
           ? Deferred.succeed(historyReceived, undefined).pipe(Effect.asVoid)
           : Effect.void,
       );
-      process.emitData("existing history\n");
+      process.emitData("existing history\n\u001b[0c");
       yield* Deferred.await(historyReceived);
       unsubscribeHistory();
 

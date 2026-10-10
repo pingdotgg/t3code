@@ -42,3 +42,8 @@ device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
 [web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
 during replay. Preserve both protections when changing retention or renderer code.
+
+Startup queries are separate: the server briefly retains them so a late attach can
+answer. The [web drawer](../../apps/web/src/components/ThreadTerminalDrawer.tsx)
+answers post-snapshot output once per retained-output reset. Remounts replay it
+muted; a fresh reconnect snapshot starts a new lifetime.
