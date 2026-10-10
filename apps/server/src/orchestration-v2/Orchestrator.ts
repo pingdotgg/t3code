@@ -604,10 +604,14 @@ function delegatedTaskTerminalStatus(
   }
 }
 
+/**
+ * The next queued run that may start. Held runs wait for the user; the only
+ * runs queued unheld beside them are provider wakes that skipped the hold.
+ */
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
 function latestStableRun(
@@ -1278,8 +1282,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runs.some(isBlockingRun) ||
-        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        projection.runs.some(isBlockingRun)
       ) {
         return;
       }
@@ -4974,6 +4977,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                 ),
               );
+        const queueIsHeld = projection.runs.some(
+          (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+        );
+        // A provider wake adopts a turn the provider already started, such as Claude's
+        // background-task wake. It doesn't inherit a hold left by a restart or a provider
+        // failure. Holding it doesn't stop that turn. It only leaves the turn with no T3 run,
+        // so its T3 tool calls fail. A wake that arrives after Stop reached the active run
+        // still waits, since Stop starts nothing.
+        const wakeSkipsHold =
+          queueIsHeld &&
+          command.createdBy === "agent" &&
+          command.creationSource === "provider" &&
+          !(yield* stopReachedRun(command, command.threadId, activeRun.id));
         const run: OrchestrationV2Run = {
           id: runId,
           threadId: command.threadId,
@@ -4985,11 +5001,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: "queued",
-          ...(projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-          )
-            ? { queueHeld: true }
-            : {}),
+          ...(queueIsHeld && !wakeSkipsHold ? { queueHeld: true } : {}),
           queuePosition:
             Math.max(
               0,

@@ -4305,6 +4305,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(request?.threadId, harness.threadId);
           assert.equal(request?.providerThreadId, harness.providerThread.id);
           assert.equal(request?.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
+          assert.equal(request?.delivery, "message_text");
           assert.deepEqual(request?.notification, {
             source: { kind: "command" },
             outcome: "completed",
