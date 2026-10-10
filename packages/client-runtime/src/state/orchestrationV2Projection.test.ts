@@ -275,6 +275,133 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems.map((row) => row.position)).toEqual([0, 1]);
   });
 
+  describe("partial timeline", () => {
+    const queuedRunId = RunId.make("run-queued");
+    const steerRunId = RunId.make("run-steer");
+    const queuedRun = { ...run, id: queuedRunId, ordinal: 2, status: "queued" } as const;
+    const steerRun = { ...run, id: steerRunId, ordinal: 3, status: "completed" } as const;
+    const runItem = (id: string, itemRunId: RunId, ordinal: number) => ({
+      ...commandItem(id, id, ordinal),
+      runId: itemRunId,
+    });
+    const windowOf = (
+      runs: ReadonlyArray<OrchestrationV2Run>,
+      items: ReadonlyArray<OrchestrationV2TurnItem>,
+    ): OrchestrationV2ThreadProjection => ({
+      ...emptyProjection,
+      runs,
+      turnItems: items,
+      visibleTurnItems: items.map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    });
+    const itemEvent = (payload: OrchestrationV2TurnItem) =>
+      ({
+        id: `event-${payload.id}`,
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+    const runEvent = (payload: OrchestrationV2Run) =>
+      ({
+        id: `event-${payload.id}-${payload.status}`,
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+
+    it("shows a queued run that starts after a newer steer raised the watermark", () => {
+      // Run 2 was queued first, run 3 was steered in and ran first. Its items
+      // sit in run 3's band and already raised the watermark past run 2's band.
+      const steerItems = [
+        runItem("item-steer-user", steerRunId, 3_000_001),
+        runItem("item-steer-reply", steerRunId, 3_000_002),
+      ];
+      let projection: OrchestrationV2ThreadProjection | null = windowOf(
+        [run, queuedRun, steerRun],
+        steerItems,
+      );
+      let latestLocalTurnOrdinal = 3_000_002;
+      // Same order the orchestrator commits a queued start: the user message
+      // lands while the run is still queued, then the run starts and replies.
+      const queuedUser = runItem("item-queued-user", queuedRunId, 2_000_001);
+      const queuedReply = runItem("item-queued-reply", queuedRunId, 2_000_002);
+      for (const event of [
+        itemEvent(queuedUser),
+        runEvent({ ...queuedRun, status: "running" }),
+        itemEvent(queuedReply),
+        runEvent({ ...queuedRun, status: "completed" }),
+      ]) {
+        projection = applyOrchestrationV2ProjectionEvent(projection, event, {
+          partialTimeline: true,
+          latestLocalTurnOrdinal,
+        });
+        if (event.type === "turn-item.updated") {
+          latestLocalTurnOrdinal = Math.max(latestLocalTurnOrdinal, event.payload.ordinal);
+        }
+      }
+
+      expect(projection?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+        queuedUser.id,
+        queuedReply.id,
+        ...steerItems.map((item) => item.id),
+      ]);
+      expect(projection?.turnItems.map((item) => item.id)).toContain(queuedReply.id);
+    });
+
+    it("keeps a running run's item when the window starts after its earlier items", () => {
+      // The bounded window begins inside run 3; run 2 started and kept going,
+      // but none of its rows made it into the window.
+      const runningRun = { ...queuedRun, status: "running" } as const;
+      const steerItems = [
+        runItem("item-steer-user", steerRunId, 3_000_001),
+        runItem("item-steer-reply", steerRunId, 3_000_002),
+      ];
+      const projection = windowOf([run, runningRun, steerRun], steerItems);
+      const reply = runItem("item-running-reply", queuedRunId, 2_000_003);
+
+      const next = applyOrchestrationV2ProjectionEvent(projection, itemEvent(reply), {
+        partialTimeline: true,
+        latestLocalTurnOrdinal: 3_000_002,
+      });
+
+      expect(next?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+        reply.id,
+        ...steerItems.map((item) => item.id),
+      ]);
+    });
+
+    it.each([
+      { name: "keeps an item of a run already in the window", itemRunId: steerRunId, kept: true },
+      { name: "drops an item of a finished run outside the window", itemRunId: runId, kept: false },
+    ])("$name that arrives below the watermark", ({ itemRunId, kept }) => {
+      const first = runItem("item-first", steerRunId, 3_000_001);
+      const later = runItem("item-later", steerRunId, 3_000_003);
+      const late = runItem("item-late", itemRunId, 3_000_002);
+      const projection = windowOf([run, steerRun], [first, later]);
+
+      const next = applyOrchestrationV2ProjectionEvent(projection, itemEvent(late), {
+        partialTimeline: true,
+        latestLocalTurnOrdinal: later.ordinal,
+      });
+      if (kept) {
+        expect(next?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+          first.id,
+          late.id,
+          later.id,
+        ]);
+      } else {
+        expect(next).toBe(projection);
+      }
+    });
+  });
+
   it("removes only hidden local items while preserving inherited rows", () => {
     const inherited = commandItem("item-inherited");
     const local = commandItem("item-local");

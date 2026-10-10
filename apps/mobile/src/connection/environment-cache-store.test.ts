@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
 } from "@t3tools/client-runtime/platform";
 import {
@@ -251,7 +252,7 @@ describe("mobile SQLite environment cache store", () => {
         ORCHESTRATION_CACHE_SCHEMA_VERSION,
       );
       expect(memory.schemaVersions.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))).toBe(
-        ORCHESTRATION_CACHE_SCHEMA_VERSION,
+        ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       );
     }),
   );

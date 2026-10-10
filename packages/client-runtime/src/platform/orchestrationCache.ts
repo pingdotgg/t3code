@@ -10,6 +10,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
+/**
+ * Thread snapshots version on their own so a thread-only invalidation keeps
+ * shell caches warm. 4 drops bounded windows that lost queued runs' items (#16987).
+ */
+export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 4 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
@@ -18,7 +23,7 @@ export const StoredOrchestrationShellSnapshot = Schema.Struct({
 });
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
+  schemaVersion: Schema.Literal(ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationV2ThreadDetailSnapshot.mapFields((fields) => ({
