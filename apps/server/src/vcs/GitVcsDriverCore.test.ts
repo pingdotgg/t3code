@@ -1160,11 +1160,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       // Git cannot tell a missing revision from a missing file in these.
       { label: "an argument that may be a path", args: ["log", "-1", "missing"] },
       { label: "a pathspec", args: ["checkout", "missing"] },
+      // The tag exists; it names a tree, which git reports in the same words.
+      { label: "a worktree from a non-commit", args: ["worktree", "add", "../tree", "tree-tag"] },
+      { label: "a non-commit revision", args: ["rev-parse", "--verify", "tree-tag^{commit}"] },
     ])("leaves $label unclassified rather than calling it a missing ref", ({ args }) =>
       Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "repo");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["tag", "tree-tag", "HEAD^{tree}"]);
 
         const error = yield* driver
           .execute({

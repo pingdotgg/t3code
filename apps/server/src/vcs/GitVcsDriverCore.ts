@@ -461,14 +461,18 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
   // covers tag and ref collisions, which are not path collisions.
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
-  // Only wordings that can mean nothing but a ref or revision that does not
-  // resolve. `unknown revision or path not in the working tree` and
-  // `pathspec ... did not match` are left out: they also cover a missing file.
+  // Wordings git uses for a ref or revision that does not resolve. `unknown
+  // revision or path not in the working tree` and `pathspec ... did not match`
+  // are left out: they also cover a missing file.
   [
     /fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'[^']+' is not a commit and a branch '[^']+' cannot be created from it)/i,
     "ref_not_found",
   ],
 ];
+
+// Git words a ref that exists but is not a commit the same way as a missing
+// one, and only an `error:` line before it tells them apart.
+const GIT_NOT_A_COMMIT_PATTERN = /error: .+(?:, not a commit|expected commit type)/i;
 
 // Hooks write to the same stream git does, and nothing distinguishes their
 // text from git's: a pre-push hook echoing "authentication failed" would
@@ -498,7 +502,9 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   if (diagnostics.length === 0) return null;
   if (isNonRepositoryGitStderr(diagnostics)) return "not_a_repository";
   for (const [pattern, reason] of GIT_FAILURE_REASON_PATTERNS) {
-    if (pattern.test(diagnostics)) return reason;
+    if (!pattern.test(diagnostics)) continue;
+    if (reason === "ref_not_found" && GIT_NOT_A_COMMIT_PATTERN.test(diagnostics)) continue;
+    return reason;
   }
   return null;
 }
