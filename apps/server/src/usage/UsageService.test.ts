@@ -749,6 +749,44 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("reads Antigravity history from each instance's data directory", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const first = NodePath.join(home, "antigravity-first");
+      const second = NodePath.join(home, "antigravity-second");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(first);
+        await NodeFSP.mkdir(second);
+      });
+      const instance = (dataDir: string) => ({
+        driver: ProviderDriverKind.make("antigravity"),
+        environment: [{ name: "ANTIGRAVITY_DATA_DIR", value: dataDir, sensitive: false }],
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-antigravity-instances-test",
+            home,
+            settings: {
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("antigravity-first")]: instance(first),
+                [ProviderInstanceId.make("antigravity-second")]: instance(` ${second}, `),
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const roots = summary.sources
+        .filter((source) => source.fingerprint.provider === "antigravity")
+        .map((source) => source.fingerprint.resolvedHomePath);
+      for (const dir of [first, second]) {
+        assert.include(roots, yield* Effect.promise(() => NodeFSP.realpath(dir)));
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
