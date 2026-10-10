@@ -34,6 +34,7 @@ export function useScopedModelDisabledReason(
         const entry = applyProviderInstanceSettings(
           deriveProviderInstanceEntries(config.providers),
           candidate.settings,
+          candidate.projectId,
         ).find((option) => option.instanceId === instanceId);
         const options = getCustomModelOptionsByInstance(
           { ...settings, ...candidate.settings },

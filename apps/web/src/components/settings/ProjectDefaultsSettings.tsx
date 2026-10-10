@@ -63,7 +63,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      target?.projectId ?? null,
+    ),
   );
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -104,6 +108,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       const entry = applyProviderInstanceSettings(
         deriveProviderInstanceEntries(config.providers),
         candidate.settings,
+        candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
       const options = getCustomModelOptionsByInstance(
         { ...settings, ...candidate.settings },

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -54,6 +55,15 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  if (command.type === "message.dispatch") {
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const projection = yield* threads.getThreadRecords(command.threadId, []);
+    yield* ThreadManagement.assertProviderInstanceEnabledForProject(
+      serverSettings,
+      projection.thread.projectId,
+      (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+    );
+  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
@@ -183,6 +193,12 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
   input: ThreadLaunch.ThreadLaunchInput,
 ) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  yield* ThreadManagement.assertProviderInstanceEnabledForProject(
+    serverSettings,
+    input.projectId,
+    input.modelSelection.instanceId,
+  );
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
     return yield* launches.launch(input);

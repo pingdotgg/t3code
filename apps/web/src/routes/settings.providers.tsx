@@ -11,7 +11,7 @@ import { useSettingsScope } from "../components/settings/SettingsScopeContext";
  */
 function SettingsProvidersRoute() {
   const target = Route.useSearch();
-  const { environment, scope } = useSettingsScope();
+  const { environment, scope, target: scopedTarget } = useSettingsScope();
   if (!environment) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
@@ -25,6 +25,7 @@ function SettingsProvidersRoute() {
     <ProviderSettingsPanel
       environmentId={environment.environmentId}
       {...(target.instanceId ? { instanceId: target.instanceId } : {})}
+      projectId={scopedTarget?.projectId ?? null}
       scoped
     />
   );

@@ -582,7 +582,10 @@ function TaskForm({
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
-  const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
+  const modelOptions = useMemo(
+    () => buildModelOptions(config, null, undefined, draft.projectId),
+    [config, draft.projectId],
+  );
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );

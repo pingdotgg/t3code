@@ -126,7 +126,10 @@ export const PROJECT_FILE_BACKED_SETTINGS = {
   defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },
   worktreeSubmodules: { field: "worktreeSubmodules", builtIn: "recursive" },
 } as const satisfies {
-  readonly [K in ProjectScopedServerSettingKey]?: {
+  // `providerInstanceEnablement` is scoped per project but has no matching
+  // environment-level `ServerSettings` field (see its doc comment in
+  // settings.ts), so it cannot be file-backed and is excluded here.
+  readonly [K in ProjectScopedServerSettingKey & keyof ServerSettings]?: {
     readonly field: {
       readonly [F in keyof T3ProjectFile]: T3ProjectFile[F] extends
         | Exclude<ServerSettings[K], null>

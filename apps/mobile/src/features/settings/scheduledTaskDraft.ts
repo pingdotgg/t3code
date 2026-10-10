@@ -34,7 +34,12 @@ export function scheduledTaskDefaultModel(
     draftSelection: null,
     projectDefaultSelection,
     stickySelection: null,
-    modelOptions: buildModelOptions(config, projectDefaultSelection),
+    modelOptions: buildModelOptions(
+      config,
+      projectDefaultSelection,
+      undefined,
+      project?.id ?? null,
+    ),
   });
 }
 

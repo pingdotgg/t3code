@@ -1,8 +1,15 @@
-import { AuthProvidersManageScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderEnvironmentOptions,
+  buildProviderInstanceEnablementOverridePatch,
   classifyProviderEnvironmentAccess,
   isProviderSettingsEnvironmentAvailable,
   resolvePrimaryOperateAccess,
@@ -224,6 +231,74 @@ describe("primary operate access", () => {
         hasError: false,
       }),
     ).toBe("pending");
+  });
+});
+
+describe("buildProviderInstanceEnablementOverridePatch", () => {
+  const projectId = ProjectId.make("project-a");
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const otherInstanceId = ProviderInstanceId.make("claudeAgent_personal");
+
+  it("sets an override when the project has none yet", () => {
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {},
+    };
+
+    expect(
+      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, true),
+    ).toEqual({ [projectId]: { providerInstanceEnablement: { [instanceId]: true } } });
+  });
+
+  it("adds an instance override alongside the project's other overrides", () => {
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstanceEnablement: { [otherInstanceId]: false },
+        },
+      },
+    };
+
+    expect(
+      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, true),
+    ).toEqual({
+      [projectId]: {
+        newWorktreesStartFromOrigin: true,
+        providerInstanceEnablement: { [otherInstanceId]: false, [instanceId]: true },
+      },
+    });
+  });
+
+  it("resets the only override by clearing the whole project entry", () => {
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+      },
+    };
+
+    expect(
+      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, undefined),
+    ).toEqual({ [projectId]: null });
+  });
+
+  it("resets one instance while another instance's override and other keys survive", () => {
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstanceEnablement: { [instanceId]: true, [otherInstanceId]: false },
+        },
+      },
+    };
+
+    expect(
+      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, undefined),
+    ).toEqual({
+      [projectId]: {
+        newWorktreesStartFromOrigin: true,
+        providerInstanceEnablement: { [otherInstanceId]: false },
+      },
+    });
   });
 });
 

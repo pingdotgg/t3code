@@ -2,9 +2,11 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProjectId,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -167,13 +169,20 @@ export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
   providerInstanceId?: ModelSelection["instanceId"],
+  projectId: ProjectId | null = null,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
+    // `provider.enabled` reflects the machine plus any project's keep-alive
+    // override, so it alone can't tell this project apart from one that
+    // merely shares the instance. Settings carry the real per-project view.
+    const isEnabledForProject = config?.settings
+      ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
+      : provider.enabled;
     if (
       (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
-      !provider.enabled ||
+      !isEnabledForProject ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")

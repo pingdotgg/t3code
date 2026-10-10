@@ -24,6 +24,8 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
+  ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   RunId,
   type ScheduledTaskId,
   ThreadId,
@@ -41,6 +43,7 @@ import * as Stream from "effect/Stream";
 import * as Orchestrator from "./Orchestrator.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -260,6 +263,18 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
   }
 }
 
+export class ThreadManagementProviderInstanceDisabledError extends Schema.TaggedError<ThreadManagementProviderInstanceDisabledError>()(
+  "ThreadManagementProviderInstanceDisabledError",
+  {
+    projectId: ProjectId,
+    instanceId: ProviderInstanceId,
+  },
+) {
+  override get message(): string {
+    return `Provider instance "${this.instanceId}" is disabled for project ${this.projectId}.`;
+  }
+}
+
 export const ThreadManagementError = Schema.Union([
   ThreadManagementThreadNotFoundError,
   ThreadManagementRunNotFoundError,
@@ -269,10 +284,32 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
   ThreadManagementDurableRunProjectionError,
+  ThreadManagementProviderInstanceDisabledError,
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
+
+/**
+ * Refuses to start a new turn on an instance a project has effectively
+ * disabled, in either direction: the machine disabled it with no project
+ * override, or the project disabled it over a machine-enabled instance.
+ * Shared by `sendToThread` and by the intake layer's new-thread and
+ * existing-thread dispatch paths, which all read settings themselves.
+ */
+export const assertProviderInstanceEnabledForProject = (
+  settings: ServerSettings.ServerSettingsService["Service"],
+  projectId: ProjectId,
+  instanceId: ProviderInstanceId,
+): Effect.Effect<void, ThreadManagementProviderInstanceDisabledError> =>
+  settings.getSettings.pipe(
+    Effect.orDie,
+    Effect.flatMap((current) =>
+      resolveProjectProviderInstanceEnabled(current, projectId, instanceId)
+        ? Effect.void
+        : new ThreadManagementProviderInstanceDisabledError({ projectId, instanceId }),
+    ),
+  );
 
 export interface ThreadManagementServiceShape {
   readonly searchThreadStream: (
@@ -443,6 +480,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const layerScope = yield* Effect.scope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -593,6 +631,11 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
         });
       }
+      yield* assertProviderInstanceEnabledForProject(
+        serverSettings,
+        input.projectId,
+        (input.modelSelection ?? target.thread.modelSelection).instanceId,
+      );
 
       const steerableRun = latestSteerableRun(target);
       let dispatchMode: Extract<
@@ -938,11 +981,18 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   }),
 );
 
-export const layer: Layer.Layer<ThreadManagementService, never, Orchestrator.OrchestratorV2> =
-  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(layerLegacyV1ThreadImporterNoop));
+export const layer: Layer.Layer<
+  ThreadManagementService,
+  never,
+  Orchestrator.OrchestratorV2 | ServerSettings.ServerSettingsService
+> = Layer.effect(ThreadManagementService, make).pipe(
+  Layer.provide(layerLegacyV1ThreadImporterNoop),
+);
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
-  LegacyV1ThreadImporter.LegacyV1ThreadImporter | Orchestrator.OrchestratorV2
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
+  | Orchestrator.OrchestratorV2
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(ThreadManagementService, make);

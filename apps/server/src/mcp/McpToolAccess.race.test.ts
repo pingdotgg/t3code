@@ -21,6 +21,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -184,7 +185,7 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const shell = yield* projections.getThreadShell(threadId);
       assert.equal(shell?.runtimeMode, "full-access");
       assert.equal(shell?.title, "Before");
-    }).pipe(Effect.provide(ThreadManagement.layer)),
+    }).pipe(Effect.provide(ThreadManagement.layer.pipe(Layer.provide(ServerSettings.layerTest())))),
   );
 
   it.effect("lets the write through when the thread stays within the caller's modes", () =>
@@ -195,6 +196,6 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const outcome = yield* renameRacingTheUser(threadId, false);
       assert.deepEqual(outcome, { renamed: true });
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "Renamed by the agent");
-    }).pipe(Effect.provide(ThreadManagement.layer)),
+    }).pipe(Effect.provide(ThreadManagement.layer.pipe(Layer.provide(ServerSettings.layerTest())))),
   );
 });
