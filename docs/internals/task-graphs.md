@@ -54,6 +54,13 @@ Nodes on peers do neither yet: a limit there fails the node.
 
 A peer is another environment this server holds a session on.
 
+- **Adding through a client:** a client connected to both machines asks the
+  peer for a grant (`taskGraphPeers.issueGrant`), a five-minute pairing
+  credential limited to `TASK_GRAPH_PEER_SCOPES` that the caller must already
+  hold. It hands that to this server with the address it reaches the peer at.
+  For a T3 Connect connection that is the tunnel hostname, which forwards plain
+  HTTP and WebSocket to the peer, so the server never needs T3 Connect
+  credentials of its own; the peer's own auth accepts the bearer session.
 - **Pairing:** pairing exchanges a normal pairing link at the peer's
   `/oauth/token`, narrowed to `orchestration:read`, `orchestration:operate`
   and `source-control:write`, as a `bot` client. The token lives in the secret

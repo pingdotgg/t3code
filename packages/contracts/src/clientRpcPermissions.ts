@@ -48,6 +48,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.taskGraphPeersAdd]: AuthEnvironmentMaintainScope,
   [WS_METHODS.taskGraphPeersRemove]: AuthEnvironmentMaintainScope,
   [WS_METHODS.taskGraphPeersSetWeight]: AuthEnvironmentMaintainScope,
+  // The grant also needs every scope it hands out; the server checks that.
+  [WS_METHODS.taskGraphPeersIssueGrant]: AuthEnvironmentMaintainScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

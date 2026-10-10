@@ -18,7 +18,9 @@ import {
   type TaskGraph,
   type TaskGraphNode,
   type TaskGraphPeer,
+  type TaskGraphPeerGrant,
   type TaskGraphPeerListResult,
+  TASK_GRAPH_PEER_SCOPES,
   type ThreadId,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
@@ -26,6 +28,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -43,6 +46,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -116,6 +120,8 @@ export class TaskGraphPeers extends Context.Service<
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<TaskGraphPeerListResult, TaskGraphError>;
+    /** A grant another machine redeems to run nodes here; see `TaskGraphPeerGrant`. */
+    readonly issueGrant: (label: string) => Effect.Effect<TaskGraphPeerGrant, TaskGraphError>;
     readonly setWeight: (
       environmentId: EnvironmentId,
       weight: number,
@@ -137,16 +143,10 @@ export const layerNone = Layer.succeed(
     subscribe: Stream.make({ peers: [] }),
     add: () => Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
     remove: () => Effect.succeed({ peers: [] }),
+    issueGrant: () => Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
     setWeight: () => Effect.succeed({ peers: [] }),
   }),
 );
-
-/**
- * What this server asks a peer for. It can run, watch and stop threads and
- * push their branches; it cannot read files, open terminals, change settings
- * or manage access.
- */
-export const PEER_SCOPES = ["orchestration:read", "orchestration:operate", "source-control:write"];
 
 const DEFAULT_PEER_WEIGHT = 50;
 const tokenSecretName = (environmentId: string) => `task-graph-peer-token:${environmentId}`;
@@ -237,6 +237,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const projects = yield* ProjectService.ProjectService;
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const localEnvironmentId = yield* environment.getEnvironmentId;
   const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 
@@ -637,7 +638,7 @@ const make = Effect.gen(function* () {
             subject_token: target.credential,
             subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
             requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            scope: PEER_SCOPES.join(" "),
+            scope: TASK_GRAPH_PEER_SCOPES.join(" "),
             client_label: "T3 Code task graphs",
             client_device_type: "bot",
           }),
@@ -709,6 +710,22 @@ const make = Effect.gen(function* () {
       Effect.andThen(list),
     );
 
+  const issueGrant: TaskGraphPeers["Service"]["issueGrant"] = (label) =>
+    auth
+      .createPairingLink({
+        scopes: TASK_GRAPH_PEER_SCOPES,
+        subject: "task-graph-peer",
+        ttl: Duration.minutes(5),
+        label: `Task graphs: ${label}`,
+      })
+      .pipe(
+        Effect.map((link) => ({
+          credential: link.credential,
+          expiresAt: DateTime.formatIso(link.expiresAt),
+        })),
+        Effect.mapError((cause) => peerError("Could not issue a pairing grant.", cause)),
+      );
+
   const subscribe = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(changes);
@@ -733,6 +750,7 @@ const make = Effect.gen(function* () {
     subscribe,
     add,
     remove,
+    issueGrant,
     setWeight,
   });
 });

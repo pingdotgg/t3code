@@ -8,6 +8,7 @@ import {
 import { type FormEvent, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { readPreparedConnection } from "~/state/session";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -53,8 +54,11 @@ function summarizeTaskGraphPeers(peers: ReadonlyArray<TaskGraphPeer>): string {
  */
 export function TaskGraphMachinesSettings({
   environment,
+  environments,
 }: {
   readonly environment: EnvironmentPresentation | null;
+  /** This client's machines; connected ones can be added in one step. */
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
   const environmentId = environment?.environmentId ?? null;
   const connected =
@@ -77,9 +81,9 @@ export function TaskGraphMachinesSettings({
       summary={peersQuery.data ? summarizeTaskGraphPeers(peers) : null}
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Let agents' task graphs run nodes on your other machines. Paste a pairing link from the
-        other machine; this machine gets access to start, watch and stop threads and push branches
-        there, nothing else.
+        Let agents' task graphs run nodes on your other machines. Add one this app is connected to,
+        including over T3 Connect, or paste a pairing link from it; this machine gets access to
+        start, watch and stop threads and push branches there, nothing else.
       </p>
       {peersQuery.error && !peersQuery.data ? (
         <p className="px-3 py-2.5 text-xs text-destructive sm:px-4">{peersQuery.error}</p>
@@ -93,6 +97,23 @@ export function TaskGraphMachinesSettings({
           revoked.
         </p>
       ) : null}
+      {canAdd
+        ? environments
+            .filter(
+              (candidate) =>
+                candidate.environmentId !== environmentId &&
+                candidate.connection.phase === "connected" &&
+                !peers.some((peer) => peer.environmentId === candidate.environmentId),
+            )
+            .map((candidate) => (
+              <ConnectedMachineRow
+                key={candidate.environmentId}
+                environmentId={environmentId}
+                environmentLabel={environment?.label ?? "This machine"}
+                candidate={candidate}
+              />
+            ))
+        : null}
       {canAdd ? <AddTaskGraphPeerForm environmentId={environmentId} /> : null}
     </FoldedSettingsSection>
   );
@@ -195,6 +216,84 @@ function TaskGraphPeerRow({
         </Button>
       ) : null}
     </EnvironmentRow>
+  );
+}
+
+/**
+ * A machine this client is connected to but the environment has not paired.
+ * Adding asks that machine for a short-lived grant and hands it, with the
+ * address this client reaches it at, to the environment. That address is the
+ * T3 Connect hostname for a relay connection, so relay-only machines work too.
+ */
+function ConnectedMachineRow({
+  environmentId,
+  environmentLabel,
+  candidate,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly candidate: EnvironmentPresentation;
+}) {
+  const canGrant = useAtomValue(
+    serverEnvironment.issueTaskGraphPeerGrant.permissionAtom(candidate.environmentId),
+  );
+  const issueGrant = useAtomCommand(serverEnvironment.issueTaskGraphPeerGrant, {
+    reportFailure: false,
+  });
+  const add = useAtomCommand(serverEnvironment.addTaskGraphPeer, { reportFailure: false });
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const commandError = (result: AtomCommandResult<unknown, unknown>, fallback: string) =>
+    result._tag === "Failure" && !isAtomCommandInterrupted(result)
+      ? failureMessage(squashAtomCommandFailure(result), fallback)
+      : null;
+
+  const addMachine = async () => {
+    const connection = readPreparedConnection(candidate.environmentId);
+    if (adding || connection === null) return;
+    setAdding(true);
+    setError(null);
+    const grant = await issueGrant({
+      environmentId: candidate.environmentId,
+      input: { label: environmentLabel },
+    });
+    if (grant._tag !== "Success") {
+      setAdding(false);
+      setError(commandError(grant, `${candidate.label} would not issue a pairing grant.`));
+      return;
+    }
+    const pairingUrl = new URL("/pair", connection.httpBaseUrl);
+    pairingUrl.hash = `token=${grant.value.credential}`;
+    const result = await add({
+      environmentId,
+      input: { pairingUrl: pairingUrl.toString(), label: candidate.label },
+    });
+    setAdding(false);
+    setError(commandError(result, `Could not add ${candidate.label}.`));
+  };
+
+  return (
+    <div className="space-y-1 px-3 py-2 sm:px-4">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm">{candidate.label}</span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={adding || !canGrant}
+          onClick={() => void addMachine()}
+        >
+          {adding ? <Spinner size="sm" /> : null}
+          Add
+        </Button>
+      </div>
+      {!canGrant ? (
+        <p className="text-xs text-muted-foreground">
+          Your session on {candidate.label} cannot pair other machines.
+        </p>
+      ) : null}
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+    </div>
   );
 }
 

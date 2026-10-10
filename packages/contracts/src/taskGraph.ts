@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import type { AuthEnvironmentScope } from "./auth.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
 /** Most nodes one graph may hold. A graph is a plan for a turn, not a backlog. */
@@ -259,3 +260,30 @@ export const TaskGraphPeerSetWeightInput = Schema.Struct({
   weight: TaskGraphPeer.fields.weight,
 });
 export type TaskGraphPeerSetWeightInput = typeof TaskGraphPeerSetWeightInput.Type;
+
+/**
+ * What a peer session may do: start, watch and stop threads and push their
+ * branches. Not files, terminals, settings or access.
+ */
+export const TASK_GRAPH_PEER_SCOPES = [
+  "orchestration:read",
+  "orchestration:operate",
+  "source-control:write",
+] as const satisfies ReadonlyArray<AuthEnvironmentScope>;
+
+export const TaskGraphPeerGrantInput = Schema.Struct({
+  /** The machine that will redeem the grant, shown in this machine's connected clients. */
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+});
+export type TaskGraphPeerGrantInput = typeof TaskGraphPeerGrantInput.Type;
+
+/**
+ * A short-lived pairing credential limited to `TASK_GRAPH_PEER_SCOPES`. A
+ * client connected to two machines asks one for a grant and hands it to the
+ * other, which also works when the first is only reachable through T3 Connect.
+ */
+export const TaskGraphPeerGrant = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+});
+export type TaskGraphPeerGrant = typeof TaskGraphPeerGrant.Type;

@@ -1343,6 +1343,10 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    issueTaskGraphPeerGrant: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:issue-grant",
+      tag: WS_METHODS.taskGraphPeersIssueGrant,
+    }),
     setTaskGraphPeerWeight: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:task-graph-peer:set-weight",
       tag: WS_METHODS.taskGraphPeersSetWeight,

@@ -99,6 +99,8 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
+  TASK_GRAPH_PEER_SCOPES,
+  TaskGraphError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -2057,6 +2059,19 @@ const layerWsRpc = (
         [WS_METHODS.taskGraphPeersSubscribe]: (_input) => taskGraphPeers.subscribe,
         [WS_METHODS.taskGraphPeersAdd]: (input) => taskGraphPeers.add(input),
         [WS_METHODS.taskGraphPeersRemove]: (input) => taskGraphPeers.remove(input.environmentId),
+        [WS_METHODS.taskGraphPeersIssueGrant]: (input) =>
+          Effect.gen(function* () {
+            // Never hand out more than the caller could do itself.
+            const missing = TASK_GRAPH_PEER_SCOPES.find(
+              (scope) => !currentSession.scopes.includes(scope),
+            );
+            if (missing !== undefined) {
+              return yield* new TaskGraphError({
+                message: `Pairing another machine needs the ${missing} permission here.`,
+              });
+            }
+            return yield* taskGraphPeers.issueGrant(input.label);
+          }),
         [WS_METHODS.taskGraphPeersSetWeight]: (input) =>
           taskGraphPeers.setWeight(input.environmentId, input.weight),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>

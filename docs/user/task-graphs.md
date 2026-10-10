@@ -87,10 +87,17 @@ and pull request.
 
 ## Running tasks on other machines
 
-A graph can spread its tasks across your other T3 Code machines. On the other
-machine, create a pairing link (see [Remote access](./remote-access.md)). On
-this machine, paste it under **Settings → Connections → Task graph machines**.
-Both machines need the project open from the same repository.
+A graph can spread its tasks across your other T3 Code machines. Open
+**Settings → Connections → Task graph machines** on the machine that runs the
+graph. Machines this app is already connected to, over T3 Connect or directly,
+are listed there: choose **Add**. The other machine needs this version of T3
+Code for that. You can also paste a pairing link from the other machine (see
+[Remote access](./remote-access.md)). Both machines need the project open from
+the same repository.
+
+A machine added over T3 Connect is reached at its T3 Connect address. If that
+address changes, for example after you unlink and relink the machine, it shows
+as unreachable; remove it and add it again.
 
 This machine only gets permission to start, watch and stop threads and push
 branches there. It cannot read files, open terminals or change settings. To

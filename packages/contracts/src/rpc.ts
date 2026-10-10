@@ -341,6 +341,8 @@ import {
   TaskGraphError,
   TaskGraphListResult,
   TaskGraphPeerAddInput,
+  TaskGraphPeerGrant,
+  TaskGraphPeerGrantInput,
   TaskGraphPeerListResult,
   TaskGraphPeerSetWeightInput,
   TaskGraphPeerTargetInput,
@@ -530,6 +532,7 @@ export const WS_METHODS = {
   taskGraphPeersAdd: "taskGraphPeers.add",
   taskGraphPeersRemove: "taskGraphPeers.remove",
   taskGraphPeersSetWeight: "taskGraphPeers.setWeight",
+  taskGraphPeersIssueGrant: "taskGraphPeers.issueGrant",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1835,6 +1838,12 @@ const WsTaskGraphPeersSetWeightRpc = Rpc.make(WS_METHODS.taskGraphPeersSetWeight
   error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
 });
 
+const WsTaskGraphPeersIssueGrantRpc = Rpc.make(WS_METHODS.taskGraphPeersIssueGrant, {
+  payload: TaskGraphPeerGrantInput,
+  success: TaskGraphPeerGrant,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -1947,6 +1956,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTaskGraphPeersAddRpc,
   WsTaskGraphPeersRemoveRpc,
   WsTaskGraphPeersSetWeightRpc,
+  WsTaskGraphPeersIssueGrantRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

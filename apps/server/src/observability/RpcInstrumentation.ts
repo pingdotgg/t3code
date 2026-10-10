@@ -89,6 +89,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.taskGraphPeersAdd]: "taskGraphs",
   [WS_METHODS.taskGraphPeersRemove]: "taskGraphs",
   [WS_METHODS.taskGraphPeersSetWeight]: "taskGraphs",
+  [WS_METHODS.taskGraphPeersIssueGrant]: "taskGraphs",
   [WS_METHODS.scheduledTasksList]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",

@@ -360,6 +360,7 @@ it.effect("places a node on a peer with more free capacity and pushes local bran
         subscribe: Stream.never,
         add: () => Effect.die("unused"),
         remove: () => Effect.die("unused"),
+        issueGrant: () => Effect.die("unused"),
         setWeight: () => Effect.die("unused"),
       }),
     );

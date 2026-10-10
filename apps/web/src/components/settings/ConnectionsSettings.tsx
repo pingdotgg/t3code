@@ -4170,7 +4170,10 @@ export function ConnectionsSettings() {
         />
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <TaskGraphMachinesSettings environment={primaryEnvironment} />
+      <TaskGraphMachinesSettings
+        environment={primaryEnvironment}
+        environments={loadBalancingEnvironments}
+      />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
   );
