@@ -49,8 +49,12 @@ class Refusal {
   }
 }
 
-// Not defined on Windows, where opening never follows a link anyway.
-const OPEN_FLAGS = NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0);
+// Neither is defined on Windows, where opening never follows a link or waits on a FIFO.
+// Non-blocking, so a file swapped for a FIFO opens at once and is refused below.
+const OPEN_FLAGS =
+  NodeFS.constants.O_RDONLY |
+  (NodeFS.constants.O_NOFOLLOW ?? 0) |
+  (NodeFS.constants.O_NONBLOCK ?? 0);
 
 const walk = async (
   root: string,
@@ -90,6 +94,7 @@ const walk = async (
     // A file swapped for a link after listing is refused, not followed.
     const handle = await NodeFSP.open(NodePath.join(root, file), OPEN_FLAGS);
     try {
+      if (!(await handle.stat()).isFile()) throw new Refusal(`${file} is not a regular file.`);
       for await (const chunk of handle.createReadStream({ autoClose: false, signal })) {
         size += chunk.length;
         if (bytes + size > limits.maxBytes)
