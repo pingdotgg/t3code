@@ -28,6 +28,8 @@ export type PreviewStreamMessage =
   | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
   | { readonly type: "clipboard"; readonly text: string }
+  /** The input that types into page fields gained or lost focus. */
+  | { readonly type: "input"; readonly focused: boolean }
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
   | {

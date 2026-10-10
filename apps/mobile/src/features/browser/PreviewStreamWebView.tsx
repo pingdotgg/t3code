@@ -24,6 +24,7 @@ import * as Clipboard from "expo-clipboard";
 
 import { AppText } from "../../components/AppText";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";
 
@@ -55,6 +56,8 @@ type NativeStreamBridge = {
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. Pass a stable function. */
   readonly onStreamingChange?: (streaming: boolean) => void;
+  /** A page field took or lost this device's keyboard. Pass a stable function. */
+  readonly onPageInput?: (focused: boolean) => void;
   /** The floating player shows a spinner without text or a reconnect button. */
   readonly compact?: boolean;
 };
@@ -235,6 +238,7 @@ function PreviewStreamDocumentView({
   onControl,
   onPictureInPicture,
   onStreamingChange,
+  onPageInput,
   onRetry,
   onStreaming,
   onRecoverProcess,
@@ -279,6 +283,7 @@ function PreviewStreamDocumentView({
     failed.current = true;
     webView.current?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
     onStreamingChange?.(false);
+    onPageInput?.(false);
     setControl(null);
     setFileChooser(null);
     onControl?.(null);
@@ -315,6 +320,7 @@ function PreviewStreamDocumentView({
     };
   }, []);
   useEffect(() => () => onStreamingChange?.(false), [onStreamingChange]);
+  useEffect(() => () => onPageInput?.(false), [onPageInput]);
   useEffect(() => () => controlChanged(null), []);
   const processTerminated = () => {
     if (!active.current || failed.current) return;
@@ -394,7 +400,10 @@ function PreviewStreamDocumentView({
               onViewport?.(message);
               return;
             case "clipboard":
-              void Clipboard.setStringAsync(message.text).catch(() => undefined);
+              copyTextWithHaptic(message.text, { target: "browser page selection" });
+              return;
+            case "input":
+              onPageInput?.(message.focused);
               return;
             case "download":
               offerDownload(message);

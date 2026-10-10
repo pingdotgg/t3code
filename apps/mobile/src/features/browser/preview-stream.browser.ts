@@ -610,6 +610,9 @@ export function start(configuration: PreviewStreamConfiguration) {
     input.addEventListener("input", onInput);
     input.addEventListener("compositionend", onCompositionEnd);
     input.addEventListener("focus", resetInput);
+    // Native shows its clipboard and password tools while a page field has the keyboard.
+    input.addEventListener("focus", () => post({ type: "input", focused: true }));
+    input.addEventListener("blur", () => post({ type: "input", focused: false }));
     // Copying the input would put its sentinel on this device's clipboard.
     input.addEventListener("copy", preventDefault);
     input.addEventListener("cut", preventDefault);
