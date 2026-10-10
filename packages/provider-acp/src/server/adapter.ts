@@ -4369,18 +4369,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification,
                 idleRootSessionId,
               );
-              // A nested subagent started meanwhile carries over with its parent.
-              const carried = new Set(idleCarryover.subagents);
-              const started = [...idleCarryover.context.subagents.values()].filter(
-                (subagent) =>
-                  !carried.has(subagent) && acpSubagentHasPendingBackgroundWork(subagent),
-              );
-              if (started.length > 0) {
-                yield* Ref.set(carryoverSubagents, {
-                  ...idleCarryover,
-                  subagents: [...idleCarryover.subagents, ...started],
-                });
-              }
               return;
             }
             const bufferOutcome = yield* bufferPostSettleWake(notification);
