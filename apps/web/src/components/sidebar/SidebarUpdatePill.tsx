@@ -2,6 +2,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { APP_VERSION } from "../../branding";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
@@ -13,6 +14,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateIdleTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -108,6 +110,22 @@ function SidebarUpdateArchitectureWarningContent() {
   );
 }
 
+// Rendered inside the tooltip popup, which mounts on each open, so the release age
+// is computed at hover time rather than when the sidebar last rendered.
+function SidebarUpdateIdleTooltip({ state }: { readonly state: DesktopUpdateState }) {
+  const { title, details } = getDesktopUpdateIdleTooltip(state, APP_VERSION);
+  return (
+    <div className="text-left">
+      <div className="text-sm leading-5 font-medium">{title}</div>
+      {details.map((detail) => (
+        <div className="mt-0.5 text-xs leading-4 text-muted-foreground" key={detail}>
+          {detail}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SidebarUpdatePill() {
   return isElectron ? <SidebarUpdateControl /> : null;
 }
@@ -143,13 +161,16 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
+  const idleTooltipState = !showUpdateDetails && !showCheckIcon ? state : null;
   const tooltip = showUpdateDetails
     ? state
       ? getDesktopUpdateButtonTooltip(state)
       : "Update available"
     : showCheckIcon
       ? "Checking for updates…"
-      : "Check for updates";
+      : idleTooltipState
+        ? getDesktopUpdateIdleTooltip(idleTooltipState, APP_VERSION).title
+        : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : showUpdateDetails
@@ -385,7 +406,7 @@ function SidebarUpdateControl() {
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {tooltip}
+              {idleTooltipState ? <SidebarUpdateIdleTooltip state={idleTooltipState} /> : tooltip}
             </TooltipPopup>
           ) : null}
         </Tooltip>
