@@ -537,6 +537,8 @@ export interface FallbackCatalogCandidate {
   readonly enabled?: boolean | undefined;
   readonly installed?: boolean | undefined;
   readonly availability?: string | undefined;
+  readonly auth?: { readonly status: string } | undefined;
+  readonly status?: string | undefined;
   readonly models?:
     | ReadonlyArray<{ readonly slug: string; readonly isDefault?: boolean | undefined }>
     | undefined;
@@ -559,7 +561,9 @@ export function resolveFallbackModelSelection(
       if (
         match.enabled === false ||
         match.installed === false ||
-        match.availability === "unavailable"
+        match.availability === "unavailable" ||
+        match.auth?.status === "unauthenticated" ||
+        (match.status !== undefined && match.status !== "ready")
       ) {
         return null;
       }
@@ -576,6 +580,8 @@ export function resolveFallbackModelSelection(
       if (c.enabled === false) return false;
       if (c.installed === false) return false;
       if (c.availability === "unavailable") return false;
+      if (c.auth?.status === "unauthenticated") return false;
+      if (c.status !== undefined && c.status !== "ready") return false;
       return true;
     });
 

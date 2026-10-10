@@ -114,5 +114,26 @@ describe("FallbackModelPicker", () => {
       expect(markup).toContain("Fallback model:");
       expect(markup).toContain("GPT-6.1-Sol");
     });
+
+    it("does not render unauthenticated providers in fallback options", () => {
+      const unauthenticatedEntry = {
+        ...entry,
+        instanceId: ProviderInstanceId.make("unauthed_provider"),
+        snapshot: { ...entry.snapshot, auth: { status: "unauthenticated" as const } },
+      };
+      const customOptions = new Map([
+        [unauthenticatedEntry.instanceId, [{ slug: "model-1", name: "Model 1" }]],
+      ]);
+      const markup = renderToStaticMarkup(
+        <ModelPickerFallbackFooter
+          fallbackSelection={{ mode: "auto" }}
+          instanceEntries={[unauthenticatedEntry]}
+          modelOptionsByInstance={customOptions}
+          onFallbackSelect={() => {}}
+        />,
+      );
+      expect(markup).not.toContain("unauthed_provider");
+      expect(markup).not.toContain("Model 1");
+    });
   });
 });

@@ -18,7 +18,7 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import type { ModelEsque } from "./providerIconUtils";
 import { cn } from "~/lib/utils";
 
@@ -62,6 +62,15 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
     const modelName = found ? found.name : model;
     return `Fallback: ${modelName}`;
   }, [fallbackSelection, modelOptionsByInstance]);
+
+  const readyEntries = useMemo(
+    () =>
+      instanceEntries.filter(
+        (entry) =>
+          isProviderInstancePickerReady(entry) && entry.snapshot.auth.status !== "unauthenticated",
+      ),
+    [instanceEntries],
+  );
 
   const handleValueChange = (val: string) => {
     if (val === "off") {
@@ -142,7 +151,7 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
           </MenuRadioGroup>
         </MenuGroup>
 
-        {instanceEntries.map((entry) => {
+        {readyEntries.map((entry) => {
           const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
           if (models.length === 0) return null;
 
@@ -211,6 +220,15 @@ export const ModelPickerFallbackFooter = memo(function ModelPickerFallbackFooter
     const found = options.find((opt) => opt.slug === model);
     return found ? found.name : model;
   }, [fallbackSelection, modelOptionsByInstance]);
+
+  const readyEntries = useMemo(
+    () =>
+      instanceEntries.filter(
+        (entry) =>
+          isProviderInstancePickerReady(entry) && entry.snapshot.auth.status !== "unauthenticated",
+      ),
+    [instanceEntries],
+  );
 
   const handleValueChange = (val: string) => {
     if (val === "off") {
@@ -303,7 +321,7 @@ export const ModelPickerFallbackFooter = memo(function ModelPickerFallbackFooter
             </MenuRadioGroup>
           </MenuGroup>
 
-          {instanceEntries.map((entry) => {
+          {readyEntries.map((entry) => {
             const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
             if (models.length === 0) return null;
 
