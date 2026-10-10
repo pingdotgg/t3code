@@ -147,7 +147,11 @@ it.effect("leaves a parameter it cannot measure for the statement to handle", ()
     const sql = yield* SqlClient.SqlClient;
     const detached = new DataView(new ArrayBuffer(8));
     structuredClone(detached.buffer, { transfer: [detached.buffer] });
-    assert.deepEqual(yield* sql`SELECT length(${detached}) AS size`, [{ size: null }]);
+    // What a detached view binds as varies by Node version; match the statement itself.
+    const native = new NodeSqlite.DatabaseSync(":memory:");
+    const expected = native.prepare("SELECT length(?) AS size").all(detached);
+    native.close();
+    assert.deepEqual(yield* sql`SELECT length(${detached}) AS size`, expected);
 
     const throwing = {
       get $value(): string {
