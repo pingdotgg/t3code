@@ -57,6 +57,15 @@ describe("resolveMarkdownLinkPresentation", () => {
   });
 
   it("recognizes relative source paths and bare filenames", () => {
+    expect(resolveMarkdownLinkPresentation("apps/mobile/src/index.ts:49-74")).toEqual({
+      kind: "file",
+      href: "apps/mobile/src/index.ts:49-74",
+      icon: "typescript",
+      label: "index.ts:49-74",
+      path: "apps/mobile/src/index.ts",
+      line: 49,
+      endLine: 74,
+    });
     expect(resolveMarkdownLinkPresentation("apps/mobile/src/index.ts:10")).toEqual({
       kind: "file",
       href: "apps/mobile/src/index.ts:10",

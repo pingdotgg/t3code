@@ -10,16 +10,15 @@ import {
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*$/;
 
-const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+$/;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 
@@ -237,7 +236,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
     path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
   const labelPosition = splitFilePathPosition(label.trim());
   if (
-    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
+    (labelPosition.line !== undefined &&
+      (labelPosition.line !== destination.line || labelPosition.endLine !== destination.endLine)) ||
     (labelPosition.column !== undefined && labelPosition.column !== destination.column)
   ) {
     return false;
@@ -276,7 +276,7 @@ function looksLikeFilePath(path: string, authoredPath: string): boolean {
   if (isWindowsAbsolutePath(path) || RELATIVE_PATH_PREFIX_PATTERN.test(path)) return true;
   if (path.startsWith("/")) return looksLikePosixFilesystemPath(authoredPath);
   if (EXTENSIONLESS_FILE_NAMES.has(path)) return true;
-  return RELATIVE_FILE_PATH_PATTERN.test(authoredPath) || RELATIVE_FILE_NAME_PATTERN.test(path);
+  return RELATIVE_FILE_PATH_PATTERN.test(path) || RELATIVE_FILE_NAME_PATTERN.test(path);
 }
 
 function hasExternalScheme(path: string): boolean {

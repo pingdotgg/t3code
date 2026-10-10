@@ -2,7 +2,9 @@ import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContex
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
+  formatFilePathPosition,
   resolvePathLinkTarget,
+  splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
@@ -1953,7 +1955,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        // Editors accept a single line/column; keep ranges for display and copying.
+        const { endLine, ...position } = splitFilePathPosition(targetPath);
+        const result = await onOpen(
+          endLine === undefined ? targetPath : formatFilePathPosition(position),
+        );
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -2653,6 +2659,7 @@ function useChatMarkdownState({
               path: fileLinkMeta.filePath,
               ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
               ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+              ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
             },
             fileLinkParentSuffixByPath,
           )}
