@@ -310,9 +310,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it("derives the Windows npm prefix from a binary path inside the package", () => {
     // The shim proof uses the shim's directory as the prefix; both must agree so
     // updates share one lock key. At a root that keeps the separator, and npm
-    // would read a bare `C:` as the drive's current directory.
+    // would read a bare `C:` as the drive's current directory. `İ` grows when
+    // lowercased, so it would shift a prefix sliced by a lowercased index.
     for (const prefix of [
       "C:\\Users\\Theo\\AppData\\Roaming\\npm",
+      "C:\\Users\\İbrahimİ\\AppData\\Roaming\\npm",
       "C:\\",
       "\\\\server\\share\\",
     ]) {

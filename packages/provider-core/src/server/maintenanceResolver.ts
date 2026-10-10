@@ -281,7 +281,11 @@ export function windowsNpmPrefixFromPackagePath(
   realCommandPath: string,
   packageName: string,
 ): string | null {
-  const normalized = normalizeCommandPath(realCommandPath);
+  // Only ASCII is lowercased: `İ` lowercases to two code units, which would shift
+  // indexes into `realCommandPath`. The segment and npm package names are ASCII.
+  const normalized = realCommandPath
+    .replaceAll("\\", "/")
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   const packageIndex = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
   if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
