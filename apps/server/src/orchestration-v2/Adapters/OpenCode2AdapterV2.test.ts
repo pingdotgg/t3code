@@ -79,8 +79,11 @@ const mcpRules = [
   { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+/** The thread's title, which the recorded session already carries. */
+const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
+  title: TITLE,
   permissions: t3Rules,
   projectID: "global",
   model: { id: "big-pickle", providerID: "opencode", variant: "default" },
@@ -226,7 +229,7 @@ const turnInput = (
   modelSelection: ModelSelection = bigPickle,
   runtimeMode: "full-access" | "approval-required" = "full-access",
 ) => ({
-  appThread: {} as OrchestrationV2AppThread,
+  appThread: { title: TITLE } as OrchestrationV2AppThread,
   threadId,
   runId: RunId.make("run:opencode2-adapter"),
   runOrdinal: 1,
@@ -433,6 +436,66 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("creates the session with the thread's title, so OpenCode generates none", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+        ...opening,
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions: t3Rules,
+          title: "Check whether 391 is prime",
+        }),
+        replyData("session.create", sessionInfo({ title: "Check whether 391 is prime" })),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const thread = yield* runtime.ensureThread({
+        threadId,
+        title: "  Check whether 391 is prime ",
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        appThread: { title: "Check whether 391 is prime" } as OrchestrationV2AppThread,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("renames the session before the first turn after the thread was renamed", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.update", { sessionID: SESSION, title: "Prime factors of 391" }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Renamed once: the next turn under the same title sends no update.
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const renamed = {
+        ...turnInput(thread),
+        appThread: { title: "Prime factors of 391" } as OrchestrationV2AppThread,
+      };
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(renamed);
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...renamed,
+        runId: RunId.make("run:opencode2-adapter:2"),
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+      });
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends a turn on the provider thread it started on", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -631,6 +694,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ...turnInput(thread),
     appThread: {
       id: threadId,
+      title: TITLE,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2AppThread,
   });

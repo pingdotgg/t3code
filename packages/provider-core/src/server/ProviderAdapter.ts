@@ -394,6 +394,8 @@ export interface ProviderAdapterV2OpenSessionInput {
 
 export interface ProviderAdapterV2EnsureThreadInput {
   readonly threadId: ThreadId;
+  /** The app thread's title, for providers that name their native sessions. */
+  readonly title?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly providerSessionId?: ProviderSessionId;
