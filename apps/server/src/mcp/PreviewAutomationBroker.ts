@@ -60,8 +60,7 @@ export interface PreviewAutomationConnectOptions {
   /**
    * New agent work goes to a preferred host before any desktop. The server's
    * own headless browser registers this way so a standalone environment keeps
-   * browsing when every desktop disconnects. Being in-process, it is never
-   * evicted for a request timeout.
+   * browsing when every desktop disconnects.
    */
   readonly preferred?: boolean;
 }
@@ -674,10 +673,13 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             // actions: the client may have applied them before becoming unreachable.
             // A background metadata read has a short budget and changes nothing,
             // so a slow one must not cut the host off from the agent's next call.
-            // The preferred host is the server's own in-process browser: a slow
-            // page there is not an unreachable host, and evicting it would drop
-            // every thread's tab assignment and in-flight request at once.
-            if (input.updateCurrentTab !== false && !connection.preferred) {
+            // The server's own browser is in-process: a slow page there is not
+            // an unreachable host, and evicting it would drop every thread's
+            // tab assignment and in-flight request at once.
+            if (
+              input.updateCurrentTab !== false &&
+              connection.clientId !== SERVER_BROWSER_AUTOMATION_CLIENT_ID
+            ) {
               yield* disconnect(connection.clientId, connection.queue, true);
             }
             return yield* new PreviewAutomationTimeoutError(requestContext);

@@ -1526,38 +1526,58 @@ it.effect("keeps the host connected when a background status read times out", ()
   ),
 );
 
-it.effect("keeps the server's own browser and the agent's tab when an action times out", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* makeBroker;
-      const tabId = PreviewTabId.make("tab-server");
-      const received = yield* Deferred.make<void>();
-      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
-      // A slow page never answers its snapshot; everything else answers with its tab.
-      yield* Stream.runForEach(requests, (request) =>
-        request.operation === "snapshot"
-          ? Deferred.succeed(received, undefined)
-          : broker.respond({
-              clientId: "client-1",
-              connectionId: request.connectionId,
-              requestId: request.requestId,
-              ok: true,
-              result: { tabId: request.tabId ?? tabId },
-            }),
-      ).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
+it.effect.each([
+  { clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID, kept: true },
+  // Preferred routing alone does not make a remote host in-process.
+  { clientId: "client-1", kept: false },
+])(
+  "keeps only the server's own browser and the agent's tab when an action times out ($clientId)",
+  ({ clientId, kept }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const tabId = PreviewTabId.make("tab-server");
+        const received = yield* Deferred.make<void>();
+        const requests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId }), { preferred: true }),
+        );
+        // A slow page never answers its snapshot; everything else answers with its tab.
+        yield* Stream.runForEach(requests, (request) =>
+          request.operation === "snapshot"
+            ? Deferred.succeed(received, undefined)
+            : broker.respond({
+                clientId,
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: { tabId: request.tabId ?? tabId },
+              }),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
 
-      yield* broker.invoke({ scope, operation: "open", input: {} });
-      const timedOut = yield* broker
-        .invoke<void>({ scope, operation: "snapshot", input: {}, timeoutMs: 1_000 })
-        .pipe(Effect.flip, Effect.forkScoped);
-      yield* Deferred.await(received);
-      yield* TestClock.adjust(2_000);
-      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+        yield* broker.invoke({ scope, operation: "open", input: {} });
+        const timedOut = yield* broker
+          .invoke<void>({ scope, operation: "snapshot", input: {}, timeoutMs: 1_000 })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(received);
+        yield* TestClock.adjust(2_000);
+        expect(yield* Fiber.join(timedOut)).toMatchObject({
+          _tag: "PreviewAutomationTimeoutError",
+        });
 
-      expect(yield* broker.invoke({ scope, operation: "click", input: {} })).toEqual({ tabId });
-    }),
-  ),
+        const click = broker.invoke<{ readonly tabId: string }>({
+          scope,
+          operation: "click",
+          input: {},
+        });
+        if (kept) expect(yield* click).toEqual({ tabId });
+        else {
+          expect(yield* Effect.flip(click)).toMatchObject({
+            _tag: "PreviewAutomationNoAvailableHostError",
+          });
+        }
+      }),
+    ),
 );
 
 it.effect("keeps each thread's current tab when threads share a provider session", () =>
