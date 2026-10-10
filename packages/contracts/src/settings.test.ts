@@ -382,10 +382,27 @@ describe("ClientSettings language", () => {
     }
   });
 
-  it("rejects a language the client cannot render", () => {
-    expect(() => decodeClientSettings({ languagePreference: "ja" })).toThrow();
-    expect(() => decodeClientSettingsPatch({ languagePreference: "ja" })).toThrow();
-  });
+  it.each(["ja", null, 42])(
+    "preserves other saved preferences for an unknown language %s",
+    (languagePreference) => {
+      const decoded = decodeClientSettings({
+        languagePreference,
+        timestampFormat: "24-hour",
+        wordWrap: false,
+      });
+      expect(decoded).toMatchObject({
+        languagePreference: "system",
+        timestampFormat: "24-hour",
+        wordWrap: false,
+      });
+      expect(encodeClientSettings(decoded)).toMatchObject({
+        languagePreference: "system",
+        timestampFormat: "24-hour",
+        wordWrap: false,
+      });
+      expect(() => decodeClientSettingsPatch({ languagePreference })).toThrow();
+    },
+  );
 
   it("reads settings written before the field existed", () => {
     // An older client persisted no language at all; decoding such a document

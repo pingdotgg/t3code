@@ -507,6 +507,8 @@ export const ClientSettingsSchema = Schema.Struct({
    * renders UI.
    */
   languagePreference: LanguagePreference.pipe(
+    // A newer client's locale must not invalidate the rest of a saved snapshot.
+    Schema.catchDecoding(() => Effect.succeedSome(DEFAULT_LANGUAGE_PREFERENCE)),
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_LANGUAGE_PREFERENCE)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
