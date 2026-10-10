@@ -255,6 +255,30 @@ it.effect(
   120_000,
 );
 
+it.effect(
+  "keeps both lock entries when two installs run at once",
+  () =>
+    withLibrary(({ library, home, source }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const target = { kind: "environment" } as const;
+        yield* Effect.all(
+          [
+            library.install({ source, skills: ["notes"], target }),
+            library.install({ source, skills: ["review"], target }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const lock = JSON.parse(
+          yield* fileSystem.readFileString(path.join(home, ".agents", ".skill-lock.json")),
+        ) as { skills: Record<string, unknown> };
+        expect(Object.keys(lock.skills).toSorted()).toEqual(["notes", "review"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  120_000,
+);
+
 describe("lockedInstallSource", () => {
   it("updates one skill from its folder, as `npx skills update` does", () => {
     const skillPath = "skills/productivity/grill-me/SKILL.md";

@@ -104,8 +104,8 @@ describe("skill switches", () => {
       settings,
       skillsDisabledPatch(settings, projectId, ["grill-me"], false),
     );
-    // One switch replaces the differently cased one, and it wins over the environment's spelling.
-    expect(next.projectSettingsOverrides[projectId]?.disabledSkills).toEqual({ "grill-me": false });
+    // One switch replaces the differently cased one, spelled as the environment spells it.
+    expect(next.projectSettingsOverrides[projectId]?.disabledSkills).toEqual({ "Grill-Me": false });
     expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual([]);
   });
 });

@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -80,6 +81,9 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const self = yield* resolveSelfInvocation();
+  // The host's environment, including the PATH the server resolved, decides
+  // which home the CLI installs into, so it's passed in whole.
+  const environment = yield* HostProcessEnvironment;
 
   const run = (command: "add" | "remove", args: ReadonlyArray<string>, cwd: string) =>
     processRunner
@@ -88,6 +92,7 @@ const make = Effect.gen(function* () {
         args: [...selfInvocationArgs(self, ["skills-cli", command, ...args])],
         cwd,
         env: {
+          ...environment,
           ELECTRON_RUN_AS_NODE: "1",
           DISABLE_TELEMETRY: "1",
           DO_NOT_TRACK: "1",

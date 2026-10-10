@@ -42,6 +42,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { parse as parseYamlDocument } from "yaml";
 
 import * as ProjectService from "../project/ProjectService.ts";
@@ -147,6 +148,9 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const cli = yield* SkillsCli.SkillsCli;
+  // Each CLI run rewrites a whole lock file without locking it, so two at once
+  // can drop each other's entries. Installs are rare; run them one at a time.
+  const changes = yield* Semaphore.make(1);
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectService = yield* ProjectService.ProjectService;
   const environment = yield* HostProcessEnvironment;
@@ -435,7 +439,7 @@ const make = Effect.gen(function* () {
   const install: SkillLibrary["Service"]["install"] = Effect.fn("SkillLibrary.install")(
     function* (input) {
       const target = yield* resolveTarget(input.target);
-      return yield* installInto(target, input.source, input.skills);
+      return yield* installInto(target, input.source, input.skills).pipe(changes.withPermits(1));
     },
   );
 
@@ -457,7 +461,13 @@ const make = Effect.gen(function* () {
   const update: SkillLibrary["Service"]["update"] = Effect.fn("SkillLibrary.update")(
     function* (input) {
       const target = yield* resolveTarget(input.target);
-      const entry = yield* lockedEntry(target, input.name);
+      return yield* updateLocked(target, input.name).pipe(changes.withPermits(1));
+    },
+  );
+
+  const updateLocked = (target: SkillInstallTarget, name: string) =>
+    Effect.gen(function* () {
+      const entry = yield* lockedEntry(target, name);
       const from = lockedInstallSource(entry, target.kind === "environment" ? "home" : "project");
       if (from === null) {
         return yield* new SkillLibraryError({
@@ -466,18 +476,23 @@ const make = Effect.gen(function* () {
             "This skill's lock doesn't record which host it came from. Install it again from its URL.",
         });
       }
-      return yield* installInto(target, from.source, [input.name], from.fullDepth);
-    },
-  );
+      return yield* installInto(target, from.source, [name], from.fullDepth);
+    });
 
   const remove: SkillLibrary["Service"]["remove"] = Effect.fn("SkillLibrary.remove")(
     function* (input) {
       const target = yield* resolveTarget(input.target);
-      yield* lockedEntry(target, input.name);
+      yield* removeLocked(target, input.name).pipe(changes.withPermits(1));
+    },
+  );
+
+  const removeLocked = (target: SkillInstallTarget, name: string) =>
+    Effect.gen(function* () {
+      yield* lockedEntry(target, name);
       const paths = targetPaths(target);
       yield* cli
         .remove({
-          skills: [input.name],
+          skills: [name],
           global: target.kind === "environment",
           cwd: paths.root,
         })
@@ -489,16 +504,15 @@ const make = Effect.gen(function* () {
       yield* refreshAgents(target);
       // The CLI reports a skill it couldn't delete without failing, so check what's left.
       const folderLeft = yield* fileSystem
-        .exists(path.join(paths.folder, input.name))
+        .exists(path.join(paths.folder, name))
         .pipe(Effect.orElseSucceed(() => false));
-      const lockLeft = (yield* readLock(paths.lock)).has(input.name);
+      const lockLeft = (yield* readLock(paths.lock)).has(name);
       if (folderLeft || lockLeft) {
         return yield* cliFailed(
-          `Couldn't remove ${input.name}. Check the permissions of ${folderLeft ? paths.folder : paths.lock}.`,
+          `Couldn't remove ${name}. Check the permissions of ${folderLeft ? paths.folder : paths.lock}.`,
         );
       }
-    },
-  );
+    });
 
   return SkillLibrary.of({ inspect, preview, install, update, remove });
 });
