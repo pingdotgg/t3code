@@ -935,6 +935,10 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
+    // A steer interrupts the turn without closing the query. Undeclared, that
+    // interrupt also stops background subagents. T3 stops background work by
+    // closing the query (Stop) rather than through `stop_task`.
+    perTaskStopAffordance: true,
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
@@ -2461,6 +2465,14 @@ function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
   return (
     message.terminal_reason === "aborted_streaming" || message.terminal_reason === "aborted_tools"
   );
+}
+
+// Claude reads a `now` message only once the running tool returns, so a steer
+// the user sends interrupts the turn first, as Esc then send does in Claude
+// Code. Agent and scheduled deliveries never cut off a command the agent is
+// waiting on; they join at the next tool boundary.
+function claudeSteerInterruptsTurn(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
+  return message.createdBy === "user" && message.scheduledTaskId === undefined;
 }
 
 function isClaudeProviderContinuationTurn(
@@ -7816,6 +7828,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            // The query stays open: the interrupted turn's aborted result is
+            // skipped (see isClaudeActiveSteeringAbortResult) and the steer
+            // runs next in the same turn. Offering after the interrupt keeps
+            // the steer out of the aborted turn, which a tool returning just
+            // before the interrupt could otherwise fold it into.
+            if (claudeSteerInterruptsTurn(turnInput.message)) {
+              yield* existing.query.interrupt.pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.claude-steer-interrupt-failed", {
+                    providerTurnId: turnInput.providerTurnId,
+                    cause,
+                  }),
+                ),
+              );
+            }
             yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>

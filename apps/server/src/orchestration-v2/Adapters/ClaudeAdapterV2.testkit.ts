@@ -1669,9 +1669,16 @@ async function recordClaudeActiveSteeringQuery(input: {
     promptQueue.offer(message);
     offeredPrompts.add(index);
   };
-  const offerSteeringPrompts = () => {
+  // Like ClaudeAdapterV2.steerTurn, a user's steer interrupts the turn before it is offered.
+  const offerSteeringPrompts = async () => {
     for (let index = 1; index < input.prompts.length; index += 1) {
       if (!offeredPrompts.has(index)) {
+        input.entries.push({
+          type: "expect_outbound",
+          label: `query.interrupt:${index}`,
+          frame: { type: "query.interrupt" },
+        });
+        await queryRuntime.interrupt();
         offerPrompt(index, "now");
       }
     }
@@ -1738,7 +1745,7 @@ async function recordClaudeActiveSteeringQuery(input: {
   const iterator = queryRuntime[Symbol.asyncIterator]();
   try {
     offerPrompt(0);
-    offerSteeringPrompts();
+    await offerSteeringPrompts();
     const completed = await recordMessagesUntilTurnResults({
       iterator,
       entries: input.entries,
