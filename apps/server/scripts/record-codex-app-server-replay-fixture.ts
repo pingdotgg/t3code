@@ -1,6 +1,9 @@
 import * as NodeOS from "node:os";
 
-import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
+import {
+  CODEX_THREAD_CONFIG,
+  resolveCodexReasoningSummary,
+} from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
 import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -1383,12 +1386,11 @@ function runReplaySession({
       step: TurnReplayStep,
     ) =>
       Effect.gen(function* () {
-        const turnParams: TurnStartParams = {
+        const params: TurnStartParams = {
           approvalPolicy: "never",
           sandboxPolicy: { type: "dangerFullAccess" },
           cwd: process.cwd(),
           model,
-          summary: "detailed",
           approvalsReviewer: "user",
           ...(run.interactionMode === "plan"
             ? { collaborationMode: planCollaborationMode(model) }
@@ -1397,6 +1399,12 @@ function runReplaySession({
           ...step.turnOverrides,
           input: turnInput(step.prompt),
           threadId,
+        };
+        // Resolved per turn after overrides, so config/read sees the final cwd; the
+        // adapter's own resolver, so recordings carry what the adapter sends.
+        const turnParams: TurnStartParams = {
+          ...params,
+          summary: yield* resolveCodexReasoningSummary(client.raw, params.cwd ?? null),
         };
 
         if (step.type === "steeredTurn") {
