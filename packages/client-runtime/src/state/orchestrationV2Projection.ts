@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -86,6 +87,14 @@ function oldestLocalTurnOrdinal(
   return oldest;
 }
 
+const UNFINISHED_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 function shouldDropMissingPartialTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
@@ -98,9 +107,12 @@ function shouldDropMissingPartialTurnItem(
     return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
   }
   // A queued run keeps the ordinal it got when queued, so a steer sent later
-  // can raise the watermark past it. The orchestrator commits its first item
-  // while the run is still queued, so that item is new, not unloaded history.
-  if (projection.runs.some((run) => run.id === item.runId && run.status === "queued")) {
+  // can raise the watermark past it. Items of a run that has not finished are
+  // new, not unloaded history: the first lands while the run is still queued,
+  // and a bounded window can start after the ones before it.
+  if (
+    projection.runs.some((run) => run.id === item.runId && UNFINISHED_RUN_STATUSES.has(run.status))
+  ) {
     return false;
   }
   // Later items of a run already in the window can raise the watermark first.

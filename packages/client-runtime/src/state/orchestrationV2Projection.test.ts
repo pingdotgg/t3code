@@ -355,6 +355,28 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       expect(projection?.turnItems.map((item) => item.id)).toContain(queuedReply.id);
     });
 
+    it("keeps a running run's item when the window starts after its earlier items", () => {
+      // The bounded window begins inside run 3; run 2 started and kept going,
+      // but none of its rows made it into the window.
+      const runningRun = { ...queuedRun, status: "running" } as const;
+      const steerItems = [
+        runItem("item-steer-user", steerRunId, 3_000_001),
+        runItem("item-steer-reply", steerRunId, 3_000_002),
+      ];
+      const projection = windowOf([run, runningRun, steerRun], steerItems);
+      const reply = runItem("item-running-reply", queuedRunId, 2_000_003);
+
+      const next = applyOrchestrationV2ProjectionEvent(projection, itemEvent(reply), {
+        partialTimeline: true,
+        latestLocalTurnOrdinal: 3_000_002,
+      });
+
+      expect(next?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+        reply.id,
+        ...steerItems.map((item) => item.id),
+      ]);
+    });
+
     it.each([
       { name: "keeps an item of a run already in the window", itemRunId: steerRunId, kept: true },
       { name: "drops an item of a finished run outside the window", itemRunId: runId, kept: false },
