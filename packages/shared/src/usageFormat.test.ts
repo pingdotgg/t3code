@@ -2,8 +2,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  enumerateDays,
   enumerateHourStarts,
   formatDateTimeShort,
+  formatDayShort,
   formatHourShort,
   formatPercent,
   formatRelativeHourShort,
@@ -105,5 +107,24 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+
+  it("requests a one-year window that ends today and covers 365 calendar days", () => {
+    try {
+      // Just after midnight on the morning clocks fall back in New York.
+      vi.stubEnv("TZ", "America/New_York");
+      const window = makeWindow(365, new Date("2026-11-01T04:30:00.000Z"));
+
+      expect(window.untilDay).toBe("2026-11-01");
+      expect(window.sinceDay).toBe("2025-11-02");
+      expect(enumerateDays(window.sinceDay, window.untilDay)).toHaveLength(365);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("adds the year to a day only when asked", () => {
+    expect(formatDayShort("2026-08-07")).toBe("Aug 7");
+    expect(formatDayShort("2025-10-11", true)).toBe("Oct 11, 2025");
   });
 });

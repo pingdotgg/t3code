@@ -144,6 +144,12 @@ export interface ProviderUsageScan {
     | null;
   /** Answered from a cache while a refresh runs. */
   readonly refreshing?: true;
+  /**
+   * Whether the source's saved history reaches back to `windowStartMs`, so the
+   * days before its first record are known zero rather than missing. Omit when
+   * the source cannot tell.
+   */
+  readonly hasEarlierHistory?: boolean;
 }
 
 export interface ProviderUsageScanInput<Config> {

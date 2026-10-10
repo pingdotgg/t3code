@@ -69,7 +69,7 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
@@ -94,10 +94,10 @@ const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The longest window the UI offers, 90 days, plus its `MTIME_SLACK_MS`, rounded
+ * The longest window the UI offers, one year, plus its `MTIME_SLACK_MS`, rounded
  * up. Older entries are pruned.
  */
-const CACHE_RETENTION_DAYS = 92;
+const CACHE_RETENTION_DAYS = 367;
 
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
@@ -241,7 +241,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((fileName) =>
+    path.join(config.stateDir, fileName),
+  );
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -440,7 +442,11 @@ export const make = Effect.gen(function* () {
         );
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+        // Newest first, so a v5 file written alongside the legacy one wins.
+        for (const legacyPath of legacyScanCachePaths) {
+          document = yield* readDocument(legacyPath);
+          if (document !== null) break;
+        }
         // Write the migrated cache to its own file on the next scan.
         cacheDirty = document !== null;
       }
@@ -591,6 +597,8 @@ export const make = Effect.gen(function* () {
       | null;
     /** Answered from a cache while a refresh runs. */
     readonly refreshing?: true;
+    /** Whether the source holds usage older than the scan read. Absent when unknown. */
+    readonly hasEarlierHistory?: boolean;
   }
 
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
@@ -601,8 +609,16 @@ export const make = Effect.gen(function* () {
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
-    const { files, failedPaths } = yield* Effect.promise(() =>
+    if (!exists) {
+      return {
+        provider,
+        dir,
+        volumeId,
+        files: null,
+        hasEarlierHistory: false,
+      } satisfies ScannedDir;
+    }
+    const { files, failedPaths, olderFiles } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
     // A cold parse waits on disk reads, so a few files in flight read
@@ -638,6 +654,8 @@ export const make = Effect.gen(function* () {
       dir,
       volumeId,
       files: parsedFiles,
+      // An unopened older transcript counts as history without being parsed.
+      hasEarlierHistory: olderFiles > 0,
       ...(unread > 0
         ? {
             status: "partial",
@@ -777,17 +795,27 @@ export const make = Effect.gen(function* () {
     // path. Like the walk, skip files last written before the window: they
     // cannot hold records inside it.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
-    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
+    // Saved usage of a cleaned-up transcript from before the window, by scanned directory.
+    const retainedEarlier = new Set<number>();
+    const filesByDir = scannedDirs.map(({ provider, dir, files }, index) => {
       const retainedFiles = [...(files ?? [])];
       const livePaths = new Set(retainedFiles.map((file) => file.path));
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||
-          entry.mtimeMs < retainedSinceMs ||
           livePaths.has(filePath) ||
           !isWithinDirectory(filePath, dir)
         )
           continue;
+        if (entry.mtimeMs < retainedSinceMs) {
+          // Entries past the retention are pruned below and no longer saved.
+          if (
+            entry.mtimeMs >= retentionCutoffMs &&
+            entry.records.length + entry.tailRecords.length > 0
+          )
+            retainedEarlier.add(index);
+          continue;
+        }
         retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
       }
       return retainedFiles;
@@ -796,7 +824,18 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      {
+        provider,
+        dir,
+        volumeId,
+        files,
+        status,
+        message,
+        action,
+        refreshing,
+        hasEarlierHistory,
+        hostId: sourceHostId,
+      },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -839,6 +878,11 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      // The mtime slack admits records from just before the window, and a
+      // reader reports what it left out. Neither makes an unknown answer a no.
+      const earlierHistory =
+        aggregator.hadEarlierRecords(dir) || retainedEarlier.has(index) || hasEarlierHistory;
+
       sources.push({
         fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
         // Clients exclude missing sources, so saved records remain an available source.
@@ -849,6 +893,7 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message:
           message ?? (files === null ? "No transcript directory on this environment." : null),
+        ...(earlierHistory === undefined ? {} : { hasEarlierHistory: earlierHistory }),
         ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });

@@ -126,10 +126,16 @@ export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<{ readonly files: readonly TranscriptFile[]; readonly failedPaths: number }> {
+): Promise<{
+  readonly files: readonly TranscriptFile[];
+  readonly failedPaths: number;
+  /** Transcripts last written before `sinceMs`, which the scan leaves unopened. */
+  readonly olderFiles: number;
+}> {
   const fileName = options?.fileName;
   const candidates: string[] = [];
   let failedPaths = 0;
+  let olderFiles = 0;
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
@@ -157,6 +163,8 @@ export async function listTranscriptFiles(
         const stats = await NodeFSP.stat(path);
         if (stats.mtimeMs >= sinceMs) {
           found[index] = { path, size: stats.size, mtimeMs: stats.mtimeMs };
+        } else {
+          olderFiles += 1;
         }
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
@@ -168,7 +176,7 @@ export async function listTranscriptFiles(
   await Promise.all(
     Array.from({ length: Math.min(STAT_CONCURRENCY, candidates.length) }, statQueued),
   );
-  return { files: found.filter((file) => file !== undefined), failedPaths };
+  return { files: found.filter((file) => file !== undefined), failedPaths, olderFiles };
 }
 
 /**

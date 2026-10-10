@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPeriodColumns, chartScale, niceScale } from "./UsageProviderChart";
+import {
+  buildPeriodColumns,
+  chartScale,
+  hasNoSavedHistory,
+  historyHatchStartIndex,
+  historyStartMarkers,
+  niceScale,
+} from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("chartScale", () => {
@@ -121,6 +128,68 @@ describe("buildPeriodColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+});
+
+describe("historyStartMarkers", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
+
+  it("marks a provider whose history starts on the final day", () => {
+    expect(
+      historyStartMarkers(["codex", "claude"], days, new Map([["claude", "2026-08-03"]])),
+    ).toEqual(["claude"]);
+  });
+
+  it("leaves earlier starts and providers without a boundary alone", () => {
+    expect(historyStartMarkers(["codex"], days, new Map([["codex", "2026-08-01"]]))).toEqual([]);
+    expect(historyStartMarkers(["codex"], days, new Map())).toEqual([]);
+  });
+});
+
+describe("hasNoSavedHistory", () => {
+  const starts = new Map([["claude" as const, 3]]);
+
+  it("is true only before the provider's own boundary", () => {
+    expect(hasNoSavedHistory(2, "claude", starts)).toBe(true);
+    expect(hasNoSavedHistory(3, "claude", starts)).toBe(false);
+    expect(hasNoSavedHistory(null, "claude", starts)).toBe(false);
+  });
+
+  it("keeps a provider that reports no boundary visible under the hatch", () => {
+    // Its quiet days read as zero, so its recorded values still show.
+    expect(hasNoSavedHistory(1, "opencode", starts)).toBe(false);
+  });
+});
+
+describe("historyHatchStartIndex", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
+
+  it("starts the hatch where the earliest bounded provider does", () => {
+    expect(
+      historyHatchStartIndex(["codex", "claude"], days, new Map([["claude", "2026-08-03"]]), "day"),
+    ).toBe(2);
+  });
+
+  it("is not cancelled by a provider that reports no boundary", () => {
+    // OpenCode and Antigravity report nothing; their quiet days read as zero.
+    expect(
+      historyHatchStartIndex(
+        ["codex", "opencode"],
+        days,
+        new Map([["codex", "2026-08-02"]]),
+        "day",
+      ),
+    ).toBe(1);
+  });
+
+  it("has no hatch when nothing is bounded or history reaches the window start", () => {
+    expect(historyHatchStartIndex(["opencode"], days, new Map(), "day")).toBe(0);
+    expect(historyHatchStartIndex(["codex"], days, new Map([["codex", "2026-08-01"]]), "day")).toBe(
+      0,
+    );
+    expect(
+      historyHatchStartIndex(["codex"], days, new Map([["codex", "2026-08-02"]]), "hour"),
+    ).toBe(0);
   });
 });
 

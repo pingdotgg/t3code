@@ -16,6 +16,12 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
+Periods run up to one year. T3 keeps the usage it has read for a year, including usage from
+transcripts a provider has since deleted, so longer periods fill in as you keep using T3. On web
+and desktop, a provider's line starts where its saved history starts, and days before any history
+are hatched: those days are unknown, not zero. T3 cannot tell this for OpenCode or Antigravity, or
+for an environment older than your app, so their quiet days always read as zero.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
@@ -140,7 +146,7 @@ Session, Weekly, or both for each provider. Reopen T3 to refresh expired reading
 
 On web and desktop, open Usage from the command palette. While on Usage,
 press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
-Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
-24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+Use `Ctrl+Shift+1` through `6` (`Cmd+Shift+1` through `6` on macOS) for the past
+24 hours, 7 days, 30 days, 90 days, 180 days, or 1 year. Period shortcuts do nothing on Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.

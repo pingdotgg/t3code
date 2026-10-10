@@ -6,9 +6,11 @@ import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/
 import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
+  usageLoadingState,
   usageProgress,
 } from "@t3tools/client-runtime/state/usage-progress";
 import {
+  historyStartDays,
   isCompatibleUsageContractVersion,
   isModelCostUnknown,
   type DailyTotals,
@@ -54,7 +56,12 @@ import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
-import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import {
+  PROVIDER_LABEL,
+  PROVIDER_ORDER,
+  useProviderColors,
+  useUsageMixColors,
+} from "./usageProviders";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -69,6 +76,8 @@ const WINDOW_OPTIONS = [
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  { value: 180, label: "180d", accessibilityLabel: "Past 180 days" },
+  { value: 365, label: "1y", accessibilityLabel: "Past year" },
 ] as const;
 
 const METRIC_OPTIONS = [
@@ -78,6 +87,7 @@ const METRIC_OPTIONS = [
 
 const CHART_HEIGHT = 180;
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
+const NO_HISTORY_STARTS: ReadonlyMap<UsageProviderKind, string> = new Map();
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
 /**
@@ -173,6 +183,21 @@ export function UsageRouteScreen() {
     refreshing: refreshingUsage,
     providerLabel,
   });
+  const loadingPartial = usageLoadingState(selectedEnvironments, refreshingUsage).partial;
+  // A source still answering may yet report older history, so no boundary is
+  // drawn while any environment or slow source is updating.
+  const historyStarts = useMemo(
+    () =>
+      isPast24Hours || loadingPartial
+        ? NO_HISTORY_STARTS
+        : historyStartDays(
+            selectedEnvironments.flatMap(({ environmentId, label, summary }) =>
+              summary === null ? [] : [{ environmentId, label, summary }],
+            ),
+            window.sinceDay,
+          ),
+    [isPast24Hours, loadingPartial, selectedEnvironments, window.sinceDay],
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -371,6 +396,7 @@ export function UsageRouteScreen() {
                       untilDay={window.untilDay}
                       isPast24Hours={isPast24Hours}
                       timeZone={window.timeZone}
+                      historyStartDays={historyStarts}
                     />
                     <ProviderSection
                       merged={merged}
@@ -554,10 +580,20 @@ function ChartCard(props: {
   readonly untilDay: string;
   readonly isPast24Hours: boolean;
   readonly timeZone: string;
+  readonly historyStartDays: ReadonlyMap<UsageProviderKind, string>;
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
+  // A window that spans two years needs the year to tell its ends apart.
+  const withYear = props.sinceDay.slice(0, 4) !== props.untilDay.slice(0, 4);
+  const activeProviders = new Set(merged.providers.map((provider) => provider.provider));
+  const historyNotes = PROVIDER_ORDER.flatMap((provider) => {
+    const start = props.historyStartDays.get(provider);
+    return start === undefined || !activeProviders.has(provider)
+      ? []
+      : [`${PROVIDER_LABEL[provider]} history starts ${formatDayShort(start, withYear)}.`];
+  });
 
   return (
     <View className="gap-4 rounded-[24px] border-continuous bg-grouped-card p-4">
@@ -613,6 +649,12 @@ function ChartCard(props: {
             : formatDayShort(props.untilDay)}
         </Text>
       </View>
+
+      {historyNotes.length > 0 ? (
+        <Text className="text-xs text-foreground-muted">
+          {historyNotes.join(" ")} Earlier days are unknown, not zero.
+        </Text>
+      ) : null}
     </View>
   );
 }

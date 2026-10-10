@@ -1,3 +1,4 @@
+import type { UsageProviderKind } from "@t3tools/contracts";
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
 import { useMemo } from "react";
@@ -31,6 +32,7 @@ export interface UsageChartWindow {
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly referenceTime: string | undefined;
+  readonly historyStartDays: ReadonlyMap<UsageProviderKind, string>;
 }
 
 /**
@@ -117,6 +119,7 @@ export function UsageModelDialog({
               referenceTime={chartWindow.referenceTime}
               resolution={chartWindow.resolution}
               timeZone={chartWindow.timeZone}
+              historyStartDays={chartWindow.historyStartDays}
             />
 
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">

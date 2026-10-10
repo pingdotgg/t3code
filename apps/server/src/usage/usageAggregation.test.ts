@@ -240,6 +240,66 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(0);
   });
 
+  it("keeps a one-year window's totals equal to its records across day boundaries", () => {
+    // New York changes offset twice inside this window.
+    const aggregator = new UsageAggregator({
+      timeZone: "America/New_York",
+      sinceDay: "2025-10-11",
+      untilDay: "2026-10-10",
+      rates,
+    });
+    const inside = [
+      "2025-10-11T04:00:00.000Z", // local midnight opening the window
+      "2025-11-02T05:30:00.000Z", // 1:30 AM before clocks fall back
+      "2025-11-02T06:30:00.000Z", // 1:30 AM again, an hour later
+      "2026-03-08T06:59:59.999Z", // last instant before clocks spring forward
+      "2026-03-08T07:00:00.000Z",
+      "2026-10-11T03:59:59.999Z", // last instant of the window's last day
+    ];
+    const outside = ["2025-10-11T03:59:59.999Z", "2026-10-11T04:00:00.000Z"];
+    // Distinct powers of two, so a dropped or doubled record changes the sum.
+    const tokens = (index: number) => 2 ** index;
+    for (const [index, timestamp] of [...inside, ...outside].entries()) {
+      aggregator.add(
+        record({
+          timestampMs: Date.parse(timestamp),
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: tokens(index),
+            reasoningTokens: 0,
+          },
+        }),
+      );
+    }
+    const result = aggregator.finish();
+
+    expect(result.buckets.map((bucket) => [bucket.day, bucket.totals.outputTokens])).toEqual([
+      ["2025-10-11", tokens(0)],
+      ["2025-11-02", tokens(1) + tokens(2)],
+      ["2026-03-08", tokens(3) + tokens(4)],
+      ["2026-10-10", tokens(5)],
+    ]);
+    expect(result.outOfWindow).toBe(outside.length);
+  });
+
+  it("remembers which sources had records from before the window", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.add(record({ timestampMs: Date.parse("2026-07-31T23:59:59.999Z") }), "/earlier");
+    aggregator.add(record({ timestampMs: Date.parse("2026-09-01T00:00:00.000Z") }), "/later");
+    aggregator.add(record(), "/inside");
+
+    expect(aggregator.hadEarlierRecords("/earlier")).toBe(true);
+    expect(aggregator.hadEarlierRecords("/later")).toBe(false);
+    expect(aggregator.hadEarlierRecords("/inside")).toBe(false);
+  });
+
   it("reports whether a record contributed", () => {
     const aggregator = new UsageAggregator({
       timeZone: "UTC",

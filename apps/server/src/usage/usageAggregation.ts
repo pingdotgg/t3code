@@ -149,6 +149,7 @@ export class UsageAggregator {
   } | null = null;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
+  readonly #sourcesWithEarlierRecords = new Set<string>();
 
   constructor(options: AggregateOptions) {
     this.#options = options;
@@ -186,6 +187,9 @@ export class UsageAggregator {
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
+      if (record.timestampMs < this.#hourlyWindow.sinceTimeMs) {
+        this.#sourcesWithEarlierRecords.add(sourcePath ?? "");
+      }
       this.#outOfWindow += 1;
       return false;
     }
@@ -195,6 +199,7 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
+      if (day < this.#options.sinceDay) this.#sourcesWithEarlierRecords.add(sourcePath ?? "");
       this.#outOfWindow += 1;
       return false;
     }
@@ -240,6 +245,11 @@ export class UsageAggregator {
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
+  }
+
+  /** Whether `add` turned away a record of this source for predating the window. */
+  hadEarlierRecords(sourcePath?: string): boolean {
+    return this.#sourcesWithEarlierRecords.has(sourcePath ?? "");
   }
 
   /** The target's own rate applies, so a provider-specific `rateModel` is dropped. */

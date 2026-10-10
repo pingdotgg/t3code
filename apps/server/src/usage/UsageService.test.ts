@@ -19,6 +19,8 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -207,7 +209,7 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
 /** The service's cache retention, which the Cursor account cache always covers. */
-const CURSOR_RETENTION_MS = 92 * 24 * HOUR_MS;
+const CURSOR_RETENTION_MS = 367 * 24 * HOUR_MS;
 
 /**
  * Stands in for Cursor's dashboard API. Each read returns the account's events
@@ -490,6 +492,33 @@ describe("UsageService", () => {
         Effect.provide(
           layerService({ prefix: "usage-service-cursor-incremental", home, settings }),
         ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("reports a covered Cursor window as having no missing history", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      // The account's only event is inside the window. The API still answered
+      // every earlier day of its covered range, so those days are known zero.
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 }];
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const covered = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursorSource(covered)?.hasEarlierHistory, true);
+
+        // A window reaching past the cache's start cannot make that claim.
+        const wide = yield* service.readSummary({
+          ...WINDOW,
+          sinceDay: UsageDay.make("2025-07-01"),
+          awaitRefresh: true,
+        });
+        assert.isUndefined(cursorSource(wide)?.hasEarlierHistory);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-cursor-coverage", home, settings })),
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
@@ -1182,7 +1211,7 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
@@ -1455,6 +1484,142 @@ describe("UsageService", () => {
           Effect.provide(layerService({ prefix: "usage-service-late-read-test", home, settings })),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the saved usage of a deleted transcript for the one-year period", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const day = 24 * HOUR_MS;
+      const writtenAtMs = (yield* Clock.currentTimeMillis) - 300 * day;
+      const isoDay = (ms: number) =>
+        UsageDay.make(DateTime.formatIso(DateTime.makeUnsafe(ms)).slice(0, 10));
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5).replace(
+            "2026-08-01T10:00:00Z",
+            DateTime.formatIso(DateTime.makeUnsafe(writtenAtMs)),
+          ),
+        );
+        await NodeFSP.utimes(transcript, writtenAtMs / 1000, writtenAtMs / 1000);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-year-test", home, settings })),
+      );
+      const year: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: isoDay(writtenAtMs - 64 * day),
+        untilDay: isoDay(writtenAtMs + 300 * day),
+      };
+      assert.strictEqual(totalOutputTokens(yield* service.readSummary(year)), 5);
+
+      // The provider cleans the transcript up; T3 still has what it read.
+      yield* Effect.promise(() => NodeFSP.rm(transcript));
+      assert.strictEqual(totalOutputTokens(yield* service.readSummary(year)), 5);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("migrates a v5 cache without dropping the older usage a v5 server kept", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const day = 24 * HOUR_MS;
+      const writtenAtMs = (yield* Clock.currentTimeMillis) - 300 * day;
+      const isoDay = (ms: number) =>
+        UsageDay.make(DateTime.formatIso(DateTime.makeUnsafe(ms)).slice(0, 10));
+      const year: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: isoDay(writtenAtMs - 64 * day),
+        untilDay: isoDay(writtenAtMs + 300 * day),
+      };
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5).replace(
+            "2026-08-01T10:00:00Z",
+            DateTime.formatIso(DateTime.makeUnsafe(writtenAtMs)),
+          ),
+        );
+        await NodeFSP.utimes(transcript, writtenAtMs / 1000, writtenAtMs / 1000);
+      });
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+        const previousPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const first = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* first.readSummary(year)), 5);
+        yield* first.awaitPersisted;
+
+        // What a v5 server would have left behind, with the transcript since
+        // deleted. A v5 server pruning its 92-day cache must keep this file.
+        const previous = yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            readonly version?: unknown;
+          };
+          const text = encodeUnknownJsonString({ ...document, version: 5 });
+          await NodeFSP.writeFile(previousPath, text);
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.rm(transcript);
+          return text;
+        });
+
+        const second = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* second.readSummary(year)), 5);
+        yield* second.awaitPersisted;
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(previousPath, "utf8")),
+          previous,
+        );
+        const migrated = decodeUnknownJsonString(
+          yield* Effect.promise(() => NodeFSP.readFile(cachePath, "utf8")),
+        ) as { readonly version?: unknown };
+        assert.strictEqual(migrated.version, 6);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-v5-migration-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports whether a source has history from before the window", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      // One record on 2026-08-01, inside `WINDOW` and before `NARROW_WINDOW`.
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const claudeSource = (summary: { readonly sources: readonly UsageSource[] }) =>
+        summary.sources.find((source) => source.fingerprint.provider === "claude");
+      const layer = layerService({ prefix: "usage-service-earlier-test", home, settings });
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        assert.strictEqual(
+          claudeSource(yield* service.readSummary(WINDOW))?.hasEarlierHistory,
+          false,
+        );
+        // The file is recent enough to be read, and its record predates the window.
+        const narrow = yield* service.readSummary(NARROW_WINDOW);
+        assert.strictEqual(narrow.buckets.length, 0);
+        assert.strictEqual(claudeSource(narrow)?.hasEarlierHistory, true);
+        yield* service.awaitPersisted;
+      }).pipe(Effect.provide(layer));
+
+      // Last written before the window: left unopened, still history.
+      yield* Effect.promise(() =>
+        NodeFSP.utimes(transcript, BEFORE_NARROW_WINDOW, BEFORE_NARROW_WINDOW),
+      );
+      yield* Effect.gen(function* () {
+        const unopened = yield* (yield* UsageService.make).readSummary(NARROW_WINDOW);
+        assert.strictEqual(unopened.buckets.length, 0);
+        assert.strictEqual(claudeSource(unopened)?.hasEarlierHistory, true);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-unopened-test", home, settings })),
+      );
+
+      // Deleted, but its usage was saved by the first service's scan.
+      yield* Effect.promise(() => NodeFSP.rm(transcript));
+      yield* Effect.gen(function* () {
+        const saved = yield* (yield* UsageService.make).readSummary(NARROW_WINDOW);
+        assert.strictEqual(claudeSource(saved)?.hasEarlierHistory, true);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>

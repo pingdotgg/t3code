@@ -28,12 +28,15 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
   });
 
-  it.each([1, 7, 30, 90] as const)("round-trips every metric with a %i-day range", (windowDays) => {
-    for (const metric of ["cost", "tokens", "limits"] as const) {
-      saveUsagePagePreferences({ metric, windowDays });
-      expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
-    }
-  });
+  it.each([1, 7, 30, 90, 180, 365] as const)(
+    "round-trips every metric with a %i-day range",
+    (windowDays) => {
+      for (const metric of ["cost", "tokens", "limits"] as const) {
+        saveUsagePagePreferences({ metric, windowDays });
+        expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
+      }
+    },
+  );
 
   it("round-trips hidden providers and reads older saves without them", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
@@ -46,7 +49,7 @@ describe("Usage page preferences", () => {
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',
-    '{"metric":"cost","windowDays":365}',
+    '{"metric":"cost","windowDays":366}',
   ])("replaces invalid preferences on the next save: %s", (value) => {
     values.set(key, value);
     expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });

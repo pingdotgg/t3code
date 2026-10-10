@@ -60,8 +60,8 @@ export function formatUsageContractMismatch(
     : `This client is older than the server on ${environmentLabel}; its usage is excluded from totals.`;
 }
 
-/** `2026-08-07` to `Aug 7`. */
-export function formatDayShort(day: string): string {
+/** `2026-08-07` to `Aug 7`, or `Aug 7, 2026` for a window that spans two years. */
+export function formatDayShort(day: string, withYear = false): string {
   const [year, month, dayOfMonth] = day.split("-").map((part) => Number(part));
   if (year === undefined || month === undefined || dayOfMonth === undefined) return day;
   const MONTHS = [
@@ -78,7 +78,7 @@ export function formatDayShort(day: string): string {
     "Nov",
     "Dec",
   ];
-  return `${MONTHS[month - 1] ?? ""} ${dayOfMonth}`;
+  return `${MONTHS[month - 1] ?? ""} ${dayOfMonth}${withYear ? `, ${year}` : ""}`;
 }
 
 /** Inclusive day list between two `YYYY-MM-DD` bounds. */

@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/usage-progress";
 
 import {
+  historyStartDays,
   isCompatibleUsageContractVersion,
   isModelCostUnknown,
   type DailyTotals,
@@ -110,6 +111,7 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 }
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
+const NO_HISTORY_STARTS: ReadonlyMap<UsageProviderKind, string> = new Map();
 
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
@@ -210,6 +212,22 @@ export function UsagePage() {
     () => enumerateDays(shownWindow.sinceDay, shownWindow.untilDay),
     [shownWindow.sinceDay, shownWindow.untilDay],
   );
+  // A window that spans two years needs the year to tell its ends apart.
+  const withYear = shownWindow.sinceDay.slice(0, 4) !== shownWindow.untilDay.slice(0, 4);
+  const historyStarts = useMemo(
+    () =>
+      // A source still answering may yet report older history, so no boundary
+      // is drawn while any environment or slow source is updating.
+      shownHourly || loading.partial
+        ? NO_HISTORY_STARTS
+        : historyStartDays(
+            selectedEnvironments.flatMap(({ environmentId, label, summary }) =>
+              summary === null ? [] : [{ environmentId, label, summary }],
+            ),
+            shownWindow.sinceDay,
+          ),
+    [shownHourly, loading.partial, selectedEnvironments, shownWindow.sinceDay],
+  );
   const hours = useMemo(
     () =>
       shownWindow.sinceTime === undefined || shownWindow.untilTime === undefined
@@ -217,7 +235,7 @@ export function UsagePage() {
         : enumerateHourStarts(shownWindow.sinceTime, shownWindow.untilTime),
     [shownWindow.sinceTime, shownWindow.untilTime],
   );
-  // Newest first: the window can run 90 periods, so the interesting end
+  // Newest first: the window can run 365 periods, so the interesting end
   // belongs at the top of the table.
   const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
     () => (shownHourly ? merged.hourly : merged.daily).toReversed(),
@@ -380,7 +398,7 @@ export function UsagePage() {
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone)}`
-      : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
+      : `${formatDayShort(shownWindow.sinceDay, withYear)} to ${formatDayShort(shownWindow.untilDay, withYear)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 xl:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
@@ -728,7 +746,21 @@ export function UsagePage() {
                       referenceTime={shownWindow.untilTime}
                       resolution={shownHourly ? "hour" : "day"}
                       timeZone={shownWindow.timeZone}
+                      historyStartDays={historyStarts}
                     />
+                    {activeProviders.some((provider) => historyStarts.has(provider)) ? (
+                      <p className="pl-16 text-xs text-muted-foreground">
+                        {activeProviders.flatMap((provider) => {
+                          const start = historyStarts.get(provider);
+                          return start === undefined
+                            ? []
+                            : [
+                                `${PROVIDER_PRESENTATION[provider].label} history starts ${formatDayShort(start, withYear)}. `,
+                              ];
+                        })}
+                        Earlier days are unknown, not zero.
+                      </p>
+                    ) : null}
                   </div>
                 </section>
 
@@ -943,7 +975,7 @@ export function UsagePage() {
                               <td className="py-2 text-foreground">
                                 {"hourStart" in period
                                   ? formatHourShort(period.hourStart, shownWindow.timeZone)
-                                  : formatDayShort(period.day)}
+                                  : formatDayShort(period.day, withYear)}
                               </td>
                               {activeProviders.map((provider) => (
                                 <td
@@ -995,6 +1027,7 @@ export function UsagePage() {
             resolution: shownHourly ? "hour" : "day",
             timeZone: shownWindow.timeZone,
             referenceTime: shownWindow.untilTime,
+            historyStartDays: historyStarts,
           }}
           onSetPrice={() => {
             setSelectedModelKey(null);

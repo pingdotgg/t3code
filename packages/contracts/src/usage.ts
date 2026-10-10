@@ -181,6 +181,13 @@ export const UsageSource = Schema.Struct({
    */
   distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Whether this source's saved history reaches back to the window's start, so
+   * the days before its first record are known zero rather than missing.
+   * `false` means its history is only saved from its first record on; absent
+   * when the source cannot tell or the server predates it.
+   */
+  hasEarlierHistory: Schema.optionalKey(Schema.Boolean),
   /** An action the client can offer to make this source available. */
   action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
   /**

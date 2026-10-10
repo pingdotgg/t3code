@@ -277,6 +277,11 @@ const make = Effect.gen(function* () {
         ? { status: "ok" }
         : { status: "partial", message: failureMessage }),
       ...(refreshing ? { refreshing: true } : {}),
+      // The account API answered every event from `cache.sinceMs` on, so a
+      // window it covers has no missing usage: quiet days in it are known
+      // zero, and the source has no gap to explain. A cache that starts after
+      // the window cannot tell, so it makes no claim.
+      ...(cache.sinceMs <= windowStartMs ? { hasEarlierHistory: true } : {}),
     } satisfies ProviderUsageScan;
   });
 
