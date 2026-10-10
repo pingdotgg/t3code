@@ -30,6 +30,7 @@ import {
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
   xAiSubagentFinishedNotice,
+  xAiTaskCompletedWakeTaskId,
   XAiAskUserQuestionRequest,
 } from "./xaiAcpExtension.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -82,6 +83,32 @@ describe("xAiPromptCompleteFromSessionUpdate", () => {
         update: { sessionUpdate: "turn_completed", stop_reason: "end_turn" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("xAiTaskCompletedWakeTaskId", () => {
+  const frame = (promptId: string | undefined) =>
+    ({
+      sessionId: "root",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } },
+      ...(promptId === undefined ? {} : { _meta: { promptId } }),
+    }) as Parameters<typeof xAiTaskCompletedWakeTaskId>[0];
+
+  it("reads the task a task-completed wake turn answers", () => {
+    expect(
+      xAiTaskCompletedWakeTaskId(frame("task-completed-01a12558-adae-79c3-88f8-d218a710a33e")),
+    ).toBe("01a12558-adae-79c3-88f8-d218a710a33e");
+    expect(
+      xAiTaskCompletedWakeTaskId(
+        frame("task-completed-call-67febf5f-8f43-49b2-b568-2c483a0a28d2-63"),
+      ),
+    ).toBe("call-67febf5f-8f43-49b2-b568-2c483a0a28d2-63");
+  });
+
+  it("names no task for other turns", () => {
+    expect(xAiTaskCompletedWakeTaskId(frame("t3-xai-prompt-1"))).toBeUndefined();
+    expect(xAiTaskCompletedWakeTaskId(frame("task-completed-"))).toBeUndefined();
+    expect(xAiTaskCompletedWakeTaskId(frame(undefined))).toBeUndefined();
   });
 });
 

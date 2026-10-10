@@ -382,6 +382,14 @@ export interface AcpAdapterV2Flavor {
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
   /**
+   * The background task a provider wake turn answers, when the frame names it
+   * (Grok `task-completed-<task id>`). Agent text in that turn counts as
+   * chatter only if that task was already handled in the turn that started it.
+   */
+  readonly providerWakeTaskId?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => string | undefined;
+  /**
    * When true, keep the active turn open after session/prompt returns while
    * background tools/subagents are still running so later monitor/wake traffic
    * can project (Grok monitors finish after the root prompt settles).
@@ -2005,6 +2013,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
+        // Agent text that follows background work handled in the turn is
+        // chatter. A provider wake turn that names its task is chatter only for
+        // that task: a wake for a task the turn never read is the agent's reply.
+        const isHandledTaskChatterFrame = (notification: EffectAcpSchema.SessionNotification) =>
+          Ref.get(handledBackgroundTaskIdsInActiveTurn).pipe(
+            Effect.map((handled) => {
+              const wakeTaskId = flavor.providerWakeTaskId?.(notification);
+              return wakeTaskId === undefined ? handled.size > 0 : handled.has(wakeTaskId);
+            }),
+          );
         // Background tasks that reached a genuine terminal mutation while a root
         // turn was still streaming and were not yet marked handled in-turn. The
         // mid-turn offer is suppressed (active turn owns the work); on finalize
@@ -3965,9 +3983,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // grok-in-turn-monitor-no-wake, multiturn stale-buffer arm). Check
           // before buffering so the frames cannot dirty wakeBuffer and later
           // arm a mid-turn offer when a second monitor completes.
-          const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
           const isInTurnHandledAgentChatter =
-            handledInTurnCount > 0 &&
+            (yield* isHandledTaskChatterFrame(notification)) &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk");
           // Grok prompts itself for every monitor event after the root turn
@@ -4184,7 +4201,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             context !== null &&
             context.finalized &&
-            (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size > 0 &&
+            (yield* isHandledTaskChatterFrame(notification)) &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk")
           ) {

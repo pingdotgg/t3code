@@ -10441,6 +10441,291 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("a provider wake turn is chatter only for the background task it names", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+        [];
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptGates: Array<Deferred.Deferred<EffectAcpSchema.PromptResponse, never>> = [];
+      const capturedMutation: {
+        current:
+          | ((mutation: {
+              readonly sessionId: string;
+              readonly taskId: string;
+              readonly status: "running" | "completed" | "failed";
+            }) => Effect.Effect<void>)
+          | null;
+      } = { current: null };
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          providerWakeTaskId: (notification) => {
+            const promptId = notification._meta?.promptId;
+            return typeof promptId === "string" && promptId.startsWith("task-completed-")
+              ? promptId.slice("task-completed-".length)
+              : undefined;
+          },
+          extractBackgroundTaskId: (toolCall) => {
+            if (toolCall.toolCallId === "tool-call-monitor-1") return "task-monitor-1";
+            if (toolCall.toolCallId === "tool-call-monitor-2") return "task-monitor-2";
+            return undefined;
+          },
+          extractBackgroundToolMutation: (text) => {
+            if (text.includes('Monitor "task-monitor-1" ended')) {
+              return [{ taskId: "task-monitor-1", status: "completed", appendOutput: "" }];
+            }
+            if (text.includes('Monitor "task-monitor-2" ended')) {
+              return [{ taskId: "task-monitor-2", status: "completed", appendOutput: "" }];
+            }
+            return [];
+          },
+          extractBackgroundTaskCompletion: (toolCall) => {
+            if (toolCall.toolCallId === "tool-call-fetch-1") {
+              return [
+                {
+                  taskId: "task-monitor-1",
+                  status: toolCall.status === "completed" ? "completed" : "running",
+                  appendOutput: toolCall.status === "completed" ? "MONITOR_LISTING_TOKEN" : "",
+                },
+              ];
+            }
+            if (toolCall.toolCallId === "tool-call-fetch-2") {
+              return [
+                {
+                  taskId: "task-monitor-2",
+                  status: toolCall.status === "completed" ? "completed" : "running",
+                  appendOutput: toolCall.status === "completed" ? "MONITOR_LISTING_TOKEN_2" : "",
+                },
+              ];
+            }
+            return [];
+          },
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              capturedMutation.current = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const gate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+                  promptGates.push(gate);
+                  return yield* Deferred.await(gate);
+                }),
+            }),
+          }),
+        },
+        selfInvocation,
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-wake-names-its-task");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-wake-names-its-task"),
+        modelSelection,
+        runtimePolicy,
+      });
+      if (runtime.hasPendingBackgroundWork === undefined) {
+        return yield* Effect.die(
+          "ACP runtime must expose hasPendingBackgroundWork when post-settle continuation is enabled.",
+        );
+      }
+      const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      while (promptGates.length < 1) {
+        yield* Effect.yieldNow;
+      }
+      assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
+      const applyMutation = capturedMutation.current;
+      if (applyMutation === null) {
+        return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+      }
+
+      // Turn 1: in-turn monitor + get_command hydrate + report.
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-monitor-1",
+          title: "Monitor: first turn",
+          kind: "execute",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-monitor-1",
+          status: "in_progress",
+        },
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-1",
+        status: "running",
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-fetch-1",
+          title: "get_command_or_subagent_output",
+          kind: "other",
+          status: "pending",
+          rawInput: { task_id: "task-monitor-1" },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-fetch-1",
+          status: "completed",
+          rawOutput: { output: "MONITOR_LISTING_TOKEN" },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Monitor listing ready in-turn." },
+        },
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-1",
+        status: "completed",
+      });
+      assert.lengthOf(continuationRequests, 0);
+
+      yield* Deferred.succeed(promptGates[0]!, { stopReason: "end_turn" });
+      const firstProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      let firstTerminal: string | null = null;
+      while (firstTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) {
+          firstTerminal = event.status;
+        }
+      }
+      assert.equal(firstTerminal, "completed");
+
+      // The wake turn for the task read in-turn is still ack chatter.
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { promptId: "task-completed-task-monitor-1" },
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: {
+            type: "text",
+            text: '<monitor-event taskId="task-monitor-1">Monitor "task-monitor-1" ended</monitor-event>',
+          },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { promptId: "task-completed-task-monitor-1" },
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: {
+            type: "text",
+            text: "That monitor event is the same run I already summarized.",
+          },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { promptId: "task-completed-task-monitor-1" },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "That monitor event is the same run I already summarized above.",
+          },
+        },
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.lengthOf(
+        continuationRequests,
+        0,
+        "turn-1 injected-turn acks must not open a continuation",
+      );
+      assert.isFalse(
+        yield* hasPendingBackgroundWork,
+        "turn-1 injected-turn ack chatter must not remain as wake buffer evidence",
+      );
+
+      // A wake turn for a task the root turn never read is the agent's reply.
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { promptId: "task-completed-task-unread" },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "The other command finished: second done" },
+        },
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.isTrue(
+        yield* hasPendingBackgroundWork,
+        "a wake reply for an unread task must stay as wake evidence",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect(
     "two-turn in-turn monitors never open a wake run or retain turn-1 injected-turn ack chatter",
     () =>
