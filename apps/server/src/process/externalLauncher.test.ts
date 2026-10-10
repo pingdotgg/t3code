@@ -1421,7 +1421,7 @@ it.effect.each([
     if (Exit.isFailure(exit)) {
       assert.instanceOf(
         Cause.squash(exit.cause),
-        ExternalLauncher.ExternalLauncherEditorSpawnError,
+        ExternalLauncher.ExternalLauncherUnsupportedTargetError,
       );
     }
   }),

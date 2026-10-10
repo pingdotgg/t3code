@@ -14,6 +14,7 @@ import {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  ExternalLauncherUnsupportedTargetError,
   type EditorId,
   type FileManagerRevealKind,
   type LaunchEditorInput,
@@ -53,6 +54,7 @@ export {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  ExternalLauncherUnsupportedTargetError,
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {
@@ -735,13 +737,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
 
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env });
   if (spawnCommand.shell && launch.args.some((arg) => WINDOWS_SHIM_UNSAFE_ARG_PATTERN.test(arg))) {
-    return yield* new ExternalLauncherEditorSpawnError({
-      editor: launch.editor,
-      target: launch.target,
-      command: launch.command,
-      args: launch.args,
-      cause: new Error("Editor arguments contain characters a Windows command shim cannot pass"),
-    });
+    return yield* new ExternalLauncherUnsupportedTargetError({ editor: launch.editor });
   }
   yield* launchAndUnref(
     {
