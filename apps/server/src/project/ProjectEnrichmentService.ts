@@ -61,6 +61,11 @@ export class ProjectEnrichmentService extends Context.Service<
     readonly getAvailable: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
     /** Invalidate workspace-derived metadata. */
     readonly invalidate: (workspaceRoots: Iterable<string>) => Effect.Effect<void>;
+    /**
+     * Re-resolve a root whose repository changed on disk, such as a finished
+     * clone, and publish the new identity.
+     */
+    readonly refresh: (workspaceRoot: string) => Effect.Effect<void>;
     /** Subscribe to ephemeral completion notifications. */
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<ProjectEnrichmentChange>,
@@ -299,11 +304,22 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     );
   });
 
+  const refresh: ProjectEnrichmentService["Service"]["refresh"] = Effect.fn(
+    "ProjectEnrichmentService.refresh",
+  )(function* (workspaceRoot) {
+    // Both caches hold the old repository: the resolver's, keyed by Git root,
+    // and this one, keyed by workspace root.
+    yield* repositoryIdentityResolver.resolve(workspaceRoot, { refresh: true });
+    yield* invalidate([workspaceRoot]);
+    yield* resolveRepositoryIdentity(workspaceRoot);
+  });
+
   return ProjectEnrichmentService.of({
     peek,
     request,
     getAvailable,
     invalidate,
+    refresh,
     subscribeChanges: PubSub.subscribe(changes),
   });
 });

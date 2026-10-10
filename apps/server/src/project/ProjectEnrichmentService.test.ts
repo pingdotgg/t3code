@@ -1,13 +1,17 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
+import * as ProcessRunner from "../processRunner.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
@@ -486,3 +490,58 @@ it.effect(
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
 );
+
+const git = (cwd: string, args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    return yield* processRunner.run({ command: "git", args: ["-C", cwd, ...args] });
+  }).pipe(Effect.provide(ProcessRunner.layer));
+
+it.layer(NodeServices.layer)("ProjectEnrichmentService with Git", (it) => {
+  it.effect("shows a clone's own repository once it lands inside another repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-project-enrichment-clone-test-",
+      });
+      yield* git(home, ["init"]);
+      yield* git(home, ["remote", "add", "origin", "git@github.com:example/dotfiles.git"]);
+      // The clone's project and empty folder exist before git creates the repository.
+      const destination = path.join(home, "t3code");
+      yield* fileSystem.makeDirectory(destination);
+
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const changes = yield* service.subscribeChanges;
+      yield* service.request(destination);
+      const duringClone = yield* PubSub.take(changes);
+      assert.equal(
+        duringClone.enrichment.repositoryIdentity?.canonicalKey,
+        "github.com/example/dotfiles",
+      );
+
+      yield* git(destination, ["init"]);
+      yield* git(destination, ["remote", "add", "origin", "git@github.com:example/t3code.git"]);
+      yield* service.refresh(destination);
+
+      const published = yield* PubSub.take(changes);
+      assert.equal(
+        published.enrichment.repositoryIdentity?.canonicalKey,
+        "github.com/example/t3code",
+      );
+      const afterClone = yield* service.peek(destination);
+      assert.equal(afterClone.repositoryIdentity?.canonicalKey, "github.com/example/t3code");
+    }).pipe(
+      Effect.provide(
+        layer(
+          Layer.merge(
+            RepositoryIdentityResolver.layer.pipe(Layer.provide(NodeServices.layer)),
+            Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+              resolvePath: () => Effect.succeed(null),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
