@@ -889,12 +889,18 @@ importers:
       jszip:
         specifier: 3.10.1
         version: 3.10.1
+      katex:
+        specifier: ^0.16.47
+        version: 0.16.47
       lucide:
         specifier: ^0.564.0
         version: 0.564.0
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.2.6)
+      mdast-util-math:
+        specifier: ^3.0.0
+        version: 3.0.0
       mermaid:
         specifier: ^11.17.2
         version: 11.17.2
@@ -974,6 +980,12 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.1.0(@noble/hashes@1.8.0)
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
+      micromark-util-types:
+        specifier: ^2.0.2
+        version: 2.0.2
       react-test-renderer:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
@@ -9743,6 +9755,9 @@ packages:
   mdast-util-gfm@3.1.0:
     resolution: {integrity: sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==}
 
+  mdast-util-math@3.0.0:
+    resolution: {integrity: sha512-Tl9GBNeG/AhJnQM221bJR2HPvLOSnLE/T9cJI9tlc6zwQk2nPk/4f0cHkOdEixQPC/j8UtKDdITswvLAy1OZ1w==}
+
   mdast-util-mdx-expression@2.0.1:
     resolution: {integrity: sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==}
 
@@ -11739,6 +11754,9 @@ packages:
 
   unist-util-position@5.0.0:
     resolution: {integrity: sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==}
+
+  unist-util-remove-position@5.0.0:
+    resolution: {integrity: sha512-Hp5Kh3wLxv0PHj9m2yZhhLt58KzPtEYKQQ4yxfYFEO7EvHwzyDYnduhHnY1mDxoqr7VUwVuHXk9RXKIiYS1N8Q==}
 
   unist-util-stringify-position@4.0.0:
     resolution: {integrity: sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==}
@@ -20497,6 +20515,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  mdast-util-math@3.0.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
+      longest-streak: 3.1.0
+      mdast-util-from-markdown: 2.0.3
+      mdast-util-to-markdown: 2.1.2
+      unist-util-remove-position: 5.0.0
+    transitivePeerDependencies:
+      - supports-color
+
   mdast-util-mdx-expression@2.0.1:
     dependencies:
       '@types/estree-jsx': 1.0.5
@@ -23138,6 +23168,11 @@ snapshots:
   unist-util-position@5.0.0:
     dependencies:
       '@types/unist': 3.0.3
+
+  unist-util-remove-position@5.0.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-visit: 5.1.0
 
   unist-util-stringify-position@4.0.0:
     dependencies:
