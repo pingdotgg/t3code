@@ -186,6 +186,12 @@ describe("GitCafeSourceControlProvider", () => {
     ["no context", undefined, "https://git.cafe/fork/project.git"],
     ["an HTTPS remote", "https://git.cafe/team/project.git", "https://git.cafe/fork/project.git"],
     ["an SSH remote", "ssh@git.cafe:team/project.git", "ssh@git.cafe:fork/project.git"],
+    ["an ssh:// remote", "ssh://ssh@git.cafe/team/project.git", "ssh@git.cafe:fork/project.git"],
+    [
+      "an HTTPS remote with a user",
+      "https://alice@git.cafe/team/project.git",
+      "https://git.cafe/fork/project.git",
+    ],
   ] as const)("checks a fork out over the transport of %s", ([, remoteUrl, expected]) => {
     const remotes: Array<string> = [];
     const client = HttpClient.make((request) =>

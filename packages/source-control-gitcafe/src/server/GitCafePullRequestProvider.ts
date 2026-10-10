@@ -835,7 +835,9 @@ export const make = Effect.gen(function* () {
         });
         return;
       }
-      if (mine == null || !isId(mine)) return;
+      if (mine == null) return;
+      if (!isId(mine))
+        return yield* failure("setReaction", "GitCafe returned an unreadable reaction id.");
       yield* send("setReaction", input, { method: "DELETE", path: `${path}${mine}` });
     }),
     setThreadResolution: Effect.fn("GitCafePullRequestProvider.setThreadResolution")(

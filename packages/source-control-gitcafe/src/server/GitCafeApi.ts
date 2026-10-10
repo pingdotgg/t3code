@@ -78,6 +78,13 @@ const reasonForStatus = (status: number): typeof GitCafeApiFailure.Type =>
         ? "not-found"
         : "failed";
 
+const MAX_PROBLEM_TEXT = 300;
+const boundedProblemText = (text: string | undefined) => {
+  const line = text?.replace(/\s+/gu, " ").trim();
+  if (!line) return undefined;
+  return line.length > MAX_PROBLEM_TEXT ? `${line.slice(0, MAX_PROBLEM_TEXT)}…` : line;
+};
+
 const credentialFailure = (
   error: GitCafeCredentials.GitCafeCredentialUnavailableError,
 ): typeof GitCafeApiFailure.Type =>
@@ -157,7 +164,9 @@ export const make = Effect.gen(function* () {
     return yield* fail({
       status,
       reason: reasonForStatus(status),
-      detail: problem?.detail ?? problem?.title ?? `GitCafe answered HTTP ${status}.`,
+      // GitCafe's own explanation is what the user acts on; it is kept short and single-line.
+      detail:
+        boundedProblemText(problem?.detail ?? problem?.title) ?? `GitCafe answered HTTP ${status}.`,
     });
   });
 

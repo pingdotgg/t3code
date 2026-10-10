@@ -138,6 +138,10 @@ const cloneUrls = (target: Target) => ({
   sshUrl: `ssh@${target.host}:${target.repository}.git`,
 });
 
+/** An scp-like `user@host:path` or `ssh://` remote; HTTPS remotes may carry userinfo too. */
+const isSshRemote = (remoteUrl: string | undefined) =>
+  remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
+
 const pullUrlPattern = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pulls\/(\d+)\/?(?:[?#].*)?$/u;
 
 export const make = Effect.gen(function* () {
@@ -456,7 +460,7 @@ export const make = Effect.gen(function* () {
                   cwd: input.cwd,
                   preferredName: "gitcafe",
                   // SSH only when the checkout already reaches GitCafe over SSH; HTTPS otherwise.
-                  url: input.context?.remoteUrl.includes("@")
+                  url: isSshRemote(input.context?.remoteUrl)
                     ? `ssh@${pullHost}:${sourceRepository}.git`
                     : `https://${pullHost}/${sourceRepository}.git`,
                 });

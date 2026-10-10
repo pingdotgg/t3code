@@ -691,4 +691,45 @@ describe("GitCafePullRequestProvider", () => {
       assert.deepInclude(server.sent.at(-1)?.body as object, { baseOid: branchOid, headOid });
     }).pipe(Effect.provide(server.layer));
   });
+
+  it.effect("refuses to drop a reaction whose id it cannot address", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7/reactions/": {
+        items: [
+          {
+            subject: { kind: "pull_request_comment", id: "root" },
+            emoji: { kind: "unicode", value: "🚀" },
+            count: 1,
+            viewerReactionId: "../escape",
+            reactors: [actor],
+          },
+        ],
+        next: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const result = yield* provider
+        .setReaction({ ...target, subjectId: "root", content: "rocket", reacted: false })
+        .pipe(Effect.result);
+      assert.strictEqual(result._tag, "Failure");
+      assert.deepStrictEqual(server.writes(), []);
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("keeps GitCafe's explanation short and on one line", () => {
+    const server = fakeGitCafe(
+      {
+        "GET /repos/owner/repo/pulls/7": { title: "Conflict", detail: `Line\n${"x".repeat(900)}` },
+      },
+      { status: 409 },
+    );
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const error = yield* provider.getChangeRequest(target).pipe(Effect.flip);
+      assert.notInclude(error.detail, "\n");
+      assert.isAtMost(error.detail.length, 310);
+      assert.isTrue(error.detail.startsWith("Line x"));
+    }).pipe(Effect.provide(server.layer));
+  });
 });
