@@ -33,10 +33,13 @@ interface Harness {
   readonly gitActions: Array<GitRunStackedActionInput>;
   readonly interrupted: Array<ThreadId>;
   readonly report: Deferred.Deferred<string>;
-  /** Marks a node thread's run finished with a reply on a branch, then emits the run event. */
+  /**
+   * Sets a node thread's latest run, completed by default, with a reply on a
+   * branch, then emits the run event.
+   */
   readonly finish: (
     launch: ThreadLaunch.ThreadLaunchInput,
-    result: { readonly reply: string; readonly branch: string },
+    result: { readonly reply: string; readonly branch: string; readonly status?: string },
   ) => Effect.Effect<void>;
 }
 
@@ -92,14 +95,14 @@ const withService = <A, E>(
               id: threadId,
               branch: result.branch,
               worktreePath: `/worktrees/${result.branch}`,
-              runStatus: "completed",
+              runStatus: result.status ?? "completed",
               reply: result.reply,
             }),
           );
           yield* Queue.offer(events, {
             type: "run.updated",
             threadId,
-            payload: { status: "completed" },
+            payload: { status: result.status ?? "completed" },
           } as unknown as OrchestrationV2DomainEvent);
         }),
     };
@@ -342,4 +345,34 @@ it.effect("places a node on a peer with more free capacity and pushes local bran
       peers,
     );
   }),
+);
+
+it.effect("follows a failed node that someone continues in its own thread", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      const graph = yield* service.create({
+        threadId: PARENT,
+        title: "Roadmap",
+        nodes: [node("a"), node("b", ["a"])],
+        run: true,
+      });
+      const a = yield* Queue.take(harness.launches);
+      yield* harness.finish(a, { reply: "crashed", branch: "t3/a", status: "failed" });
+      assert.include(yield* Deferred.await(harness.report), "finished: failed");
+
+      // The user sends a follow-up in a's thread and that run succeeds.
+      yield* harness.finish(a, { reply: "", branch: "t3/a", status: "running" });
+      yield* harness.finish(a, { reply: "fixed it", branch: "t3/a" });
+
+      const b = yield* Queue.take(harness.launches);
+      assert.equal(b.title, "b");
+      assert.include(b.initialMessage!.text, "fixed it");
+      const resumed = yield* service.get(graph.id);
+      assert.equal(resumed.status, "running");
+      assert.deepEqual(
+        resumed.nodes.map((graphNode) => graphNode.status),
+        ["succeeded", "running"],
+      );
+    }),
+  ),
 );

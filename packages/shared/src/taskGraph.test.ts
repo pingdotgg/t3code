@@ -7,6 +7,7 @@ import {
   deriveTaskGraphStatus,
   newTaskGraphNode,
   readyTaskGraphNodes,
+  resumeTaskGraphNode,
   skipUnreachableTaskGraphNodes,
   taskGraphLayers,
   taskGraphNodeOpensPullRequest,
@@ -152,5 +153,26 @@ describe("buildTaskGraphNodePrompt", () => {
     expect(prompt).not.toContain("- t3/b");
     expect(prompt).toContain("b done");
     expect(prompt).toContain("do d");
+  });
+});
+
+describe("resumeTaskGraphNode", () => {
+  it("runs a failed node again on its thread and reopens what was skipped below it", () => {
+    const failed = skipUnreachableTaskGraphNodes(
+      withStatus(diamond(), { a: "succeeded", b: "failed", c: "succeeded" }).map((node) =>
+        node.key === "b" ? { ...node, threadId: "thread-b" as never, error: "boom" } : node,
+      ),
+      NOW,
+    );
+    expect(failed.find((node) => node.key === "d")?.status).toBe("skipped");
+
+    const resumed = resumeTaskGraphNode(failed, "b")!;
+    const b = resumed.find((node) => node.key === "b")!;
+    expect([b.status, b.threadId, b.error]).toEqual(["running", "thread-b", null]);
+    expect(resumed.find((node) => node.key === "d")?.status).toBe("pending");
+  });
+
+  it("leaves nodes that did not fail alone", () => {
+    expect(resumeTaskGraphNode(withStatus(diamond(), { a: "succeeded" }), "a")).toBeNull();
   });
 });

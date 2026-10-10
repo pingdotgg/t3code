@@ -20,6 +20,7 @@ import {
   isTerminalTaskGraphNodeStatus,
   newTaskGraphNode,
   readyTaskGraphNodes,
+  resumeTaskGraphNode,
   skipUnreachableTaskGraphNodes,
   taskGraphNodeOpensPullRequest,
   taskGraphNodeSummary,
@@ -177,6 +178,8 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<ThreadId>();
   /** Node threads still running locally, so run events map back to their node. */
   const nodeByThread = new Map<ThreadId, { graphId: TaskGraphId; key: string }>();
+  /** Threads of local nodes that failed or were cancelled, in case someone continues them. */
+  const endedByThread = new Map<ThreadId, { graphId: TaskGraphId; key: string }>();
 
   const readGraph = (graphId: TaskGraphId) =>
     sql<TaskGraphRow>`SELECT graph_json FROM task_graphs WHERE graph_id = ${graphId}`.pipe(
@@ -207,16 +210,57 @@ const make = Effect.gen(function* () {
     Effect.flatMap(readGraphs),
   );
 
+  /** Graphs a node may still come back to life in: anything not cancelled as a whole. */
+  const resumableGraphs = sql<TaskGraphRow>`
+    SELECT graph_json FROM task_graphs WHERE status IN ('running', 'failed') ORDER BY created_at
+  `.pipe(
+    Effect.mapError((cause) => graphError("Could not list task graphs.", undefined, cause)),
+    Effect.flatMap(readGraphs),
+  );
+
   const indexGraph = (graph: TaskGraph) => {
     for (const node of graph.nodes) {
       if (node.threadId === null) continue;
+      const target = { graphId: graph.id, key: node.key };
       if (isActiveTaskGraphNodeStatus(node.status)) {
-        nodeByThread.set(node.threadId, { graphId: graph.id, key: node.key });
+        nodeByThread.set(node.threadId, target);
       } else {
         nodeByThread.delete(node.threadId);
       }
+      if (
+        (node.status === "failed" || node.status === "cancelled") &&
+        graph.status !== "cancelled" &&
+        node.assignedEnvironmentId === localEnvironmentId
+      ) {
+        endedByThread.set(node.threadId, target);
+      } else {
+        endedByThread.delete(node.threadId);
+      }
     }
   };
+
+  /**
+   * Someone continued a failed or cancelled node in its own thread. Follow
+   * that run instead of leaving the node, and everything after it, stuck.
+   */
+  const resumeNode = (graphId: TaskGraphId, key: string) =>
+    locked(
+      Effect.gen(function* () {
+        const graph = yield* requireGraph(graphId);
+        if (graph.status === "cancelled") return;
+        const nodes = resumeTaskGraphNode(graph.nodes, key);
+        if (nodes === null) return;
+        yield* writeGraph({ ...graph, status: "running", nodes });
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not resume task graph node", {
+          graphId,
+          key,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   /** Writes a graph after settling skips and status. Returns the stored graph. */
   const writeGraph = (graph: TaskGraph) =>
@@ -777,8 +821,30 @@ const make = Effect.gen(function* () {
   // server was down. Launches are idempotent by command id, so a node that was
   // marked running but never launched is launched again.
   yield* Effect.gen(function* () {
+    for (const graph of yield* resumableGraphs) indexGraph(graph);
+    // A node continued in its thread while the server was down: follow it, and
+    // record it if that run already finished after the node had failed.
+    yield* Effect.forEach(
+      [...endedByThread],
+      ([threadId, { graphId, key }]) =>
+        Effect.gen(function* () {
+          const projection = yield* threads.getThreadProjection(threadId);
+          const graph = yield* requireGraph(graphId);
+          const endedAt = graph.nodes.find((node) => node.key === key)?.completedAt ?? null;
+          const run = ThreadManagement.latestRun(projection);
+          const ranAgain =
+            ThreadManagement.latestActiveRun(projection) !== undefined ||
+            (run?.completedAt != null &&
+              endedAt !== null &&
+              DateTime.toEpochMillis(run.completedAt) >
+                DateTime.toEpochMillis(DateTime.makeUnsafe(endedAt)));
+          if (!ranAgain) return;
+          yield* resumeNode(graphId, key);
+          yield* finishLocalNode(graphId, key, threadId);
+        }).pipe(Effect.ignoreCause),
+      { discard: true },
+    );
     const graphs = yield* runningGraphs;
-    for (const graph of graphs) indexGraph(graph);
     yield* Effect.forEach(
       graphs.flatMap((graph) =>
         graph.nodes
@@ -840,11 +906,12 @@ const make = Effect.gen(function* () {
 
   yield* forkParked(
     Stream.runForEach(threads.streamDomainEvents, (event) => {
-      if (
-        event.type !== "run.updated" ||
-        !ThreadManagement.isTerminalRunStatus(event.payload.status)
-      ) {
-        return Effect.void;
+      if (event.type !== "run.updated") return Effect.void;
+      if (!ThreadManagement.isTerminalRunStatus(event.payload.status)) {
+        // Only a new run passes through an active status, so a repeated update of
+        // the run that failed never resumes the node.
+        const ended = endedByThread.get(event.threadId);
+        return ended === undefined ? Effect.void : resumeNode(ended.graphId, ended.key);
       }
       const target = nodeByThread.get(event.threadId);
       return target === undefined

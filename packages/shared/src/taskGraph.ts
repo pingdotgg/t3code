@@ -202,6 +202,27 @@ function applyEdit(nodes: Nodes, edit: TaskGraphEdit, now: string): TaskGraphEdi
   }
 }
 
+/**
+ * A failed or cancelled node whose thread started working again, because
+ * someone continued it there. The node runs again on the same thread, and what
+ * was skipped because of it waits for it again. Null when the node is not one
+ * that can resume.
+ */
+export function resumeTaskGraphNode(nodes: Nodes, key: string): Nodes | null {
+  const target = nodes.find((node) => node.key === key);
+  if (target === undefined || (target.status !== "failed" && target.status !== "cancelled")) {
+    return null;
+  }
+  const below = taskGraphDescendants(nodes, key);
+  return nodes.map((node) =>
+    node.key === key
+      ? { ...node, status: "running", error: null, pullRequestResult: null, completedAt: null }
+      : below.has(node.key) && node.status === "skipped"
+        ? reopened(node)
+        : node,
+  );
+}
+
 /** Applies edits in order. Either all apply and the result is a valid graph, or none do. */
 export function applyTaskGraphEdits(
   nodes: Nodes,
