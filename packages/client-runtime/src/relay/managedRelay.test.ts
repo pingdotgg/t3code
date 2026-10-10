@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
@@ -23,6 +24,7 @@ function layerManagedRelayTest(
   fetchFn: typeof globalThis.fetch,
   relayUrl = "https://relay.example.test",
   accessTokenStore?: ManagedRelay.ManagedRelayAccessTokenStore,
+  backgroundRelayUrl?: string,
 ) {
   const layerHttpClient = RpcHttp.layerRemoteHttpClient(fetchFn);
   const layerSigner = Layer.succeed(
@@ -36,6 +38,7 @@ function layerManagedRelayTest(
   return ManagedRelay.layer({
     relayUrl,
     clientId: "t3-mobile",
+    ...(backgroundRelayUrl !== undefined ? { backgroundRelayUrl } : {}),
     ...(accessTokenStore ? { accessTokenStore } : {}),
   }).pipe(Layer.provide(layerSigner), Layer.provide(layerHttpClient));
 }
@@ -47,6 +50,157 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect.each([false, true])(
+    "routes background delivery separately and clears both caches (store clear defects: %s)",
+    (defectOnClear) => {
+      const requests: Array<{ url: string; authorization: string | null }> = [];
+      let exchanges = 0;
+      const fetchFn = ((input, init) => {
+        const url = String(input);
+        requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+        if (url.endsWith("/v1/client/dpop-token")) {
+          exchanges += 1;
+          const payload = new URLSearchParams(
+            init?.body instanceof Uint8Array
+              ? new TextDecoder().decode(init.body)
+              : String(init?.body),
+          );
+          return Promise.resolve(
+            Response.json({
+              access_token: `token:${new URL(url).origin}`,
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              token_type: "DPoP",
+              expires_in: 1800,
+              scope: payload.get("scope"),
+            }),
+          );
+        }
+        if (url.endsWith("/status"))
+          return Promise.resolve(
+            Response.json({
+              environmentId: "env-1",
+              endpoint: {
+                httpBaseUrl: "https://desktop.example.test/",
+                wsBaseUrl: "wss://desktop.example.test/ws",
+                providerKind: "cloudflare_tunnel",
+              },
+              status: "offline",
+              checkedAt: "2026-06-05T20:00:00.000Z",
+            }),
+          );
+        if (url.includes("agent-activity"))
+          return Promise.resolve(Response.json({ aggregate: null }));
+        if (url.endsWith("/environments"))
+          return Promise.resolve(Response.json({ environments: [] }));
+        if (url.endsWith("/devices") && init?.method === "GET")
+          return Promise.resolve(Response.json({ devices: [] }));
+        return Promise.resolve(Response.json({ ok: true }));
+      }) satisfies typeof globalThis.fetch;
+      const primaryUrl = "https://relay.example.test";
+      const backgroundUrl = "https://background.example.test";
+      return Effect.gen(function* () {
+        const client = yield* ManagedRelay.ManagedRelayClient;
+        const token = clerkToken("user-1", "session-1");
+        const register = client.registerDevice({
+          clerkToken: token,
+          payload: {
+            deviceId: "device-1",
+            label: "Phone",
+            platform: "ios",
+            iosMajorVersion: 18,
+            pushToken: "push-token",
+            preferences: {
+              liveActivitiesEnabled: true,
+              notificationsEnabled: true,
+              notifyOnApproval: true,
+              notifyOnInput: true,
+              notifyOnCompletion: true,
+              notifyOnFailure: true,
+            },
+          },
+        });
+        const status = client.getEnvironmentStatus({
+          clerkToken: token,
+          scopes: [RelayEnvironmentStatusScope],
+          environmentId: EnvironmentId.make("env-1"),
+        });
+        yield* client.listEnvironments({ clerkToken: token });
+        yield* status;
+        const primaryRequests = requests.length;
+        yield* client.listDevices({ clerkToken: token });
+        yield* register;
+        yield* client.registerLiveActivity({
+          clerkToken: token,
+          payload: { deviceId: "device-1", activityPushToken: "activity-token" },
+        });
+        yield* client.getAgentActivitySnapshot({ clerkToken: token });
+        yield* client.unregisterDevice({ clerkToken: token, deviceId: "device-1" });
+        expect(client.relayUrl).toBe(primaryUrl);
+        expect(
+          requests.slice(0, primaryRequests).every((request) => request.url.startsWith(primaryUrl)),
+        ).toBe(true);
+        expect(
+          requests.slice(primaryRequests).every((request) => request.url.startsWith(backgroundUrl)),
+        ).toBe(true);
+        for (const request of requests.filter(
+          (request) =>
+            !request.url.endsWith("/dpop-token") &&
+            !request.url.endsWith("/environments") &&
+            !request.url.endsWith("/devices"),
+        )) {
+          expect(request.authorization).toBe(`DPoP token:${new URL(request.url).origin}`);
+        }
+        const cachedExchanges = exchanges;
+        yield* register;
+        yield* status;
+        expect(exchanges).toBe(cachedExchanges);
+        const reset = yield* Effect.exit(client.resetTokenCache);
+        expect(Exit.isFailure(reset)).toBe(defectOnClear);
+        yield* register;
+        yield* status;
+        expect(exchanges).toBe(cachedExchanges + 2);
+      }).pipe(
+        Effect.provide(
+          layerManagedRelayTest(
+            fetchFn,
+            primaryUrl,
+            {
+              load: Effect.succeed([]),
+              save: () => Effect.void,
+              clear: defectOnClear ? Effect.die("store clear defect") : Effect.void,
+            },
+            backgroundUrl,
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("does not fall back to T3 Connect for an invalid background origin", () => {
+    let requests = 0;
+    const fetchFn = (() => {
+      requests += 1;
+      return Promise.resolve(Response.json({}));
+    }) satisfies typeof globalThis.fetch;
+    return Effect.gen(function* () {
+      const client = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* client
+        .getAgentActivitySnapshot({ clerkToken: "token" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("ManagedRelayUrlInvalidError");
+      expect(requests).toBe(0);
+    }).pipe(
+      Effect.provide(
+        layerManagedRelayTest(
+          fetchFn,
+          "https://relay.example.test",
+          undefined,
+          "http://invalid.example.test",
+        ),
+      ),
+    );
+  });
+
   it.effect("owns tracing at service and implementation boundaries", () => {
     const spanNames: Array<string> = [];
     const tracer = Tracer.make({

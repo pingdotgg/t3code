@@ -15,12 +15,14 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import { BackgroundRelayConfig } from "./BackgroundRelayConfig.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -285,6 +287,30 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("publishes only to the background relay and still honors the sharing switch", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.isTrue(publications[0]?.url.startsWith("https://background.example.test/") ?? false);
+      assert.equal(publications[0]?.authorization, "Bearer background-credential");
+      const publicCredential = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+      assert.equal(
+        Option.getOrNull(Option.map(publicCredential, (bytes) => new TextDecoder().decode(bytes))),
+        "credential-1",
+      );
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+    }).pipe(
+      Effect.provideService(BackgroundRelayConfig, {
+        url: "https://background.example.test",
+        issuer: "https://background.example.test",
+        environmentCredential: Redacted.make("background-credential"),
+      }),
+    ),
+  );
+
   it("ignores transcript and tool updates but retains activity and metadata changes", () => {
     for (const type of [
       "message.updated",
