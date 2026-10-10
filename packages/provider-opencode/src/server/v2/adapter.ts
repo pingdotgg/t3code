@@ -21,6 +21,7 @@
  *
  * @module orchestration-v2/Adapters/OpenCode2AdapterV2
  */
+import * as NodeURL from "node:url";
 
 import {
   AbsolutePath,
@@ -38,6 +39,7 @@ import {
 import { Mcp } from "@opencode/schema/mcp";
 import {
   isOrchestrationV2WorkActive,
+  type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -62,6 +64,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -82,7 +85,10 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
-import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   backgroundWorkNotification,
@@ -806,6 +812,35 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
 ];
 
 /**
+ * A message's pasted images as prompt files, which OpenCode reads from T3's
+ * attachment directory and gives the model as images. The prompt text still
+ * names where each one is saved, as with 1.x. A server T3 did not start may
+ * not see that directory, so it gets the path text only.
+ */
+export const promptImageFiles = (
+  attachments: ReadonlyArray<ChatAttachment>,
+  resolveAttachmentPath: (attachment: ChatAttachment) => string | null,
+  external: boolean,
+) =>
+  external
+    ? []
+    : attachments.filter(isProviderNativeImageAttachment).flatMap((attachment) => {
+        const path = resolveAttachmentPath(attachment);
+        return path === null
+          ? []
+          : [{ uri: NodeURL.pathToFileURL(path).href, name: attachment.name }];
+      });
+
+/** OpenCode rejects the whole prompt for a missing file, so a deleted image keeps only its path text. */
+export const presentPromptFiles = (
+  fileSystem: FileSystem.FileSystem,
+  files: ReadonlyArray<{ readonly uri: string; readonly name: string }>,
+) =>
+  Effect.filter(files, (file) =>
+    fileSystem.exists(NodeURL.fileURLToPath(file.uri)).pipe(Effect.orElseSucceed(() => false)),
+  );
+
+/**
  * The turn's own tokens: steps add up, and the last step's input is the live
  * context size. A subagent's tokens are its own session's, never these.
  */
@@ -836,6 +871,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const fileSystem = yield* FileSystem.FileSystem;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
@@ -3584,12 +3620,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           )
         : [];
+      const files = yield* presentPromptFiles(
+        fileSystem,
+        promptImageFiles(
+          turnInput.message.attachments,
+          host.resolveAttachmentPath,
+          connection.external,
+        ),
+      );
       if (!sending()) return;
       return yield* client.session
         .prompt({
           sessionID,
           id,
           text: promptText(turnInput),
+          ...(files.length === 0 ? {} : { files }),
           ...(skills.length === 0
             ? {}
             : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
@@ -3939,6 +3984,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
+          const files = yield* presentPromptFiles(
+            fileSystem,
+            promptImageFiles(
+              steerInput.message.attachments,
+              host.resolveAttachmentPath,
+              connection.external,
+            ),
+          );
           yield* client.session
             .prompt({
               sessionID: Session.ID.make(sessionId),
@@ -3948,6 +4001,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 attachments: steerInput.message.attachments,
                 resolveAttachmentPath: host.resolveAttachmentPath,
               }).trim(),
+              ...(files.length === 0 ? {} : { files }),
               delivery: "steer",
             })
             .pipe(

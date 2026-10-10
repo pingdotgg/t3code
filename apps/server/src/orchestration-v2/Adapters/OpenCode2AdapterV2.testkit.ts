@@ -23,6 +23,8 @@ import * as UrlParams from "effect/http/UrlParams";
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -269,6 +271,20 @@ const makeReplayAdapter = (
 
 const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
+const layerReplayHostWithAttachments = (attachmentsDir: string) =>
+  Layer.effect(
+    ProviderHost.ProviderHost,
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      return ProviderHost.ProviderHost.of({
+        ...host,
+        paths: { ...host.paths, attachmentsDir },
+        resolveAttachmentPath: (attachment) =>
+          resolveAttachmentPath({ attachmentsDir, attachment }),
+      });
+    }),
+  ).pipe(Layer.provide(layerReplayHost));
+
 function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
   options?: { readonly replayGate?: ProviderReplayGate },
@@ -286,7 +302,11 @@ function layerRegistry(
  */
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly borrowers?: { current: number } },
+  options?: {
+    readonly external?: boolean;
+    readonly borrowers?: { current: number };
+    readonly attachmentsDir?: string;
+  },
 ) =>
   Effect.gen(function* () {
     const adapter = yield* makeReplayAdapter(
@@ -313,7 +333,17 @@ export const openCode2ReplayRuntime = (
         cwd: "/work/opencode2",
       },
     });
-  }).pipe(Effect.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        options?.attachmentsDir === undefined
+          ? layerReplayHost
+          : layerReplayHostWithAttachments(options.attachmentsDir),
+        IdAllocator.layer,
+        NodeServices.layer,
+      ),
+    ),
+  );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,
