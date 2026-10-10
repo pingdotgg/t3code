@@ -568,6 +568,7 @@ it("shows readable models and only differing workspace details in agent tooltips
       {
         instanceId: "codex",
         driver: "codex",
+        enabled: true,
         displayName: "Work account",
         models: [
           {
@@ -580,6 +581,7 @@ it("shows readable models and only differing workspace details in agent tooltips
       {
         instanceId: "codex_personal",
         driver: "codex",
+        enabled: true,
         displayName: "Personal account",
         models: [],
       },
