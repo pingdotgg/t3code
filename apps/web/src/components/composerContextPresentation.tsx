@@ -68,6 +68,7 @@ export type ComposerDraftContextRecord =
 /** What a chip can do beyond showing itself; the composer supplies the handlers. */
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
+  cwd?: string | undefined;
   expandImage: (imageId: string) => void;
   expandVideo: (fileId: string) => void;
   openFile: (fileId: string) => void;

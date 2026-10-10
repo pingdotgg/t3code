@@ -111,3 +111,13 @@ export function workspaceRelativeFilePath(
 export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
+
+/** Resolve a literal filesystem path without interpreting file-link positions.
+ * Home-relative paths stay intact for the server to expand. */
+export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
+  if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
+  const base = workspaceRoot.replace(/[/\\]+$/, "");
+  return isWindowsAbsolutePath(workspaceRoot)
+    ? `${base}\\${path.replaceAll("/", "\\")}`
+    : `${base}/${path}`;
+}

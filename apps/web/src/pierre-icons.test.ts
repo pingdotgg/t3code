@@ -8,6 +8,22 @@ import {
 } from "./pierre-icons";
 
 describe("Pierre file icons", () => {
+  it("uses detected types for extensionless files while keeping known filename icons", () => {
+    assert.equal(
+      resolvePierreIconForEntry("custom-script", "file", "text/x-python")?.token,
+      "python",
+    );
+    assert.equal(resolvePierreIconForEntry("image", "file", "image/png")?.token, "image");
+    assert.equal(
+      resolvePierreIconForEntry("Dockerfile", "file", "text/x-shellscript")?.token,
+      "docker",
+    );
+    assert.isNull(resolvePierreIconForEntry("folder.png", "directory", "image/png"));
+    assert.equal(
+      resolvePierreIconForEntry("unknown", "file", "application/octet-stream")?.token,
+      "default",
+    );
+  });
   it("uses Pierre exact filename and complete-set extension mappings", () => {
     assert.equal(resolvePierreIconForEntry("Dockerfile", "file")?.token, "docker");
     assert.equal(resolvePierreIconForEntry("src/Button.tsx", "file")?.token, "react");

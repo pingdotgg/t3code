@@ -91,6 +91,7 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
+import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -273,6 +274,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     >
       <FileTagChipContent
         path={path}
+        environmentId={actions.environmentId}
+        cwd={actions.cwd}
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
@@ -282,7 +285,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup side="top">{path}</TooltipPopup>
+        <TooltipPopup side="top">
+          <WorkspaceEntryTooltip
+            path={path}
+            environmentId={actions.environmentId}
+            cwd={actions.cwd}
+          />
+        </TooltipPopup>
       </Tooltip>
     </NodeViewWrapper>
   );

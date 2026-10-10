@@ -13,7 +13,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import { type EnvironmentRpcInput, request } from "../rpc/client.ts";
+import {
+  type EnvironmentRpcInput,
+  type EnvironmentRpcSuccess,
+  request,
+  requestGuarded,
+} from "../rpc/client.ts";
 import type { EnvironmentProject } from "./models.ts";
 import {
   createAtomCommandScheduler,
@@ -30,6 +35,8 @@ import {
   updateProject,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { createFileMetadataAtoms } from "./fileMetadata.ts";
+import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 
 export type {
   CreateProjectInput,
@@ -52,6 +59,17 @@ function optimisticProjectFileKey(target: OptimisticProjectFileTarget): string {
   return JSON.stringify([target.environmentId, target.cwd, target.relativePath]);
 }
 
+function writtenFilePaths(
+  input: EnvironmentRpcInput<typeof WS_METHODS.projectsWriteFile>,
+  result: EnvironmentRpcSuccess<typeof WS_METHODS.projectsWriteFile>,
+) {
+  return new Set(
+    [result.relativePath, input.relativePath].map((path) =>
+      resolveWorkspaceFilePath(path, input.cwd),
+    ),
+  );
+}
+
 /** The Scratch project was created, but its event never reached this client. */
 export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProjectNotLoadedError>()(
   "ScratchProjectNotLoadedError",
@@ -69,6 +87,7 @@ export function createProjectEnvironmentAtoms<R, E>(
     readonly projectAtom: (ref: ScopedProjectRef) => Atom.Atom<EnvironmentProject | null>;
   },
 ) {
+  const fileMetadata = createFileMetadataAtoms(runtime);
   const projectScheduler = createAtomCommandScheduler();
   const fileScheduler = createAtomCommandScheduler();
   const optimisticFileFamily = Atom.family((key: string) =>
@@ -82,22 +101,52 @@ export function createProjectEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.projectId]),
   };
   return {
+    fileMetadata: fileMetadata.metadata,
+    fileMetadataThread: fileMetadata.retainThread,
+    invalidateFileMetadata: createEnvironmentCommand(runtime, {
+      label: "environment-data:filesystem:invalidate-metadata",
+      execute: (input: { paths: ReadonlyArray<string> }, registry, environmentId) =>
+        Effect.forEach([...new Set(input.paths)], (path) =>
+          fileMetadata
+            .invalidate(path)
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => fileMetadata.refreshPath(environmentId, path, registry)),
+              ),
+            ),
+        ),
+    }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
+      execute: (input) =>
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsSearchEntries, input),
+          (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
+        ),
     }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      execute: (input) =>
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsListEntries, input),
+          (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
+        ),
     }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      execute: (input) =>
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsReadFile, input),
+          (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
+        ),
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
@@ -163,6 +212,17 @@ export function createProjectEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
+      execute: (input) =>
+        requestGuarded(WS_METHODS.projectsWriteFile, input).pipe(
+          Effect.tap((result) =>
+            Effect.forEach(writtenFilePaths(input, result), fileMetadata.invalidate),
+          ),
+        ),
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          for (const path of writtenFilePaths(input, result))
+            fileMetadata.refreshPath(environmentId, path, registry);
+        }),
     }),
   };
 }

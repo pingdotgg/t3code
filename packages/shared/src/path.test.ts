@@ -9,9 +9,22 @@ import {
   newProjectFolderName,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
+  resolveWorkspaceFilePath,
 } from "./path.ts";
 
 describe("path helpers", () => {
+  it.each([
+    ["report:123", "/workspace", "/workspace/report:123"],
+    ["/workspace/report:12:3", "/other", "/workspace/report:12:3"],
+    ["src/file", "C:\\Workspace\\", "C:\\Workspace\\src\\file"],
+    ["C:/Workspace/file", "/other", "C:/Workspace/file"],
+    ["file", "\\\\host\\share\\", "\\\\host\\share\\file"],
+    ["file", "/", "/file"],
+    ["~/report:123", "/workspace", "~/report:123"],
+  ])("resolves literal path %s within %s", (path, root, expected) => {
+    expect(resolveWorkspaceFilePath(path, root)).toBe(expected);
+  });
+
   it("detects windows drive paths", () => {
     expect(isWindowsDrivePath("C:\\repo")).toBe(true);
     expect(isWindowsDrivePath("D:/repo")).toBe(true);
