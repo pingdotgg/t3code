@@ -1044,14 +1044,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         copy.delete(webContentsId);
       }),
     ]);
-    if (control) {
-      // The server can only drive a tab while the desktop holds its debugger.
-      if (closedServerTab) browserHost.detach(closedServerTab);
-      for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
-        if (tab.webContentsId === webContentsId && tab.serverTab) browserHost.detach(tab.serverTab);
+    if (control) yield* releaseControlSession(control, closedServerTab);
+  });
+
+  /** Closes a session already taken out of `controlSessionsRef`. */
+  const releaseControlSession = Effect.fnUntraced(function* (
+    control: BrowserControlSession,
+    closedServerTab?: PreviewTabState["serverTab"],
+  ) {
+    // The server can only drive a tab while the desktop holds its debugger.
+    if (closedServerTab) browserHost.detach(closedServerTab);
+    for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
+      if (tab.webContentsId === control.webContentsId && tab.serverTab) {
+        browserHost.detach(tab.serverTab);
       }
-      yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
     }
+    yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
   });
 
   const ensureControlSession = Effect.fn("PreviewManager.ensureControlSession")(function* (
@@ -1167,10 +1175,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
             runFork(handleDebuggerMessage(method, params));
           };
+          // Chromium can drop the debugger on its own, e.g. when the guest's
+          // renderer dies. The cached session would then fail every command until
+          // the webview is replaced, so release it and attach again.
+          const onDetach = () => {
+            runFork(recoverDetachedControlSession(wc, control));
+          };
           yield* Scope.addFinalizer(
             scope,
             attempt({ operation: "detachControlSession", webContentsId: wc.id }, () => {
               wcDebugger.off("message", onMessage);
+              wcDebugger.off("detach", onDetach);
               if (wcDebugger.isAttached()) wcDebugger.detach();
             }).pipe(Effect.ignore),
           );
@@ -1184,6 +1199,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
             yield* attempt({ operation: "attachDebuggerListeners", webContentsId: wc.id }, () => {
               wcDebugger.on("message", onMessage);
+              wcDebugger.on("detach", onDetach);
               wcDebugger.attach("1.3");
             });
             // Electron gives `<webview>` guests a transparent base background, and
@@ -2426,6 +2442,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
       }
+    }).pipe(Effect.ignore);
+
+  // Handles a debugger detach this manager did not request. Only the session
+  // that saw the detach is replaced, so a newer session for the guest stays.
+  const recoverDetachedControlSession = (
+    wc: Electron.WebContents,
+    detached: BrowserControlSession,
+  ) =>
+    Effect.gen(function* () {
+      const removed = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) =>
+        sessions.get(wc.id) === detached
+          ? ([
+              true,
+              replaceMap(sessions, (copy) => {
+                copy.delete(wc.id);
+              }),
+            ] as const)
+          : ([false, sessions] as const),
+      );
+      if (!removed) return;
+      yield* releaseControlSession(detached);
+      if (wc.isDestroyed()) return;
+      const tabId = yield* tabIdForWebContents(wc.id);
+      if (tabId === null) return;
+      // DevTools opened from the app menu take the debugger; attach again once
+      // they close, as openDevTools does for the ones it opens.
+      if (wc.isDevToolsOpened()) {
+        wc.once("devtools-closed", () => {
+          if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
+        });
+        return;
+      }
+      yield* restoreControlSession(tabId, wc);
     }).pipe(Effect.ignore);
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
