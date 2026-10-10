@@ -78,6 +78,25 @@ describe("plugin host child", () => {
     expect(await child.exited).toEqual([0, null]);
   });
 
+  it("answers a call cancelled before its handler started", async () => {
+    const child = startChild();
+    child.send(activateMessage("cancellable.mjs"));
+    expect(await child.read()).toEqual({ _tag: "Ready" });
+
+    // Read in one chunk, the cancel lands before the handler can listen for it.
+    child.send(
+      [
+        JSON.stringify({ _tag: "Invoke", requestId: 1, handler: "cooperative", input: null }),
+        JSON.stringify({ _tag: "Cancel", requestId: 1 }),
+      ].join("\n"),
+    );
+    expect(await child.read()).toEqual({
+      _tag: "Failed",
+      requestId: 1,
+      message: "Call cancelled.",
+    });
+  });
+
   it("exits with a failure on a line that is not JSON", async () => {
     const child = startChild();
     child.send("{not json");

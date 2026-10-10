@@ -148,7 +148,11 @@ export const runPluginHostChild = (): void => {
     const controller = new AbortController();
     requests.set(message.requestId, controller);
     Promise.resolve()
-      .then(() => handler(message.input, { signal: controller.signal }))
+      .then(() => {
+        // A cancel read with its invoke aborts before the handler could listen for it.
+        if (controller.signal.aborted) throw controller.signal.reason;
+        return handler(message.input, { signal: controller.signal });
+      })
       .then(
         (value) => settle(message.requestId, value),
         (error) => settle(message.requestId, new Error(errorMessage(error))),
