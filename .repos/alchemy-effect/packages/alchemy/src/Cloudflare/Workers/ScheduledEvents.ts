@@ -1,29 +1,28 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { DurableObjectState } from "./DurableObjectState.ts";
+import {
+  ensureAlarmTables,
+  reconcileDurableObjectAlarm,
+} from "./DurableObjectAlarmStorage.ts";
 import type { SqlStorageValue } from "./DurableObjectStorage.ts";
 
 // ---------------------------------------------------------------------------
 // Scheduled Events — SQLite-backed cron/timer for Durable Objects
 // ---------------------------------------------------------------------------
 
-const INIT_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS alchemy_scheduled_events (
-  id TEXT PRIMARY KEY,
-  run_at INTEGER NOT NULL,
-  repeat_ms INTEGER,
-  payload TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_alchemy_scheduled_events_run_at
-  ON alchemy_scheduled_events (run_at);
-`;
-
 const ensureTable = Effect.gen(function* () {
   const ctx = yield* DurableObjectState;
-  void (yield* ctx.storage.sql.exec(INIT_TABLE_SQL));
+  yield* ensureAlarmTables(ctx.raw.storage);
 });
+
+const inTransaction = <A, R>(effect: Effect.Effect<A, never, R>) =>
+  Effect.gen(function* () {
+    const ctx = yield* DurableObjectState;
+    return yield* ctx.storage.transaction(effect).pipe(Effect.orDie);
+  });
 
 export interface ScheduledEvent {
   id: string;
@@ -77,7 +76,7 @@ export const scheduleEvent = Effect.fn(function* (
   );
 
   yield* reconcileAlarm;
-});
+}, inTransaction);
 
 /**
  * Cancel a previously scheduled event by id. No-op if the event does not exist.
@@ -92,7 +91,7 @@ export const cancelEvent = Effect.fn(function* (id: string) {
   );
 
   yield* reconcileAlarm;
-});
+}, inTransaction);
 
 /**
  * List all currently scheduled events, ordered by `runAt` ascending.
@@ -137,33 +136,32 @@ export const processScheduledEvents: Effect.Effect<
 > = Effect.gen(function* () {
   yield* ensureTable;
   const ctx = yield* DurableObjectState;
-  const now = Date.now();
+  const now = yield* Clock.currentTimeMillis;
 
   const cursor = yield* ctx.storage.sql.exec<EventRow>(
     `SELECT id, run_at, repeat_ms, payload FROM alchemy_scheduled_events WHERE run_at <= ? ORDER BY run_at ASC`,
     now,
   );
 
-  const fired = yield* cursor.pipe(
-    Stream.mapEffect((row) =>
-      (row.repeat_ms != null
-        ? ctx.storage.sql.exec(
-            `UPDATE alchemy_scheduled_events SET run_at = ? WHERE id = ?`,
-            now + row.repeat_ms,
-            row.id,
-          )
-        : ctx.storage.sql.exec(
-            `DELETE FROM alchemy_scheduled_events WHERE id = ?`,
-            row.id,
-          )
-      ).pipe(Effect.as(toScheduledEvent(row))),
-    ),
-    Stream.runCollect,
-  );
+  const rows = yield* cursor.toArray();
+  const fired: ScheduledEvent[] = [];
+  for (const row of rows) {
+    yield* row.repeat_ms != null
+      ? ctx.storage.sql.exec(
+          `UPDATE alchemy_scheduled_events SET run_at = ? WHERE id = ?`,
+          now + row.repeat_ms,
+          row.id,
+        )
+      : ctx.storage.sql.exec(
+          `DELETE FROM alchemy_scheduled_events WHERE id = ?`,
+          row.id,
+        );
+    fired.push(toScheduledEvent(row));
+  }
 
   yield* reconcileAlarm;
   return fired;
-});
+}).pipe(inTransaction);
 
 /**
  * Set the DO alarm to the earliest pending event, or clear it if none remain.
@@ -175,15 +173,5 @@ const reconcileAlarm: Effect.Effect<
 > = Effect.gen(function* () {
   const ctx = yield* DurableObjectState;
 
-  const next = yield* (yield* ctx.storage.sql.exec<{
-    run_at: number;
-  }>(
-    `SELECT run_at FROM alchemy_scheduled_events ORDER BY run_at ASC LIMIT 1`,
-  )).pipe(Stream.take(1), Stream.runHead);
-
-  if (Option.isSome(next)) {
-    yield* ctx.storage.setAlarm(next.value.run_at);
-  } else {
-    yield* ctx.storage.deleteAlarm();
-  }
+  yield* reconcileDurableObjectAlarm(ctx.raw.storage);
 });

@@ -13,18 +13,17 @@
  *
  * @module provider/Drivers/ClaudeSkills
  */
-import * as NodeOS from "node:os";
 
 import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { parse as parseYamlDocument } from "yaml";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 type ClaudeSkillScope = "user" | "project";
 
@@ -75,11 +74,28 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     return { kind: "missing" };
   }
 
+  const frontmatter = match[1] ?? "";
   let parsed: unknown;
   try {
-    parsed = parseYamlDocument(match[1] ?? "");
+    parsed = parseYamlDocument(frontmatter);
   } catch {
-    return { kind: "malformed" };
+    // Claude Code accepts plain scalars containing `: `. Repair only those,
+    // leaving comments and YAML structure for the full-document parser.
+    const repaired = frontmatter.replace(
+      /^([\w-]+:[ \t]*)([^\r\n]*)/gm,
+      (line, prefix: string, value: string) => {
+        const scalar = value.split(/[ \t]+#/)[0] ?? "";
+        if (!/:[ \t]/.test(scalar) || /^(?:["'[\]{}|>&*!#%@`]|[-?:](?:[ \t]|$))/.test(scalar)) {
+          return line;
+        }
+        return `${prefix}${JSON.stringify(scalar)}${value.slice(scalar.length)}`;
+      },
+    );
+    try {
+      parsed = parseYamlDocument(repaired);
+    } catch {
+      return { kind: "malformed" };
+    }
   }
   if (typeof parsed !== "object" || parsed === null) {
     return { kind: "malformed" };
@@ -226,7 +242,7 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
 ): Effect.fn.Return<ReadonlyMap<string, SkillOverride>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
@@ -279,9 +295,10 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   cwd?: string,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
   if (homePath.length > 0) {
-    return path.resolve(expandHomePath(homePath));
+    return path.resolve(expandHomePath(homePath, home));
   }
   // No tilde expansion here: the spawned CLI receives this env var verbatim
   // (env vars are never shell-expanded), so a literal `~` must stay literal
@@ -292,7 +309,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   if (environmentConfigDir.length > 0) {
     return cwd ? path.resolve(cwd, environmentConfigDir) : path.resolve(environmentConfigDir);
   }
-  return path.join(NodeOS.homedir(), ".claude");
+  return path.join(home, ".claude");
 });
 
 /**

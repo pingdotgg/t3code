@@ -1,5 +1,10 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
+import { useShortcutModifierState } from "~/shortcutModifierState";
+import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
+import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
+import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
+import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -132,6 +137,7 @@ import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { toastManager } from "../components/ui/toast";
+import { useEscapeToGoBack } from "../hooks/useNavigateBack";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -218,7 +224,7 @@ function PullRequestGroupHeader({
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <h2 className="shrink-0">{group.label}</h2>
       <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
-      <Separator className="min-w-2 flex-1 bg-border/60" />
+      <Separator className="min-w-2 flex-1" />
     </div>
   );
 }
@@ -340,6 +346,10 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  useEscapeToGoBack();
+  const modifiers = useShortcutModifierState(true);
+  const speedMode =
+    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -786,6 +796,11 @@ function PullRequestsRouteView() {
     ],
   );
   const baselineQuery = usePullRequestList(baselineTargets);
+  const baselineEmpty =
+    baselineQuery.data?.entries.length === 0 &&
+    baselineQuery.data.errors.length === 0 &&
+    !baselineQuery.isPending &&
+    baselineQuery.error === null;
   const facetTargets = useMemo(() => {
     if (!filtersOpen) return NO_LIST_TARGETS;
     return environmentQueries.map(({ environmentId, projectIds }) => ({
@@ -950,6 +965,18 @@ function PullRequestsRouteView() {
   };
   /** The detail panel's own writes, by row, so its failure takes back its own note. */
   const detailOverrideTokens = useRef(new Map<string, number | null>());
+  const speedActionRef = useRef<(result: PullRequestSpeedActionResult) => void>(() => {});
+  speedActionRef.current = ({ entry, action }) => {
+    // Some hosts accept a merge before it completes. Let the next host read declare it merged.
+    if (action !== "merge") overrideEntry(entry, action);
+  };
+  const onSpeedAction = useCallback((result: PullRequestSpeedActionResult) => {
+    speedActionRef.current(result);
+  }, []);
+  const onBatchClosed = useCallback((entry: EnvironmentPullRequestEntry) => {
+    speedActionRef.current({ entry, action: "close" });
+  }, []);
+  const { close: closeBatch, closingKeys } = usePullRequestCloseBatch(onBatchClosed);
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
@@ -988,13 +1015,15 @@ function PullRequestsRouteView() {
       // stay — hydrated or previously answered — rather than being dropped for a feed that
       // merely settled first.
       const partitions =
-        partitionsWanted && authoredQuery.data !== null && reviewingQuery.data !== null
-          ? { authored: authoredQuery.data.entries, reviewing: reviewingQuery.data.entries }
-          : current !== null &&
-              current.environmentKey === environmentKey &&
-              current.scope === scopeKey
-            ? current.partitions
-            : undefined;
+        partitionsWanted && baselineEmpty
+          ? { authored: [], reviewing: [] }
+          : partitionsWanted && authoredQuery.data !== null && reviewingQuery.data !== null
+            ? { authored: authoredQuery.data.entries, reviewing: reviewingQuery.data.entries }
+            : current !== null &&
+                current.environmentKey === environmentKey &&
+                current.scope === scopeKey
+              ? current.partitions
+              : undefined;
       // A search's answer is the search's, not the workspace's, so only unsearched lists
       // persist. Written here where the held partitions are in reach, so a feed settling
       // ahead of them cannot overwrite a stored snapshot that already had both groups.
@@ -1035,6 +1064,7 @@ function PullRequestsRouteView() {
     sentQuery,
     listQuery.data,
     listQuery.isPending,
+    baselineEmpty,
     partitionsWanted,
     authoredQuery.data,
     reviewingQuery.data,
@@ -1326,6 +1356,11 @@ function PullRequestsRouteView() {
    */
   const groups = useMemo(() => {
     if (search.involvement !== "all") return [{ key: "others" as const, label: "", entries }];
+    // An empty whole-list answer also empties the priority groups. Their old snapshot must
+    // not restore the last merged rows after the partition reads are no longer mounted.
+    if (baselineEmpty) {
+      return groupPullRequestsByInvolvement(entries, viewers);
+    }
     // Until both partitions have answered, the snapshot's stand in — they are yesterday's
     // groups, but whole ones, where grouping the feed's first page locally loses every
     // authored row older than it. Once the live reads land they take over; with neither,
@@ -1355,6 +1390,7 @@ function PullRequestsRouteView() {
     return partitionPullRequestsWithPriority(entries, authored, reviewing);
   }, [
     hasLocalFilters,
+    baselineEmpty,
     localFilters,
     authoredQuery.data?.entries,
     entries,
@@ -1393,11 +1429,11 @@ function PullRequestsRouteView() {
     [statsBatches],
   );
   const statsObserver = useRef<IntersectionObserver | null>(null);
-  const statsRows = useRef(new Set<HTMLButtonElement>());
+  const statsRows = useRef(new Set<HTMLDivElement>());
   const statsPending = useRef(true);
   const statsPolicyRef = useRef(statsPolicy);
   statsPolicyRef.current = statsPolicy;
-  const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
+  const registerStatsRow = useCallback((node: HTMLDivElement | null) => {
     if (node === null || typeof IntersectionObserver === "undefined") return;
     statsRows.current.add(node);
     statsObserver.current?.observe(node);
@@ -1556,6 +1592,97 @@ function PullRequestsRouteView() {
   ]);
   /** What is actually on screen once the reader's pending answers are on the rows. */
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
+  const [closeSweepKeys, setCloseSweepKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const closeSensorRef = useRef<SidebarPointerSensor | null>(null);
+  const closeSweepRows = useMemo(
+    () =>
+      new Map(
+        displayGroups.flatMap((group) =>
+          group.entries.map(
+            (entry) => [pullRequestEntryKey(entry), { entry, groupKey: group.key }] as const,
+          ),
+        ),
+      ),
+    [displayGroups],
+  );
+  const closeSweepRef = useRef({ displayGroups, closeSweepRows, closingKeys, closeBatch });
+  closeSweepRef.current = { displayGroups, closeSweepRows, closingKeys, closeBatch };
+  useEffect(() => () => closeSensorRef.current?.cancel(), [filterKey, search.q, sort]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || closeSensorRef.current === null) return;
+      event.preventDefault();
+      closeSensorRef.current.cancel();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+  const startCloseSweep = useCallback((entry: EnvironmentPullRequestEntry, event: PointerEvent) => {
+    closeSensorRef.current?.cancel();
+    const originKey = pullRequestEntryKey(entry);
+    const group = closeSweepRef.current.displayGroups.find((candidate) =>
+      candidate.entries.some((row) => pullRequestEntryKey(row) === originKey),
+    );
+    if (!group || closeSweepRef.current.closingKeys.has(originKey)) return;
+    const orderedKeys = closeSweepRef.current.displayGroups.flatMap((candidate) =>
+      candidate.entries.map(pullRequestEntryKey),
+    );
+    const canClose = (key: string) => {
+      const row = closeSweepRef.current.closeSweepRows.get(key);
+      return (
+        row?.groupKey === group.key &&
+        row.entry.state === "open" &&
+        row.entry.provider === "github" &&
+        !closeSweepRef.current.closingKeys.has(key) &&
+        !scrollRef.current?.querySelector(
+          `[data-pull-request-key="${CSS.escape(key)}"] [data-pull-request-action-pending="true"]`,
+        )
+      );
+    };
+    let sweptKeys: string[] = [];
+    let targetKey: string | null = null;
+    const sweepTo = (key: string) => {
+      if (key === targetKey) return;
+      targetKey = key;
+      sweptKeys = resolveSidebarSweepKeys(orderedKeys, originKey, key, canClose);
+      setCloseSweepKeys(new Set(sweptKeys));
+    };
+    closeSensorRef.current = new SidebarPointerSensor({
+      active: originKey,
+      event,
+      options: {
+        distance: 6,
+        onAttach: () => {},
+        onFinish: () => {
+          closeSensorRef.current = null;
+          setCloseSweepKeys(new Set());
+        },
+      },
+      onPending: () => {},
+      onStart: () => sweepTo(originKey),
+      onMove: ({ y }) => {
+        const viewport = scrollRef.current;
+        if (!viewport) return;
+        const bounds = viewport.getBoundingClientRect();
+        const visibleY = Math.min(Math.max(y, bounds.top), bounds.bottom - 1);
+        let key: string | null = null;
+        for (const row of viewport.querySelectorAll<HTMLElement>("[data-pull-request-key]")) {
+          if (key !== null && row.getBoundingClientRect().top > visibleY) break;
+          key = row.dataset.pullRequestKey ?? null;
+        }
+        if (key !== null) sweepTo(key);
+      },
+      onEnd: () => {
+        const batch = sweptKeys.filter(canClose).flatMap((key) => {
+          const row = closeSweepRef.current.closeSweepRows.get(key);
+          return row ? [row.entry] : [];
+        });
+        void closeSweepRef.current.closeBatch(batch);
+      },
+      onCancel: () => {},
+      onAbort: () => {},
+    });
+  }, []);
   const heldPullRequestsBySurface = useMemo(
     () =>
       new Map(
@@ -1709,14 +1836,18 @@ function PullRequestsRouteView() {
   const panelToggleControls = (
     <PanelLayoutControls
       showTerminalControl={false}
+      showThreadPanelControl={false}
       terminalAvailable={false}
       terminalOpen={false}
       terminalShortcutLabel={null}
+      threadPanelOpen={false}
+      threadPanelPresentation="inline"
+      threadPanelShortcutLabel={null}
+      onToggleThreadPanel={() => undefined}
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       rightPanelUnavailableLabel="Select a pull request first"
-      liveAgentCount={0}
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
@@ -1779,7 +1910,7 @@ function PullRequestsRouteView() {
           onLoadMore={loadMore}
         />
       ) : (
-        <div className="space-y-3">
+        <div className={cn("space-y-3", closeSweepKeys.size > 0 && "**:pointer-events-none")}>
           {displayGroups.map((group) => (
             <div key={group.key} className="space-y-0.5">
               {group.label ? <PullRequestGroupHeader group={group} /> : null}
@@ -1810,6 +1941,11 @@ function PullRequestsRouteView() {
                       selected.number === entry.number
                     }
                     onSelect={selectEntry}
+                    speedMode={speedMode}
+                    onActed={onSpeedAction}
+                    closing={closingKeys.has(entryKey)}
+                    sweeping={closeSweepKeys.has(entryKey)}
+                    onCloseSweepStart={startCloseSweep}
                   />
                 );
               })}
@@ -1819,7 +1955,7 @@ function PullRequestsRouteView() {
       )}
 
       {listQuery.error && shownCount > 0 ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
             Retry
@@ -2063,8 +2199,9 @@ function PullRequestsRouteView() {
       if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Let panel shortcuts consume Escape before page navigation at window.
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [keybindings]);
 
   return (
@@ -2077,6 +2214,8 @@ function PullRequestsRouteView() {
           <RightPanelTabs
             mode="inline"
             open={rightPanelState.isOpen}
+            keybindings={keybindings}
+            getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:pull-request-panel-width"
             // Default to roughly half the viewport: the PR list needs more
             // room than a chat, so the 540px chat-preview default squashes
@@ -2110,7 +2249,6 @@ function PullRequestsRouteView() {
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
-            onAddAgents={() => undefined}
             onAddDevice={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
@@ -2118,9 +2256,7 @@ function PullRequestsRouteView() {
             filesAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
-            agentsAvailable={false}
             deviceAvailable={false}
-            liveAgentCount={0}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
@@ -2234,16 +2370,13 @@ function CompactFilterMenu<Value extends string>({
         aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
         title={iconOnly ? `${label}: ${current.label}` : undefined}
         render={
-          outlined ? <Button variant="outline" size={iconOnly ? "icon" : "default"} /> : undefined
+          outlined ? (
+            <Button variant="outline" size={iconOnly ? "icon" : "default"} />
+          ) : (
+            <Button variant="ghost-muted" size="sm" />
+          )
         }
-        className={
-          outlined
-            ? className
-            : cn(
-                "inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-                className,
-              )
-        }
+        className={cn("min-w-0", className)}
       >
         {iconOnly ? (
           <current.Icon aria-hidden className="size-4" />
@@ -2259,7 +2392,7 @@ function CompactFilterMenu<Value extends string>({
           </>
         )}
       </MenuTrigger>
-      <MenuPopup align="start" side="bottom" className="min-w-40">
+      <MenuPopup align="start" side="bottom">
         <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
           {options.map((option) => {
             const item = (
@@ -2280,9 +2413,7 @@ function CompactFilterMenu<Value extends string>({
             ) : (
               <Tooltip key={option.value}>
                 <TooltipTrigger render={item} />
-                <TooltipPopup side="right" className="max-w-64 break-words">
-                  {option.unavailable}
-                </TooltipPopup>
+                <TooltipPopup side="right">{option.unavailable}</TooltipPopup>
               </Tooltip>
             );
           })}

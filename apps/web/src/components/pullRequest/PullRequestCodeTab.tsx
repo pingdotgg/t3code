@@ -13,17 +13,17 @@ import type {
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
   Columns2Icon,
   FolderTreeIcon,
   InfoIcon,
   MessageSquareOffIcon,
   PilcrowIcon,
   Rows3Icon,
+  Settings2Icon,
   TextWrapIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -38,6 +38,7 @@ import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
   fnv1a32,
+  getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -64,12 +65,17 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -252,7 +258,9 @@ function PullRequestCodeTab({
     readonly slices: ReadonlyArray<DiffSlice>;
   }>({ key: "", cursor: null, slices: NO_SLICES });
   const parseCache = useRef(new Map<string, RenderablePatch>());
-  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
+  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
+    null,
+  );
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -592,6 +600,23 @@ function PullRequestCodeTab({
       ),
     [loadedSlices],
   );
+  const sourceFileStats = useMemo(
+    () =>
+      new Map(
+        parsedSlices.flatMap((parsed) =>
+          parsed?.kind === "files"
+            ? parsed.files.map(
+                (file, index) =>
+                  [
+                    buildFileDiffRenderKey(file),
+                    getDiffLineStat([parsed.sourceFiles[index] ?? file]),
+                  ] as const,
+              )
+            : [],
+        ),
+      ),
+    [parsedSlices],
+  );
   const fileKeys = useMemo(() => items.map((item) => item.id), [items]);
   const collapsedFileKeys = useMemo(
     () => new Set(items.filter((item) => item.collapsed === true).map((item) => item.id)),
@@ -783,17 +808,13 @@ function PullRequestCodeTab({
           variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className="mr-1 rounded hover:bg-transparent"
+          className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
           }}
         >
-          {collapsed ? (
-            <ChevronRightIcon className="size-4" />
-          ) : (
-            <ChevronDownIcon className="size-4" />
-          )}
+          <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
         </Button>
       );
     },
@@ -811,12 +832,8 @@ function PullRequestCodeTab({
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<ReviewAnnotationGroup>) => {
       if (item.type !== "diff") return null;
-      let additions = 0;
-      let deletions = 0;
-      for (const hunk of item.fileDiff.hunks) {
-        additions += hunk.additionLines;
-        deletions += hunk.deletionLines;
-      }
+      let { additions, deletions } =
+        sourceFileStats.get(item.id) ?? getDiffLineStat([item.fileDiff]);
       const path = resolveFileDiffPath(item.fileDiff);
       if (additions === 0 && deletions === 0) {
         const withheld = omittedFileStats.get(path);
@@ -826,7 +843,7 @@ function PullRequestCodeTab({
         <PullRequestDiffStat
           additions={additions}
           deletions={deletions}
-          className="font-mono text-[11px]"
+          className="font-mono text-2xs"
         />
       );
       const viewedFiles = filesViewedRef.current;
@@ -840,7 +857,7 @@ function PullRequestCodeTab({
               attribute is what the header's capture listener looks for. */}
           <label
             data-viewed-toggle=""
-            className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted-foreground"
+            className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
             onClick={(event) => event.stopPropagation()}
           >
             <Checkbox
@@ -850,7 +867,7 @@ function PullRequestCodeTab({
             />
             {stale ? (
               <Tooltip>
-                <TooltipTrigger render={<span className="text-amber-600 dark:text-amber-500" />}>
+                <TooltipTrigger render={<span className="text-warning-foreground" />}>
                   Changed
                 </TooltipTrigger>
                 <TooltipPopup side="bottom">
@@ -858,13 +875,13 @@ function PullRequestCodeTab({
                 </TooltipPopup>
               </Tooltip>
             ) : (
-              "Viewed"
+              <span className="@max-xs:hidden">Viewed</span>
             )}
           </label>
         </span>
       );
     },
-    [omittedFileStats],
+    [omittedFileStats, sourceFileStats],
   );
 
   const diffViewOptions = useMemo(
@@ -1061,46 +1078,52 @@ function PullRequestCodeTab({
     }
   }, [commit, onSelectedCommitChange, selectedCommit]);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
+  const changeIgnoreWhitespace = (next: boolean) => {
+    setIgnoreWhitespace(next);
+    setDraft(null);
+    setSelectedLines(null);
+  };
   const toolbar = (
-    <div className="flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
+    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {/* A host that reports no commits has nothing to scope by, and a dropdown whose only
             entry is the scope already showing is a control that does nothing. */}
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="inline-flex h-6 min-w-0 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
+              render={<Button size="xs" variant="secondary" />}
+              className="min-w-0 max-w-64"
               aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-80">
-              <DropdownMenuItem
-                className={commit === null ? "bg-foreground/[0.08]" : undefined}
-                onClick={() => onSelectedCommitChange(null)}
+            <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
+              <DropdownMenuRadioGroup
+                value={commit ?? "all"}
+                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
               >
-                <span>All commits</span>
-              </DropdownMenuItem>
-              {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
-                <DropdownMenuItem
-                  key={entry.oid}
-                  className={entry.oid === commit ? "bg-foreground/[0.08]" : undefined}
-                  onClick={() => onSelectedCommitChange(entry.oid)}
-                >
-                  {/* Headlines run long, and the abbreviated oid after one is what a reader
-                      matches against the commit list on the host. */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
-                    />
-                    <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
-                  </Tooltip>
-                  <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {entry.oid.slice(0, 7)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                <DropdownMenuRadioItem value="all" closeOnClick>
+                  <span>All commits</span>
+                </DropdownMenuRadioItem>
+                {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
+                  <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
+                    {/* Headlines run long, and the abbreviated oid after one is what a reader
+                        matches against the commit list on the host. */}
+                    <span className="flex items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
+                        />
+                        <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
+                      </Tooltip>
+                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                        {entry.oid.slice(0, 7)}
+                      </span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
               {orderedCommits.length > visibleCommitCount ? (
                 // Kept out of the radio group: it changes how much of the list is on screen
                 // rather than what the diff is scoped to.
@@ -1118,7 +1141,7 @@ function PullRequestCodeTab({
         ) : null}
         {/* One count, and the caveats as icons that carry their own words. Spelled out they
             competed for a strip this narrow and every one of them truncated to nothing. */}
-        <PullRequestMetaLine className="shrink-0">
+        <PullRequestMetaLine>
           <span className="shrink-0 tabular-nums">
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
@@ -1154,7 +1177,7 @@ function PullRequestCodeTab({
                   <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                     <TriangleAlertIcon
                       aria-label="Your ticks could not be read"
-                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                      className="size-3.5 text-warning-foreground"
                     />
                   </TooltipTrigger>
                   <TooltipPopup side="bottom">
@@ -1168,7 +1191,7 @@ function PullRequestCodeTab({
                   <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                     <TriangleAlertIcon
                       aria-label="This count covers only part of the change"
-                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                      className="size-3.5 text-warning-foreground"
                     />
                   </TooltipTrigger>
                   <TooltipPopup side="bottom">
@@ -1184,7 +1207,7 @@ function PullRequestCodeTab({
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <TriangleAlertIcon
                   aria-label="Some of this diff was not shown"
-                  className="size-3.5 text-amber-600 dark:text-amber-500"
+                  className="size-3.5 text-warning-foreground"
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
@@ -1209,30 +1232,113 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={<Button size="icon-sm" variant="ghost" />}
+                  className="@lg:hidden"
+                  aria-label="Diff options"
+                />
+              }
+            >
+              <Settings2Icon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Diff options</TooltipPopup>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuCheckboxItem
+              checked={ignoreWhitespace}
+              onCheckedChange={(checked) => changeIgnoreWhitespace(checked)}
+            >
+              Hide whitespace changes
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={wordWrap}
+              onCheckedChange={(checked) => setWordWrap(checked)}
+            >
+              Wrap lines
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              value={diffLayout}
+              onValueChange={(value) => {
+                if (value === "stacked" || value === "split") {
+                  updateClientSettings({ diffLayout: value });
                 }
-                variant="ghost"
-                size="sm"
-                pressed={ignoreWhitespace}
-                onPressedChange={(pressed) => {
-                  setIgnoreWhitespace(Boolean(pressed));
-                  setDraft(null);
-                  setSelectedLines(null);
-                }}
-              />
-            }
+              }}
+            >
+              <DropdownMenuRadioItem value="stacked" closeOnClick>
+                Stacked
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="split" closeOnClick>
+                Split
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div className="hidden items-center gap-1 @lg:flex">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={
+                    ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+                  }
+                  variant="ghost"
+                  size="sm"
+                  pressed={ignoreWhitespace}
+                  onPressedChange={(pressed) => changeIgnoreWhitespace(Boolean(pressed))}
+                />
+              }
+            >
+              <PilcrowIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+            </TooltipPopup>
+          </Tooltip>
+          <ToggleGroup
+            aria-label="Diff layout"
+            className="shrink-0"
+            variant="segmented"
+            value={[diffLayout]}
+            onValueChange={(value) => {
+              const next = value[0];
+              if (next === "stacked" || next === "split") {
+                updateClientSettings({ diffLayout: next });
+              }
+            }}
           >
-            <PilcrowIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
-          </TooltipPopup>
-        </Tooltip>
+            <Toggle aria-label="Stacked diff view" value="stacked">
+              <Rows3Icon className="size-3.5" />
+            </Toggle>
+            <Toggle aria-label="Split diff view" value="split">
+              <Columns2Icon className="size-3.5" />
+            </Toggle>
+          </ToggleGroup>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={wordWrap}
+                  onPressedChange={(pressed) => {
+                    setWordWrap(Boolean(pressed));
+                  }}
+                />
+              }
+            >
+              <TextWrapIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1246,56 +1352,16 @@ function PullRequestCodeTab({
                 />
               }
             >
-              {allFilesCollapsed ? (
-                <ChevronsUpDownIcon className="size-3.5" />
-              ) : (
-                <ChevronsDownUpIcon className="size-3.5" />
-              )}
+              <MorphIcon
+                className="size-3.5"
+                icon={allFilesCollapsed ? ChevronsUpDown : ChevronsDownUp}
+              />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        <ToggleGroup
-          aria-label="Diff layout"
-          className="shrink-0"
-          variant="segmented"
-          value={[diffLayout]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              updateClientSettings({ diffLayout: next });
-            }
-          }}
-        >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3.5" />
-          </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3.5" />
-          </Toggle>
-        </ToggleGroup>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
-                variant="ghost"
-                size="sm"
-                pressed={wordWrap}
-                onPressedChange={(pressed) => {
-                  setWordWrap(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <TextWrapIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
-          </TooltipPopup>
-        </Tooltip>
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1404,63 +1470,63 @@ function PullRequestCodeTab({
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (
-        <Collapsible
-          className="shrink-0 border-b border-border/60"
-          open={orphansOpen}
-          onOpenChange={setOrphansOpen}
-        >
-          {/* Still a heading, so the section keeps its place in a screen reader's outline;
+        <div className="shrink-0 border-b border-border/60">
+          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+            {/* Still a heading, so the section keeps its place in a screen reader's outline;
                 the count is spelled out there rather than left as a bare number. */}
-          <h2>
-            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-              {/* While slices are still arriving a conversation may simply belong to a file
+            <h2>
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+                {/* While slices are still arriving a conversation may simply belong to a file
                     that has not landed yet, which is not the same as being off the diff. */}
-              <span>
-                {nextCursor === null
-                  ? "Conversations not on the current diff"
-                  : "Conversations not on the diff loaded so far"}
-              </span>
-              <ChevronRightIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-              />
-              <span aria-hidden className="tabular-nums">
-                {orphanThreads.length}
-              </span>
-              <span className="sr-only">
-                {orphanThreads.length === 1
-                  ? "1 conversation"
-                  : `${orphanThreads.length} conversations`}
-              </span>
-            </CollapsibleTrigger>
-          </h2>
-          <CollapsiblePanel>
-            {/* Capped: opened on a change with dozens of them, this would otherwise leave no
+                <span>
+                  {nextCursor === null
+                    ? "Conversations not on the current diff"
+                    : "Conversations not on the diff loaded so far"}
+                </span>
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+                />
+                <span aria-hidden className="tabular-nums">
+                  {orphanThreads.length}
+                </span>
+                <span className="sr-only">
+                  {orphanThreads.length === 1
+                    ? "1 conversation"
+                    : `${orphanThreads.length} conversations`}
+                </span>
+              </CollapsibleTrigger>
+            </h2>
+            <CollapsiblePanel>
+              {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
-            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-              {[...orphanFiles].map(([path, threads]) => (
-                <div key={path}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
-                    />
-                    <TooltipPopup side="top">{path}</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-1 space-y-2">
-                    {threads.map((thread) => (
-                      <div key={thread.id}>
-                        {thread.line === null ? null : (
-                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
-                        )}
-                        {renderThreadCard(thread)}
-                      </div>
-                    ))}
+              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+                {[...orphanFiles].map(([path, threads]) => (
+                  <div key={path}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
+                        }
+                      />
+                      <TooltipPopup side="top">{path}</TooltipPopup>
+                    </Tooltip>
+                    <div className="mt-1 space-y-2">
+                      {threads.map((thread) => (
+                        <div key={thread.id}>
+                          {thread.line === null ? null : (
+                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                          )}
+                          {renderThreadCard(thread)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
@@ -1503,7 +1569,7 @@ function PullRequestCodeTab({
             // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
             // interaction, but its native host outline clips and competes with the focus
             // indicators on its actual controls.
-            className="h-full overflow-auto [scrollbar-gutter:stable]"
+            className="@container h-full overflow-auto [scrollbar-gutter:stable]"
             viewerRef={setViewer}
             items={items}
             selectedLines={selectedLines}
@@ -1516,6 +1582,12 @@ function PullRequestCodeTab({
             renderHeaderPrefix={renderHeaderPrefix}
             renderHeaderMetadata={renderHeaderMetadata}
             renderAnnotation={renderAnnotation}
+            // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
+            onRevealSearchMatch={(item) =>
+              setToggledFiles((current) =>
+                toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+              )
+            }
             unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
           />
         </div>

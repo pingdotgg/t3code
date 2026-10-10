@@ -4,7 +4,7 @@ import {
   type AtomQueryOptions,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { useCallback, useContext } from "react";
 
 export function useAtomQueryRunner<T, A, E>(

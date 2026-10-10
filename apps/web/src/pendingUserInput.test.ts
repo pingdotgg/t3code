@@ -5,6 +5,7 @@ import {
   carryDisplacedCustomAnswerIntoPrompt,
   countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
+  findFirstUnansweredPendingUserInputQuestionIndex,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -53,6 +54,34 @@ const nativeChoiceQuestion = {
 } as const;
 
 describe("resolvePendingUserInputAnswer", () => {
+  it("preserves exact editor text, including a deliberately cleared answer", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: question.initialAnswer })).toBe(
+      question.initialAnswer,
+    );
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: "  Edited message\n\n" })).toBe(
+      "  Edited message\n\n",
+    );
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: "" })).toBe("");
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: " \n" })).toBe(" \n");
+    expect(
+      setPendingUserInputCustomAnswer(
+        { selectedOptionValues: ["Orchestration-first"] },
+        "",
+        question,
+      ),
+    ).toEqual({ customAnswer: "" });
+    const questions = [question, { ...singleSelectQuestion, id: "follow-up" }];
+    const drafts = { scope: { customAnswer: "" } };
+    expect(findFirstUnansweredPendingUserInputQuestionIndex(questions, drafts)).toBe(1);
+    expect(derivePendingUserInputProgress([question], drafts, 0)).toMatchObject({
+      customAnswer: "",
+      resolvedAnswer: "",
+      canAdvance: true,
+      isComplete: true,
+    });
+  });
+
   it("prefers a custom answer over selected options", () => {
     expect(
       resolvePendingUserInputAnswer(singleSelectQuestion, {
@@ -241,6 +270,29 @@ describe("pending user input question progress", () => {
       countAnsweredPendingUserInputQuestions(questions, {
         scope: {
           selectedOptionValues: ["Orchestration-first"],
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it("finds the first unanswered question", () => {
+    expect(
+      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
+        scope: {
+          selectedOptionValues: ["Orchestration-first"],
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it("returns the last question index when all answers are complete", () => {
+    expect(
+      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
+        scope: {
+          selectedOptionValues: ["Orchestration-first"],
+        },
+        compat: {
+          customAnswer: "Keep it for one release window",
         },
       }),
     ).toBe(1);

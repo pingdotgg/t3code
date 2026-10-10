@@ -32,6 +32,7 @@ export interface VerifyResult {
  * ```
  *
  * @binding
+ * @product Secret Key
  */
 export interface Verify extends Binding.Service<
   Verify,

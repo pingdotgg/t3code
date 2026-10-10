@@ -1,6 +1,13 @@
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { ReactNode, Ref } from "react";
-import { Platform, View, type ColorValue, type ViewProps, type ViewStyle } from "react-native";
+import {
+  Platform,
+  View,
+  type ColorValue,
+  type ViewInstance,
+  type ViewProps,
+  type ViewStyle,
+} from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
@@ -14,7 +21,7 @@ const ThemedGlassView = withUniwind(GlassView, {
 });
 
 interface GlassSurfaceProps extends ViewProps {
-  readonly ref?: Ref<View>;
+  readonly ref?: Ref<ViewInstance>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;

@@ -1,13 +1,33 @@
 import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
-import { cn } from "~/lib/utils";
-import { Button } from "../ui/button";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+/** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
+function getIncompatibleVersion(status: ServerProvider) {
+  const compatibility = status.compatibilityAdvisory;
+  if (status.status === "error" && status.auth.status === "unauthenticated") return null;
+  return compatibility?.status === "broken" ||
+    (status.status === "ready" && compatibility?.status === "unsupported")
+    ? compatibility
+    : null;
+}
+
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  if (!status || status.status === "ready" || status.status === "disabled") return null;
+  if (!status || status.status === "disabled") return null;
+  const incompatible = getIncompatibleVersion(status);
+  if (incompatible) {
+    return [
+      status.instanceId,
+      incompatible.status,
+      status.version ?? "",
+      incompatible.message ?? "",
+    ].join("\u0000");
+  }
+  if (status.status === "ready") return null;
   // Antigravity checks saved credentials when a session starts. Its local
   // health check leaves auth unknown after a restart, which is not a failure.
   if (
@@ -39,8 +59,15 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-/** Keep the environment's error intact in both the banner and model picker. */
+/** Broken-version guidance takes precedence over startup failures it can cause. */
 export function getProviderStatusMessage(status: ServerProvider): string {
+  if (
+    status.auth.status !== "unauthenticated" &&
+    status.compatibilityAdvisory?.status === "broken" &&
+    status.compatibilityAdvisory.message
+  ) {
+    return status.compatibilityAdvisory.message;
+  }
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
@@ -76,55 +103,50 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
-    : `${providerName} provider status`;
-  const message = getProviderStatusMessage(status);
+    : incompatible
+      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+      : `${providerName} provider status`;
+  const message = incompatible?.message ?? getProviderStatusMessage(status);
+  const isWarning =
+    incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
-      <div
-        className={cn(
-          "alert-glass relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-card-foreground text-sm",
-          status.status === "warning"
-            ? "border-warning/32 [&_svg]:text-warning"
-            : "border-destructive/32 text-destructive-foreground [&_svg]:text-destructive",
-        )}
-        data-variant={status.status === "warning" ? "warning" : "error"}
-        role="alert"
+      <Alert
+        variant={isWarning ? "warning" : "error"}
+        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
+        surface="glass"
+        controlAlignment="first-line"
       >
-        <InfoIcon className="size-4 shrink-0" aria-hidden />
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="font-medium">{title}</div>
+        <InfoIcon />
+        <AlertTitle>{title}</AlertTitle>
+        <AlertDescription>
           <Tooltip>
-            <TooltipTrigger
-              render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
-            />
-            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
+            <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
+            <TooltipPopup side="top" className="whitespace-pre-wrap">
               {message}
             </TooltipPopup>
           </Tooltip>
           {onOpenProviderSetup && hasProviderSetup(status) ? (
-            <Button
-              className="self-start px-0 text-foreground"
-              onClick={() => onOpenProviderSetup(status.instanceId)}
-              size="xs"
-              variant="link"
-            >
+            <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
               Open provider setup
-            </Button>
+            </InlineButton>
           ) : null}
-        </div>
-        <Button
-          aria-label={`Dismiss ${providerName} provider ${status.status}`}
-          className="absolute top-2 right-2 size-6 text-muted-foreground hover:text-foreground"
-          onClick={onDismiss}
-          size="icon-xs"
-          variant="ghost"
-        >
-          <XIcon aria-hidden className="size-3.5" />
-        </Button>
-      </div>
+        </AlertDescription>
+        <AlertAction>
+          <Button
+            aria-label={`Dismiss ${providerName} provider ${status.status}`}
+            onClick={onDismiss}
+            size="icon-xs"
+            variant="ghost-muted"
+          >
+            <XIcon />
+          </Button>
+        </AlertAction>
+      </Alert>
     </div>
   );
 });

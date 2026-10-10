@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/http-api"
 import { Api } from "../../api/Api.ts"
 import { CurrentUser } from "../../api/Authorization.ts"
 import { AuthorizationLayer } from "../Authorization.ts"

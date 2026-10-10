@@ -1,12 +1,12 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
+import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
+import * as OpenApi from "effect/http-api/OpenApi";
 
 import {
   DpopFailureReason,
@@ -186,6 +186,34 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
+export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+  origin: RelayManagedEndpointOrigin,
+  proof: TrimmedNonEmptyString,
+});
+export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
+
+export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+  tunnelId: TrimmedNonEmptyString,
+  origin: RelayManagedEndpointOrigin,
+  proof: TrimmedNonEmptyString,
+});
+export type RelayManagedEndpointRecoveryRegistrationRequest =
+  typeof RelayManagedEndpointRecoveryRegistrationRequest.Type;
+
+export const RelayManagedEndpointRecoveryRegistrationResponse = Schema.Struct({
+  status: Schema.Literals(["ready", "recovery_required"]),
+});
+export type RelayManagedEndpointRecoveryRegistrationResponse =
+  typeof RelayManagedEndpointRecoveryRegistrationResponse.Type;
+
+export const RelayManagedEndpointRecoveryResponse = Schema.Struct({
+  endpoint: RelayManagedEndpoint,
+  endpointRuntime: RelayManagedEndpointRuntimeConfig,
+});
+export type RelayManagedEndpointRecoveryResponse = typeof RelayManagedEndpointRecoveryResponse.Type;
+
 export const RelayLinkProofRequest = Schema.Struct({
   challenge: Schema.String,
   relayIssuer: Schema.String,
@@ -212,6 +240,26 @@ const RelaySignedJwtRegisteredClaims = {
   iat: Schema.Int,
   exp: Schema.Int,
 } as const;
+
+export const RelayManagedEndpointRecoveryProofPayload = Schema.Union([
+  Schema.Struct({
+    ...RelaySignedJwtRegisteredClaims,
+    action: Schema.Literal("register"),
+    environmentId: EnvironmentId,
+    cloudUserId: TrimmedNonEmptyString,
+    tunnelId: TrimmedNonEmptyString,
+    origin: RelayManagedEndpointOrigin,
+  }),
+  Schema.Struct({
+    ...RelaySignedJwtRegisteredClaims,
+    action: Schema.Literal("recover"),
+    environmentId: EnvironmentId,
+    cloudUserId: TrimmedNonEmptyString,
+    origin: RelayManagedEndpointOrigin,
+  }),
+]);
+export type RelayManagedEndpointRecoveryProofPayload =
+  typeof RelayManagedEndpointRecoveryProofPayload.Type;
 
 export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
@@ -775,6 +823,14 @@ export type RelayEnvironmentConnectResponse = typeof RelayEnvironmentConnectResp
 export const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
 export type RelayEnvironmentStatusValue = typeof RelayEnvironmentStatusValue.Type;
 
+/**
+ * Why an environment is offline, when the relay knows more than "the host
+ * did not answer". `tunnel_released`: the relay deleted the environment's
+ * idle tunnel, and the host needs a current T3 Code build to get a new one.
+ */
+const RelayEnvironmentOfflineReason = Schema.Literals(["tunnel_released"]);
+type RelayEnvironmentOfflineReason = typeof RelayEnvironmentOfflineReason.Type;
+
 export const RelayEnvironmentStatusResponse = Schema.Struct({
   environmentId: EnvironmentId,
   endpoint: RelayManagedEndpoint,
@@ -782,6 +838,7 @@ export const RelayEnvironmentStatusResponse = Schema.Struct({
   checkedAt: TrimmedNonEmptyString,
   descriptor: Schema.optional(ExecutionEnvironmentDescriptor),
   error: Schema.optional(TrimmedNonEmptyString),
+  offlineReason: Schema.optional(RelayEnvironmentOfflineReason),
   traceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayEnvironmentStatusResponse = typeof RelayEnvironmentStatusResponse.Type;
@@ -815,6 +872,21 @@ export const RelayCloudEnvironmentHealthProofPayload = Schema.Struct({
 });
 export type RelayCloudEnvironmentHealthProofPayload =
   typeof RelayCloudEnvironmentHealthProofPayload.Type;
+
+/**
+ * Sent with every webhook the relay forwards, signed with the relay's mint key
+ * (`x-t3-relay-delivery`). The environment trusts the relay's delivery id,
+ * receive time and trace context only when this verifies, since its webhook
+ * URL can also be called directly.
+ */
+export const RelayHookDeliveryProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  deliveryId: TrimmedNonEmptyString,
+  receivedAt: TrimmedNonEmptyString,
+  hookId: TrimmedNonEmptyString,
+});
+export type RelayHookDeliveryProofPayload = typeof RelayHookDeliveryProofPayload.Type;
 
 export const RelayCloudEnvironmentHealthProof = TrimmedNonEmptyString;
 export type RelayCloudEnvironmentHealthProof = typeof RelayCloudEnvironmentHealthProof.Type;
@@ -1088,8 +1160,40 @@ const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
   .annotate(OpenApi.Description, "DPoP-authenticated client access to linked environments.")
   .middleware(RelayDpopClientAuth);
 
+export const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
+  holdWebhooksWhileOffline: Schema.Boolean,
+});
+export type RelayEnvironmentLinkPreferencesRequest =
+  typeof RelayEnvironmentLinkPreferencesRequest.Type;
+
+export const RelayWakeHeldHooksResponse = Schema.Struct({
+  /** True when the relay was holding requests and has started delivering them. */
+  pending: Schema.Boolean,
+});
+export type RelayWakeHeldHooksResponse = typeof RelayWakeHeldHooksResponse.Type;
+
 const RelayServerGroup = HttpApiGroup.make("server")
   .add(
+    HttpApiEndpoint.post(
+      "registerManagedEndpointRecovery",
+      "/v1/environments/:environmentId/tunnel/recovery",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+        }),
+        payload: RelayManagedEndpointRecoveryRegistrationRequest,
+        success: RelayManagedEndpointRecoveryRegistrationResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Register managed tunnel recovery without provisioning"),
+    HttpApiEndpoint.post("recoverManagedEndpoint", "/v1/environments/:environmentId/tunnel", {
+      params: Schema.Struct({
+        environmentId: EnvironmentId,
+      }),
+      payload: RelayManagedEndpointRecoveryRequest,
+      success: RelayManagedEndpointRecoveryResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Recover an environment's managed tunnel"),
     HttpApiEndpoint.post(
       "publishAgentActivity",
       "/v1/environments/:environmentId/threads/:threadId/agent-activity",
@@ -1103,9 +1207,51 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post(
+      "updateLinkPreferences",
+      "/v1/environments/:environmentId/link-preferences",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: RelayEnvironmentLinkPreferencesRequest,
+        success: RelayEnvironmentLinkPreferencesRequest,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
+      params: Schema.Struct({ environmentId: EnvironmentId }),
+      success: RelayWakeHeldHooksResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(
+      OpenApi.Summary,
+      "Deliver webhook requests held while the environment was offline now",
+    ),
   )
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
+
+/**
+ * Public, stateless webhook forwarding to an environment's managed tunnel.
+ * Unauthenticated: the token in the path is the environment's credential, and
+ * the relay only routes and forwards. Raw, so the body reaches the
+ * environment byte for byte and signatures still verify there. `endpointKey`
+ * names one managed endpoint (its tunnel's hash of user and environment), not
+ * the environment id, which any account can link.
+ */
+const RelayHookParams = Schema.Struct({
+  endpointKey: Schema.String,
+  hookId: Schema.String,
+  token: Schema.String,
+});
+const RELAY_HOOK_PATH = "/v1/hooks/:endpointKey/:hookId/:token";
+const relayHookEndpoint = { params: RelayHookParams } as const;
+const RelayHooksGroup = HttpApiGroup.make("hooks")
+  .add(
+    HttpApiEndpoint.post("forwardPost", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.put("forwardPut", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.patch("forwardPatch", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.get("forwardGet", RELAY_HOOK_PATH, relayHookEndpoint),
+  )
+  .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
@@ -1116,6 +1262,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,
+    RelayHooksGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

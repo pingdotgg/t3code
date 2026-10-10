@@ -413,6 +413,7 @@ export type IssuingCardholder = Resource<
  * ```
  *
  * @resource
+ * @product Issuing
  */
 export const IssuingCardholder = Resource<IssuingCardholder>(
   "Stripe.IssuingCardholder",

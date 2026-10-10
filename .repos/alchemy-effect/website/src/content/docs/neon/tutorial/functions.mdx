@@ -1,0 +1,191 @@
+---
+title: Protect and process uploads
+description: Verify JWTs, sign private uploads, and record real bucket events in Postgres.
+---
+
+The complete Effect implementation is `src/Api.ts`. Its class props resolve the shared resources and set `main: import.meta.url`; its initialization Effect builds clients without opening database pools. The Function bridge supplies a fresh request scope when handling HTTP or a bucket event.
+
+## Bind the database
+
+```diff lang="typescript"
++const db = yield* Neon.Connect(branch);
+```
+
+The callable `Binding.Service` returns lazy, redacted connection accessors and uses the Function's same-branch injected database configuration.
+
+## Create the SQL client
+
+```diff lang="typescript"
++const sql = yield* SQL.Postgres({ url: db.connectionString });
+```
+
+The client opens its pool lazily in the current request scope, rather than acquiring a disposable connection during Function initialization.
+
+## Bind the bucket
+
+```diff lang="typescript"
++const files = yield* Neon.ReadWriteBucket(uploads);
+```
+
+This client can inspect uploaded metadata and generate signed PUT and GET URLs without receiving the deployment account's API key.
+
+## Compose the implementation layers
+
+```diff lang="typescript"
++}).pipe(Effect.provide(Layer.mergeAll(
++  Neon.ConnectHttp,
++  Neon.ReadWriteBucketHttp,
++  Neon.BucketEventSourceHttp,
++))),
+```
+
+The Function initialization pipeline supplies all binding implementations in one `Effect.provide`; do not chain separate provider calls.
+
+## Verify the caller
+
+```diff lang="typescript"
++const verify = yield* authenticate;
++const owner = yield* Effect.tryPromise(() => verify(request.headers.get("authorization")));
++if (!owner) return yield* respond({ error: "Sign in again: your token is missing, invalid, or expired." }, 401);
+```
+
+The shared `makeAuthenticate` helper uses `jose` to verify EdDSA signatures against managed Auth's JWKS, the issuer and audience derived from its base URL, required subject and expiry claims, and a 15-minute maximum token age. A Neon Function URL is public; neither obscuring the URL nor requesting `functions:invoke` replaces this check.
+
+## Scope the journal to its owner
+
+```diff lang="typescript"
++const rows = yield* sql<UploadRecord>`
++  SELECT id, filename, object_key, content_type, expected_bytes, actual_bytes, status, created_at
++  FROM uploads WHERE owner_id = ${owner} ORDER BY created_at DESC LIMIT 100
++`;
+```
+
+Every read filters by the verified JWT subject; the API does not accept an owner ID from the request body. `UploadRecord` in `src/policy.ts` describes the native driver's database values.
+
+## Encode the journal response
+
+```diff lang="typescript"
++return yield* respond(yield* Effect.sync(() => rows.map(serializeUploadRow)));
+```
+
+The shared `serializeUploadRow` helper converts Postgres `bigint` byte counts to strings without losing precision and epoch-millisecond timestamps to ISO strings. Returning database rows directly fails once the journal contains a `bigint`, because JSON cannot encode it.
+
+## Validate a proposed upload
+
+```diff lang="typescript"
++const input = parseUpload(json);
++if (!input) return yield* respond({ error: "Choose a nonempty file up to 10 MiB with a valid content type." }, 400);
+```
+
+The shared pure validator checks filename, MIME type, and integer size before a row or a signed upload URL is created.
+
+## Generate the object identity
+
+```diff lang="typescript"
++const id = yield* Effect.sync(() => crypto.randomUUID());
++const key = objectKey(owner, id);
+```
+
+Application uploads receive random UUIDs under an encoded owner prefix; user-supplied filenames never become storage paths. These are runtime data IDs, not nondeterministic infrastructure names.
+
+## Sign the upload
+
+```diff lang="typescript"
++const url = yield* files.presignPut(key, { contentType: input.contentType, expiresIn: 120 });
+```
+
+The browser must PUT with that exact content type before the two-minute expiry. Do not log signed URLs or store them as permanent file addresses.
+
+## Persist the pending record
+
+```diff lang="typescript"
++yield* sql`
++  INSERT INTO uploads (id, owner_id, object_key, filename, content_type, expected_bytes)
++  VALUES (${id}, ${owner}, ${key}, ${input.filename}, ${input.contentType}, ${input.size})
++`;
+```
+
+The API commits the record before returning the signed URL, so the browser cannot upload before the event processor has a row to update.
+
+## Subscribe to actual uploads
+
+```diff lang="typescript"
++yield* Neon.BucketEventSource(uploads, {
++  name: "ProcessUploads",
++  prefix: "incoming/",
++}, processUpload);
+```
+
+The binding provisions a storage-object-created trigger and dispatches Neon's attested HTTP event to `processUpload`. This is not a browser callback, a fabricated event, or an undocumented queue guarantee.
+
+## Inspect stored metadata
+
+```diff lang="typescript"
++const object = yield* files.head(event.objectKey);
++if (!object) return yield* Effect.fail(new Error("Uploaded object is not readable yet"));
++const bytes = object.ContentLength ?? 0;
+```
+
+Inside `processUpload`, read the actual object before accepting its declared size and content type. A failed inspection remains a failed event invocation rather than a false success.
+
+## Commit the processing result
+
+```diff lang="typescript"
++yield* sql`
++  WITH delivery AS (
++    INSERT INTO upload_events (invocation_id, object_key)
++    VALUES (${event.invocationId}, ${event.objectKey})
++    ON CONFLICT DO NOTHING RETURNING invocation_id
++  )
++  UPDATE uploads SET actual_bytes = ${bytes}, processed_at = now(),
++    status = CASE WHEN expected_bytes = ${bytes} AND content_type = ${object.ContentType ?? ""}
++      THEN 'ready' ELSE 'rejected' END
++  WHERE object_key = ${event.objectKey} AND EXISTS (SELECT 1 FROM delivery)
++`;
+```
+
+This single atomic statement deduplicates the delivery and records `ready` or `rejected`; replaying the same invocation cannot apply the database transition twice.
+
+## Authorize the download lookup
+
+```diff lang="typescript"
++const [row] = yield* sql<UploadRecord>`SELECT * FROM uploads WHERE id = ${id} AND owner_id = ${owner}`;
+```
+
+After validating the UUID, require the row's owner to match the caller. Return 404 when absent and 409 unless its status is `ready`.
+
+## Sign a private download
+
+```diff lang="typescript"
++const url = yield* files.presignGet(row.object_key, { expiresIn: 60 });
+```
+
+Only an authorized, processed row receives a one-minute download capability; this does not make the bucket public.
+
+## Choose a native Fetch Function
+
+```diff lang="typescript"
++const api = yield* Neon.Function("Api", {
++  branch,
++  main: "./src/native.ts",
++  env: { APP_ORIGIN: appOrigin, UPLOAD_BUCKET: uploads.bucketName, AUTH_URL: auth.baseUrl, AUTH_JWKS_URL: auth.jwksUrl },
++});
+```
+
+The alternative in `alchemy.native.ts` uses ordinary `@neondatabase/serverless`, AWS S3 SDK clients, and `jose` in an asynchronous Fetch handler. Neon supplies the same-branch database and storage variables; only resource names and public Auth configuration are passed explicitly.
+
+## Wire the native upload route
+
+```diff lang="typescript"
++yield* Neon.FunctionTrigger("ProcessUploads", {
++  function: api,
++  name: "ProcessUploads",
++  type: "storage_object_created",
++  storageObjectCreated: { bucket: uploads, prefix: "incoming/" },
++  path: "/jobs/upload",
++});
+```
+
+The native `/jobs/upload` route validates the version, discriminator, bucket, prefix, trigger name, and invocation header before processing. Trusting `X-Neon-*` depends on Neon's edge stripping caller-supplied headers; it is not authentication for a generic local HTTP server.
+
+Continue with the [browser frontend](/neon/tutorial/frontend/).

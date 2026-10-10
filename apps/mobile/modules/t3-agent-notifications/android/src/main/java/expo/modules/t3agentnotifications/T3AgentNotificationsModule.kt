@@ -26,6 +26,14 @@ class T3AgentNotificationsModule : Module() {
       appContext.reactContext?.let { AgentNotifications.clear(it) }
     }
 
+    Function("showShowcaseActivity") { scheme: String, data: Map<String, String> ->
+      appContext.reactContext?.let { AgentNotifications.showcase(it, scheme, data) }
+    }
+
+    Function("setThreadOnScreen") { path: String? ->
+      AgentNotifications.setThreadOnScreen(path)
+    }
+
     Function("openLiveUpdateSettings") {
       val context = appContext.reactContext
       if (context == null || Build.VERSION.SDK_INT < 36) {

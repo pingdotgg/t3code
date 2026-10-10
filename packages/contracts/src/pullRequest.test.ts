@@ -92,7 +92,7 @@ describe("PullRequestListResult", () => {
   it("round-trips through the JSON codec the RPC serializes with", () => {
     const codec = Schema.toCodecJson(PullRequestListResult);
 
-    const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
+    const decoded = Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
 
     expect(decoded).toStrictEqual(LIST_RESULT);
   });

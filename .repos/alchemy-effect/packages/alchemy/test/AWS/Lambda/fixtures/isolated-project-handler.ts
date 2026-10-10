@@ -1,6 +1,6 @@
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { isolatedProject } from "../../../IsolatedProject.ts";
 
 /**

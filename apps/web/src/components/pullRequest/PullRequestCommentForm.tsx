@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The comment half of the floating composer: a remark on the pull request itself, optionally
  * the one that closes or reopens it. The popover around it belongs to PullRequestComposer.
@@ -6,7 +7,6 @@ import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3to
 import { SendIcon } from "lucide-react";
 import { useState, type RefObject } from "react";
 
-import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
@@ -38,7 +38,9 @@ export function PullRequestCommentForm({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
   const followUpAction =
     detail.state === "open" &&
     detail.capabilities.actions.includes("close") &&
@@ -85,7 +87,6 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <Textarea
         ref={textareaRef}
-        className="[&_textarea]:max-h-64"
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={submitting !== null || actionPending}

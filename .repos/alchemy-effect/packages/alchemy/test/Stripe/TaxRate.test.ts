@@ -114,7 +114,10 @@ test.provider(
       const deactivated = yield* GetTaxRate({ tax_rate: created.id });
       expect(deactivated.active).toEqual(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:taxrate", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -163,7 +166,10 @@ test.provider(
       const gone = yield* waitUntilInactive(replaced.id);
       expect(gone).toEqual("inactive");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:taxrate", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -196,5 +202,8 @@ test.provider(
       const inactive = yield* waitUntilInactive(deployed.id);
       expect(inactive).toEqual("inactive");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:taxrate", "live"],
+    timeout: 120_000,
+  },
 );

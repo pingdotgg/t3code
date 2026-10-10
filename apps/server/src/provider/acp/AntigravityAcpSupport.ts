@@ -13,21 +13,22 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   | "authMethodId"
+  | "authenticateEagerly"
   | "cancelBehavior"
   | "clientCapabilities"
   | "onStderr"
@@ -63,6 +64,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
     AcpSessionRuntime.layer({
       ...input,
       authMethodId: input.authMethod ?? "oauth-personal",
+      authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientCapabilities: {
@@ -100,7 +102,7 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-export function antigravityModelOptions(
+function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
   const model = configOptions.find((option) => option.id === "model");
@@ -114,7 +116,7 @@ export function antigravityModelOptions(
  * account offers it, so T3 can pick a newer model than the one Google marks
  * current. Otherwise the agent's current selection stands.
  */
-export function resolveAntigravityModel(input: {
+function resolveAntigravityModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
   readonly defaultModel?: string | undefined;
@@ -243,10 +245,14 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".ini",
   ".conf",
 ]);
-export const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
+const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 
-/** Sends uploads as native ACP content instead of workspace path hints. */
+/**
+ * Sends supported uploads as native ACP content. Other files, and native
+ * candidates over their limits, reach the agent through the saved path
+ * ProviderService puts in the text block.
+ */
 export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(function* (input: {
   readonly input: ProviderSendTurnInput["input"];
   readonly attachments: ProviderSendTurnInput["attachments"];
@@ -280,7 +286,9 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       (mimeType.startsWith("text/") ||
         TEXT_MIME_TYPES.has(mimeType) ||
         TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
-    if (!image && !audio && !pdf && !textFile) {
+    const isPathOnly =
+      attachment.type === "file" && (isPastedText || (!audio && !pdf && !textFile));
+    if (attachment.type === "image" && !image) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Antigravity does not support '${attachment.name}' (${attachment.mimeType}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file.`,
       );
@@ -303,26 +311,30 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           ),
         ),
       );
-    if (isPastedText) {
-      if (info.type !== "File") {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          `Could not read attachment '${attachment.name}'.`,
-        );
-      }
-      continue;
+    if (info.type !== "File") {
+      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+        `Could not read attachment '${attachment.name}'.`,
+      );
     }
+    if (isPathOnly) continue;
     const size = Number(info.size);
     const limit = image
       ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
       : audio
         ? ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES
         : pdf
-          ? PROVIDER_SEND_TURN_MAX_FILE_BYTES
+          ? MAX_TOTAL_ATTACHMENT_BYTES
           : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
+    if (
+      attachment.type === "file" &&
+      (size > limit || totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES)
+    ) {
+      continue;
+    }
     totalBytes += size;
-    if (info.type !== "File" || size > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+    if (size > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Attachment '${attachment.name}' is too large. Antigravity accepts text files up to 1 MiB, images up to 10 MiB, audio up to 20 MiB, and 50 MiB total attachments.`,
+        `Image '${attachment.name}' is too large. Antigravity accepts images up to 10 MiB and 50 MiB of native attachments per message.`,
       );
     }
     const uri = yield* path.toFileUrl(attachmentPath).pipe(

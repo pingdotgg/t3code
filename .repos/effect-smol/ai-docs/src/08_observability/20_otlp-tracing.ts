@@ -5,8 +5,8 @@
  */
 import { NodeRuntime } from "@effect/platform-node"
 import { Context, Effect, Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
-import { OtlpLogger, OtlpSerialization, OtlpTracer } from "effect/unstable/observability"
+import { FetchHttpClient } from "effect/http"
+import { OtlpLogger, OtlpSerialization, OtlpTracer } from "effect/observability"
 
 // Configure OTLP span export.
 export const OtlpTracingLayer = OtlpTracer.layer({

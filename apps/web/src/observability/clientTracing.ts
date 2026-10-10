@@ -2,29 +2,30 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import { HttpClient } from "effect/unstable/http";
-import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { HttpClient } from "effect/http";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import * as ClientTracer from "./clientTracer";
-import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3-web",
+  serviceName: "t3code-web",
   attributes: {
+    "service.namespace": "t3code",
     "service.runtime": "t3-web",
     "service.mode": isElectron ? "electron" : "browser",
     "service.version": APP_VERSION,
   },
 } as const;
 
-const delegateRuntimeLayer = Layer.mergeAll(
-  primaryEnvironmentHttpLayer,
+const layerDelegateRuntime = Layer.mergeAll(
+  PrimaryEnvironmentHttpLayer.layer,
   OtlpExporter.layerFlusher,
   OtlpSerialization.layerJson,
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
@@ -69,7 +70,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
 
   await disposeTracerRuntime(previousRuntime, previousScope);
 
-  const runtime = ManagedRuntime.make(delegateRuntimeLayer);
+  const runtime = ManagedRuntime.make(layerDelegateRuntime);
   const scope = runtime.runSync(Scope.make());
 
   const delegateResult = await settleAsyncResult(() =>

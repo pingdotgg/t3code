@@ -5,9 +5,9 @@
  */
 import { NodeClusterSocket, NodeRuntime } from "@effect/platform-node"
 import { Effect, Layer, Ref, Schema } from "effect"
-import { ClusterSchema, Entity, TestRunner } from "effect/unstable/cluster"
-import { Rpc } from "effect/unstable/rpc"
-import type { SqlClient } from "effect/unstable/sql"
+import { ClusterSchema, Entity, TestRunner } from "effect/cluster"
+import { Rpc } from "effect/rpc"
+import type { SqlClient } from "effect/sql"
 
 export const Increment = Rpc.make("Increment", {
   payload: { amount: Schema.Int },

@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as NodeFs from "node:fs/promises";
 import * as NodePath from "node:path";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
@@ -139,7 +139,7 @@ const makePreviewContext = () =>
     Layer.provide(Layer.merge(Credentials.fromEnv(), FetchHttpClient.layer)),
   );
 
-const closeScope = async (scope: Scope.Scope) => {
+const closeScope = async (scope: Scope.Closeable) => {
   await Effect.runPromiseExit(
     Scope.closeUnsafe(scope, Exit.void) ?? Effect.void,
   );

@@ -8,6 +8,6 @@ export const UploadPartCopyHttp = Layer.effect(
   makeBucketHttpBinding({
     tag: "AWS.S3.UploadPartCopy",
     operation: S3.uploadPartCopy,
-    actions: ["s3:PutObject", "s3:GetObject"],
+    actions: ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"],
   }),
 );

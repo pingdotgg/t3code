@@ -1,6 +1,6 @@
 import * as Equal from "../Equal.ts"
 import { format } from "../Formatter.ts"
-import { dual, pipe } from "../Function.ts"
+import { dual } from "../Function.ts"
 import * as Hash from "../Hash.ts"
 import { NodeInspectSymbol, toJson } from "../Inspectable.ts"
 import * as Option from "../Option.ts"
@@ -29,17 +29,19 @@ const trieVariance = {
   _Value: (_: never) => _
 }
 
+const trieSeed = Hash.string(TrieTypeId)
+
 const TrieProto: TR.Trie<unknown> = {
   [TrieTypeId]: trieVariance,
   [Symbol.iterator]<V>(this: TrieImpl<V>): Iterator<[string, V]> {
     return new TrieIterator(this, (k, v) => [k, v], () => true)
   },
   [Hash.symbol](this: TR.Trie<unknown>): number {
-    let hash = Hash.hash(TrieTypeId)
+    let hash = trieSeed
     for (const item of this) {
-      hash ^= pipe(Hash.hash(item[0]), Hash.combine(Hash.hash(item[1])))
+      hash ^= Hash.combine(Hash.hash(item[0]), Hash.hash(item[1]))
     }
-    return hash
+    return Hash.optimize(hash)
   },
   [Equal.symbol]<V>(this: TrieImpl<V>, that: unknown): boolean {
     if (isTrie(that) && size(this) === size(that)) {

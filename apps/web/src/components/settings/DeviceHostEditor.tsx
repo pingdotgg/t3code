@@ -72,7 +72,7 @@ export function DeviceHostEditor({
             Hosts on the same machine are skipped.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <label className="block space-y-1.5 text-sm">
             <span>Name</span>
             <Input

@@ -105,7 +105,7 @@ export function ProjectIconPickerDialog({
           <DialogTitle>Choose project icon</DialogTitle>
           <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
         </DialogHeader>
-        <DialogPanel className="flex min-h-0 flex-col gap-4">
+        <DialogPanel className="flex min-h-0 flex-col">
           <ToggleGroup
             aria-label="Icon type"
             variant="segmented"
@@ -131,7 +131,7 @@ export function ProjectIconPickerDialog({
                     aria-label={option.label}
                     aria-pressed={color === option.value}
                     className={cn(
-                      "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       color === option.value && "border-foreground/64",
                     )}
                     onClick={() => setColor(option.value)}
@@ -161,7 +161,7 @@ export function ProjectIconPickerDialog({
                       aria-label={iconLabel(name)}
                       aria-pressed={iconName === name}
                       className={cn(
-                        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         iconName === name && "border-border bg-accent",
                         selectedColorClassName,
                       )}
@@ -211,7 +211,7 @@ export function ProjectIconPickerDialog({
                       aria-label={option.label}
                       aria-pressed={emoji === option.emoji}
                       className={cn(
-                        "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                        "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         emoji === option.emoji && "border-border bg-accent",
                       )}
                       onClick={() => setEmoji(option.emoji)}

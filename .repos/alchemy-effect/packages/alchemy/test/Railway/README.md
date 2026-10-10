@@ -1,15 +1,16 @@
 # Railway GraphQL migration verification
 
-The providers use `@distilled.cloud/railway`. Every object operation
-supplies its required projection. Shared selections describe resource
-attributes; reconcile selections add only fields needed for decisions.
-Nested connection helpers in `src/Railway/GraphQL.ts` paginate all results
-and reject repeated cursors. Service listing walks actual environment service
-instances instead of probing every service/environment combination.
+The providers use `@distilled.cloud/railway`. Every operation is a
+`Query.fn` whose builder reads only the fields it needs; shared projection
+functions describe resource attributes, and reconcile plans add only fields
+needed for decisions. Nested connection helpers in `src/Railway/GraphQL.ts`
+take a projection function and paginate all results with `Query.items`.
+Service listing walks actual environment service instances instead of
+probing every service/environment combination.
 
 The SDK's [client guide](../../../../submodules/distilled/packages/railway/README.md)
-describes selection composition, typed aggregate errors, report mode, and
-retry behavior. Its [patch evidence](../../../../submodules/distilled/packages/railway/patches/graphql/README.md)
+describes `Query.fn` plans, pagination, per-root typed errors, and retry
+behavior. Its [patch evidence](../../../../submodules/distilled/packages/railway/patches/graphql/README.md)
 records observed wire errors and the contracts generated from them.
 
 ## Run isolated live tests

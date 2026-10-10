@@ -1,10 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -34,7 +30,7 @@ const cookie = {
  * Dies if the import reaches session work: every case here covers a request
  * that must be rejected before a cookie is read or written.
  */
-const rejectedBeforeSession = Layer.succeed(
+const layerRejectedBeforeSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
     getPartition: () => Effect.die("getPartition must not be reached"),
@@ -52,10 +48,10 @@ const rejectedBeforeSession = Layer.succeed(
 const withImporter = Effect.fnUntraced(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-" });
-  const environment = Layer.succeed(HostProcessEnvironment, { HOME: home });
+  const layerEnvironment = Layer.succeed(HostProcess.Environment, { HOME: home });
   const context = yield* sourcePathContext.pipe(
-    Effect.provideService(HostProcessEnvironment, { HOME: home }),
-    Effect.provideService(HostProcessPlatform, "darwin"),
+    Effect.provideService(HostProcess.Environment, { HOME: home }),
+    Effect.provideService(HostProcess.Platform, "darwin"),
   );
   const root = helium.userDataDirectory(context);
   if (root === undefined) throw new Error("Helium has no macOS user-data directory");
@@ -67,10 +63,10 @@ const withImporter = Effect.fnUntraced(function* () {
   const importer = yield* BrowserImport.BrowserImport.pipe(
     Effect.provide(
       BrowserImport.layer.pipe(
-        Layer.provide(rejectedBeforeSession),
-        Layer.provide(environment),
-        Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
-        Layer.provide(Layer.succeed(HostProcessExecutablePath, "/Applications/T3 Code.app")),
+        Layer.provide(layerRejectedBeforeSession),
+        Layer.provide(layerEnvironment),
+        Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+        Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/Applications/T3 Code.app")),
         Layer.provide(NodeServices.layer),
       ),
     ),

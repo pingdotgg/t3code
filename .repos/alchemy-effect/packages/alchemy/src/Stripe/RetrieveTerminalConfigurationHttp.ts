@@ -8,6 +8,7 @@ import { makeHttpStripeIdBinding } from "./StripeHttp.ts";
  * on the Function or Worker Effect.
  *
  * @layer
+ * @product Terminal
  * @provides Stripe.RetrieveTerminalConfiguration
  */
 export const RetrieveTerminalConfigurationHttp = Layer.effect(

@@ -1,19 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  HostProcessIsExecutable,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -24,8 +21,8 @@ const diagnose = (
   platform: NodeJS.Platform = "darwin",
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
-    Effect.provideService(HostProcessEnvironment, environment),
-    Effect.provideService(HostProcessPlatform, platform),
+    Effect.provideService(HostProcess.Environment, environment),
+    Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -131,7 +128,55 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
-  }).pipe(Effect.provide(NodePath.layer)),
+  }).pipe(Effect.provide(NodePath.layerPosix)),
+);
+
+it.effect(
+  "recovers an owned Linux runtime directory without overriding explicit environments",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const stat = yield* fs.stat(directory);
+      for (const [platform, uid, runtimeDir, type, owner, expected] of [
+        ["linux", 1000, undefined, "Directory", 1000, "/run/user/1000"],
+        ["linux", 1000, "/custom/runtime", "Directory", 1000, "/custom/runtime"],
+        ["linux", 1000, "", "Directory", 1000, ""],
+        ["linux", 1000, undefined, "Directory", 1001, undefined],
+        ["linux", 1000, undefined, "File", 1000, undefined],
+        ["linux", undefined, undefined, "Directory", 1000, undefined],
+        ["darwin", 1000, undefined, "Directory", 1000, undefined],
+        ["win32", 1000, undefined, "Directory", 1000, undefined],
+      ] as const) {
+        const environment = { PATH: "/usr/bin", XDG_RUNTIME_DIR: runtimeDir };
+        const result = yield* LocalDeviceHost.__testing.hubEnvironment(environment).pipe(
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(HostProcess.UserId, uid),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              stat: (path) => {
+                expect(path).toBe("/run/user/1000");
+                return Effect.succeed({ ...stat, type, uid: Option.some(owner) });
+              },
+            }),
+          ),
+        );
+        expect(result.XDG_RUNTIME_DIR).toBe(expected);
+        expect(result.PATH).toBe("/usr/bin");
+        expect(result.FORCE_COLOR).toBe("0");
+        expect(result.NO_COLOR).toBe("1");
+        expect(environment.XDG_RUNTIME_DIR).toBe(runtimeDir);
+      }
+      const missing = yield* LocalDeviceHost.__testing
+        .hubEnvironment({})
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.UserId, 1000),
+          Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        );
+      expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -142,8 +187,8 @@ it.effect(
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
         Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-        Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
@@ -163,7 +208,7 @@ it.effect(
       expect(yield* host.current).toBeNull();
       const error = yield* host
         .ensureReady(() => Effect.die("Must not install without Node"))
-        .pipe(Effect.flip, Effect.provideService(HostProcessIsExecutable, true));
+        .pipe(Effect.flip, Effect.provideService(HostProcess.IsExecutable, true));
       expect(error.message).toContain("Local device support requires Node.js");
       expect(error.message).toContain("Install Node.js");
       yield* host.stop;
