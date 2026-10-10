@@ -38,11 +38,7 @@ import * as Stream from "effect/Stream";
 
 import { normalizeContributionStatusText } from "@t3tools/provider-core/server/ContributionStatusStore";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
-import {
-  PluginHostCallError,
-  type PluginHostMethod,
-  PluginSupervisor,
-} from "./PluginSupervisor.ts";
+import * as PluginSupervisor from "./PluginSupervisor.ts";
 import { makeTokenBucket } from "./pluginTokenBucket.ts";
 
 /**
@@ -76,9 +72,6 @@ const encodedBytes = (notification: PluginNotification) =>
 /** Elapsed time, which a wall clock change does not move. */
 const elapsedMillis = Effect.map(Clock.monotonicTimeNanos, (nanos) => Number(nanos / 1_000_000n));
 
-const hostError = (message: string) => new PluginHostCallError({ message });
-const STOPPED = hostError("The plugin was stopped.");
-
 interface Retained {
   readonly notification: PluginNotification;
   /** In `elapsedMillis`, not wall time. */
@@ -101,7 +94,7 @@ export class PluginNotifications extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("PluginNotifications.make")(function* () {
-  const supervisor = yield* PluginSupervisor;
+  const supervisor = yield* PluginSupervisor.PluginSupervisor;
   const crypto = yield* Crypto.Crypto;
   const epoch = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   // Every frame is the whole set, so a slow subscriber only skips intermediate ones.
@@ -165,24 +158,28 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
     return generation;
   });
 
-  const show: PluginHostMethod = ({ registration, input, admitted, lifetime }) =>
+  const show: PluginSupervisor.PluginHostMethod = ({ registration, input, admitted, lifetime }) =>
     Effect.gen(function* () {
       if (!registration.manifest.capabilities.includes(PLUGIN_NOTIFICATIONS_CAPABILITY))
-        return yield* hostError(
-          `The plugin did not declare the "${PLUGIN_NOTIFICATIONS_CAPABILITY}" capability.`,
-        );
+        return yield* new PluginSupervisor.PluginHostCallError({
+          message: `The plugin did not declare the "${PLUGIN_NOTIFICATIONS_CAPABILITY}" capability.`,
+        });
       const request = yield* decodeShowInput(input).pipe(
-        Effect.mapError(() =>
-          hostError(
-            `A notification needs a title string; body is a string; threadId is a string of at most ${PLUGIN_NOTIFICATION_LIMITS.threadIdMaxLength} characters; tone is neutral, info, success, warning or error.`,
-          ),
+        Effect.mapError(
+          () =>
+            new PluginSupervisor.PluginHostCallError({
+              message: `A notification needs a title string; body is a string; threadId is a string of at most ${PLUGIN_NOTIFICATION_LIMITS.threadIdMaxLength} characters; tone is neutral, info, success, warning or error.`,
+            }),
         ),
       );
       const title = normalizeContributionStatusText(
         request.title,
         PLUGIN_NOTIFICATION_TITLE_MAX_LENGTH,
       );
-      if (title.length === 0) return yield* hostError("The notification title is empty.");
+      if (title.length === 0)
+        return yield* new PluginSupervisor.PluginHostCallError({
+          message: "The notification title is empty.",
+        });
       const body =
         request.body === undefined
           ? ""
@@ -201,18 +198,21 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
       // sequence (an ISO timestamp is fixed width), so the record sent is never larger.
       const widest = record(Number.MAX_SAFE_INTEGER, yield* Clock.currentTimeMillis);
       if (encodedBytes(widest) > PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES)
-        return yield* hostError(
-          `The notification is too large: at most ${PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES} bytes encoded.`,
-        );
+        return yield* new PluginSupervisor.PluginHostCallError({
+          message: `The notification is too large: at most ${PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES} bytes encoded.`,
+        });
       const generation = yield* generationOf(lifetime);
       if (!(yield* generation.bucket.take))
-        return yield* hostError(
-          `Too many notifications: at most ${PLUGIN_NOTIFICATION_LIMITS.burst} at once, then one every ${PLUGIN_NOTIFICATION_LIMITS.refillMillis / 1000} seconds.`,
-        );
+        return yield* new PluginSupervisor.PluginHostCallError({
+          message: `Too many notifications: at most ${PLUGIN_NOTIFICATION_LIMITS.burst} at once, then one every ${PLUGIN_NOTIFICATION_LIMITS.refillMillis / 1000} seconds.`,
+        });
       return yield* lock.withPermit(
         Effect.gen(function* () {
           // Checked under the lock, so a withdrawal never misses a notification it races.
-          if (generation.closed) return yield* STOPPED;
+          if (generation.closed)
+            return yield* new PluginSupervisor.PluginHostCallError({
+              message: "The plugin was stopped.",
+            });
           yield* admitted;
           const now = yield* elapsedMillis;
           sequence += 1;
