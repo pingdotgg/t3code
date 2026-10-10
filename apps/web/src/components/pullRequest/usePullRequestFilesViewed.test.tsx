@@ -4,6 +4,7 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -41,11 +42,17 @@ const reference: PullRequestRef = {
   repository: "acme/web",
   number: 42,
 };
-const paths = ["a.ts"];
+const paths = ["a.ts", "b.ts"];
 
 /** What the host answers, as a fresh object each time: a read is only a read if it is a new one. */
 function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesViewedResult {
-  return { files: [{ path: "a.ts", state }], truncated: false };
+  return {
+    files: [
+      { path: "a.ts", state },
+      { path: "b.ts", state: "unviewed" },
+    ],
+    truncated: false,
+  };
 }
 
 let renderer: ReactTestRenderer | null = null;
@@ -157,5 +164,28 @@ describe("a mark the host has not answered for yet", () => {
 
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isStale("a.ts")).toBe(false);
+  });
+});
+
+describe("a failed batch that the host partly applied", () => {
+  it("refreshes the host and accepts the applied marks", async () => {
+    setFilesViewed.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("partial batch"))),
+    );
+    // A fresh host read contains the first applied alias, while the refused alias stays unviewed.
+    host.refresh.mockImplementation(() => {
+      host.data = answer("viewed");
+      renderer!.update(
+        <StrictMode>
+          <Surface />
+        </StrictMode>,
+      );
+    });
+    view().setViewed("a.ts", true);
+    view().setViewed("b.ts", true);
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(view().isViewed("a.ts")).toBe(true);
+    expect(view().isViewed("b.ts")).toBe(false);
+    expect(view().viewedCount).toBe(1);
   });
 });
