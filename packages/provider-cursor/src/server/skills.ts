@@ -9,7 +9,7 @@
  * @module provider/Drivers/CursorSkills
  */
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +19,9 @@ import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { skillRootsFor } from "@t3tools/provider-core/server/AgentSkillFolders";
+
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
@@ -225,13 +228,14 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     environment.HOME?.trim() ||
     environment.USERPROFILE?.trim() ||
     (yield* HostProcess.HomeDirectory);
-  const rootsBelow = (base: string, scope: "user" | "project") => [
-    { directory: path.join(base, ".cursor", "skills"), scope },
-    { directory: path.join(base, ".agents", "skills"), scope },
-    { directory: path.join(base, ".codex", "skills"), scope },
-    { directory: path.join(base, ".claude", "skills"), scope },
-  ];
-  const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+  const roots = skillRootsFor(CURSOR_DRIVER).flatMap(
+    (root): Array<{ directory: string; scope: "user" | "project" }> => {
+      if (root.scope === "global") {
+        return [{ directory: path.join(userHome, root.folder), scope: "user" }];
+      }
+      return cwd ? [{ directory: path.join(cwd, root.folder), scope: "project" }] : [];
+    },
+  );
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {

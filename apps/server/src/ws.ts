@@ -190,6 +190,7 @@ import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as SkillCatalog from "./skills/SkillCatalog.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -1284,6 +1285,7 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const skillCatalog = yield* SkillCatalog.SkillCatalog;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2172,6 +2174,8 @@ const layerWsRpc = (
               }),
             ),
           ),
+        [WS_METHODS.serverListSkills]: (input) => skillCatalog.list(input),
+        [WS_METHODS.serverGetSkill]: (input) => skillCatalog.get(input),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
             // Only explicit catalog refreshes bypass T3's caches. Workspace

@@ -1170,6 +1170,14 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
+    listSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:list-skills",
+      tag: WS_METHODS.serverListSkills,
+    }),
+    getSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-skill",
+      tag: WS_METHODS.serverGetSkill,
+    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,

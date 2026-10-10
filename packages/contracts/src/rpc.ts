@@ -325,6 +325,13 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  SkillGetInput,
+  SkillGetResult,
+  SkillListInput,
+  SkillListResult,
+  SkillRequestError,
+} from "./skills.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -468,6 +475,8 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
+  serverListSkills: "server.listSkills",
+  serverGetSkill: "server.getSkill",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -598,6 +607,18 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerListSkillsRpc = Rpc.make(WS_METHODS.serverListSkills, {
+  payload: SkillListInput,
+  success: SkillListResult,
+  error: Schema.Union([SkillRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetSkillRpc = Rpc.make(WS_METHODS.serverGetSkill, {
+  payload: SkillGetInput,
+  success: SkillGetResult,
+  error: Schema.Union([SkillRequestError, EnvironmentAuthorizationError]),
 });
 
 const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -1839,6 +1860,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsServerListSkillsRpc,
+  WsServerGetSkillRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,

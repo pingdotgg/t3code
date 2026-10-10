@@ -724,6 +724,44 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  // The Skills settings page reads the same folders from a shared table, so a change to the
+  // table that reorders or adds a folder would change what the `$` picker offers.
+  it.effect("reads the config folder first, then the project's .claude/skills, and no others", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const folders = [
+        { label: "config", skills: path.join(configDir, "skills") },
+        { label: "project .claude", skills: path.join(workspace, ".claude", "skills") },
+      ];
+      const ignored = [".agents/skills", ".codex/skills", ".cursor/skills", ".gemini/skills"];
+      for (const { label, skills } of folders) {
+        yield* writeSkill(skills, "probe", `---\ndescription: ${label}\n---\n`);
+      }
+      for (const folder of ignored) {
+        yield* writeSkill(
+          path.join(workspace, folder),
+          "probe",
+          "---\ndescription: ignored\n---\n",
+        );
+      }
+
+      // Each folder wins until its skill is removed, so the order is the folders' order.
+      for (const { label, skills } of folders) {
+        const found = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+        assert.deepEqual(
+          found.map((skill) => [skill.name, skill.description]),
+          [["probe", label]],
+        );
+        yield* fs.remove(path.join(skills, "probe"), { recursive: true });
+      }
+      assert.deepEqual(yield* discoverClaudeSkills({ homePath: configDir }, workspace), []);
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

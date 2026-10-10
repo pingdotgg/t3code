@@ -60,6 +60,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("reads skill folders and SKILL.md text under the filesystem read scope", () => {
+    for (const method of [WS_METHODS.serverListSkills, WS_METHODS.serverGetSkill]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    }
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,
