@@ -176,7 +176,11 @@ diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
 index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb2151a712bf0 100644
 --- a/lib/typescript/src/types.d.ts
 +++ b/lib/typescript/src/types.d.ts
-@@ -1091,6 +1091,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -864,1 +864,3 @@
+     sharesBackground?: boolean;
++    /** Native bar axis preference on iOS 27.1 and later. */
++    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
+@@ -1091,6 +1093,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
      type: 'custom';
@@ -190,15 +194,15 @@ index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb215
      /**
       * A React Element to display as the item.
       */
-@@ -864,1 +864,3 @@
-     sharesBackground?: boolean;
-+    /** Native bar axis preference on iOS 27.1 and later. */
-+    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
 diff --git a/src/types.tsx b/src/types.tsx
 index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9eb16f1a80 100644
 --- a/src/types.tsx
 +++ b/src/types.tsx
-@@ -1156,6 +1156,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -920,1 +920,3 @@
+   sharesBackground?: boolean;
++  /** Native bar axis preference on iOS 27.1 and later. */
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
+@@ -1156,6 +1158,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
    type: 'custom';
@@ -212,10 +216,6 @@ index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9e
    /**
     * A React Element to display as the item.
     */
-@@ -920,1 +920,3 @@
-   sharesBackground?: boolean;
-+  /** Native bar axis preference on iOS 27.1 and later. */
-+  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
 diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
 index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51672d7d0e 100644
 --- a/src/views/useHeaderConfigProps.tsx
