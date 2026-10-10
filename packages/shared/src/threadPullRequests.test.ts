@@ -298,17 +298,41 @@ describe("resolveThreadPullRequestChains", () => {
 });
 
 describe("chain selection and badge state", () => {
+  it("counts each status once and keeps unsynced and dismissed links distinct", () => {
+    expect(
+      resolveThreadPullRequestBadge([
+        link(1, { snapshot: snapshot({ state: "open" }) }),
+        link(2, { snapshot: snapshot({ state: "open", isDraft: true }) }),
+        link(3, { snapshot: snapshot({ state: "closed" }) }),
+        link(4, { snapshot: snapshot({ state: "merged", isDraft: true }) }),
+        link(5, { snapshot: null }),
+        link(6, { snapshot: null, source: "stack-dismissed" }),
+      ]),
+    ).toMatchObject({
+      kind: "pull-request",
+      others: 4,
+      statusSummary: "1 open · 1 draft · 1 closed · 1 merged · 1 pending",
+    });
+  });
+
+  it("does not count links awaiting their first snapshot as open", () => {
+    expect(resolveThreadPullRequestBadge([link(1), link(2)])).toMatchObject({
+      kind: "pull-request",
+      statusSummary: "2 pending",
+    });
+  });
+
   it.each([
-    ["open", false, "open", false, "open"],
-    ["closed", false, "closed", false, "closed"],
-    ["open", true, "open", true, "draft"],
-    ["open", false, "open", true, "open"],
-    ["closed", false, "open", true, "open"],
-    ["merged", false, "merged", false, "merged"],
-    ["merged", false, "closed", true, "closed"],
+    ["open", false, "open", false, "open", "2 open"],
+    ["closed", false, "closed", false, "closed", "2 closed"],
+    ["open", true, "open", true, "draft", "2 draft"],
+    ["open", false, "open", true, "open", "1 open · 1 draft"],
+    ["closed", false, "open", true, "open", "1 draft · 1 closed"],
+    ["merged", false, "merged", false, "merged", "2 merged"],
+    ["merged", false, "closed", true, "closed", "1 closed · 1 merged"],
   ] as const)(
     "aggregates %s (draft %s) and %s (draft %s) as %s",
-    (firstState, firstDraft, secondState, secondDraft, state) => {
+    (firstState, firstDraft, secondState, secondDraft, state, statusSummary) => {
       for (const stacked of [false, true]) {
         const links = [
           link(1, {
@@ -326,7 +350,7 @@ describe("chain selection and badge state", () => {
         expect(resolveThreadPullRequestBadge(links)).toEqual(
           stacked
             ? { kind: "stack", layers: 2, state }
-            : { kind: "pull-request", others: 1, state },
+            : { kind: "pull-request", others: 1, state, statusSummary },
         );
       }
     },
@@ -394,6 +418,7 @@ describe("chain selection and badge state", () => {
       kind: "pull-request",
       others: 2,
       state: "open",
+      statusSummary: "1 closed · 1 merged · 1 pending",
     });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
@@ -429,6 +454,7 @@ describe("chain selection and badge state", () => {
       kind: "pull-request",
       others: 1,
       state: "open",
+      statusSummary: "2 open",
     });
   });
 

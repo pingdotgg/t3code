@@ -87,24 +87,25 @@ describe("presentThreadLinkedPullRequests", () => {
   it("counts unrelated links without labelling them a stack", () => {
     expect(presentThreadLinkedPullRequests([linkedPr(1), linkedPr(2)])).toMatchObject({
       kind: "pull-request",
-      label: "+2",
+      label: "2 open",
       others: 1,
-      state: "open",
+      state: null,
       isDraft: false,
-      textClassName: "text-adaptive-emerald-600-400",
+      textClassName: "text-foreground-muted",
+      accessibilityLabel: "2 linked pull requests: 2 open",
     });
   });
 
   it.each([
-    ["closed", false, "closed", false, "closed", false, "text-adaptive-rose-600-400"],
-    ["open", true, "open", true, "open", true, "text-foreground-muted"],
-    ["open", true, "open", false, "open", false, "text-adaptive-emerald-600-400"],
-    ["closed", false, "open", false, "open", false, "text-adaptive-emerald-600-400"],
-    ["merged", false, "merged", false, "merged", false, "text-adaptive-violet-600-400"],
-    ["closed", false, "merged", false, "closed", false, "text-adaptive-rose-600-400"],
+    ["closed", false, "closed", false, "2 closed"],
+    ["open", true, "open", true, "2 draft"],
+    ["open", true, "open", false, "1 open · 1 draft"],
+    ["closed", false, "open", false, "1 open · 1 closed"],
+    ["merged", false, "merged", false, "2 merged"],
+    ["closed", false, "merged", false, "1 closed · 1 merged"],
   ] as const)(
-    "colors linked %s (draft %s) and %s (draft %s) by their aggregate state",
-    (firstState, firstDraft, secondState, secondDraft, state, isDraft, textClassName) => {
+    "counts linked %s (draft %s) and %s (draft %s) separately",
+    (firstState, firstDraft, secondState, secondDraft, summary) => {
       const first = linkedPr(1);
       const second = linkedPr(2);
       expect(
@@ -116,11 +117,42 @@ describe("presentThreadLinkedPullRequests", () => {
           },
         ]),
       ).toMatchObject({
-        label: "+2",
-        state,
-        isDraft,
-        textClassName,
-        accessibilityLabel: `2 linked pull requests, overall ${isDraft ? "draft" : state}`,
+        label: summary,
+        state: null,
+        isDraft: false,
+        textClassName: "text-foreground-muted",
+        accessibilityLabel: `2 linked pull requests: ${summary}`,
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "counts three closed PRs and their replacements separately, pending snapshot: %s",
+    (pending) => {
+      const links = Array.from({ length: 6 }, (_, index) => {
+        const link = linkedPr(index + 1);
+        return {
+          ...link,
+          snapshot:
+            pending && index === 5
+              ? null
+              : {
+                  ...link.snapshot!,
+                  state: index < 3 ? ("closed" as const) : ("open" as const),
+                  headBranch: `change-${index % 3}`,
+                },
+        };
+      });
+
+      expect(presentThreadLinkedPullRequests(links)).toMatchObject({
+        kind: "pull-request",
+        label: pending ? "2 open · 3 closed · 1 pending" : "3 open · 3 closed",
+        state: null,
+        isDraft: false,
+        textClassName: "text-foreground-muted",
+        accessibilityLabel: pending
+          ? "6 linked pull requests: 2 open · 3 closed · 1 pending"
+          : "6 linked pull requests: 3 open · 3 closed",
       });
     },
   );

@@ -1149,7 +1149,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
+              className={cn("max-w-40 text-xs", pr.textClassName)}
+              numberOfLines={1}
               style={{ fontFamily: MONO_FONT }}
             >
               {pr.label}

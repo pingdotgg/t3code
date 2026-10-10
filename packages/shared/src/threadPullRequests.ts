@@ -284,10 +284,14 @@ export type ThreadPullRequestBadge = {
       readonly kind: "stack";
       readonly layers: number;
     }
-  | { readonly kind: "pull-request"; readonly others: number }
+  | {
+      readonly kind: "pull-request";
+      readonly others: number;
+      readonly statusSummary: string;
+    }
 );
 
-/** Aggregate visible links' state for both stacks and unrelated linked counts. */
+/** Summarize visible links for stack and per-status badges. */
 export function resolveThreadPullRequestBadge(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
 ): ThreadPullRequestBadge | null {
@@ -305,7 +309,22 @@ export function resolveThreadPullRequestBadge(
   if (visible.length > 1 && chains.length === 1) {
     return { kind: "stack", layers: visible.length, state };
   }
-  return { kind: "pull-request", others: visible.length - 1, state };
+  // Unrelated PRs need separate counts so a total cannot imply that every PR is open.
+  const counts = { open: 0, draft: 0, closed: 0, merged: 0, pending: 0 };
+  for (const { snapshot } of visible) {
+    const status =
+      snapshot === null
+        ? "pending"
+        : snapshot.state === "open" && snapshot.isDraft
+          ? "draft"
+          : snapshot.state;
+    counts[status] += 1;
+  }
+  const statusSummary = Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(([status, count]) => `${count} ${status}`)
+    .join(" · ");
+  return { kind: "pull-request", others: visible.length - 1, state, statusSummary };
 }
 
 /** Search terms for visible PR links, including the legacy single-link projection. */

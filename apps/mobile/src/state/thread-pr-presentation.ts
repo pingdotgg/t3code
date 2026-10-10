@@ -22,7 +22,7 @@ export interface ThreadPrPresentation {
   /** Provider-side last activity, bounding when a terminal state landed. */
   readonly updatedAt: string | null;
   readonly url: string;
-  /** Compact pull request number or linked count, e.g. "3774" or "+2". */
+  /** Pull request number or counts by status, e.g. "3774" or "3 open · 3 closed". */
   readonly label: string;
   /** Full, provider-aware label for assistive technologies. */
   readonly accessibilityLabel: string;
@@ -64,20 +64,24 @@ export function presentThreadLinkedPullRequests(
   if (link === null || badge === null) return null;
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
-  const isMultiple = badge.kind === "stack" || linkedCount !== null;
-  const state = isMultiple
-    ? badge.state === "draft"
-      ? "open"
-      : badge.state
-    : (snapshot?.state ?? null);
-  const isDraft = isMultiple
-    ? badge.state === "draft"
-    : snapshot?.isDraft === true && state === "open";
+  // A total across unrelated PRs has no single status, even when one PR is selected.
+  const state =
+    linkedCount !== null
+      ? null
+      : badge.kind === "stack"
+        ? badge.state === "draft"
+          ? "open"
+          : badge.state
+        : (snapshot?.state ?? null);
+  const isDraft =
+    badge.kind === "stack"
+      ? badge.state === "draft"
+      : snapshot?.isDraft === true && state === "open";
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
       : linkedCount !== null
-        ? `+${linkedCount}`
+        ? badge.statusSummary
         : String(link.number);
   return {
     kind: badge.kind,
@@ -92,12 +96,12 @@ export function presentThreadLinkedPullRequests(
       badge.kind === "stack"
         ? `${badge.layers} pull requests in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
-          ? `${linkedCount} linked pull requests, overall ${badge.state}`
+          ? `${linkedCount} linked pull requests: ${badge.statusSummary}`
           : `#${link.number} pull request ${state === null ? "status pending" : isDraft ? "draft" : state}`,
     textClassName:
       state === null || isDraft
         ? "text-foreground-muted"
-        : isMultiple && state === "closed"
+        : badge.kind === "stack" && state === "closed"
           ? "text-adaptive-rose-600-400"
           : PR_STATE_TEXT_CLASS[state],
   };

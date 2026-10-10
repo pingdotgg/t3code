@@ -1,4 +1,10 @@
-import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type PullRequestSummary,
+  type ThreadPullRequestLink,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
+import { resolveThreadPullRequestBadge } from "@t3tools/shared/threadPullRequests";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
@@ -733,7 +739,7 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
 
       expect(
         resolveThreadPullRequestBadgePresentation({
-          badge: { kind: "pull-request", others: 0, state: "open" },
+          badge: { kind: "pull-request", others: 0, state: "open", statusSummary: "1 open" },
           number: fixture.number,
           url: fixture.url,
           status: prStatus,
@@ -768,13 +774,9 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
     },
   );
 
-  it.each([
-    ["open", PullRequestGlyph.pullRequest, "text-emerald-600 dark:text-emerald-300/90"],
-    ["draft", PullRequestGlyph.draft, "text-zinc-500 dark:text-zinc-400/80"],
-    ["merged", PullRequestGlyph.merged, "text-violet-600 dark:text-violet-300/90"],
-  ] as const)(
-    "draws the count of unrelated linked pull requests with their %s aggregate state",
-    (state, expectedIcon, expectedToneClassName) => {
+  it.each(["open", "draft", "closed", "merged"] as const)(
+    "shows separate status counts for unrelated PRs with aggregate state %s",
+    (state) => {
       const fixture = status().pr;
       if (!fixture) throw new Error("Expected pull request fixture");
       const closedStatus = prStatusIndicator(
@@ -785,16 +787,57 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
 
       expect(
         resolveThreadPullRequestBadgePresentation({
-          badge: { kind: "pull-request", others: 2, state },
+          badge: { kind: "pull-request", others: 2, state, statusSummary: `3 ${state}` },
           number: fixture.number,
           url: fixture.url,
           status: closedStatus,
         }),
       ).toEqual({
-        Icon: expectedIcon,
-        toneClassName: expectedToneClassName,
-        label: `PR #42 - Closed: PR branch, and 2 more linked; overall ${state}`,
-        text: "+3",
+        Icon: PullRequestGlyph.pullRequest,
+        toneClassName: "text-muted-foreground",
+        label: `3 linked pull requests: 3 ${state}`,
+        text: `3 ${state}`,
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "counts three closed PRs and their replacements separately, pending snapshot: %s",
+    (pending) => {
+      const links = Array.from({ length: 6 }, (_, index): ThreadPullRequestLink => ({
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: index + 1,
+        url: `https://github.com/pingdotgg/t3code/pull/${index + 1}`,
+        source: "agent",
+        linkedAt: "2026-10-04T00:00:00.000Z",
+        stack: null,
+        snapshot:
+          pending && index === 5
+            ? null
+            : {
+                state: index < 3 ? "closed" : "open",
+                isDraft: false,
+                title: `Change ${index % 3}`,
+                headBranch: `change-${index % 3}`,
+                baseBranch: "main",
+                updatedAt: null,
+                syncedAt: "2026-10-04T00:00:00.000Z",
+              },
+      }));
+
+      expect(
+        resolveThreadPullRequestBadgePresentation({
+          badge: resolveThreadPullRequestBadge(links),
+          status: null,
+        }),
+      ).toEqual({
+        Icon: PullRequestGlyph.pullRequest,
+        toneClassName: "text-muted-foreground",
+        label: pending
+          ? "6 linked pull requests: 2 open · 3 closed · 1 pending"
+          : "6 linked pull requests: 3 open · 3 closed",
+        text: pending ? "2 open · 3 closed · 1 pending" : "3 open · 3 closed",
       });
     },
   );
