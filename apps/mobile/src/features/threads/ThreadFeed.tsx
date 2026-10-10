@@ -11,6 +11,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
@@ -375,9 +376,19 @@ function AssistantForkButton(props: {
           onSelect={(workspaceStrategy) => {
             setChoosingWorkspace(false);
             const targetThreadId = ThreadId.make(uuidv4());
+            const preparingAtom = forkWorkspacePreparingAtom(
+              scopedThreadKey(props.environmentId, targetThreadId),
+            );
+            const preparesWorktree = workspaceStrategy.type === "worktree";
+            const openFork = () =>
+              navigation.navigate("Thread", {
+                environmentId: props.environmentId,
+                threadId: targetThreadId,
+              });
             setBusy(true);
             void Haptics.selectionAsync();
-            void forkFromRun({
+            if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+            const pendingResult = forkFromRun({
               environmentId: props.environmentId,
               input: {
                 sourceThreadId: props.projectedItem.sourceThreadId,
@@ -387,26 +398,42 @@ function AssistantForkButton(props: {
                 creationSource: "mobile",
                 workspaceStrategy,
               },
-            })
-              .then(async (result) => {
-                if (result._tag !== "Success") return;
-                const targetThreadReady = await waitForThreadShell(
-                  props.environmentId,
-                  targetThreadId,
+            }).finally(() => appAtomRegistry.set(preparingAtom, false));
+            void (async () => {
+              // The fork request settles only once its new worktree is ready.
+              // Open the fork as soon as its thread exists so it shows setup
+              // progress meanwhile, like a new thread started in a new worktree.
+              const openedEarly =
+                preparesWorktree &&
+                (await Promise.race([
+                  waitForThreadShell(props.environmentId, targetThreadId),
+                  pendingResult.then(() => false),
+                ]));
+              if (openedEarly) openFork();
+              const result = await pendingResult;
+              if (result._tag !== "Success") {
+                // The server deletes a fork whose worktree could not be prepared.
+                if (openedEarly)
+                  navigation.navigate("Thread", {
+                    environmentId: props.environmentId,
+                    threadId: props.threadId,
+                  });
+                return;
+              }
+              if (openedEarly) return;
+              const targetThreadReady = await waitForThreadShell(
+                props.environmentId,
+                targetThreadId,
+              );
+              if (!targetThreadReady) {
+                Alert.alert(
+                  "Fork created",
+                  "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
                 );
-                if (!targetThreadReady) {
-                  Alert.alert(
-                    "Fork created",
-                    "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-                  );
-                  return;
-                }
-                navigation.navigate("Thread", {
-                  environmentId: props.environmentId,
-                  threadId: targetThreadId,
-                });
-              })
-              .finally(() => setBusy(false));
+                return;
+              }
+              openFork();
+            })().finally(() => setBusy(false));
           }}
         />
       ) : null}
