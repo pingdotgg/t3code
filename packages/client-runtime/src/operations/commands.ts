@@ -216,6 +216,7 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
   readonly title?: string;
+  readonly workspaceStrategy?: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy;
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -937,6 +938,24 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
 export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
   input: ForkThreadFromRunInput,
 ) {
+  if (input.workspaceStrategy !== undefined) {
+    const { thread } = yield* getProjection(input.sourceThreadId);
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+      commandId: yield* allocateCommandId(input),
+      creationSource: input.creationSource ?? "web",
+      threadId: input.targetThreadId,
+      projectId: thread.projectId,
+      title: input.title ?? `${thread.title} fork`,
+      modelSelection: thread.modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      workspaceStrategy: input.workspaceStrategy,
+      forkSource: {
+        sourceThreadId: input.sourceThreadId,
+        sourcePoint: { type: "run", runId: input.runId },
+      },
+    });
+  }
   return yield* dispatch({
     type: "thread.fork",
     commandId: yield* allocateCommandId(input),

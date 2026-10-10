@@ -10,6 +10,16 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Fork into a checkout
+
+Choose **Fork from this response** to continue a conversation separately. You can keep the current
+checkout or create a new worktree. If the thread already uses a worktree, the first choice keeps
+that same worktree.
+
+Keeping the checkout uses its current files. A new worktree starts at the response's saved checkpoint
+when available, or the source branch's committed state otherwise. Later uncommitted edits are not
+copied into the new worktree. Forking keeps the original thread and does not start an agent turn.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

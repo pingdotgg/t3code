@@ -19,6 +19,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -119,6 +120,36 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { threads, projection } = yield* readThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);
+      if (input.workspaceStrategy !== undefined) {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        yield* launches
+          .launch({
+            commandId,
+            threadId: targetThreadId,
+            projectId: projection.thread.projectId,
+            title: input.title ?? `${projection.thread.title} fork`,
+            modelSelection: projection.thread.modelSelection,
+            runtimeMode: projection.thread.runtimeMode,
+            interactionMode: projection.thread.interactionMode,
+            workspaceStrategy: input.workspaceStrategy,
+            forkSource: { sourceThreadId: projection.thread.id, sourcePoint: input.sourcePoint },
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: "Could not prepare the fork's workspace.",
+                }),
+            ),
+          );
+        const sequence = yield* threads
+          .getThreadEventSequence(targetThreadId)
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence, targetThreadId };
+      }
       const result = yield* threads
         .dispatch({
           type: "thread.fork",

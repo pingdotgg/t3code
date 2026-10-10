@@ -4,6 +4,7 @@ import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationV2ThreadForkSourcePoint,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
   ModelSelection,
@@ -24,6 +25,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -203,13 +205,15 @@ const transferResult = Schema.Struct({ sequence: NonNegativeInt, targetThreadId:
 const ThreadForkTool = Tool.make("t3_thread_fork", {
   ...commandTool,
   description:
-    "Fork a thread from a stable run or checkpoint using the existing fork command. Omit threadId to fork this thread. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
+    "Fork a thread from a stable run or checkpoint. Omit threadId to fork this thread. The fork inherits the source configuration. Omit workspaceStrategy to keep its checkout; choose root, existing_worktree, or worktree to change the destination. New worktrees start at the source checkpoint when available and wait for setup before returning. No provider turn starts.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     title: Schema.optional(TrimmedNonEmptyString),
   }),
   success: transferResult,
+  dependencies: [...commandTool.dependencies, ThreadLaunch.ThreadLaunchService],
 }).annotate(Tool.Destructive, true);
 const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
   ...commandTool,

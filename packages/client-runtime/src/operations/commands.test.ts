@@ -148,6 +148,33 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("launches a fork with its selected destination and original response boundary", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands, launches, projects: [] });
+      const workspaceStrategy = {
+        type: "existing_worktree" as const,
+        worktreePath: "/chosen/worktree",
+        branch: "chosen",
+      };
+      yield* forkThreadFromRun({
+        commandId: CommandId.make("fork-destination"),
+        sourceThreadId: v2ThreadId,
+        targetThreadId: ThreadId.make("destination"),
+        runId: RunId.make("run-1"),
+        workspaceStrategy,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(commands).toEqual([]);
+      expect(launches[0]).toMatchObject({
+        threadId: "destination",
+        workspaceStrategy,
+        forkSource: { sourceThreadId: v2ThreadId, sourcePoint: { type: "run", runId: "run-1" } },
+        modelSelection: v2Projection.thread.modelSelection,
+      });
+      expect(launches[0]?.initialMessage).toBeUndefined();
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

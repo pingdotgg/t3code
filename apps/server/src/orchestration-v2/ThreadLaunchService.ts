@@ -48,6 +48,11 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { runForSourcePoint } from "./ThreadForkService.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "./threadHistoryPaging.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -83,6 +88,10 @@ export interface ThreadLaunchInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
+  readonly forkSource?: {
+    readonly sourceThreadId: ThreadId;
+    readonly sourcePoint: import("@t3tools/contracts").OrchestrationV2ThreadForkSourcePoint;
+  };
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
     readonly ref: {
@@ -99,7 +108,7 @@ export interface ThreadLaunchInput {
 /** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "forkSource"
 > & {
   /**
    * Set when a retry reuses the worktree its failed attempt created and
@@ -255,7 +264,10 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        stages: ["fetch", "checkout", "setup-script", "agent"],
+        stages:
+          input.forkSource === undefined
+            ? ["fetch", "checkout", "setup-script", "agent"]
+            : ["fetch", "checkout", "setup-script"],
         fiber: yield* Effect.fiber,
       });
     } else if (reused !== undefined) {
@@ -546,7 +558,8 @@ const make = Effect.gen(function* () {
         yield* setupTracker.stageStatus(threadId, "setup-script", "skipped");
       }
       yield* setupTracker.markUncancellable(threadId);
-      yield* setupTracker.stageStatus(threadId, "agent", "running");
+      if (input.forkSource === undefined)
+        yield* setupTracker.stageStatus(threadId, "agent", "running");
       if (runId !== null) {
         yield* threads
           .dispatch({
@@ -557,9 +570,17 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(mapError(input, "release-run", threadId)));
       }
-      yield* setupTracker.stageStatus(threadId, "agent", "done");
-      yield* awaitAsyncSetup;
-      yield* setupTracker.finish(threadId, "done");
+      if (input.forkSource === undefined)
+        yield* setupTracker.stageStatus(threadId, "agent", "done");
+      const finishSetup = awaitAsyncSetup.pipe(
+        Effect.andThen(setupTracker.finish(threadId, "done")),
+      );
+      if (input.forkSource !== undefined && setup.status === "started" && setup.async) {
+        // Async setup scripts allow work to continue while they run.
+        yield* finishSetup.pipe(Effect.forkIn(preparationScope));
+      } else {
+        yield* finishSetup;
+      }
     }).pipe(
       Effect.onError((cause) =>
         Effect.gen(function* () {
@@ -704,6 +725,37 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      if (input.forkSource !== undefined) {
+        if (input.reuseExistingThread === true || input.initialMessage !== undefined) {
+          return yield* mapError(
+            input,
+            "create-thread",
+          )("A fork must create a new thread without an initial message.");
+        }
+        const source = yield* threads
+          .getThreadRecords(input.forkSource.sourceThreadId, ["runs", "checkpoints"])
+          .pipe(Effect.mapError(mapError(input, "create-thread")));
+        if (source.thread.projectId !== input.projectId) {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )("A fork must stay in its source project.");
+        }
+        if (input.workspaceStrategy.type === "worktree") {
+          const sourceRun = runForSourcePoint(source, input.forkSource.sourcePoint);
+          const checkpoint = source.checkpoints.find(
+            (candidate) => candidate.id === sourceRun?.checkpointId && candidate.status === "ready",
+          );
+          input = {
+            ...input,
+            workspaceStrategy: {
+              ...input.workspaceStrategy,
+              baseRef: checkpoint?.ref ?? source.thread.branch ?? "HEAD",
+              startFromOrigin: false,
+            },
+          };
+        }
+      }
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before
@@ -713,7 +765,8 @@ const make = Effect.gen(function* () {
           input.threadId === undefined &&
           Option.isSome(launchReceipt) &&
           launchReceipt.value.status === "accepted" &&
-          launchReceipt.value.commandType === "thread.create"
+          (launchReceipt.value.commandType === "thread.create" ||
+            launchReceipt.value.commandType === "thread.fork")
             ? launchReceipt.value
             : undefined;
         const candidateThreadId =
@@ -746,7 +799,9 @@ const make = Effect.gen(function* () {
         // A Scratch thread launched at the project root runs in a folder of its
         // own. Only the first attempt claims one; a retry replays its create.
         const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
+          input.forkSource === undefined &&
+          input.workspaceStrategy.type === "root" &&
+          Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -765,30 +820,42 @@ const make = Effect.gen(function* () {
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
         const claimDispatch =
-          input.reuseExistingThread === true
+          input.forkSource !== undefined
             ? threads.dispatch({
-                type: "thread.metadata.update",
+                type: "thread.fork",
                 commandId: input.commandId,
-                threadId: candidateThreadId,
-                expectedEmpty: true,
-              })
-            : threads.dispatch({
-                type: "thread.create",
-                commandId: input.commandId,
-                threadId: candidateThreadId,
-                projectId: input.projectId,
+                sourceThreadId: input.forkSource.sourceThreadId,
+                targetThreadId: candidateThreadId,
+                sourcePoint: input.forkSource.sourcePoint,
                 title: input.title,
-                modelSelection: input.modelSelection,
-                runtimeMode: input.runtimeMode,
-                interactionMode: input.interactionMode,
-                branch: initialBranch,
-                worktreePath: initialWorktreePath,
-                ...(input.importedNativeThread === undefined
-                  ? {}
-                  : { importedNativeThread: input.importedNativeThread }),
+                workspace: { branch: initialBranch, worktreePath: initialWorktreePath },
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
-              });
+              })
+            : input.reuseExistingThread === true
+              ? threads.dispatch({
+                  type: "thread.metadata.update",
+                  commandId: input.commandId,
+                  threadId: candidateThreadId,
+                  expectedEmpty: true,
+                })
+              : threads.dispatch({
+                  type: "thread.create",
+                  commandId: input.commandId,
+                  threadId: candidateThreadId,
+                  projectId: input.projectId,
+                  title: input.title,
+                  modelSelection: input.modelSelection,
+                  runtimeMode: input.runtimeMode,
+                  interactionMode: input.interactionMode,
+                  branch: initialBranch,
+                  worktreePath: initialWorktreePath,
+                  ...(input.importedNativeThread === undefined
+                    ? {}
+                    : { importedNativeThread: input.importedNativeThread }),
+                  createdBy: input.createdBy,
+                  creationSource: input.creationSource,
+                });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
             mapError(
@@ -854,10 +921,22 @@ const make = Effect.gen(function* () {
         const projection = yield* threads
           .getThreadProjection(threadId)
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        if (input.forkSource !== undefined && projection.thread.deletedAt !== null) {
+          return yield* mapError(
+            input,
+            "create-thread",
+            threadId,
+          )("The fork was deleted after workspace preparation failed. Create a new fork to retry.");
+        }
         const runIsPreparing =
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
-        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
+        const shouldSchedule =
+          input.forkSource !== undefined && workspaceStrategy.type !== "worktree"
+            ? false
+            : runId === null
+              ? Option.isNone(launchReceipt)
+              : runIsPreparing;
         // A retried root launch prepares the folder its first attempt bound, so
         // a Scratch thread keeps its own. Other root launches bind no folder.
         const boundWorktreePath = projection.thread.worktreePath;
@@ -885,11 +964,37 @@ const make = Effect.gen(function* () {
                       Effect.mapError(mapError(input, "update-thread", threadId)),
                     );
               if (preparationStillRequired) {
-                yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
-                  threadId,
-                  runId,
-                );
+                if (input.forkSource !== undefined) {
+                  // A fork has no preparing run. Wait for its checkout before
+                  // the caller opens it and can submit its first prompt.
+                  yield* prepareInBackground(
+                    { ...input, workspaceStrategy: preparationStrategy },
+                    threadId,
+                    null,
+                  ).pipe(
+                    Effect.onError(() =>
+                      threads.getThreadRecords(threadId, ["runs"]).pipe(
+                        Effect.flatMap((current) =>
+                          current.thread.worktreePath === null && current.runs.length === 0
+                            ? threads.dispatch({
+                                type: "thread.delete",
+                                commandId: CommandId.make(`${input.commandId}:failed-fork`),
+                                threadId,
+                              })
+                            : Effect.void,
+                        ),
+                        Effect.ignore,
+                      ),
+                    ),
+                    Effect.ensuring(releasePreparation(input.commandId)),
+                  );
+                } else {
+                  yield* schedulePreparation(
+                    { ...input, workspaceStrategy: preparationStrategy },
+                    threadId,
+                    runId,
+                  );
+                }
               } else {
                 yield* releasePreparation(input.commandId);
               }
@@ -897,9 +1002,24 @@ const make = Effect.gen(function* () {
           }
         }
 
+        const resultProjection =
+          input.forkSource === undefined
+            ? projection
+            : yield* threads
+                .getThreadSnapshotWindow(threadId, { rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT })
+                .pipe(
+                  Effect.map(
+                    (snapshot) =>
+                      buildBoundedThreadProjection({
+                        projection: snapshot.projection,
+                        snapshotSequence: snapshot.snapshotSequence,
+                      }).projection,
+                  ),
+                  Effect.mapError(mapError(input, "create-thread", threadId)),
+                );
         return {
           threadId,
-          projection,
+          projection: resultProjection,
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
         };
       });

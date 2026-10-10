@@ -8,6 +8,7 @@ import {
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadForkSourcePoint,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -19,6 +20,30 @@ import * as Schema from "effect/Schema";
 export interface ThreadForkPlanV2 {
   readonly targetThread: OrchestrationV2AppThread;
   readonly transfer: OrchestrationV2ContextTransfer;
+}
+
+export function runForSourcePoint(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
+  sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+): OrchestrationV2Run | null {
+  switch (sourcePoint.type) {
+    case "latest_stable":
+      return (
+        projection.runs
+          .filter((run) => run.status === "completed" && run.checkpointId !== null)
+          .toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? null
+      );
+    case "run":
+      return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
+    case "checkpoint": {
+      const checkpoint = projection.checkpoints.find(
+        (candidate) => candidate.id === sourcePoint.checkpointId,
+      );
+      return checkpoint?.runId == null
+        ? null
+        : (projection.runs.find((run) => run.id === checkpoint.runId) ?? null);
+    }
+  }
 }
 
 export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>()(
@@ -62,6 +87,7 @@ export interface ThreadForkServiceV2Shape {
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
+    readonly workspace?: { readonly branch: string | null; readonly worktreePath: string | null };
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -91,6 +117,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           creationSource: input.creationSource,
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+          ...input.workspace,
           activeProviderThreadId: null,
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,

@@ -4,6 +4,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
+  threadForkWorkspaceChoices,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
@@ -31,6 +32,28 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it("offers the current checkout or a new worktree, and keeps non-Git folders forkable", () => {
+    expect(
+      threadForkWorkspaceChoices({ worktreePath: null, branch: "main", isGitRepo: true }).map(
+        (choice) => choice.workspaceStrategy.type,
+      ),
+    ).toEqual(["root", "worktree"]);
+    expect(
+      threadForkWorkspaceChoices({
+        worktreePath: "/worktree",
+        branch: "feature",
+        isGitRepo: true,
+      }).map((choice) => choice.workspaceStrategy),
+    ).toEqual([
+      { type: "existing_worktree", worktreePath: "/worktree", branch: "feature" },
+      { type: "worktree", baseRef: "feature", startFromOrigin: false },
+    ]);
+    expect(
+      threadForkWorkspaceChoices({ worktreePath: "/folder", branch: null, isGitRepo: false }).map(
+        (choice) => choice.workspaceStrategy,
+      ),
+    ).toEqual([{ type: "existing_worktree", worktreePath: "/folder" }]);
+  });
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {
