@@ -5,10 +5,17 @@ extensions, skills, context files, and native session history.
 
 ## Set Up Pi
 
-1. Install Pi on the machine running the T3 Code server. Pi 1.0 is recommended; 0.80.5 is the
-   oldest version T3 Code supports.
-2. Run Pi once in a terminal and finish the provider login or API-key setup you normally use.
+1. Install [Pi](https://pi.dev) on the machine running the T3 Code server. Pi requires Node.js
+   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Pi
+   0.80.5 or newer.
+2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
 3. Open T3 Code Settings, enable Pi, and refresh the provider.
+
+For an npm installation, use:
+
+```sh
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
 
 If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
 variables and launch arguments are also available for installations that need a custom agent
@@ -16,10 +23,21 @@ directory, endpoint, or model configuration. `--provider` must be paired with `-
 rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
 parts of the process lifecycle.
 
+On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
+Open the authorization URL on your own computer. If the callback cannot reach the server,
+paste the final redirect URL or authorization code back into Pi when prompted. You can also
+set your model provider's API-key environment variable in the Pi instance's settings; mark
+secret values as sensitive.
+
+Update installer-managed Pi with `pi update`. If another package manager owns the installation,
+update it through that manager instead. For example, a Nix profile installation uses
+`nix profile upgrade pi`.
+
 ## What Carries Over
 
 T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
-thinking picker marks Pi's current configured level as the default without overriding it. Threads
+thinking picker marks the discovered active model's configured level as its default without
+overriding it. Other models keep their Pi defaults when no level is selected. Threads
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
 preserve the native conversation through the selected turn in the destination workspace.
 Switching providers uses portable conversation context. Extension

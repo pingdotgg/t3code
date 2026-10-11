@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -535,7 +535,7 @@ describe("VcsProcess.run", () => {
         operation: "test.output-limit",
         command: "node",
         args: ["-e", "process.stdout.write('x'.repeat(2048))"],
-        cwd: yield* HostProcessWorkingDirectory,
+        cwd: yield* HostProcess.WorkingDirectory,
         maxOutputBytes: 128,
         outputMode: "error",
       }).pipe(Effect.flip);

@@ -693,6 +693,14 @@ export const ForgejoIcon: Icon = (props) => (
   </svg>
 );
 
+// GitCafe's own mark, from https://git.cafe/favicon.svg, inset so the full-bleed square does not
+// read heavier than the round and cut-out marks beside it.
+export const GitCafeIcon: Icon = (props) => (
+  <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
+    <rect x="4.8" y="4.8" width="54.4" height="54.4" fill="#a78bfa" />
+  </svg>
+);
+
 // macOS System Settings > Privacy & Security pane marks, so the SnapShot setup
 // step points at the same icon the user is about to look for.
 export const MacScreenRecordingIcon: Icon = (props) => {

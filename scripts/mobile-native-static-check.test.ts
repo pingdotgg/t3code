@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as HostProcess from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -33,7 +33,7 @@ const provideSpawner = (spawn: ChildProcessSpawner.ChildProcessSpawner["Service"
   Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, ChildProcessSpawner.make(spawn));
 
 const runSwiftLint = runCommand("swiftlint", ["lint", "--strict"], "/repo/apps/mobile").pipe(
-  Effect.provideService(HostProcess.HostProcessPlatform, "linux"),
+  Effect.provideService(HostProcess.Platform, "linux"),
 );
 
 it.layer(NodeServices.layer)("mobile native source discovery", (it) => {
