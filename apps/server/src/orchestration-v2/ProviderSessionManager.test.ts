@@ -2839,6 +2839,73 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
   }),
 );
 
+it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-pin-progress",
+        projectId: yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-pin-progress",
+        }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+      const step = (duration: Parameters<typeof TestClock.adjust>[0]) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust(duration);
+          for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+        });
+
+      // A long workflow keeps reporting progress well past the pin cap.
+      for (let tick = 0; tick < 12; tick += 1) {
+        yield* step("1500 millis");
+        yield* Queue.offer(adapterQueue!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+      }
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      // Work that goes silent past the cap is still stopped.
+      for (let tick = 0; tick < 6; tick += 1) {
+        yield* step("1 second");
+      }
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          maxIdlePinMs: 3000,
+          hasPendingBackgroundWork: Effect.succeed(true),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 does not idle-release a session that turns busy during the pending-work check",
   () =>
