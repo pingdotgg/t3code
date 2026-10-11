@@ -59,7 +59,7 @@ export function CommandPaletteContent({
               ? "flex min-h-0 flex-1 flex-col"
               : panelSize === "tall-list"
                 ? "max-h-[min(34rem,76vh)]"
-                : "max-h-[min(28rem,70vh)]"
+                : "flex max-h-[min(28rem,70vh)] min-h-0 flex-col"
           }
         >
           {children}
