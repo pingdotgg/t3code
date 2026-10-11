@@ -26,19 +26,27 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
     <View style={{ height }} className="flex-row items-end gap-px">
       {/* column-reverse stacks the bottom-first provider values upward
           without reversing the array (Hermes lacks Array#toReversed). */}
-      {chartDays.map((day) => (
-        <View key={day.day} className="h-full flex-1 flex-col-reverse overflow-hidden rounded-sm">
-          {day.values.map((entry) => (
+      {chartDays.map((day) => {
+        const barHeight = max === 0 ? 0 : (day.total / max) * height;
+        return (
+          <View key={day.day} className="h-full flex-1 justify-end">
             <View
-              key={entry.provider}
-              style={{
-                height: max === 0 ? 0 : (entry.value / max) * height,
-                backgroundColor: colors[entry.provider],
-              }}
-            />
-          ))}
-        </View>
-      ))}
+              style={{ height: barHeight }}
+              className="w-full flex-col-reverse overflow-hidden rounded-t-sm"
+            >
+              {day.values.map((entry) => (
+                <View
+                  key={entry.provider}
+                  style={{
+                    height: max === 0 ? 0 : (entry.value / max) * height,
+                    backgroundColor: colors[entry.provider],
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
