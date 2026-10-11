@@ -485,11 +485,11 @@ export function buildThreadListV2ListItems(input: {
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
+    // Snoozed rows show the same presets under Reschedule.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
-      canSnooze(item.thread, { now: input.snoozeLabelNow })
+      (item.snoozed || canSnooze(item.thread, { now: input.snoozeLabelNow }))
         ? input.snoozeLabelNow
         : undefined;
     const move =
