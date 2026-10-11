@@ -841,6 +841,104 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
+  it.effect.each(["running", "waiting"] as const)(
+    "queues automatic delivery while a %s run has no provider turn",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const threadId = ThreadId.make(`runtime-delivery-gap-${status}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}-project`),
+          title: "Delivery gap",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-first`),
+          threadId,
+          messageId: MessageId.make(`${threadId}-first`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const run = initial.runs[0]!;
+        const providerThread = initial.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          commandId: CommandId.make(`${threadId}-active`),
+          events: [
+            {
+              id: EventId.make(`${threadId}-run`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status, startedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}-session`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerThread.providerSessionId!,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                status: "running",
+                cwd: process.cwd(),
+                model: modelSelection.model,
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+            },
+          ],
+        });
+        const command = {
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-auto`),
+          threadId,
+          messageId: MessageId.make(`${threadId}-auto`),
+          text: "Keep this follow-up.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "auto",
+        } as const;
+        yield* orchestrator.dispatch(command);
+        const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* orchestrator.dispatch(command);
+        assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          queued.runs.map((candidate) => candidate.status),
+          [status, "queued"],
+        );
+        const messages = queued.messages.filter((message) => message.id === command.messageId);
+        assert.lengthOf(messages, 1);
+        assert.equal(messages[0]!.text, command.text);
+        assert.equal(messages[0]!.runId, queued.runs[1]!.id);
+        assert.deepEqual(yield* outbox.listByCommandId(command.commandId), []);
+      }),
+  );
+
   it.effect("resolves delivery intent against the active run and starts after it completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

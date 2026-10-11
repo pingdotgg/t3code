@@ -138,7 +138,14 @@ export function resolveMessageDispatchIntent(
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
-  if (activeRun.status === "preparing" || activeRun.status === "starting") {
+  // a run can become running before its provider turn arrives, or remain active
+  // after that turn ends. preserve automatic messages in the queue during either gap.
+  if (
+    activeRun.status !== "running" ||
+    !projection.providerTurns.some(
+      (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
+    )
+  ) {
     return { type: "queue_after_active" };
   }
 

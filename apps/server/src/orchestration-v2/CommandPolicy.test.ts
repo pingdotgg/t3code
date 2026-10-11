@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import * as CommandPolicy from "./CommandPolicy.ts";
 const commandId = CommandId.make("command-policy-test");
 const threadId = ThreadId.make("command-policy-thread");
 const activeRunId = RunId.make("command-policy-active-run");
+const activeAttemptId = RunAttemptId.make("command-policy-active-attempt");
 
 const baseCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 
@@ -37,7 +39,11 @@ function dispatchProjection(
     runs:
       sessionCapabilities === undefined
         ? []
-        : [{ id: activeRunId, status: "running", providerThreadId }],
+        : [{ id: activeRunId, status: "running", providerThreadId, activeAttemptId }],
+    providerTurns:
+      sessionCapabilities === undefined
+        ? []
+        : [{ runAttemptId: activeAttemptId, status: "running" }],
     providerThreads:
       sessionCapabilities === undefined ? [] : [{ id: providerThreadId, providerSessionId }],
     providerSessions:
@@ -102,7 +108,7 @@ it("resolves automatic message delivery from authoritative provider capabilities
   );
 });
 
-it.each(["preparing", "starting"] as const)(
+it.each(["preparing", "starting", "waiting"] as const)(
   "queues an automatic message while the handoff run is %s",
   (status) => {
     const projection = dispatchProjection(baseCapabilities);
@@ -116,6 +122,48 @@ it.each(["preparing", "starting"] as const)(
     );
   },
 );
+
+it.each(["missing", "pending", "completed", "interrupted", "failed", "cancelled"] as const)(
+  "queues automatic delivery when the active attempt's provider turn is %s",
+  (status) => {
+    const initial = dispatchProjection(baseCapabilities);
+    const projection = {
+      ...initial,
+      providerTurns:
+        status === "missing" ? [] : initial.providerTurns.map((turn) => ({ ...turn, status })),
+    };
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+      { type: "queue_after_active" },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "steer",
+      ),
+      { type: "steer_active", targetRunId: activeRunId },
+    );
+  },
+);
+
+it("ignores running provider turns from an earlier attempt for automatic delivery", () => {
+  const projection = dispatchProjection(baseCapabilities);
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      {
+        ...projection,
+        providerTurns: projection.providerTurns.map((turn) => ({
+          ...turn,
+          runAttemptId: RunAttemptId.make("previous-attempt"),
+        })),
+      },
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "queue_after_active" },
+  );
+});
 
 it("targets the latest active run for explicit steer and restart intent", () => {
   const projection = dispatchProjection(baseCapabilities);
