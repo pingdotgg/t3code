@@ -260,6 +260,10 @@ export const codexUsageReader: ProviderUsageReader<CodexSettings, Path.Path> = {
         ? { ...config, homePath: environmentHome }
         : config,
     );
-    return [{ dir: path.resolve(layout.sharedHomePath, "sessions") }];
+    // Codex moves archived rollouts out of `sessions`; their usage still counts.
+    return [
+      { dir: path.resolve(layout.sharedHomePath, "sessions") },
+      { dir: path.resolve(layout.sharedHomePath, "archived_sessions") },
+    ];
   }),
 };

@@ -1457,6 +1457,44 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("counts archived Codex rollouts once, including one copied to both directories", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const rollout = (sessionId: string, outputTokens: number) =>
+        [
+          { type: "session_meta", payload: { id: sessionId } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+          {
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+            },
+          },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") + "\n";
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const archived = NodePath.join(home, "codex", "archived_sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.mkdir(archived, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(sessions, "live.jsonl"), rollout("live", 10));
+        await NodeFSP.writeFile(NodePath.join(archived, "old.jsonl"), rollout("old", 20));
+        await NodeFSP.writeFile(NodePath.join(sessions, "moved.jsonl"), rollout("moved", 40));
+        await NodeFSP.writeFile(NodePath.join(archived, "moved.jsonl"), rollout("moved", 40));
+      });
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* service.awaitPersisted;
+        return summary;
+      }).pipe(Effect.provide(layerService({ prefix: "usage-codex-archived", home, settings })));
+      assert.strictEqual(totalOutputTokens(summary), 70);
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
     () =>
