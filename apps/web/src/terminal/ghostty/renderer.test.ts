@@ -68,9 +68,85 @@ describe("ghosttyTextRunEnd", () => {
     ];
     expect(ghosttyTextRunEnd(cells, 0, () => true)).toBe(4);
   });
+
+  it("stops before a built-in Powerline separator", () => {
+    expect(ghosttyTextRunEnd([cell("a"), cell("\ue0b0"), cell("b")], 0, () => true)).toBe(1);
+  });
 });
 
 describe("renderGhosttySnapshot", () => {
+  it("draws solid Powerline separators to the terminal cell edges", () => {
+    const paths: number[][][] = [];
+    let path: number[][] = [];
+    const fillTextCalls: unknown[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {
+        path = [];
+      },
+      clip: () => {},
+      closePath: () => {},
+      fill: () => paths.push(path),
+      fillRect: () => {},
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      lineTo: (x: number, y: number) => path.push([x, y]),
+      moveTo: (x: number, y: number) => path.push([x, y]),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 2,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [cell("\ue0b0"), cell("\ue0b2")],
+          text: "\ue0b0\ue0b2",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 10, height: 20, baseline: 15 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    expect(paths).toEqual([
+      [
+        [4, 4],
+        [14, 14],
+        [4, 24],
+      ],
+      [
+        [24, 4],
+        [14, 14],
+        [24, 24],
+      ],
+    ]);
+    expect(fillTextCalls).toEqual([]);
+  });
+
   it("underlines every cell in a hovered wrapped link", () => {
     const fillRectCalls: number[][] = [];
     const context = {
