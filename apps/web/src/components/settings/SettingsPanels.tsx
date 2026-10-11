@@ -168,6 +168,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { SpellCheckLanguagesSetting } from "./SpellCheckSettings";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -2838,6 +2839,8 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <SpellCheckLanguagesSetting />
 
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
