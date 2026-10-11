@@ -19,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -1162,6 +1163,7 @@ it.effect("continues a thread whose snooze already elapsed", () =>
       snoozedUntil: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
     };
     assert.equal(restartContinuationRun({ ...live, thread }, testNow)?.id, runId);
+    yield* TestClock.setTime(DateTime.toEpochMillis(testNow));
     assert.lengthOf(yield* continuationTexts({ ...cutMidTurn(), thread }), 1);
   }),
 );
