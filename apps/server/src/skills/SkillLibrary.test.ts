@@ -361,6 +361,37 @@ it.effect(
   180_000,
 );
 
+it.effect(
+  "previews a source whose result is larger than one pipe buffer",
+  () =>
+    withLibrary(({ library, home }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // About 360 bytes of JSON per skill, so 250 skills is well past 64 KiB.
+        const big = path.join(home, "big");
+        yield* Effect.forEach(
+          Array.from({ length: 250 }, (_, index) => `skill-${String(index).padStart(3, "0")}`),
+          (name) =>
+            fileSystem
+              .makeDirectory(path.join(big, name), { recursive: true })
+              .pipe(
+                Effect.andThen(
+                  fileSystem.writeFileString(
+                    path.join(big, name, "SKILL.md"),
+                    SKILL(name, `Skill ${name}.`),
+                  ),
+                ),
+              ),
+          { discard: true },
+        );
+        const preview = yield* library.preview({ source: big });
+        assert.equal(preview.skills.length, 250);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  180_000,
+);
+
 describe("lockedInstallSource", () => {
   it("updates one skill from its folder, as `npx skills update` does", () => {
     const skillPath = "skills/productivity/grill-me/SKILL.md";

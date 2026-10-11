@@ -3,6 +3,7 @@ import {
   McpServerName,
   OrchestratorMcpFailure,
   ProjectId,
+  SkillInstallInput,
   SkillInstallResult,
   SkillSource,
   TrimmedNonEmptyString,
@@ -80,7 +81,7 @@ const SkillsInstallTool = Tool.make("t3_skills_install", {
   parameters: Schema.Struct({
     ...Scope,
     source: SkillSource,
-    skills: Schema.Array(InstalledSkillName).check(Schema.isMinLength(1)),
+    skills: SkillInstallInput.fields.skills,
   }),
   success: SkillInstallResult,
 }).annotate(Tool.Destructive, true);

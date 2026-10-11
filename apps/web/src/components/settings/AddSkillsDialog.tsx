@@ -1,4 +1,9 @@
-import type { EnvironmentId, SkillInstallTarget, SkillPreviewItem } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  MAX_SKILLS_PER_INSTALL,
+  type SkillInstallTarget,
+  type SkillPreviewItem,
+} from "@t3tools/contracts";
 import { useId, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -65,7 +70,10 @@ export function AddSkillsDialog({
       return;
     }
     setFound({ source: trimmed, skills: result.value.skills });
-    setSelected(new Set(result.value.skills.map((skill) => skill.name)));
+    // Everything is ticked, up to what one install takes.
+    setSelected(
+      new Set(result.value.skills.slice(0, MAX_SKILLS_PER_INSTALL).map((skill) => skill.name)),
+    );
   };
 
   const installSelected = async () => {
@@ -96,11 +104,13 @@ export function AddSkillsDialog({
 
   const toggle = (name: string, checked: boolean) =>
     setSelected((current) => {
+      if (checked && current.size >= MAX_SKILLS_PER_INSTALL) return current;
       const next = new Set(current);
       if (checked) next.add(name);
       else next.delete(name);
       return next;
     });
+  const full = selected.size >= MAX_SKILLS_PER_INSTALL;
 
   return (
     <Dialog
@@ -169,6 +179,7 @@ export function AddSkillsDialog({
                       <Checkbox
                         className="mt-0.5"
                         checked={selected.has(skill.name)}
+                        disabled={full && !selected.has(skill.name)}
                         onCheckedChange={(checked) => toggle(skill.name, checked === true)}
                       />
                       <span className="grid min-w-0 gap-0.5">
@@ -193,6 +204,12 @@ export function AddSkillsDialog({
                     </label>
                   ))}
                 </div>
+                {found.skills.length > MAX_SKILLS_PER_INSTALL ? (
+                  <p className="text-xs text-muted-foreground">
+                    One install takes up to {MAX_SKILLS_PER_INSTALL} skills. Install the rest
+                    afterwards.
+                  </p>
+                ) : null}
                 <p className="text-xs text-muted-foreground">
                   Skills can tell agents to run their scripts. Install only sources you trust.
                 </p>

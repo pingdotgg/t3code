@@ -71,9 +71,15 @@ export type SkillPreviewItem = typeof SkillPreviewItem.Type;
 export const SkillPreviewResult = Schema.Struct({ skills: Schema.Array(SkillPreviewItem) });
 export type SkillPreviewResult = typeof SkillPreviewResult.Type;
 
+/** The most skills one install takes; a bigger pack installs in several goes. */
+export const MAX_SKILLS_PER_INSTALL = 200;
+
 export const SkillInstallInput = Schema.Struct({
   source: SkillSource,
-  skills: Schema.Array(InstalledSkillName).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  skills: Schema.Array(InstalledSkillName).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MAX_SKILLS_PER_INSTALL),
+  ),
   target: SkillInstallTarget,
 });
 export type SkillInstallInput = typeof SkillInstallInput.Type;
