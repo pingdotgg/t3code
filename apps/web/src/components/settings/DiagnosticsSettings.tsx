@@ -38,6 +38,7 @@ import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { TelemetryExportSettings } from "./TelemetryExportSettings";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -811,6 +812,20 @@ export function DiagnosticsSettingsPanel() {
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
+  const isResourceInitialLoading = isResourcePending && resourceData === null;
+  // The export form waits for each environment's first tables so a search target below them
+  // stays in view. Later loads, such as a new resource window, must not remount it and drop drafts.
+  const [exportFormEnvironmentId, setExportFormEnvironmentId] =
+    useState<typeof environmentId>(null);
+  if (
+    exportFormEnvironmentId !== environmentId &&
+    canReadDiagnostics &&
+    !isInitialLoading &&
+    !isProcessInitialLoading &&
+    !isResourceInitialLoading
+  ) {
+    setExportFormEnvironmentId(environmentId);
+  }
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
@@ -1054,7 +1069,7 @@ export function DiagnosticsSettingsPanel() {
         <ProcessResourceHistoryTable
           processes={resourceData?.topProcesses ?? []}
           emptyLabel={
-            isResourcePending && resourceData === null
+            isResourceInitialLoading
               ? "Collecting process resource samples..."
               : "No process resource samples found for this window."
           }
@@ -1330,6 +1345,7 @@ export function DiagnosticsSettingsPanel() {
           <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
         )}
       </SettingsSection>
+      {exportFormEnvironmentId === environmentId && <TelemetryExportSettings />}
     </SettingsPageContainer>
   );
 }
