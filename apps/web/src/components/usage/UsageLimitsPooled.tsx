@@ -14,7 +14,15 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import {
+  type ComponentProps,
+  createContext,
+  Fragment,
+  type ReactNode,
+  use,
+  useCallback,
+  useRef,
+} from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -219,6 +227,18 @@ function SegmentPopover({
   );
 }
 
+type PopoverActionsRef = NonNullable<ComponentProps<typeof Popover>["actionsRef"]>;
+
+/**
+ * Reports a segment popover opening or closing, so only one is open across
+ * every bar on the page. Segments keep their own Base UI state; opening one
+ * closes the previous through Base UI's close action, which also clears its
+ * click and hover bookkeeping so it reopens on the next hover.
+ */
+const SegmentOpenChangeContext = createContext<(open: boolean, segment: PopoverActionsRef) => void>(
+  () => {},
+);
+
 /**
  * One account's share of one pooled window: the segment, its popover, and the
  * reset confirm. The confirm is a sibling of the popover, not a child: dialogs
@@ -242,12 +262,13 @@ function PoolSegment({
   readonly index: number;
   readonly showAccountName: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const onSegmentOpenChange = use(SegmentOpenChangeContext);
+  const actionsRef = useRef<PopoverActionsRef["current"]>(null);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover actionsRef={actionsRef} onOpenChange={(open) => onSegmentOpenChange(open, actionsRef)}>
       <PopoverTrigger
         openOnHover
         render={
@@ -317,7 +338,7 @@ function PoolSegment({
           reset={reset}
           now={now}
           redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
+          closePopover={() => actionsRef.current?.close()}
         />
       ) : (
         <PopoverPopup side="top" sideOffset={6}>
@@ -578,6 +599,16 @@ export function UsageLimitsPooled({
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
+  const openSegment = useRef<PopoverActionsRef | null>(null);
+  const onSegmentOpenChange = useCallback((open: boolean, segment: PopoverActionsRef) => {
+    if (open) {
+      if (openSegment.current !== segment) openSegment.current?.current?.close();
+      openSegment.current = segment;
+    } else if (openSegment.current === segment) {
+      // A late close from a segment already replaced must not clear the new one.
+      openSegment.current = null;
+    }
+  }, []);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
@@ -593,12 +624,14 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool, index) => (
-        <Fragment key={pool.driver}>
-          {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
-        </Fragment>
-      ))}
+      <SegmentOpenChangeContext value={onSegmentOpenChange}>
+        {pools.map((pool, index) => (
+          <Fragment key={pool.driver}>
+            {index === cursorPromptAt ? cursorPrompt : null}
+            <PoolSection pool={pool} now={now} />
+          </Fragment>
+        ))}
+      </SegmentOpenChangeContext>
       {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <section
