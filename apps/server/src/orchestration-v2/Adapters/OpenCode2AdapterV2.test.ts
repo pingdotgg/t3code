@@ -51,7 +51,7 @@ import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
   makeProviderReplayGate,
   type ProviderReplayGate,
-} from "../testkit/ProviderReplayGate.testkit.ts";
+} from "@t3tools/provider-testing/replayGate";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
@@ -1887,7 +1887,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
 
   it.effect("ends a background reply's continuation after a lost stream took a Stop's end", () =>
     Effect.gen(function* () {
-      const offered = yield* Deferred.make<ProviderContinuationRequest>();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
       const gate = makeProviderReplayGate(["drop", "reply"]);
       const { runtime, thread } = yield* resumed(
         [
@@ -2074,7 +2075,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             : Effect.void,
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.take(3),
@@ -2114,7 +2117,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
    */
   const replyAfterUnclearFailure = (endedFirst: boolean) =>
     Effect.gen(function* () {
-      const offered = yield* Deferred.make<ProviderContinuationRequest>();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
       const gate = makeProviderReplayGate(endedFirst ? ["wake"] : ["wake", "reply"]);
       const { runtime, thread } = yield* resumed(
         [
@@ -2172,7 +2176,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The single reader of the runtime's events.
       const launched = yield* Deferred.make<void>();
       const childRan = yield* Deferred.make<void>();
-      const ended: Array<ProviderAdapterV2Event> = [];
+      const ended: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const allEnded = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
@@ -4570,7 +4574,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const NESTED = "ses_f1485c529ffeNNNNNNNNNNNNNN";
       const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
       const spawn = { sessionID: SESSION, assistantMessageID: "msg_reply", id: "call-spawn" };
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const gate = makeProviderReplayGate(["settled"]);
       const { runtime, thread } = yield* resumed(
         [
@@ -4715,7 +4719,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           take: Effect.never,
         }),
       );
-      const collected: Array<ProviderAdapterV2Event> = [];
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const replyEnded = yield* Deferred.make<void>();
       const bothEnded = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
@@ -4869,7 +4873,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           reply("permission.reply", null),
           event("session.execution.succeeded", { sessionID: SESSION }),
         ]);
-        const collected: Array<ProviderAdapterV2Event> = [];
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         const replyEnded = yield* Deferred.make<void>();
         const bothEnded = yield* Deferred.make<void>();
         yield* runtime.events.pipe(
@@ -4942,7 +4946,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             delivery: "steer",
           },
         });
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const bothOffered = yield* Deferred.make<void>();
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
