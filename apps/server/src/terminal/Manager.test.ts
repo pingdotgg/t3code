@@ -1249,7 +1249,122 @@ it.layer(
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1), 2_000);
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 2), 4_000);
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 30), 60_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1, 3_000), 12_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1, 30_000), 60_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 0, 5_000), 20_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 0, 30_000), 60_000);
   });
+
+  it.effect.each(["unavailable", "absent"] as const)(
+    "paces a slow Windows fallback when the sidecar is %s",
+    (sidecar) =>
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        const activity = yield* Deferred.make<void>();
+        const calls: Array<{ atMillis: number; timeoutMs: number }> = [];
+        const runner: ProcessRunner.ProcessRunner["Service"] = {
+          run: (input) =>
+            Effect.gen(function* () {
+              expect(input.command).toBe("powershell.exe");
+              calls.push({
+                atMillis: yield* Clock.currentTimeMillis,
+                timeoutMs: Duration.toMillis(Duration.fromInputUnsafe(input.timeout!)),
+              });
+              yield* Deferred.succeed(calls.length === 1 ? firstStarted : secondStarted, undefined);
+              yield* Effect.sleep("5 seconds");
+              return {
+                stdout: "100|9000|node.exe\n",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        };
+        const { manager } = yield* createManager(5, {
+          ...(sidecar === "unavailable"
+            ? {
+                processTable: Effect.fail("sidecar unavailable").pipe(
+                  Effect.mapError((cause) => cause as never),
+                ),
+              }
+            : {}),
+          subprocessPollIntervalMs: 1_000,
+          processKillGraceMs: 0,
+        }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.provide(layerWithHostPlatform("win32")),
+        );
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "activity" && event.hasRunningSubprocess && event.label === "node"
+            ? Deferred.succeed(activity, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(firstStarted);
+        expect(calls[0]?.timeoutMs).toBe(15_000);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        yield* Deferred.await(activity);
+        yield* TestClock.adjust("19999 millis");
+        expect(calls).toHaveLength(1);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(secondStarted);
+        expect(calls[1]!.atMillis - calls[0]!.atMillis).toBe(25_000);
+        yield* manager.close({ threadId: "thread-1" });
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["nonzero exit", "timeout"] as const)(
+    "paces a slow Windows fallback rejected for %s",
+    (failure) =>
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        const calls: Array<number> = [];
+        const runner: ProcessRunner.ProcessRunner["Service"] = {
+          run: () =>
+            Effect.gen(function* () {
+              calls.push(yield* Clock.currentTimeMillis);
+              yield* Deferred.succeed(calls.length === 1 ? firstStarted : secondStarted, undefined);
+              yield* Effect.sleep("15 seconds");
+              return {
+                stdout: "",
+                stderr: "",
+                code: failure === "timeout" ? null : ChildProcessSpawner.ExitCode(1),
+                timedOut: failure === "timeout",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        };
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 1_000,
+          processKillGraceMs: 0,
+        }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.provide(layerWithHostPlatform("win32")),
+        );
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(firstStarted);
+        yield* TestClock.adjust("15 seconds");
+        yield* TestClock.adjust("59999 millis");
+        expect(calls).toHaveLength(1);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(secondStarted);
+        expect(calls[1]! - calls[0]!).toBe(75_000);
+        yield* manager.close({ threadId: "thread-1" });
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
 
   it.effect("uses process snapshots from the resource monitor", () =>
     Effect.gen(function* () {

@@ -51,6 +51,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -60,6 +61,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -119,6 +121,7 @@ class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocess
     exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
     timedOut: Schema.optional(Schema.Boolean),
     stdoutTruncated: Schema.optional(Schema.Boolean),
+    fallbackElapsedMs: Schema.optional(Schema.Number),
   },
 ) {
   override get message(): string {
@@ -672,8 +675,12 @@ interface TerminalProcessTableSnapshot {
 export function subprocessSnapshotPollDelayMs(
   pollIntervalMs: number,
   failureCount: number,
+  fallbackElapsedMs = 0,
 ): number {
-  return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
+  return Math.min(
+    Math.max(pollIntervalMs * 2 ** failureCount, Math.max(0, fallbackElapsedMs) * 4),
+    MAX_SUBPROCESS_POLL_INTERVAL_MS,
+  );
 }
 
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
@@ -815,7 +822,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
       .run({
         command: "powershell.exe",
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
-        timeout: "1500 millis",
+        timeout: "15 seconds",
         maxOutputBytes: 262_144,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
@@ -1523,7 +1530,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     platform === "win32"
       ? windowsProcessTableSnapshot()
       : posixProcessTableSnapshot(yield* resolvePosixPsCommand())
-  ).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
+  ).pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+    Effect.result,
+    Effect.timed,
+    Effect.flatMap(([elapsed, result]) => {
+      const fallbackElapsedMs = Duration.toMillis(elapsed);
+      return Result.match(result, {
+        onSuccess: (snapshot) => Effect.succeed({ snapshot, fallbackElapsedMs }),
+        onFailure: (error) =>
+          Effect.fail(new TerminalSubprocessCheckError({ ...error, fallbackElapsedMs })),
+      });
+    }),
+  );
   const fetchProcessTableSnapshot: Effect.Effect<
     {
       readonly snapshot: TerminalProcessTableSnapshot;
@@ -1533,6 +1552,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
        * a failure so polling backs off instead of hot-looping the fallback.
        */
       readonly snapshotSucceeded: boolean;
+      readonly fallbackElapsedMs: number;
     },
     TerminalSubprocessCheckError
   > = options.processTable
@@ -1540,38 +1560,47 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.map((entries) => ({
           snapshot: processTableSnapshotFromProcesses(entries),
           snapshotSucceeded: true,
+          fallbackElapsedMs: 0,
         })),
         Effect.catch(() =>
           fallbackProcessTableSnapshot.pipe(
-            Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: false })),
+            Effect.map((result) => ({ ...result, snapshotSucceeded: false })),
           ),
         ),
       )
     : fallbackProcessTableSnapshot.pipe(
-        Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: true })),
+        Effect.map((result) => ({ ...result, snapshotSucceeded: true })),
       );
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector: Effect.Effect<
     {
       readonly inspector: TerminalSubprocessInspector;
       readonly snapshotSucceeded: boolean;
+      readonly fallbackElapsedMs: number;
     },
     TerminalSubprocessCheckError
   > =
     customSubprocessInspector !== undefined
-      ? Effect.succeed({ inspector: customSubprocessInspector, snapshotSucceeded: true })
+      ? Effect.succeed({
+          inspector: customSubprocessInspector,
+          snapshotSucceeded: true,
+          fallbackElapsedMs: 0,
+        })
       : Effect.map(
           fetchProcessTableSnapshot,
           ({
             snapshot,
             snapshotSucceeded,
+            fallbackElapsedMs,
           }): {
             readonly inspector: TerminalSubprocessInspector;
             readonly snapshotSucceeded: boolean;
+            readonly fallbackElapsedMs: number;
           } => ({
             inspector: (terminalPid) =>
               Effect.succeed(deriveSubprocessInspectResult(snapshot, terminalPid, platform)),
             snapshotSucceeded,
+            fallbackElapsedMs,
           }),
         );
   const subprocessPollIntervalMs =
@@ -2444,30 +2473,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (runningSessions.length === 0) {
-      return true;
+      return { snapshotSucceeded: true, fallbackElapsedMs: 0 };
     }
 
-    const inspectorOption = yield* acquireSubprocessInspector.pipe(
-      Effect.asSome,
-      Effect.catch((reason) =>
-        Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
-          reason,
-        }).pipe(
-          Effect.as(
-            Option.none<{
-              readonly inspector: TerminalSubprocessInspector;
-              readonly snapshotSucceeded: boolean;
-            }>(),
-          ),
-        ),
-      ),
-    );
-
-    if (Option.isNone(inspectorOption)) {
-      return false;
+    const inspectorResult = yield* Effect.result(acquireSubprocessInspector);
+    if (Result.isFailure(inspectorResult)) {
+      const reason = inspectorResult.failure;
+      yield* Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
+        errorTag: reason._tag,
+        command: reason.command,
+        exitCode: reason.exitCode,
+        timedOut: reason.timedOut,
+        stdoutTruncated: reason.stdoutTruncated,
+        fallbackElapsedMs: reason.fallbackElapsedMs,
+      });
+      return { snapshotSucceeded: false, fallbackElapsedMs: reason.fallbackElapsedMs ?? 0 };
     }
 
-    const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
+    const {
+      inspector: subprocessInspector,
+      snapshotSucceeded,
+      fallbackElapsedMs,
+    } = inspectorResult.success;
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
@@ -2536,7 +2563,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       concurrency: "unbounded",
       discard: true,
     });
-    return snapshotSucceeded;
+    return { snapshotSucceeded, fallbackElapsedMs };
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2551,13 +2578,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.flatMap((active) =>
         active
           ? pollSubprocessActivity().pipe(
-              Effect.flatMap((snapshotSucceeded) => {
+              Effect.flatMap(({ snapshotSucceeded, fallbackElapsedMs }) => {
                 subprocessSnapshotFailureCount = snapshotSucceeded
                   ? 0
                   : Math.min(subprocessSnapshotFailureCount + 1, 30);
                 const delayMs = subprocessSnapshotPollDelayMs(
                   subprocessPollIntervalMs,
                   subprocessSnapshotFailureCount,
+                  fallbackElapsedMs,
                 );
                 return Effect.sleep(delayMs);
               }),
