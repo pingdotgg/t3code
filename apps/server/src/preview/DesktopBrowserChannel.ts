@@ -27,7 +27,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import * as ServerConfig from "../config.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -54,6 +54,8 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     /** Desktop tabs as they detach. */
     readonly detached: Stream.Stream<DesktopTabKey>;
+    /** Desktop tabs as they attach, including a tab coming back after its DevTools close. */
+    readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /**
      * A one-connection CDP endpoint for an attached tab. Closing the scope
@@ -83,6 +85,7 @@ const make = Effect.gen(function* () {
       available: false,
       awaitAttached: () => Effect.succeed(false),
       detached: Stream.empty,
+      attached: Stream.empty,
       isAttached: () => Effect.succeed(false),
       endpoint: () => Effect.die("No desktop app is attached to this server."),
       pointer: () => Effect.void,
@@ -99,8 +102,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // Socket reads can be cancelled while the desktop keeps its write end open.
+  // Filesystem reads on this pipe keep Node alive after scope shutdown.
   const readable = yield* Effect.acquireRelease(
-    Effect.sync(() => NodeFS.createReadStream("", { fd: inputFd, autoClose: true })),
+    Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
     (stream) => Effect.sync(() => stream.destroy()),
   );
   yield* NodeStream.fromReadable<Uint8Array, Error>({
@@ -214,6 +219,10 @@ const make = Effect.gen(function* () {
       ),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
+      Stream.map((change) => change.key),
+    ),
+    attached: Stream.fromPubSub(changes).pipe(
+      Stream.filter((change) => change.attached),
       Stream.map((change) => change.key),
     ),
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),

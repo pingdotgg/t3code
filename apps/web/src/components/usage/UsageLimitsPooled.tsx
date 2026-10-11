@@ -21,7 +21,7 @@ import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
@@ -81,7 +81,9 @@ function AccountAvatar({
       <ProviderInstanceIcon
         driverKind={account.driver}
         displayName={
-          account.displayName ?? getDriverOption(account.driver)?.label ?? String(account.driver)
+          account.displayName ??
+          providerClients.get(account.driver)?.label ??
+          String(account.driver)
         }
         accentColor={account.accentColor}
         showBadge={Boolean(account.displayName)}
@@ -116,7 +118,7 @@ function AccountName({
   }
   return (
     <span className={className}>
-      {getDriverOption(account.driver)?.label ?? String(account.driver)}
+      {providerClients.get(account.driver)?.label ?? String(account.driver)}
     </span>
   );
 }
@@ -166,7 +168,7 @@ function SegmentPopover({
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
           <AccountAvatar account={account} />
           <span className="truncate">
-            {account.displayName ?? getDriverOption(account.driver)?.label ?? account.driver}
+            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
           </span>
         </span>
         {account.email ? (
@@ -204,7 +206,7 @@ function SegmentPopover({
             <Button
               size="xs"
               variant="outline"
-              disabled={redeem.busy}
+              disabled={redeem.busy || !redeem.canManageProviders}
               className="ms-auto"
               onClick={onRedeem}
             >
@@ -253,7 +255,7 @@ function PoolSegment({
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
+            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
       >
@@ -429,6 +431,7 @@ function RedeemableSegmentPopup({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
+        disabled={!redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
       {redeem.status ? (
@@ -530,7 +533,7 @@ function PoolWindowCard({
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
-  const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">

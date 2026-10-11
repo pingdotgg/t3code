@@ -49,10 +49,10 @@ import {
   connectionRoutes,
   entryWithRoutes,
   findRouteToSameAddress,
-  isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
+  type ReportedEndpoint,
 } from "./routes.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
@@ -452,7 +452,10 @@ export const make = Effect.gen(function* () {
       SubscriptionRef.changes(entries),
     ).pipe(
       Stream.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
-      Stream.changes,
+      // Re-pairing can replace the supervisor while its catalog details stay unchanged.
+      Stream.changesWith(
+        (previous, current) => Option.getOrNull(previous) === Option.getOrNull(current),
+      ),
       Stream.switchMap(
         Option.match({
           onNone: () => Stream.empty,
@@ -888,7 +891,7 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
+    readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -906,15 +909,24 @@ export const make = Effect.gen(function* () {
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
-        // A learned route owns its profile (address and authorization); the
-        // credential stays with the route it borrows from.
-        const previousIds = new Set(
-          connectionRoutes(entry).map((route) => connectionRouteId(route.target)),
+        // Save new learned profiles and any whose Tailscale mark changed. A
+        // learned route owns its profile; the credential stays with the route
+        // it borrows from.
+        const previousProfiles = new Map(
+          connectionRoutes(entry).map((route) => [
+            connectionRouteId(route.target),
+            Option.getOrNull(route.profile),
+          ]),
         );
         for (const route of routes) {
-          if (!isLearned(route) || previousIds.has(connectionRouteId(route.target))) continue;
           const profile = Option.getOrNull(route.profile);
-          if (profile !== null) yield* profiles.put(profile);
+          if (
+            profile === null ||
+            previousProfiles.get(connectionRouteId(route.target)) === profile
+          ) {
+            continue;
+          }
+          yield* profiles.put(profile);
         }
         yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
         // Update the lease in place: the live session already works, and

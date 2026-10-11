@@ -11,6 +11,19 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Constants {
+      if #available(iOS 26.0, *) {
+        return [
+          "supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil,
+        ]
+      }
+      return ["supportsWorkspaceColumns": false]
+    }
+    View(T3LayoutMetricsView.self) {
+      ViewName("LayoutMetrics")
+      Events("onMetricsChange")
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,
@@ -41,6 +54,15 @@ public final class T3NativeControlsModule: Module {
         view.sources = self.presentationSources
         view.identifier = identifier
       }
+    }
+
+    View(T3FrostedCutoutView.self) {
+      ViewName("FrostedCutout")
+      Prop("cutoutTop") { (view: T3FrostedCutoutView, value: Double) in view.cutoutTop = CGFloat(value) }
+      Prop("cutoutWidth") { (view: T3FrostedCutoutView, value: Double) in view.cutoutWidth = CGFloat(value) }
+      Prop("cutoutHeight") { (view: T3FrostedCutoutView, value: Double) in view.cutoutHeight = CGFloat(value) }
+      Prop("cutoutRadius") { (view: T3FrostedCutoutView, value: Double) in view.cutoutRadius = CGFloat(value) }
+      Prop("appearance") { (view: T3FrostedCutoutView, value: String) in view.appearance = value }
     }
 
     View(T3ContextSheetSizeView.self) {

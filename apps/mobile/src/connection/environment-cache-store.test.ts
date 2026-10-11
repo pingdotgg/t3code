@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
 } from "@t3tools/client-runtime/platform";
 import {
@@ -10,12 +11,14 @@ import {
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot,
+  type ThreadPullRequestLink,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
@@ -23,7 +26,7 @@ import * as Option from "effect/Option";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 import { make } from "./environment-cache-store";
-import { encodeStoredShellSnapshot } from "./shell-cache-encoding";
+import { makeStoredShellSnapshotEncoder } from "./shell-cache-encoding";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -249,10 +252,83 @@ describe("mobile SQLite environment cache store", () => {
         ORCHESTRATION_CACHE_SCHEMA_VERSION,
       );
       expect(memory.schemaVersions.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))).toBe(
-        ORCHESTRATION_CACHE_SCHEMA_VERSION,
+        ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       );
     }),
   );
+
+  it.live("returns cached threads before their pull request links, which load after", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      const link: ThreadPullRequestLink = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        source: "agent",
+        linkedAt: "2026-07-29T12:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const linked = { ...SHELL_SNAPSHOT.threads[0]!, pullRequests: [link] };
+      const unlinked = { ...SHELL_SNAPSHOT.threads[0]!, id: ThreadId.make("thread-2") };
+      yield* store.saveShell(ENVIRONMENT_ID, {
+        ...SHELL_SNAPSHOT,
+        threads: [linked, unlinked],
+      });
+
+      const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
+      expect(shell.threads.map((thread) => thread.pullRequests)).toEqual([undefined, undefined]);
+      const links = yield* shell.loadPullRequests!;
+      expect([...links]).toEqual([[THREAD_ID, [link]]]);
+    }),
+  );
+
+  it.live("keeps cached threads when their pull request links cannot be read", () => {
+    const messages: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    return Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      const link: ThreadPullRequestLink = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 5,
+        url: "https://github.com/pingdotgg/t3code/pull/5",
+        source: "agent",
+        linkedAt: "2026-07-29T12:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const readable = {
+        ...SHELL_SNAPSHOT.threads[0]!,
+        id: ThreadId.make("thread-2"),
+        pullRequests: [link],
+      };
+      yield* store.saveShell(ENVIRONMENT_ID, {
+        ...SHELL_SNAPSHOT,
+        threads: [SHELL_SNAPSHOT.threads[0]!, readable],
+      });
+      const id = cacheId(ENVIRONMENT_ID, "shell", "snapshot");
+      const payload = JSON.parse(memory.values.get(id)!);
+      payload.snapshot.threads[0].pullRequests = [{ number: -1 }];
+      memory.values.set(id, JSON.stringify(payload));
+
+      const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
+      expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID, readable.id]);
+      // Only the thread with the unreadable link loses its links.
+      expect([...(yield* shell.loadPullRequests!)]).toEqual([[readable.id, [link]]]);
+      expect(messages).toHaveLength(1);
+      expect(memory.removed).toEqual([]);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
 
   it.effect("round-trips schema-validated VCS refs", () =>
     Effect.gen(function* () {
@@ -334,6 +410,9 @@ describe("mobile SQLite environment cache store", () => {
 });
 
 describe("cooperative shell cache encoding", () => {
+  // A fresh encoder per call keeps these cases cold; the cache has its own cases below.
+  const encodeStoredShellSnapshot = (stored: typeof StoredOrchestrationShellSnapshot.Type) =>
+    makeStoredShellSnapshotEncoder()(stored);
   const encodeOriginal = Schema.encodeEffect(
     Schema.fromJsonString(StoredOrchestrationShellSnapshot),
   );
@@ -436,8 +515,10 @@ describe("cooperative shell cache encoding", () => {
           ...stored,
           snapshot: {
             ...stored.snapshot,
-            threads: Array.from({ length: 65 }, () => stored.snapshot.threads[0]!),
-            archivedThreads: Array.from({ length: 33 }, () => stored.snapshot.archivedThreads[0]!),
+            threads: Array.from({ length: 65 }, () => ({ ...stored.snapshot.threads[0]! })),
+            archivedThreads: Array.from({ length: 33 }, () => ({
+              ...stored.snapshot.archivedThreads[0]!,
+            })),
           },
         });
         // Five row chunks (3 active + 2 archived): four yields between them, one before the envelope.
@@ -515,6 +596,70 @@ describe("cooperative shell cache encoding", () => {
         vi.restoreAllMocks();
         vi.useRealTimers();
       }
+    }),
+  );
+
+  it.effect("reuses encoded rows across saves without changing the payload", () =>
+    Effect.gen(function* () {
+      const encode = makeStoredShellSnapshotEncoder();
+      expect(yield* encode(stored)).toBe(yield* encodeOriginal(stored));
+
+      const setTimer = vi.spyOn(globalThis, "setTimeout");
+      try {
+        // Same row references, new envelope: no row work, so no host yields.
+        const resaved = {
+          ...stored,
+          snapshot: { ...stored.snapshot, snapshotSequence: 4 },
+        };
+        expect(yield* encode(resaved)).toBe(yield* encodeOriginal(resaved));
+        expect(setTimer).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    }),
+  );
+
+  it.effect("encodes replaced, added, and moved-to-archive rows on a warm encoder", () =>
+    Effect.gen(function* () {
+      const encode = makeStoredShellSnapshotEncoder();
+      yield* encode(stored);
+      const [first, second, ...rest] = stored.snapshot.threads;
+      const next = {
+        ...stored,
+        snapshot: {
+          ...stored.snapshot,
+          threads: [
+            { ...first!, title: "Renamed", itemCount: 9 },
+            ...rest,
+            { ...first!, id: ThreadId.make("thread-new"), branch: "  feature  " },
+          ],
+          archivedThreads: [
+            ...stored.snapshot.archivedThreads,
+            { ...second!, archivedAt: DateTime.add(NOW, { hours: 1 }) },
+          ],
+        },
+      };
+      const actual = yield* encode(next);
+      expect(actual).toBe(yield* encodeOriginal(next));
+      const parsed = JSON.parse(actual);
+      expect(parsed.snapshot.threads[0].title).toBe("Renamed");
+      expect(parsed.snapshot.threads.at(-1).branch).toBe("feature");
+      expect(parsed.snapshot.archivedThreads).toHaveLength(2);
+    }),
+  );
+
+  it.effect("does not cache rows from a failed encode", () =>
+    Effect.gen(function* () {
+      const encode = makeStoredShellSnapshotEncoder();
+      const invalidRow = { ...stored.snapshot.threads[0]!, itemCount: -1 };
+      const invalid = {
+        ...stored,
+        snapshot: { ...stored.snapshot, threads: [...stored.snapshot.threads, invalidRow] },
+      };
+      expect(yield* Effect.isFailure(encode(invalid))).toBe(true);
+      expect(yield* Effect.isFailure(encode(invalid))).toBe(true);
+      // Valid rows from the failed save still encode correctly afterwards.
+      expect(yield* encode(stored)).toBe(yield* encodeOriginal(stored));
     }),
   );
 });

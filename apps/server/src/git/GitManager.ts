@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -12,8 +13,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
@@ -32,9 +36,9 @@ import {
   ModelSelection,
   type ProjectId,
   SourceControlProviderError,
-  type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
+  type ThreadPullRequestKey,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
 } from "@t3tools/contracts";
@@ -51,10 +55,16 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 import {
+  canonicalRepositoryKey,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeyOf,
+} from "@t3tools/shared/threadPullRequests";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -72,8 +82,8 @@ import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
@@ -95,6 +105,8 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
   readonly updatedAt: string | null;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
+  /** The pull request's head commit, when the host read reports it. */
+  readonly headSha?: string | null;
 };
 
 interface SourceControlTextGenerationSettings {
@@ -137,6 +149,15 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    /**
+     * Pull requests a branch PR lookup saw in a new state (merged, closed, reopened), so thread
+     * links can catch up before the next sync sweep. Best effort.
+     */
+    readonly subscribePullRequestStateChanges: Effect.Effect<
+      Stream.Stream<ThreadPullRequestKey>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/git/GitManager") {}
 
@@ -201,6 +222,7 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   closedAt?: string | null;
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
+  headSha?: string | undefined;
 }
 
 const pullRequestUpdatedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInput(
@@ -293,27 +315,20 @@ function resolvePullRequestWorktreeLocalBranchName(
   return `t3code/pr-${pullRequest.number}/${suffix}`;
 }
 
+/** The repository's `owner/name` from a remote URL, as `provider` reads its remote paths. */
 export function parseRepositoryNameWithOwnerFromRemoteUrl(
   url: string | null,
-  providerKind?: ChangeRequest["provider"],
+  provider?: Pick<
+    SourceControlProvider.SourceControlProvider["Service"],
+    "repositoryNameFromRemoteUrl"
+  >,
 ): string | null {
   const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const match =
-    /^(?:[^@/\s]+@[^:/\s]+:|(?:ssh|https?|git):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  // Forgejo HTTP paths can include an installation mount; its API always names owner/repo.
-  if (providerKind === "forgejo" && /^https?:\/\//iu.test(trimmed)) {
-    return repositoryNameWithOwner.length > 0
-      ? repositoryNameWithOwner.split("/").slice(-2).join("/")
-      : null;
-  }
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+  if (trimmed.length === 0) return null;
+  return (
+    provider?.repositoryNameFromRemoteUrl?.(trimmed) ??
+    SourceControlProvider.repositoryPathFromRemoteUrl(trimmed)
+  );
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -460,6 +475,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     closedAt: summary.closedAt ?? null,
@@ -603,24 +619,18 @@ function parseCustomCommitMessage(raw: string): { subject: string; body: string 
   };
 }
 
-// Without the owner selector, a bare branch name also lists same-named
-// branches on other forks (`main`, `patch-1`), so GitHub probes ask for a full
-// page and let matchesBranchHeadContext pick the right head. gh fetches up to
-// 100 in one request, and GitHub prices a first:100 connection like first:1.
-const GITHUB_HEAD_BRANCH_PROBE_LIMIT = 100;
-
-// `gh pr list --head` filters on the head ref name alone and accepts anything, so an
-// `owner:branch` or `remote:branch` selector silently lists zero pull requests
-// while spending a GraphQL call. Git branch names cannot contain ":", and the
-// bare head branch is always among the selectors, so GitHub probes skip them and
-// leave the owner check to matchesBranchHeadContext.
-function probeableHeadSelectors(
-  providerKind: SourceControlProviderKind,
+/** The selectors and page size `provider` asks about when looking up a branch's change requests. */
+function headBranchProbe(
+  provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  return providerKind === "github"
-    ? headSelectors.filter((selector) => !selector.includes(":"))
-    : headSelectors;
+  state: "open" | "all",
+) {
+  return (
+    provider.headBranchProbe?.({ headSelectors, state }) ?? {
+      headSelectors,
+      limit: state === "open" ? 1 : 20,
+    }
+  );
 }
 
 function appendUnique(values: string[], next: string | null | undefined): void {
@@ -756,7 +766,10 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const root = yield* fileSystem.realPath(cwd);
       const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
-      if (!instructionPath.startsWith(`${root}${path.sep}`)) {
+      // A drive root such as `D:\` already ends with a separator, so compare
+      // with path.relative instead of a `${root}${sep}` prefix.
+      const relative = path.relative(root, instructionPath);
+      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
         return "";
       }
       const info = yield* fileSystem.stat(instructionPath);
@@ -950,11 +963,45 @@ export const make = Effect.gen(function* () {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
-        yield* gitCore.fetchPullRequestBranch({
-          cwd,
-          prNumber: pullRequest.number,
-          branch: localBranch,
-        });
+        yield* gitCore
+          .fetchPullRequestBranch({
+            cwd,
+            prNumber: pullRequest.number,
+            branch: localBranch,
+          })
+          .pipe(
+            // Azure DevOps, GitLab and Bitbucket publish no `refs/pull/<n>/head`. A head in the
+            // same repository is a branch on the primary remote, so it is fetched by name instead,
+            // but only when that remote is the pull request's own repository: Azure finds a pull
+            // request by number anywhere in the organization. Only while it is open, too: the
+            // branch of a closed one may have moved on past the head it was closed with.
+            Effect.catch((cause) =>
+              pullRequest.isCrossRepository === true || pullRequest.state !== "open"
+                ? Effect.fail(cause)
+                : Effect.gen(function* () {
+                    const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+                    const remoteUrl = yield* gitCore.readConfigValue(
+                      cwd,
+                      `remote.${remoteName}.url`,
+                    );
+                    const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
+                    if (
+                      remoteUrl === null ||
+                      pullRequestKey === null ||
+                      canonicalRepositoryKey(pullRequestKey) !==
+                        canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl))
+                    ) {
+                      return yield* cause;
+                    }
+                    yield* gitCore.fetchRemoteBranch({
+                      cwd,
+                      remoteName,
+                      remoteBranch: pullRequest.headBranch,
+                      localBranch,
+                    });
+                  }),
+            ),
+          );
         return;
       }
 
@@ -1118,6 +1165,26 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+  // The last state a branch PR lookup read per pull request. The thread details panel shows
+  // this lookup, so a merge it sees must reach the thread's link and settlement right away.
+  const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
+  const lookupStates = new Map<string, PullRequestInfo["state"]>();
+  const noteLookupState = (pr: PullRequestInfo) =>
+    Effect.suspend(() => {
+      const parsed = parseChangeRequestUrl(pr.url);
+      if (parsed === null || parsed.number !== pr.number) return Effect.void;
+      const key = normalizeThreadPullRequestKey(parsed);
+      const id = threadPullRequestKeyOf(key);
+      // An unseen pull request counts as open, so only a terminal first read announces.
+      const previous = lookupStates.get(id) ?? "open";
+      lookupStates.delete(id);
+      if (lookupStates.size >= PR_LOOKUP_CACHE_CAPACITY) {
+        const oldest = lookupStates.keys().next().value;
+        if (oldest !== undefined) lookupStates.delete(oldest);
+      }
+      lookupStates.set(id, pr.state);
+      return previous === pr.state ? Effect.void : PubSub.publish(pullRequestStateChanges, key);
+    });
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
@@ -1150,6 +1217,7 @@ export const make = Effect.gen(function* () {
           return { latest: null, headContext };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
     },
@@ -1282,7 +1350,7 @@ export const make = Effect.gen(function* () {
               ? {
                   provider: error.provider,
                   providerOperation: error.operation,
-                  providerCommand: error.command ?? "unknown",
+                  ...(error.command === undefined ? {} : { providerCommand: error.command }),
                   errorDetail: error.detail,
                 }
               : {}),
@@ -1387,15 +1455,14 @@ export const make = Effect.gen(function* () {
       /^https?:\/\//iu.test(remoteUrl) &&
       (repositoryNameWithOwner?.split("/").length ?? 0) > 2
     ) {
-      const detected = detectSourceControlProviderFromGitRemoteUrl(remoteUrl);
-      const kind =
-        detected?.kind === "unknown"
-          ? yield* sourceControlProvider(cwd).pipe(
-              Effect.map((provider) => provider.kind),
-              Effect.orElseSucceed(() => undefined),
-            )
-          : detected?.kind;
-      repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl, kind);
+      const kind = detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind;
+      const provider =
+        kind === undefined
+          ? undefined
+          : yield* (
+              kind === "unknown" ? sourceControlProvider(cwd) : sourceControlProviders.get(kind)
+            ).pipe(Effect.orElseSucceed(() => undefined));
+      repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl, provider);
     }
     return {
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
@@ -1658,13 +1725,13 @@ export const make = Effect.gen(function* () {
     >,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const headSelectors = probeableHeadSelectors(provider.kind, headContext.headSelectors);
-    for (const headSelector of headSelectors) {
+    const probe = headBranchProbe(provider, headContext.headSelectors, "open");
+    for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "open",
-        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 1,
+        limit: probe.limit,
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
@@ -1690,12 +1757,13 @@ export const make = Effect.gen(function* () {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
     const provider = yield* sourceControlProvider(cwd);
-    for (const headSelector of probeableHeadSelectors(provider.kind, headContext.headSelectors)) {
+    const probe = headBranchProbe(provider, headContext.headSelectors, "all");
+    for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "all",
-        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 20,
+        limit: probe.limit,
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
@@ -1720,7 +1788,9 @@ export const make = Effect.gen(function* () {
   ) {
     const terms = yield* sourceControlProvider(cwd).pipe(
       Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-      Effect.orElseSucceed(() => getChangeRequestTerminologyForKind("unknown")),
+      Effect.orElseSucceed(() =>
+        getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
+      ),
     );
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
@@ -2086,8 +2156,10 @@ export const make = Effect.gen(function* () {
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =
-      settings.style.followChangeRequestTemplates && provider.kind === "github"
-        ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))
+      settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
+        ? Option.getOrUndefined(
+            yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
+          )
         : undefined;
 
     const generated = yield* textGeneration.generatePrContent({
@@ -2321,6 +2393,7 @@ export const make = Effect.gen(function* () {
       ...toStatusPr(latest),
       closedAt: latest.closedAt ?? null,
       mergedAt: latest.mergedAt ?? null,
+      headSha: latest.headSha ?? null,
       // Hosting CLIs can select an upstream repository instead of origin.
       // The returned PR URL names the repository that actually owns it.
       repositoryKey: pullRequestRepositoryKey(latest.url),
@@ -2698,14 +2771,6 @@ export const make = Effect.gen(function* () {
             detail: "Feature-branch checkout is only supported for commit actions.",
           });
         }
-        if (input.action === "create_pr" && initialStatus.hasWorkingTreeChanges) {
-          return yield* new GitManagerError({
-            operation: "runStackedAction",
-            cwd: input.cwd,
-            detail: "Commit local changes before creating a PR.",
-          });
-        }
-
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
@@ -2791,7 +2856,9 @@ export const make = Effect.gen(function* () {
         const changeRequestTerms = wantsPr
           ? yield* sourceControlProvider(input.cwd).pipe(
               Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-              Effect.orElseSucceed(() => getChangeRequestTerminologyForKind("unknown")),
+              Effect.orElseSucceed(() =>
+                getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
+              ),
             )
           : null;
 
@@ -2891,6 +2958,9 @@ export const make = Effect.gen(function* () {
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,
+    subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
+      Effect.map((subscription) => Stream.fromSubscription(subscription)),
+    ),
   });
 });
 

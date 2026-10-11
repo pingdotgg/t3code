@@ -1,48 +1,46 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  GrokSettings,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as EffectAcpErrors from "effect-acp/errors";
-import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
+import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as ServerConfig from "../../config.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProjectStore from "../ProjectStore.ts";
-import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
-import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
-import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import {
   AcpProviderCapabilitiesV2,
   acpCompletedTurnShouldTerminalizeTool,
   acpSubagentStatusBlocksTurnSettlement,
   acpSupportsImagePrompts,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 import {
   makeGrokAcpAdapterFlavor,
   makeGrokAdapterV2,
   GrokProviderCapabilitiesV2,
-  type GrokAdapterV2Options,
-} from "./GrokAdapterV2.ts";
+} from "@t3tools/provider-grok/testing";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",
@@ -71,7 +69,7 @@ function runtimePolicy(input: {
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
 }) {
-  return ProviderAdapterV2RuntimePolicy.make({
+  return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: input.runtimeMode,
     interactionMode: "default",
     cwd: "/workspace",
@@ -96,9 +94,12 @@ describe("acpSubagentStatusBlocksTurnSettlement", () => {
 
 describe("GrokAdapterV2 capabilities", () => {
   it("preserves Grok's rate-limit stop and distinguishes other prompt failures", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as GrokAdapterV2Options);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
     const limit = flavor.promptFailure?.(
       new EffectAcpErrors.AcpRequestError({
         code: xAiRateLimitedErrorCode,
@@ -124,9 +125,12 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("wires hard Stop teardown but soft non-Stop interrupts in the constructor flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as GrokAdapterV2Options);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
 
     assert.isFalse(flavor.interruptPromptOnCancel);
     // User Stop (requestRuntimeRestart) keeps the hard process-group kill and
@@ -141,9 +145,12 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as GrokAdapterV2Options);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
     const foreground = {
       toolCallId: "foreground-1",
       title: "Terminal",
@@ -286,9 +293,12 @@ describe("ACP permission policy", () => {
 });
 
 describe("Grok permission prompts", () => {
-  const disposition = makeGrokAcpAdapterFlavor({
-    makeRuntime: () => Effect.never,
-  } as unknown as GrokAdapterV2Options).permissionDisposition;
+  const disposition = makeGrokAcpAdapterFlavor(
+    {
+      makeRuntime: () => Effect.never,
+    } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+    "/home/ada",
+  ).permissionDisposition;
 
   // grok_auto_blocked_command replays Auto end to end. When an explicit policy
   // launches Grok asking instead, T3's policy still answers its prompts.
@@ -311,15 +321,18 @@ describe("Grok permission prompts", () => {
 });
 
 describe("Grok launch permission mode", () => {
-  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
-    prefix: "t3-grok-v2-launch-",
-  }).pipe(Layer.provide(NodeServices.layer));
-  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerServerConfig);
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
   // process starts.
-  const launchArgs = (runtimePolicy: ProviderAdapterV2RuntimePolicy) =>
+  const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
       const launches: Array<ReadonlyArray<string>> = [];
       const childProcessSpawner = ChildProcessSpawner.make((command) => {
@@ -333,18 +346,13 @@ describe("Grok launch permission mode", () => {
         );
       });
       const instanceId = ProviderInstanceId.make("grok-launch-test");
-      const adapter = makeGrokAdapterV2({
+      const adapter = yield* makeGrokAdapterV2({
         instanceId,
         settings: LAUNCH_TEST_GROK_SETTINGS,
         environment: {},
         hostPlatform: "darwin",
-        childProcessSpawner,
-        crypto: yield* Crypto.Crypto,
-        fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
         selfInvocation: yield* resolveSelfInvocation(),
-      });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
       yield* adapter
         .openSession({
           threadId: ThreadId.make("grok-launch-test"),
@@ -356,15 +364,15 @@ describe("Grok launch permission mode", () => {
       return launches;
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
-      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provide(layerTest),
     );
 
   const policy = (
     runtimeMode: RuntimeMode,
-    override: Partial<ProviderAdapterV2RuntimePolicy> = {},
+    override: Partial<ProviderAdapter.ProviderAdapterV2RuntimePolicy> = {},
   ) =>
-    ProviderAdapterV2RuntimePolicy.make({
+    ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
       runtimeMode,
       interactionMode: "default",
       cwd: process.cwd(),

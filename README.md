@@ -48,6 +48,12 @@ Install the latest version of the desktop app from [GitHub Releases](https://git
 winget install T3Tools.T3Code
 ```
 
+#### Windows (`scoop`)
+
+```bash
+scoop install extras/t3code
+```
+
 #### macOS (Homebrew)
 
 ```bash
@@ -94,6 +100,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Project settings](./docs/user/project-settings.md)
 - [Appearance preferences](./docs/user/appearance.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
