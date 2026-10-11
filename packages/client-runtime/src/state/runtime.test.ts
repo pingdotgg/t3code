@@ -363,7 +363,7 @@ describe("finite environment subscription lifecycle", () => {
 
 describe("environment query lifecycle", () => {
   it.effect(
-    "retries an interrupted query without exposing a failure during session replacement",
+    "retries a query without exposing a failure when session loss races the connection signal",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -409,7 +409,8 @@ describe("environment query lifecycle", () => {
 
           yield* firstStarted.await;
           yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
-          yield* Effect.yieldNow;
+          // Do not yield here: the in-flight request can observe session loss
+          // before the atom processes the paired connection signal.
           failFirst.openUnsafe();
           yield* firstSettled.await;
           yield* Effect.yieldNow;
@@ -447,6 +448,26 @@ describe("environment query lifecycle", () => {
           ).toBe("recovered");
         }),
       ),
+  );
+
+  it.effect("fails a query that reports unavailable while its session is still live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const unavailable = new EnvironmentRpcUnavailableError({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          message: "The environment did not respond to the request.",
+        });
+        const harness = yield* makeEnvironmentQueryHarness(Effect.fail(unavailable));
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+
+        const exit = yield* AtomRegistry.getResult(registry, harness.atom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.exit);
+
+        expect(exit).toStrictEqual(Exit.fail(unavailable));
+      }),
+    ),
   );
 
   it.effect.each([
