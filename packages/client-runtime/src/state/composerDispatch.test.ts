@@ -10,9 +10,9 @@ describe("resolveComposerDispatchMode", () => {
     expect(resolveComposerDispatchMode({ running: false, alternateModifier: false })).toBe("auto");
   });
 
-  it("steers by default and reserves Mod+Enter for queueing while running", () => {
-    expect(resolveComposerDispatchMode({ running: true, alternateModifier: false })).toBe("steer");
-    expect(resolveComposerDispatchMode({ running: true, alternateModifier: true })).toBe("queue");
+  it("queues by default and reserves Mod+Enter for steering while running", () => {
+    expect(resolveComposerDispatchMode({ running: true, alternateModifier: false })).toBe("queue");
+    expect(resolveComposerDispatchMode({ running: true, alternateModifier: true })).toBe("steer");
   });
 
   it("queues as the alternate action when restarting is the default", () => {
@@ -67,6 +67,6 @@ describe("resolveComposerDispatchMode", () => {
   it("names the alternate action so the affordance can be labelled", () => {
     expect(alternateComposerDispatchAction("queue")).toBe("steer");
     expect(alternateComposerDispatchAction("steer")).toBe("queue");
-    expect(alternateComposerDispatchAction()).toBe("queue");
+    expect(alternateComposerDispatchAction()).toBe("steer");
   });
 });
