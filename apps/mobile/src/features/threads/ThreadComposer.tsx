@@ -48,6 +48,8 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  type AnimatedRef,
+  type SharedValue,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
@@ -74,6 +76,11 @@ import {
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { GlassSurface } from "../../components/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ResizableComposerInput,
+  useComposerResizeContainer,
+  type ComposerResizeInset,
+} from "../../components/ResizableComposerInput";
 import { fileRoutePathSegments } from "../files/filePath";
 import {
   ComposerActionButton,
@@ -138,7 +145,7 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
-export const COMPOSER_EXPANDED_CHROME = 156;
+export const COMPOSER_EXPANDED_CHROME = Platform.OS === "ios" ? 170 : 156;
 
 export interface ThreadComposerProps {
   readonly canOperateThread: boolean;
@@ -183,6 +190,10 @@ export interface ThreadComposerProps {
   /** Whether the live turn can actually be steered by this provider. */
   readonly canSteerActiveTurn: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
+  readonly resizeBoundaryRef: AnimatedRef<View>;
+  readonly resizeEnabled: boolean;
+  readonly resizeInset: ComposerResizeInset;
+  readonly resizeActive: SharedValue<boolean>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
@@ -242,8 +253,30 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
     },
   };
 };
-export const COMPOSER_LAYOUT_TRANSITION =
-  Platform.OS === "android" ? undefined : composerHeightTransition;
+/** Manual height and keyboard movement already animate the expanded layout. */
+export function useComposerLayoutTransition(resizeActive: SharedValue<boolean>) {
+  return useMemo<LayoutAnimationFunction | undefined>(
+    () =>
+      Platform.OS === "android"
+        ? undefined
+        : (values) => {
+            "worklet";
+            if (resizeActive.value) {
+              return {
+                initialValues: {
+                  originX: values.targetOriginX,
+                  originY: values.targetOriginY,
+                  width: values.targetWidth,
+                  height: values.targetHeight,
+                },
+                animations: {},
+              };
+            }
+            return composerHeightTransition(values);
+          },
+    [resizeActive],
+  );
+}
 
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
@@ -315,6 +348,7 @@ export function ComposerSurface(props: {
   readonly style: ViewStyle;
   /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
+  readonly resizeActive: SharedValue<boolean>;
 }) {
   const colors = useUniwindTheme();
   const targetBorderRadius =
@@ -332,7 +366,8 @@ export function ComposerSurface(props: {
   const animatedShapeStyle = useAnimatedStyle(() => ({
     borderRadius: animatedBorderRadius.value,
   }));
-  const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
+  const composerLayoutTransition = useComposerLayoutTransition(props.resizeActive);
+  const layoutTransition = shouldAnimate ? composerLayoutTransition : undefined;
 
   // Each native frame follows the same transition. Animating only the outer
   // clip leaves the glass and content at their final height on the first frame.
@@ -383,6 +418,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
+  const resizeContainer = useComposerResizeContainer();
+  const layoutTransition = useComposerLayoutTransition(props.resizeActive);
   const [isFocused, setIsFocused] = useState(false);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
@@ -748,6 +785,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   return (
     <Animated.View
+      ref={resizeContainer.ref}
+      onLayout={resizeContainer.onLayout}
       className="px-[12px]"
       style={{
         paddingTop: isExpanded ? 8 : 6,
@@ -813,6 +852,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
 
         <ComposerSurface
+          resizeActive={props.resizeActive}
           style={
             isExpanded
               ? {
@@ -820,7 +860,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   minHeight: 140,
                   overflow: "hidden" as const,
                   paddingBottom: 6,
-                  paddingTop: 14,
+                  paddingTop: Platform.OS === "ios" ? 0 : 14,
                 }
               : {
                   // Keep the numeric radius close to the expanded card so the
@@ -887,141 +927,154 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             <Animated.View
               className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
-              layout={COMPOSER_LAYOUT_TRANSITION}
+              layout={layoutTransition}
             >
-              <ComposerEditor
-                draftKey={composerDraftKey}
-                environmentId={props.environmentId}
-                onOpenMention={(path) => {
-                  Keyboard.dismiss();
-                  navigation.navigate("ThreadFile", {
-                    environmentId: String(props.environmentId),
-                    threadId: String(props.selectedThread.id),
-                    path: fileRoutePathSegments(path),
-                  });
-                }}
-                onOpenAttachment={openDraftDocument}
-                // A rested composer full of chips left almost nowhere to tap to start typing:
-                // every chip opened its file instead. Collapsed, they focus the editor.
-                chipsInert={!isExpanded}
-                onInertChipPress={() => inputRef.current?.focus()}
-                ref={inputRef}
-                multiline
-                value={props.draftMessage}
-                readOnly={voiceInput.freezesEditor}
-                skills={composerMenu.skills}
-                selection={composerMenu.selection}
-                onChangeText={props.onChangeDraftMessage}
-                onSelectionChange={composerMenu.onSelectionChange}
-                onPasteImages={(uris) => void props.onNativePasteImages(uris)}
-                onPasteText={(paste) => {
-                  const insertPaste = () => {
-                    const insertion = replaceTextSelection({
-                      value: paste.value,
-                      selection: paste.selection,
-                      text: paste.text,
+              <ResizableComposerInput
+                active={isExpanded && props.resizeEnabled}
+                resizeActive={props.resizeActive}
+                resizeInset={props.resizeInset}
+                key={composerDraftKey}
+                boundaryRef={props.resizeBoundaryRef}
+                container={resizeContainer}
+              >
+                <ComposerEditor
+                  draftKey={composerDraftKey}
+                  environmentId={props.environmentId}
+                  onOpenMention={(path) => {
+                    Keyboard.dismiss();
+                    navigation.navigate("ThreadFile", {
+                      environmentId: String(props.environmentId),
+                      threadId: String(props.selectedThread.id),
+                      path: fileRoutePathSegments(path),
                     });
-                    const selection = { start: insertion.cursor, end: insertion.cursor };
-                    props.onChangeDraftMessage(insertion.value);
-                    composerMenu.onSelectionChange(selection);
-                  };
-                  const capabilities = props.serverConfig?.environment.capabilities;
-                  const advertisedMax =
-                    capabilities?.attachmentUploads === true
-                      ? capabilities.fileAttachments?.maxUploadBytes
-                      : undefined;
-                  const maxBytes =
-                    advertisedMax === undefined
-                      ? null
-                      : clampFileAttachmentUploadBytes(advertisedMax);
-                  const wouldExceedInputLimit =
-                    paste.value.length -
-                      Math.max(0, paste.selection.end - paste.selection.start) +
-                      paste.text.length >
-                    PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
-                  const canAttach =
-                    maxBytes !== null &&
-                    countComposerDraftAttachmentsAfterSelection(composerDraftKey, {
-                      text: paste.value,
-                      ...paste.selection,
-                    }) < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
-                    new TextEncoder().encode(paste.text).byteLength <= maxBytes;
-                  if (
-                    pastedTextDisposition({
-                      text: paste.text,
-                      wouldExceedInputLimit,
-                      canAttach: true,
-                    }) === "attachment"
-                  ) {
-                    if (canAttach) {
-                      pendingPastedTextAttachmentCountRef.current += 1;
-                      setPendingPastedTextAttachmentCount(
-                        pendingPastedTextAttachmentCountRef.current,
-                      );
-                      const finishAttachment = () => {
-                        pendingPastedTextAttachmentCountRef.current = Math.max(
-                          0,
-                          pendingPastedTextAttachmentCountRef.current - 1,
-                        );
+                  }}
+                  onOpenAttachment={openDraftDocument}
+                  // A rested composer full of chips left almost nowhere to tap to start typing:
+                  // every chip opened its file instead. Collapsed, they focus the editor.
+                  chipsInert={!isExpanded}
+                  onInertChipPress={() => inputRef.current?.focus()}
+                  ref={inputRef}
+                  multiline
+                  value={props.draftMessage}
+                  readOnly={voiceInput.freezesEditor}
+                  skills={composerMenu.skills}
+                  selection={composerMenu.selection}
+                  onChangeText={props.onChangeDraftMessage}
+                  onSelectionChange={composerMenu.onSelectionChange}
+                  onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                  onPasteText={(paste) => {
+                    const insertPaste = () => {
+                      const insertion = replaceTextSelection({
+                        value: paste.value,
+                        selection: paste.selection,
+                        text: paste.text,
+                      });
+                      const selection = { start: insertion.cursor, end: insertion.cursor };
+                      props.onChangeDraftMessage(insertion.value);
+                      composerMenu.onSelectionChange(selection);
+                    };
+                    const capabilities = props.serverConfig?.environment.capabilities;
+                    const advertisedMax =
+                      capabilities?.attachmentUploads === true
+                        ? capabilities.fileAttachments?.maxUploadBytes
+                        : undefined;
+                    const maxBytes =
+                      advertisedMax === undefined
+                        ? null
+                        : clampFileAttachmentUploadBytes(advertisedMax);
+                    const wouldExceedInputLimit =
+                      paste.value.length -
+                        Math.max(0, paste.selection.end - paste.selection.start) +
+                        paste.text.length >
+                      PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+                    const canAttach =
+                      maxBytes !== null &&
+                      countComposerDraftAttachmentsAfterSelection(composerDraftKey, {
+                        text: paste.value,
+                        ...paste.selection,
+                      }) < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+                      new TextEncoder().encode(paste.text).byteLength <= maxBytes;
+                    if (
+                      pastedTextDisposition({
+                        text: paste.text,
+                        wouldExceedInputLimit,
+                        canAttach: true,
+                      }) === "attachment"
+                    ) {
+                      if (canAttach) {
+                        pendingPastedTextAttachmentCountRef.current += 1;
                         setPendingPastedTextAttachmentCount(
                           pendingPastedTextAttachmentCountRef.current,
                         );
-                      };
-                      void props.onNativePasteText(paste).then(finishAttachment, finishAttachment);
-                    } else if (!wouldExceedInputLimit) {
-                      insertPaste();
-                    } else {
-                      Alert.alert(
-                        wouldExceedInputLimit
-                          ? "Pasted text is too large for this message"
-                          : "Could not attach pasted text",
-                        wouldExceedInputLimit
-                          ? "Remove some text or an attachment, then paste again."
-                          : "Remove an attachment or use a smaller paste, then try again.",
-                      );
+                        const finishAttachment = () => {
+                          pendingPastedTextAttachmentCountRef.current = Math.max(
+                            0,
+                            pendingPastedTextAttachmentCountRef.current - 1,
+                          );
+                          setPendingPastedTextAttachmentCount(
+                            pendingPastedTextAttachmentCountRef.current,
+                          );
+                        };
+                        void props
+                          .onNativePasteText(paste)
+                          .then(finishAttachment, finishAttachment);
+                      } else if (!wouldExceedInputLimit) {
+                        insertPaste();
+                      } else {
+                        Alert.alert(
+                          wouldExceedInputLimit
+                            ? "Pasted text is too large for this message"
+                            : "Could not attach pasted text",
+                          wouldExceedInputLimit
+                            ? "Remove some text or an attachment, then paste again."
+                            : "Remove an attachment or use a smaller paste, then try again.",
+                        );
+                      }
+                      return;
                     }
-                    return;
+                    insertPaste();
+                  }}
+                  placeholder={props.placeholder}
+                  onFocus={handleFocus}
+                  onBlur={handleBlur}
+                  // Command-Return sends the other way, matching web's Mod+Enter.
+                  onSubmit={(alternate) =>
+                    void handleSend(
+                      alternate && sendPresentation.alternate !== null
+                        ? sendPresentation.alternate
+                        : undefined,
+                    )
                   }
-                  insertPaste();
-                }}
-                placeholder={props.placeholder}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                // Command-Return sends the other way, matching web's Mod+Enter.
-                onSubmit={(alternate) =>
-                  void handleSend(
-                    alternate && sendPresentation.alternate !== null
-                      ? sendPresentation.alternate
-                      : undefined,
-                  )
-                }
-                submitTitle={sendPresentation.label}
-                alternateSubmitTitle={
-                  sendPresentation.alternate === null
-                    ? sendPresentation.label
-                    : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
-                }
-                scrollEnabled={isExpanded}
-                // Android: collapsed single line centers natively (gravity) in
-                // a pill-height box matching the send button; iOS keeps insets.
-                singleLineCentered={!isExpanded}
-                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
-                style={
-                  isExpanded
-                    ? {
-                        minHeight: 72,
-                        maxHeight: 160,
-                        paddingVertical: 4,
-                      }
-                    : {
-                        height: 36,
-                      }
-                }
-                textStyle={{
-                  ...bodyText,
-                  color: foregroundColor,
-                }}
-              />
+                  submitTitle={sendPresentation.label}
+                  alternateSubmitTitle={
+                    sendPresentation.alternate === null
+                      ? sendPresentation.label
+                      : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
+                  }
+                  scrollEnabled={isExpanded}
+                  // Android: collapsed single line centers natively (gravity) in
+                  // a pill-height box matching the send button; iOS keeps insets.
+                  singleLineCentered={!isExpanded}
+                  contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                  style={
+                    isExpanded
+                      ? Platform.OS === "ios"
+                        ? { flex: 1, paddingVertical: 4 }
+                        : {
+                            minHeight: 72,
+                            maxHeight: 160,
+                            paddingVertical: 4,
+                          }
+                      : {
+                          height: 36,
+                        }
+                  }
+                  textStyle={{
+                    ...bodyText,
+                    color: foregroundColor,
+                  }}
+                />
+              </ResizableComposerInput>
             </Animated.View>
             {!isExpanded && stripAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
@@ -1078,7 +1131,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
-            layout={COMPOSER_LAYOUT_TRANSITION}
+            layout={layoutTransition}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
             style={
               isExpanded
