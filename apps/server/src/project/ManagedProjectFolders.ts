@@ -9,7 +9,13 @@
  *
  * @module ManagedProjectFolders
  */
-import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type GitManagerServiceError,
+  ProjectId,
+  type ThreadId,
+  VcsProcessSpawnError,
+} from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -220,6 +226,15 @@ function describeCommitFailure(stderr: string): string {
   return lines.at(-1) ?? "Git could not make the first commit.";
 }
 
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
+
+// Spawning a `git` that is not on PATH fails with NotFound, on Windows too.
+const isGitMissing = (error: GitManagerServiceError) =>
+  error._tag === "GitManagerError" &&
+  isVcsProcessSpawnError(error.cause) &&
+  PlatformError.isPlatformError(error.cause.cause) &&
+  error.cause.cause.reason._tag === "NotFound";
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -258,11 +273,13 @@ const make = Effect.gen(function* () {
 
   // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
-  // when the data dir is outside any work tree. Probed once; detection
+  // when the data dir is outside any work tree. With no Git installed nothing
+  // can see a checkout, so Scratch is offered. Probed once; other detection
   // failures hide Scratch rather than failing callers. An interrupted probe
   // invalidates the cache so the next caller probes again.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
+      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) =>
         isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
       ),
