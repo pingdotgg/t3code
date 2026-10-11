@@ -1395,3 +1395,61 @@ describe("ChatGPT sharing presentation", () => {
     ).toBe(false);
   });
 });
+
+describe("Antigravity limit presentation", () => {
+  it("keeps the shared Claude/GPT bucket separate from Gemini and pairs their windows", () => {
+    const antigravity = provider({
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      usageLimits: {
+        checkedAt: "2026-10-09T12:00:00.000Z",
+        windows: [
+          { ...window, id: "3p-5h", label: "Claude & GPT (shared) · 5-hour", usedPercent: 90 },
+          { ...window, id: "gemini-5h", label: "Gemini · 5-hour", usedPercent: 20 },
+          {
+            ...window,
+            id: "3p-weekly",
+            kind: "weekly",
+            label: "Claude & GPT (shared) · Weekly",
+            usedPercent: 100,
+          },
+          {
+            ...window,
+            id: "gemini-weekly",
+            kind: "weekly",
+            label: "Gemini · Weekly",
+            usedPercent: 10,
+          },
+        ],
+      },
+    });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("a"),
+          {
+            entry: { target: { label: "Local" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  usageLimits: { checkedAt: "2026-10-09T12:00:00.000Z", windows: [window] },
+                }),
+                antigravity,
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    const pools = collectLimitPools(accounts, now);
+    expect(pools.map((pool) => pool.driver)).toEqual(["codex", "antigravity"]);
+    const windows = displayLimitWindows(pools[1]!);
+    expect(windows.map((window) => window.id)).toEqual([
+      "gemini-5h",
+      "gemini-weekly",
+      "3p-5h",
+      "3p-weekly",
+    ]);
+    expect(windows.map((window) => window.remainingPercent)).toEqual([80, 90, 10, 0]);
+  });
+});
