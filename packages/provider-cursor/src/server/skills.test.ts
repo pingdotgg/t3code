@@ -102,6 +102,89 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDirectory = (prefix: string) =>
+          fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = yield* tempDirectory("cursor-skills-home-");
+        const workspace = yield* tempDirectory("cursor-skills-workspace-");
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (directory: string) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        });
+        const userRoot = path.join(userHome, ".claude", "skills");
+        // The root is depth 0, so `deep-skill` sits at the depth limit and `below` past it.
+        const atLimit = path.join(
+          userRoot,
+          "deep",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "deep-skill",
+        );
+
+        yield* writeSkill(path.join(workspace, ".agents", "skills", "review"));
+        yield* writeSkill(atLimit);
+        yield* writeSkill(path.join(atLimit, "below"));
+        yield* writeSkill(path.join(userRoot, "later"));
+
+        const expected = [
+          {
+            name: "deep-skill",
+            path: path.join(atLimit, "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "later",
+            path: path.join(userRoot, "later", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "review",
+            path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ];
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+      }),
+    ));
+
+  it("still fails discovery when a root holds more entries than the scan allows", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectoryScoped({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const root = path.join(userHome, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* Effect.forEach(
+          Array.from({ length: 10_001 }, (_, index) => path.join(root, `entry-${index}`)),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+
+        const error = yield* Effect.flip(probeCursorSkills(undefined, { HOME: userHome }));
+        expect(error.message).toContain("scan-budget-exhausted");
+      }),
+    ));
+
   it.skipIf(!symlinksSupported)(
     "treats a symlinked skill outside the root as a package boundary",
     async () =>
