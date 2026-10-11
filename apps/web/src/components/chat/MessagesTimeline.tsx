@@ -2195,6 +2195,14 @@ function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
+function UserMessageBubble({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("relative rounded-2xl bg-message p-3 text-message-foreground", className)}>
+      {children}
+    </div>
+  );
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
@@ -2402,7 +2410,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <UserMessageBubble className="max-w-[80%]">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -2514,7 +2522,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             markdownCwd={ctx.markdownCwd}
           />
         </div>
-      </div>
+      </UserMessageBubble>
       {row.projectedItem &&
       row.projectedItem.item.status !== "completed" &&
       row.projectedItem.item.status !== "pending" &&
@@ -5424,6 +5432,32 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     }
     setExpanded(next);
   };
+  if (workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)) {
+    return (
+      <>
+        {workEntryDisplayIndicatesToolFailure(workEntry) ? (
+          <WorkLogRow
+            icon={
+              <XIcon
+                role="img"
+                aria-label="Tool call failed"
+                className={cn("size-4", failedToolIconClassName)}
+              />
+            }
+            label="User input request failed"
+            trailing={
+              <TimelineRowTimestamp
+                createdAt={workEntry.createdAt}
+                timestampFormat={timestampFormat}
+                alwaysVisible
+              />
+            }
+          />
+        ) : null}
+        <QuestionAnswerHistory answer={workEntry.questionAnswer} highlightAnswers />
+      </>
+    );
+  }
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
@@ -5792,10 +5826,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
 
 function QuestionAnswerHistory({
   answer,
+  highlightAnswers = false,
 }: {
   answer: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
+  highlightAnswers?: boolean;
 }) {
-  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const { activeThreadEnvironmentId, skills, markdownCwd } = use(TimelineRowCtx);
   const attachments = useMemo(() => Object.values(answer.attachmentsByQuestionId).flat(), [answer]);
   const resources = useMemo(
     () =>
@@ -5807,51 +5843,76 @@ function QuestionAnswerHistory({
   );
   const urls = useAssetUrls(activeThreadEnvironmentId, resources);
   return (
-    <div className="ms-7 mt-2 space-y-2" onClick={stopRowToggle}>
+    <div className={cn("space-y-2", !highlightAnswers && "ms-7 mt-2")} onClick={stopRowToggle}>
       {[
         ...new Set([
           ...Object.keys(answer.questionTextById ?? {}),
           ...Object.keys(answer.answers),
           ...Object.keys(answer.attachmentsByQuestionId),
         ]),
-      ].map((questionId) => (
-        <div key={questionId} className="space-y-1">
-          {answer.questionTextById?.[questionId] ? (
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-              {answer.questionTextById[questionId]}
-            </p>
-          ) : null}
-          {getQuestionAnswerText(answer.answers[questionId]) ? (
-            <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">
-              {getQuestionAnswerText(answer.answers[questionId])}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            {(answer.attachmentsByQuestionId[questionId] ?? []).map((attachment) => {
-              const url = urls[attachments.indexOf(attachment)];
-              return (
-                <a
-                  key={attachment.id}
-                  href={url ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm underline"
-                >
-                  {attachment.type === "image" && url ? (
-                    <img
-                      src={url}
-                      alt={attachment.name}
-                      className="h-20 max-w-32 rounded object-contain"
-                    />
-                  ) : (
-                    attachment.name
-                  )}
-                </a>
-              );
-            })}
+      ].map((questionId) => {
+        const text = getQuestionAnswerText(answer.answers[questionId]);
+        const questionAttachments = answer.attachmentsByQuestionId[questionId] ?? [];
+        const response = (
+          <>
+            {highlightAnswers ? <MessageAuthorHeading>You</MessageAuthorHeading> : null}
+            {text ? (
+              highlightAnswers ? (
+                <CollapsibleUserMessageBody
+                  text={text}
+                  renderContextReference={(reference) => reference.label}
+                  skills={skills}
+                  markdownCwd={markdownCwd}
+                />
+              ) : (
+                <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">{text}</p>
+              )
+            ) : null}
+            {questionAttachments.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {questionAttachments.map((attachment) => {
+                  const url = urls[attachments.indexOf(attachment)];
+                  return (
+                    <a
+                      key={attachment.id}
+                      href={url ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm underline"
+                    >
+                      {attachment.type === "image" && url ? (
+                        <img
+                          src={url}
+                          alt={attachment.name}
+                          className="h-20 max-w-32 rounded object-contain"
+                        />
+                      ) : (
+                        attachment.name
+                      )}
+                    </a>
+                  );
+                })}
+              </div>
+            ) : null}
+          </>
+        );
+        return (
+          <div key={questionId} className="space-y-2">
+            {answer.questionTextById?.[questionId] ? (
+              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                {answer.questionTextById[questionId]}
+              </p>
+            ) : null}
+            {highlightAnswers && (text || questionAttachments.length > 0) ? (
+              <div className="flex justify-end">
+                <UserMessageBubble className="max-w-[80%]">{response}</UserMessageBubble>
+              </div>
+            ) : (
+              response
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

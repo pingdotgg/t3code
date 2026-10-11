@@ -1,3 +1,4 @@
+import { hasQuestionAnswer } from "@t3tools/client-runtime/work-log/user-input";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -71,6 +72,14 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+
+function timelineEntryIsUserResponse(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "work" &&
+    entry.entry.questionAnswer !== undefined &&
+    hasQuestionAnswer(entry.entry.questionAnswer)
+  );
+}
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -820,6 +829,7 @@ function deriveSupersededAttemptFolds(
       completeAttemptIds.has(entry.attempt.id) ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
+      timelineEntryIsUserResponse(entry) ||
       // A published page stays visible, as it does when its turn folds.
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
@@ -1142,7 +1152,11 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
-      if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      if (
+        (entry.kind === "work" && entry.entry.itemType === "notification") ||
+        timelineEntryIsUserResponse(entry)
+      )
+        continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1488,6 +1502,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
+        timelineEntryIsUserResponse(entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
         collapsedEntryIds.has(entry.id) ||
@@ -1656,7 +1671,8 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.tone === "error" ||
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
-        timelineEntry.entry.itemType === "notification"
+        timelineEntry.entry.itemType === "notification" ||
+        timelineEntryIsUserResponse(timelineEntry)
       ) {
         nextRows.push({
           kind: "work",
@@ -1679,6 +1695,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
           nextEntry.entry.itemType === "notification" ||
+          timelineEntryIsUserResponse(nextEntry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           collapsedSupersededEntryIds.has(nextEntry.id) ||
