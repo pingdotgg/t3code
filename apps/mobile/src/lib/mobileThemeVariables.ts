@@ -48,5 +48,6 @@ export function getMobileThemeRuntimeVariables(
     ...variables,
     "--color-header": frame,
     "--color-header-foreground": variables["--color-drawer-foreground"],
+    "--color-drawer": variables["--color-screen"],
   };
 }
