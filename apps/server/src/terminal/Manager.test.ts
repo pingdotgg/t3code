@@ -1516,6 +1516,23 @@ it.layer(
       }),
   );
 
+  it.effect("retains plain Unicode and control characters around a split query", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const before = "café\t界🙂\u0007\u009c\u0085";
+      const after = "e\u0301\r\n";
+
+      process.emitData(before);
+      process.emitData("\u001b[5");
+      process.emitData(`n${after}`);
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect((yield* manager.open(openInput())).history).toBe(before + after);
+    }),
+  );
+
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
