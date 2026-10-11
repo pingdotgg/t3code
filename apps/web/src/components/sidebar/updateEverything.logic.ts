@@ -153,8 +153,13 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     return items;
   };
   for (const server of plan.servers) {
-    const kind = server.selfUpdate === "desktop-managed" ? "desktop app" : "server";
-    itemsFor(server.environmentId, server.serverLabel).push(`${kind} to ${server.targetVersion}`);
+    // A desktop-managed server installs whatever its own app's update feed
+    // offers, so it has no target version to show.
+    itemsFor(server.environmentId, server.serverLabel).push(
+      server.selfUpdate === "desktop-managed"
+        ? "desktop app update"
+        : `server to ${server.targetVersion}`,
+    );
   }
   for (const machine of plan.providerMachines) {
     itemsFor(machine.environmentId, machine.label).push(...machine.providers);

@@ -140,7 +140,7 @@ describe("describeUpdateEverything", () => {
       lines: [
         "This app: 0.0.50, restarts last",
         "alvin: server to 0.0.50, Codex, Claude",
-        "studio: desktop app to 0.0.50",
+        "studio: desktop app update",
         "box: Cursor",
       ],
     });
