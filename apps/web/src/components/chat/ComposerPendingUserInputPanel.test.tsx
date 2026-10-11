@@ -68,4 +68,15 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
   });
+
+  it("keeps the author's line breaks in the question text", () => {
+    const markup = renderPanel({
+      ...prompt,
+      questions: [{ ...prompt.questions[0]!, question: "First paragraph.\n\nSecond paragraph." }],
+    });
+
+    const question = markup.match(/<p[^>]*>First paragraph\.[\s\S]*?<\/p>/)?.[0];
+    expect(question).toContain("whitespace-pre-line");
+    expect(question).toContain("First paragraph.\n\nSecond paragraph.");
+  });
 });
