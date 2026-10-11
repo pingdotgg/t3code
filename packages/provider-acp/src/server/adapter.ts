@@ -682,17 +682,19 @@ interface AcpMcpContext {
 
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
+  authorizationFile: string | undefined,
   self: SelfInvocation,
 ): AcpMcpContext {
-  if (session === undefined) {
+  if (session === undefined || authorizationFile === undefined) {
     return { servers: [], acpServers: [] };
   }
   // Stdio is ACP's required baseline MCP transport. Agents that advertise
   // optional http support still routinely fail to wire injected http servers
   // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
   // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
-  // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
-  // travels via environment variables, never the command line.
+  // forwards JSON-RPC to T3's authenticated MCP endpoint. The bridge and the
+  // `acp-mcp-call` fallback read the credential from a private file; only its
+  // path travels in the environment, and nothing on the command line.
   return {
     servers: [
       {
@@ -702,7 +704,7 @@ function acpMcpContext(
         env: [
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
-          { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          { name: "T3_ACP_MCP_AUTHORIZATION_FILE", value: authorizationFile },
         ],
       },
     ],
@@ -711,7 +713,7 @@ function acpMcpContext(
     authorization: session.authorizationHeader,
     processEnvironment: {
       T3_ACP_MCP_ENDPOINT: session.endpoint,
-      T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
+      T3_ACP_MCP_AUTHORIZATION_FILE: authorizationFile,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
     },
@@ -1494,10 +1496,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
-  const readMcpContext = (threadId: ThreadId | null) =>
-    threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self))
-      : mcpSessions.read(threadId).pipe(Effect.map((session) => acpMcpContext(session, self)));
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -1511,6 +1509,37 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        // Each thread's MCP credential reaches the agent as a file whose path
+        // stays the same for the session: the agent's environment, its bridge
+        // and remembered terminal environments keep naming it while a rotated
+        // credential is written over it. Session close removes them all.
+        const mcpCredentialFiles = yield* McpProviderSession.makeMcpCredentialFiles().pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+        const mcpAuthorizationFile = Effect.fnUntraced(
+          function* (threadId: ThreadId, authorization: string | undefined) {
+            if (authorization !== undefined) {
+              return yield* mcpCredentialFiles.write(threadId, authorization);
+            }
+            yield* mcpCredentialFiles.remove(threadId);
+            return undefined;
+          },
+          // T3's tools are an addition: a session that cannot receive them still runs.
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not write the T3 Code MCP credential file.", cause).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+        );
+        const readMcpContext = Effect.fnUntraced(function* (threadId: ThreadId | null) {
+          if (threadId === null) return acpMcpContext(undefined, undefined, self);
+          const session = yield* mcpSessions.read(threadId);
+          const authorizationFile = yield* mcpAuthorizationFile(
+            threadId,
+            session?.authorizationHeader,
+          );
+          return acpMcpContext(session, authorizationFile, self);
+        });
         // Persisted ACP threads from before item identity v2 retain their old
         // deterministic ids. Fresh threads scope native ids by instance so
         // separately configured agents cannot collide.

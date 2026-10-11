@@ -1,12 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
-  T3_MCP_BEARER_ENV,
+  T3_MCP_AUTHORIZATION_FILE_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -17,16 +16,9 @@ import {
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
 
-const threadId = ThreadId.make("thread-pi-t3-mcp");
-
-const mcpSession = {
-  environmentId: EnvironmentId.make("environment-pi-t3-mcp"),
-  threadId,
-  providerSessionId: "mcp-session-pi",
-  providerInstanceId: ProviderInstanceId.make("pi"),
+const mcp = {
   endpoint: "http://127.0.0.1:43123/mcp",
-  authorizationHeader: "Bearer secret-pi-token",
-  browserToolsAvailable: true,
+  authorizationFile: "t3-mcp-fixture/credential",
 };
 
 describe("pi T3 MCP injection", () => {
@@ -39,7 +31,7 @@ describe("pi T3 MCP injection", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: resolvedArgs.args,
       environment: { PATH: "/usr/bin" },
-      mcpSession,
+      mcp,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
       runtimeMode: "approval-required",
     });
@@ -64,7 +56,7 @@ describe("pi T3 MCP injection", () => {
     ]);
     assert.notInclude(launch.args, "--no-extensions");
     assert.equal(launch.env[T3_MCP_URL_ENV], "http://127.0.0.1:43123/mcp");
-    assert.equal(launch.env[T3_MCP_BEARER_ENV], "secret-pi-token");
+    assert.equal(launch.env[T3_MCP_AUTHORIZATION_FILE_ENV], "t3-mcp-fixture/credential");
     assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
     assert.equal(launch.env[T3_PI_MCP_EXTENSION_PATH_ENV], "/tmp/cache/pi-t3-mcp-extension.ts");
 
@@ -72,10 +64,13 @@ describe("pi T3 MCP injection", () => {
       launchArgs: [],
       environment: {
         [T3_MCP_URL_ENV]: "http://127.0.0.1:9999/stale",
-        [T3_MCP_BEARER_ENV]: "stale-token",
+        [T3_MCP_AUTHORIZATION_FILE_ENV]: "stale/credential",
+        T3_MCP_BEARER_TOKEN: "stale-token",
+        T3_ACP_MCP_AUTHORIZATION: "Bearer stale-token",
+        T3_CODE_MCP_AUTHORIZATION: "Bearer stale-token",
         [T3_PI_MCP_EXTENSION_PATH_ENV]: "/stale/extension.ts",
       },
-      mcpSession: undefined,
+      mcp: undefined,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
       runtimeMode: "auto-accept-edits",
     });
@@ -87,7 +82,10 @@ describe("pi T3 MCP injection", () => {
     ]);
     assert.isFalse(permissionOnly.hasT3Mcp);
     assert.isUndefined(permissionOnly.env[T3_MCP_URL_ENV]);
-    assert.isUndefined(permissionOnly.env[T3_MCP_BEARER_ENV]);
+    assert.isUndefined(permissionOnly.env[T3_MCP_AUTHORIZATION_FILE_ENV]);
+    assert.isUndefined(permissionOnly.env.T3_MCP_BEARER_TOKEN);
+    assert.isUndefined(permissionOnly.env.T3_ACP_MCP_AUTHORIZATION);
+    assert.isUndefined(permissionOnly.env.T3_CODE_MCP_AUTHORIZATION);
     assert.equal(permissionOnly.env[T3_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
     assert.equal(
       permissionOnly.env[T3_PI_MCP_EXTENSION_PATH_ENV],
@@ -99,7 +97,7 @@ describe("pi T3 MCP injection", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: [],
       environment: {},
-      mcpSession: undefined,
+      mcp: undefined,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
       runtimeMode: "auto",
     });
@@ -119,7 +117,7 @@ describe("pi T3 MCP injection", () => {
         "anthropic",
       ],
       environment: {},
-      mcpSession,
+      mcp,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
       ephemeral: true,
       disableExtensions: true,

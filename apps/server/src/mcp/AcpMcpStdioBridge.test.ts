@@ -1,13 +1,21 @@
 // The harness asserts raw JSON-RPC wire strings, mirroring the bridge's
 // schema-free passthrough.
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { AcpMcpBridgeError, callAcpMcpTool, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+import {
+  AcpMcpBridgeError,
+  callAcpMcpTool,
+  readAcpMcpCredentials,
+  runAcpMcpStdioBridge,
+} from "./AcpMcpStdioBridge.ts";
 
 function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
   const input = new NodeStream.PassThrough();
@@ -32,6 +40,38 @@ function makeHarness(responder: (request: Request) => Promise<Response> | Respon
 }
 
 describe("AcpMcpStdioBridge", () => {
+  it("reads the credential from the file the environment names", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-acp-mcp-bridge-"));
+    try {
+      const endpoint = "http://127.0.0.1:1/mcp";
+      const file = NodePath.join(directory, "credential");
+      await NodeFSP.writeFile(file, "Bearer dummy-mcp-credential");
+      expect(
+        await readAcpMcpCredentials({
+          T3_ACP_MCP_ENDPOINT: endpoint,
+          T3_ACP_MCP_AUTHORIZATION_FILE: file,
+        }),
+      ).toEqual({ endpoint, authorization: "Bearer dummy-mcp-credential" });
+      // The raw environment variable is no longer a credential channel.
+      expect(
+        await readAcpMcpCredentials({
+          T3_ACP_MCP_ENDPOINT: endpoint,
+          T3_ACP_MCP_AUTHORIZATION: "Bearer dummy-mcp-credential",
+        }),
+      ).toBeUndefined();
+      // A closed session removed its file; the bridge reports it instead of sending nothing.
+      await NodeFSP.rm(file);
+      expect(
+        await readAcpMcpCredentials({
+          T3_ACP_MCP_ENDPOINT: endpoint,
+          T3_ACP_MCP_AUTHORIZATION_FILE: file,
+        }),
+      ).toBeUndefined();
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.effect("preserves the original transport failure as the typed error cause", () =>
     Effect.gen(function* () {
       const source = new Error("fetch failed");

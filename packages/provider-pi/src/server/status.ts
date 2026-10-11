@@ -141,7 +141,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   const launch = buildPiRpcLaunch({
     launchArgs,
     environment,
-    mcpSession: undefined,
+    mcp: undefined,
     extensionPath: undefined,
     ephemeral: true,
   });

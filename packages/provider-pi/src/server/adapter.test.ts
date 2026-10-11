@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -1307,29 +1308,42 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
+  it.effect("hands Pi the MCP credential as a session-owned file, not in its environment", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-pi-mcp"),
         threadId: THREAD_ID,
         providerSessionId: "mcp-session-pi",
         providerInstanceId: PI_INSTANCE_ID,
         endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-pi-token",
+        authorizationHeader: "Bearer dummy-pi-credential",
         browserToolsAvailable: true,
       });
       const fake = yield* makeFakePi;
-      yield* openRuntime(fake);
-      const spawn = fake.lastSpawn();
-      assert.isTrue(spawn.args.includes("--extension"));
-      const extensions = spawn.args.flatMap((arg, index) =>
-        arg === "--extension" ? [spawn.args[index + 1]] : [],
+      const authorizationFile = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* openRuntime(fake);
+          const spawn = fake.lastSpawn();
+          assert.isTrue(spawn.args.includes("--extension"));
+          const extensions = spawn.args.flatMap((arg, index) =>
+            arg === "--extension" ? [spawn.args[index + 1]] : [],
+          );
+          assert.isFalse(spawn.args.includes("--no-extensions"));
+          assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
+          assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
+          assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+          assert.notInclude(JSON.stringify([spawn.args, spawn.env]), "dummy-pi-credential");
+          const file = spawn.env.T3_MCP_AUTHORIZATION_FILE;
+          assert.isString(file);
+          assert.equal(yield* fileSystem.readFileString(file!), "Bearer dummy-pi-credential");
+          if ((yield* HostProcess.Platform) !== "win32") {
+            assert.equal((yield* fileSystem.stat(file!)).mode & 0o777, 0o600);
+          }
+          return file!;
+        }),
       );
-      assert.isFalse(spawn.args.includes("--no-extensions"));
-      assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
-      assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
-      assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
-      assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      assert.isFalse(yield* fileSystem.exists(authorizationFile));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

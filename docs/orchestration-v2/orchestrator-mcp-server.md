@@ -58,17 +58,14 @@ check the `orchestration` capability before reading or mutating state.
 
 ### Codex V2
 
-Codex app-server receives the remote MCP server through command-line config
-overrides:
+Codex app-server receives the remote MCP server in the `config` of its
+`thread/start`, `thread/resume` and `thread/fork` requests, over the JSON-RPC
+connection, so the token is in neither its command line nor its environment:
 
 ```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
+mcp_servers.t3-code.url = http://127.0.0.1:<port>/mcp
+mcp_servers.t3-code.http_headers.Authorization = Bearer <provider-session-token>
 ```
-
-The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
-production Codex launcher and the injectable test launcher use the same
-projection helper.
 
 ### Claude Agent SDK V2
 
@@ -156,8 +153,11 @@ extension into the server cache and spawns
 
 ```text
 T3_MCP_URL=http://127.0.0.1:<port>/mcp
-T3_MCP_BEARER_TOKEN=<provider-session-token>
+T3_MCP_AUTHORIZATION_FILE=<owner-only file holding the Authorization header>
 ```
+
+Only the file's path is in Pi's environment. Commands Pi runs do not inherit
+the token, so it is not in their `COREDUMP_ENVIRON` either.
 
 The extension preserves public names under `mcp__t3-code__` for saved loadouts
 and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,

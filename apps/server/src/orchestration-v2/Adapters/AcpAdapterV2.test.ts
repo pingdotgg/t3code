@@ -509,6 +509,32 @@ function rawProtocolRequestParam(
   return typeof params === "object" && params !== null ? Reflect.get(params, key) : undefined;
 }
 
+/** The raw credential older builds exported, as a server started from one of their terminals inherits it. */
+const STALE_RAW_MCP_CREDENTIAL = "Bearer stale-dummy-credential";
+
+/** Prints a terminal's raw MCP credential variable, then the contents of its credential file. */
+const TERMINAL_MCP_CREDENTIAL_PROBE = [
+  "const file = process.env.T3_ACP_MCP_AUTHORIZATION_FILE;",
+  "const contents = file ? require('node:fs').readFileSync(file, 'utf8') : '';",
+  "process.stdout.write((process.env.T3_ACP_MCP_AUTHORIZATION ?? '') + '|' + contents);",
+].join(" ");
+
+/** Value of `name` in a stdio MCP server's `env` list. */
+function mcpServerEnvironmentValue(server: unknown, name: string): string | undefined {
+  if (typeof server !== "object" || server === null || !("env" in server)) return undefined;
+  if (!Array.isArray(server.env)) return undefined;
+  const variable: unknown = server.env.find(
+    (candidate: unknown) =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      "name" in candidate &&
+      candidate.name === name,
+  );
+  return typeof variable === "object" && variable !== null && "value" in variable
+    ? String(variable.value)
+    : undefined;
+}
+
 function rawProtocolPromptText(event: EffectAcpProtocol.AcpProtocolLogEvent): string {
   const prompt = rawProtocolRequestParam(event, "prompt");
   if (!Array.isArray(prompt)) return "";
@@ -761,6 +787,266 @@ describe("AcpAdapterV2", () => {
       assert.equal(runtimeInput?.processEnvironment?.T3_ACP_MCP_NODE, process.execPath);
       assert.equal(runtimeInput?.processEnvironment?.T3_ACP_MCP_ENTRYPOINT, undefined);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps an ACP thread's MCP credential file at one path through rotation and clear", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-credential-file");
+      const threadId = ThreadId.make("thread-acp-mcp-credential-file");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const issueCredential = (authorizationHeader: string) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-acp-mcp-credential-file"),
+          threadId,
+          providerSessionId: `mcp-session-${authorizationHeader.length}`,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader,
+          browserToolsAvailable: false,
+        });
+      yield* issueCredential("Bearer dummy-mcp-credential");
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let agent: RuntimeService | undefined;
+      let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
+      let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
+      let waitForTerminalExit:
+        | Parameters<RuntimeService["handleTerminalWaitForExit"]>[0]
+        | undefined;
+      const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        // Like Grok and Antigravity, this flavor ignores `processEnvironment`.
+        environment: { T3_ACP_MCP_AUTHORIZATION: STALE_RAW_MCP_CREDENTIAL },
+        wrapRuntime: (runtime) => {
+          agent = runtime;
+          return {
+            ...runtime,
+            handleCreateTerminal: (handler) =>
+              Effect.sync(() => {
+                createTerminal = handler;
+              }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
+            handleTerminalOutput: (handler) =>
+              Effect.sync(() => {
+                readTerminalOutput = handler;
+              }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
+            handleTerminalWaitForExit: (handler) =>
+              Effect.sync(() => {
+                waitForTerminalExit = handler;
+              }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(handler))),
+          };
+        },
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (input) =>
+            Effect.sync(() => runtimeInputs.push(input)).pipe(Effect.andThen(makeRuntime(input))),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const now = yield* DateTime.now;
+
+      const file = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-credential-file"),
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const sessionId = providerThread.nativeThreadRef?.nativeId;
+          if (
+            typeof sessionId !== "string" ||
+            agent === undefined ||
+            createTerminal === undefined ||
+            readTerminalOutput === undefined ||
+            waitForTerminalExit === undefined
+          ) {
+            return yield* Effect.die("ACP runtime must start a session with terminal handlers");
+          }
+          const runTurn = (ordinal: number) =>
+            runtime
+              .startTurn(
+                makeTurnInput({
+                  threadId,
+                  providerThread,
+                  instanceId,
+                  runtimePolicy,
+                  now,
+                  ordinal,
+                }),
+              )
+              .pipe(
+                Effect.andThen(
+                  runtime.events.pipe(
+                    Stream.takeUntil((event) => event.type === "turn.terminal"),
+                    Stream.runDrain,
+                  ),
+                ),
+              );
+
+          const input = runtimeInputs[0];
+          const file = input?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION_FILE;
+          if (file === undefined) {
+            return yield* Effect.die("the agent must receive the credential file");
+          }
+          assert.equal(
+            mcpServerEnvironmentValue(input?.mcpServers[0], "T3_ACP_MCP_AUTHORIZATION_FILE"),
+            file,
+          );
+          assert.notInclude(
+            JSON.stringify([input?.processEnvironment, input?.mcpServers]),
+            "dummy-mcp-credential",
+          );
+          assert.equal(yield* fileSystem.readFileString(file), "Bearer dummy-mcp-credential");
+          if ((yield* HostProcess.Platform) !== "win32") {
+            assert.equal((yield* fileSystem.stat(file)).mode & 0o777, 0o600);
+          }
+          assert.deepEqual(yield* agent.request("_test/environment", {}), {
+            inherited: false,
+            explicit: false,
+            rawMcpCredential: false,
+          });
+
+          // The same native session keeps going: the turn re-reads the
+          // rotated credential, and the agent's environment, its bridge and
+          // the remembered terminal environment still name `file`.
+          yield* issueCredential("Bearer rotated-dummy-mcp-credential");
+          yield* runTurn(1);
+          assert.lengthOf(runtimeInputs, 1);
+          assert.equal(
+            yield* fileSystem.readFileString(file),
+            "Bearer rotated-dummy-mcp-credential",
+          );
+          const terminal = yield* createTerminal(
+            { sessionId, command: process.execPath, args: ["-e", TERMINAL_MCP_CREDENTIAL_PROBE] },
+            { requestId: "test-terminal-create", method: "terminal/create" },
+          );
+          yield* waitForTerminalExit(
+            { sessionId, terminalId: terminal.terminalId },
+            { requestId: "test-terminal-wait", method: "terminal/wait_for_exit" },
+          );
+          assert.equal(
+            (yield* readTerminalOutput(
+              { sessionId, terminalId: terminal.terminalId },
+              { requestId: "test-terminal-output", method: "terminal/output" },
+            )).output,
+            "|Bearer rotated-dummy-mcp-credential",
+          );
+
+          // A cleared credential removes the file; a new one puts it back at the same path.
+          yield* mcpSessions.clear(threadId);
+          yield* runTurn(2);
+          assert.isFalse(yield* fileSystem.exists(file));
+          yield* issueCredential("Bearer reissued-dummy-mcp-credential");
+          yield* runTurn(3);
+          assert.equal(
+            yield* fileSystem.readFileString(file),
+            "Bearer reissued-dummy-mcp-credential",
+          );
+          return file;
+        }),
+      );
+      assert.isFalse(yield* fileSystem.exists(file));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "opens an ACP session without T3's MCP server when its credential file cannot be written",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-mcp-credential-write-failure");
+        const threadId = ThreadId.make("thread-acp-mcp-credential-write-failure");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-acp-mcp-credential-write-failure"),
+          threadId,
+          providerSessionId: "mcp-session-acp-mcp-credential-write-failure",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer dummy-mcp-credential",
+          browserToolsAvailable: false,
+        });
+        let agent: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+        const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+        const makeRuntime = makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          environment: { T3_ACP_MCP_AUTHORIZATION: STALE_RAW_MCP_CREDENTIAL },
+          wrapRuntime: (runtime) => {
+            agent = runtime;
+            return runtime;
+          },
+        });
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: (input) =>
+              Effect.sync(() => runtimeInputs.push(input)).pipe(Effect.andThen(makeRuntime(input))),
+          },
+          selfInvocation,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            makeTempFileScoped: () =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "makeTempFileScoped",
+                }),
+              ),
+          }),
+        );
+        yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-write-failure"),
+          modelSelection: { instanceId, model: "default" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        });
+        assert.deepEqual(runtimeInputs[0]?.mcpServers, []);
+        assert.isUndefined(runtimeInputs[0]?.processEnvironment);
+        if (agent === undefined) return yield* Effect.die("ACP runtime must start");
+        assert.deepEqual(yield* agent.request("_test/environment", {}), {
+          inherited: false,
+          explicit: false,
+          rawMcpCredential: false,
+        });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("refreshes ACP prompt instructions when the interaction mode changes", () =>
@@ -2392,7 +2678,9 @@ describe("AcpAdapterV2", () => {
           makeRuntime,
         },
         selfInvocation,
-        clientTerminals: {},
+        // Older builds exported the raw credential; terminals must drop one
+        // inherited this way whether or not their session has a credential.
+        clientTerminals: { environment: { T3_ACP_MCP_AUTHORIZATION: STALE_RAW_MCP_CREDENTIAL } },
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
@@ -2456,6 +2744,15 @@ describe("AcpAdapterV2", () => {
         Option.fromNullishOr(rawProtocolRequest(forkRequestEvent)),
       );
 
+      const forkMcpServers = rawProtocolRequestParam(forkRequestEvent, "mcpServers");
+      const forkAuthorizationFile = mcpServerEnvironmentValue(
+        Array.isArray(forkMcpServers) ? forkMcpServers[0] : undefined,
+        "T3_ACP_MCP_AUTHORIZATION_FILE",
+      );
+      if (forkAuthorizationFile === undefined) {
+        return yield* Effect.die("session/fork must name the target thread's credential file");
+      }
+
       assert.equal(sourceProviderThread.nativeThreadRef?.nativeId, "mock-session-1");
       assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "mock-session-1-fork");
       assert.equal(forkedProviderThread.appThreadId, targetThreadId);
@@ -2475,11 +2772,15 @@ describe("AcpAdapterV2", () => {
             env: [
               { name: "ELECTRON_RUN_AS_NODE", value: "1" },
               { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
-              { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer target-thread-token" },
+              { name: "T3_ACP_MCP_AUTHORIZATION_FILE", value: forkAuthorizationFile },
             ],
           },
         ],
       });
+      assert.equal(
+        yield* (yield* FileSystem.FileSystem).readFileString(forkAuthorizationFile),
+        "Bearer target-thread-token",
+      );
       // Re-reading another binding must not reassign the forked native
       // session's credential scope.
       yield* runtime.ensureThread({
@@ -2498,7 +2799,7 @@ describe("AcpAdapterV2", () => {
         {
           sessionId: "mock-child-session-without-credential-scope",
           command: process.execPath,
-          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+          args: ["-e", TERMINAL_MCP_CREDENTIAL_PROBE],
         },
         { requestId: "test-unknown-terminal-create", method: "terminal/create" },
       );
@@ -2516,13 +2817,14 @@ describe("AcpAdapterV2", () => {
         },
         { requestId: "test-unknown-terminal-output", method: "terminal/output" },
       );
-      assert.equal(unknownTerminalOutput.output, "");
+      // No credential for this session: no file, and no inherited raw value.
+      assert.equal(unknownTerminalOutput.output, "|");
 
       const terminal = yield* createTerminal(
         {
           sessionId: "mock-session-1-fork",
           command: process.execPath,
-          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+          args: ["-e", TERMINAL_MCP_CREDENTIAL_PROBE],
         },
         { requestId: "test-terminal-create", method: "terminal/create" },
       );
@@ -2540,7 +2842,8 @@ describe("AcpAdapterV2", () => {
         },
         { requestId: "test-terminal-output", method: "terminal/output" },
       );
-      assert.equal(terminalOutput.output, "Bearer target-thread-token");
+      // The terminal gets the path, never the value.
+      assert.equal(terminalOutput.output, "|Bearer target-thread-token");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2930,21 +3233,22 @@ describe("AcpAdapterV2", () => {
       });
       assert.isString(rolledBack.providerThread.nativeThreadRef?.nativeId);
       assert.deepEqual(rolledBack.providerTurns, []);
+      const replacementAuthorizationFile =
+        runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION_FILE;
+      if (replacementAuthorizationFile === undefined) {
+        return yield* Effect.die("the replacement runtime must receive the credential file");
+      }
       assert.equal(
-        runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION,
+        yield* (yield* FileSystem.FileSystem).readFileString(replacementAuthorizationFile),
         "Bearer rollback-target-token",
       );
-      const replacementMcpServer = runtimeInputs[1]?.mcpServers[0];
-      const replacementMcpEnvironment =
-        replacementMcpServer !== undefined &&
-        "env" in replacementMcpServer &&
-        Array.isArray(replacementMcpServer.env)
-          ? replacementMcpServer.env
-          : undefined;
       assert.equal(
-        replacementMcpEnvironment?.find((variable) => variable.name === "T3_ACP_MCP_AUTHORIZATION")
-          ?.value,
-        "Bearer rollback-target-token",
+        mcpServerEnvironmentValue(runtimeInputs[1]?.mcpServers[0], "T3_ACP_MCP_AUTHORIZATION_FILE"),
+        replacementAuthorizationFile,
+      );
+      assert.notInclude(
+        JSON.stringify([runtimeInputs[1]?.processEnvironment, runtimeInputs[1]?.mcpServers]),
+        "rollback-target-token",
       );
       const snapshotAfterRollback = yield* runtime.readThreadSnapshot({
         providerThread: rolledBack.providerThread,

@@ -520,6 +520,37 @@ describe("AcpSessionRuntime", () => {
       expect(yield* runtime.request("_test/environment", {})).toEqual({
         inherited: false,
         explicit: true,
+        rawMcpCredential: false,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drops a raw MCP credential the server inherited from an older build", () =>
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.env.T3_ACP_MCP_AUTHORIZATION;
+          process.env.T3_ACP_MCP_AUTHORIZATION = "Bearer stale-dummy-mcp-credential";
+          return previous;
+        }),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.T3_ACP_MCP_AUTHORIZATION;
+            else process.env.T3_ACP_MCP_AUTHORIZATION = previous;
+          }),
+      );
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: mockAgentArgs,
+          env: { T3_ACP_RUNTIME_EXPLICIT: "kept" },
+        },
+      });
+      yield* runtime.initialize();
+      expect(yield* runtime.request("_test/environment", {})).toMatchObject({
+        explicit: true,
+        rawMcpCredential: false,
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

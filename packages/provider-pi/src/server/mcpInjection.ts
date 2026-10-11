@@ -2,11 +2,11 @@ import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import { withoutRawMcpCredentials } from "@t3tools/provider-core/server/mcpSession";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
-  T3_MCP_BEARER_ENV,
+  T3_MCP_AUTHORIZATION_FILE_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -170,10 +170,6 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
   return { ok: true, args };
 }
 
-function bearerTokenFromAuthorizationHeader(header: string): string {
-  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : header;
-}
-
 function normalizedPiPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
 }
@@ -251,7 +247,8 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
 export function buildPiRpcLaunch(input: {
   readonly launchArgs: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
-  readonly mcpSession: McpProviderSessionConfig | undefined;
+  /** The session's MCP endpoint and the private file holding its `Authorization` header. */
+  readonly mcp: { readonly endpoint: string; readonly authorizationFile: string } | undefined;
   readonly extensionPath: string | undefined;
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
@@ -263,7 +260,7 @@ export function buildPiRpcLaunch(input: {
   readonly hasT3Mcp: boolean;
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
-  const hasT3Mcp = hasT3Extension && input.mcpSession !== undefined;
+  const hasT3Mcp = hasT3Extension && input.mcp !== undefined;
   const extensionSafeArgs =
     input.disableExtensions === true
       ? withoutExplicitExtensions(input.launchArgs)
@@ -287,11 +284,11 @@ export function buildPiRpcLaunch(input: {
   ) {
     args.push("--extension", input.extensionPath);
   }
-  const environment = { ...input.environment };
   // These values belong to the current T3 session. Never let a Pi child reuse
   // credentials inherited from the server or a parent provider process.
+  const environment = withoutRawMcpCredentials(input.environment);
   delete environment[T3_MCP_URL_ENV];
-  delete environment[T3_MCP_BEARER_ENV];
+  delete environment[T3_MCP_AUTHORIZATION_FILE_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
 
   return {
@@ -307,12 +304,10 @@ export function buildPiRpcLaunch(input: {
               input.runtimeMode === "auto" ? "approval-required" : input.runtimeMode,
           }
         : {}),
-      ...(hasT3Mcp && input.mcpSession !== undefined
+      ...(hasT3Mcp && input.mcp !== undefined
         ? {
-            [T3_MCP_URL_ENV]: input.mcpSession.endpoint,
-            [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
-              input.mcpSession.authorizationHeader,
-            ),
+            [T3_MCP_URL_ENV]: input.mcp.endpoint,
+            [T3_MCP_AUTHORIZATION_FILE_ENV]: input.mcp.authorizationFile,
           }
         : {}),
     },

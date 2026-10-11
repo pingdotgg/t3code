@@ -40,7 +40,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
         environment,
-        mcpSession: undefined,
+        mcp: undefined,
         extensionPath: undefined,
         ephemeral: true,
         // No user is present to answer a text-generation extension dialog.
