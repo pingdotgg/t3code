@@ -1,5 +1,6 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
+  EventId,
   MessageId,
   NodeId,
   ProviderDriverKind,
@@ -12,15 +13,24 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ThreadProjection,
+  ProjectId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
@@ -35,6 +45,7 @@ it.effect("leaves durable effects for the worker after runtime reconciliation", 
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([]),
+            getUnboundLiveProviderSessions: () => Effect.succeed([]),
           }),
           Layer.mock(EventSink.EventSinkV2)({}),
           IdAllocator.layer,
@@ -83,6 +94,7 @@ it.effect("reads recovery projections only for threads that need runtime recover
               archivedThreads: [],
             } as never),
           getRecoveryThreadIds: () => Effect.succeed([recoveryThreadId]),
+          getUnboundLiveProviderSessions: () => Effect.succeed([]),
           getRuntimeRecoveryProjection: (threadId) => {
             projectionReads(threadId);
             return Effect.succeed({
@@ -154,6 +166,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getUnboundLiveProviderSessions: () => Effect.succeed([]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand: committed }),
@@ -799,6 +812,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getUnboundLiveProviderSessions: () => Effect.succeed([]),
             getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
@@ -1485,5 +1499,139 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
         : [],
     );
     assert.deepEqual(noted, [`subagent ${nativeSubagentId}`]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("stops a live session left without a thread binding on startup", () => {
+  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+    Layer.provideMerge(layerDatabase),
+  );
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        EventSink.layer,
+        EffectOutbox.layer,
+        IdAllocator.layer,
+      ).pipe(Layer.provideMerge(layerStores)),
+    ),
+  );
+  const providerInstanceId = ProviderInstanceId.make("codex");
+  const driver = ProviderDriverKind.make("codex");
+  const detachedThreadId = ThreadId.make("thread_recovery_detached");
+  const boundThreadId = ThreadId.make("thread_recovery_bound");
+  const unboundSessionId = ProviderSessionId.make("provider_session_recovery_unbound");
+  const boundSessionId = ProviderSessionId.make("provider_session_recovery_bound");
+
+  return Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const session = (id: ProviderSessionId): OrchestrationV2ProviderSession => ({
+      id,
+      driver,
+      providerInstanceId,
+      status: "ready",
+      cwd: "/workspace",
+      model: "gpt-5.4",
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    });
+    const threadCreated = (threadId: ThreadId): OrchestrationV2DomainEvent => ({
+      id: EventId.make(`event:${threadId}:created`),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project_recovery_sessions"),
+        title: "Recovery",
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const attached = (threadId: ThreadId, id: ProviderSessionId): OrchestrationV2DomainEvent => ({
+      id: EventId.make(`event:${id}:attached`),
+      type: "provider-session.attached",
+      threadId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: session(id),
+    });
+    // What a release before the fix left behind: the detach dropped the
+    // binding and no terminal status followed.
+    yield* eventSink.write({
+      events: [
+        threadCreated(detachedThreadId),
+        threadCreated(boundThreadId),
+        attached(detachedThreadId, unboundSessionId),
+        {
+          id: EventId.make(`event:${unboundSessionId}:detached`),
+          type: "provider-session.detached",
+          threadId: detachedThreadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { providerSessionId: unboundSessionId, detachedAt: now },
+        },
+        attached(boundThreadId, boundSessionId),
+      ],
+    });
+
+    const summary = yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+
+    assert.equal(summary.stoppedSessions, 2);
+    const rows = yield* sql<{ readonly provider_session_id: string; readonly status: string }>`
+      SELECT provider_session_id, status FROM orchestration_v2_projection_provider_sessions
+      ORDER BY provider_session_id
+    `;
+    assert.deepEqual(
+      rows.map((row) => [row.provider_session_id, row.status]),
+      [
+        [boundSessionId, "stopped"],
+        [unboundSessionId, "stopped"],
+      ],
+    );
+    // One stop per session: the bound one through its thread's reconcile, the
+    // unbound one through the thread that last held it.
+    const stops = yield* eventStore
+      .read({ eventType: "provider-session.updated" })
+      .pipe(Stream.runCollect);
+    assert.deepEqual(
+      stops.map(({ event }) =>
+        event.type === "provider-session.updated"
+          ? [event.payload.id, event.threadId, event.payload.status]
+          : [],
+      ),
+      [
+        [boundSessionId, boundThreadId, "stopped"],
+        [unboundSessionId, detachedThreadId, "stopped"],
+      ],
+    );
+
+    // A second start finds nothing left to stop.
+    const again = yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+    assert.equal(again.stoppedSessions, 0);
   }).pipe(Effect.provide(layer));
 });

@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   NodeId,
   ProviderThreadId,
   ProviderTurnId,
@@ -169,6 +172,39 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     } as OrchestrationV2DomainEvent;
 
     expect(applyOrchestrationV2ProjectionEvent(emptyProjection, event)).toBe(emptyProjection);
+  });
+
+  it("updates only sessions the thread is attached to", () => {
+    const session = {
+      id: ProviderSessionId.make("provider-session-reducer"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready",
+      cwd: "/workspace",
+      model: "gpt-5.4",
+      capabilities: {},
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    } as unknown as OrchestrationV2ProviderSession;
+    const stopped = (projection: OrchestrationV2ThreadProjection) =>
+      applyOrchestrationV2ProjectionEvent(projection, {
+        id: "event-session-stopped",
+        type: "provider-session.updated",
+        threadId,
+        driver: session.driver,
+        providerInstanceId: session.providerInstanceId,
+        occurredAt: now,
+        payload: { ...session, status: "stopped" },
+      } as OrchestrationV2DomainEvent);
+
+    // A detached thread still receives the session's final status.
+    expect(stopped(emptyProjection)?.providerSessions).toEqual([]);
+    expect(
+      stopped({ ...emptyProjection, providerSessions: [session] })?.providerSessions.map(
+        (entry) => entry.status,
+      ),
+    ).toEqual(["stopped"]);
   });
 
   it("preserves visible row identity when run updates do not change membership", () => {

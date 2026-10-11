@@ -252,11 +252,16 @@ export function applyOrchestrationV2ProjectionEvent(
     case "subagent.updated":
       return { ...base, subagents: upsertEntity(base.subagents, event.payload) };
     case "provider-session.attached":
-    case "provider-session.updated":
       return {
         ...base,
         providerSessions: upsertEntity(base.providerSessions, event.payload),
       };
+    // Only attach binds a session to the thread, as on the server. A thread
+    // that detached can still receive the session's final status.
+    case "provider-session.updated":
+      return base.providerSessions.some((session) => session.id === event.payload.id)
+        ? { ...base, providerSessions: upsertEntity(base.providerSessions, event.payload) }
+        : base;
     case "provider-session.detached":
       return {
         ...base,

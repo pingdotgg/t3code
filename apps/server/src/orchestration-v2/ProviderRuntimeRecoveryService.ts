@@ -725,8 +725,39 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
+  // A session whose last thread detached can be left "ready" with no binding,
+  // so the per-thread pass above never reads it. No runtime outlives the
+  // process, so every such row is stale.
+  const stopUnboundSessions = Effect.gen(function* () {
+    const unbound = yield* projections.getUnboundLiveProviderSessions();
+    if (unbound.length === 0) return 0;
+    const now = yield* DateTime.now;
+    const events = yield* Effect.forEach(unbound, ({ threadId, session }) =>
+      Effect.gen(function* () {
+        return {
+          id: yield* ids.allocate.event({ threadId, providerSessionId: session.id }),
+          type: "provider-session.updated",
+          threadId,
+          driver: session.driver,
+          providerInstanceId: session.providerInstanceId,
+          occurredAt: now,
+          payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
+        } satisfies OrchestrationV2DomainEvent;
+      }),
+    );
+    yield* eventSink.write({ events });
+    return events.length;
+  }).pipe(
+    Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
+  );
+
   const recover = Effect.gen(function* () {
-    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
+    const summary = yield* reconcile("startup");
+    const stoppedUnbound = yield* stopUnboundSessions;
+    return {
+      ...summary,
+      stoppedSessions: summary.stoppedSessions + stoppedUnbound,
+    } satisfies ProviderRuntimeRecoverySummary;
   });
 
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });

@@ -258,6 +258,7 @@ it.effect(
           canStartQueuedRun: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
+          getUnboundLiveProviderSessions: () => Effect.die("unused getUnboundLiveProviderSessions"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
         }),

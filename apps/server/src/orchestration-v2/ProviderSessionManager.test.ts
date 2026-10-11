@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
@@ -2636,6 +2637,110 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
   }),
+);
+
+// The session row's status, which recovery and storage cleanup read even
+// when no thread is bound to the session.
+const projectedSessionStatus = (providerSessionId: ProviderSessionId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly status: string }>`
+      SELECT status FROM orchestration_v2_projection_provider_sessions
+      WHERE provider_session_id = ${providerSessionId}
+    `;
+    return rows.map((row) => row.status);
+  });
+
+it.effect(
+  "ProviderSessionManagerV2 records an exclusive session stopped when its last thread detaches",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-exclusive-detach");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          now,
+        });
+        yield* eventSink.write({ events: pendingRequest.events });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // What the effect worker runs after an archive, settle, or delete.
+        yield* manager.detach({ providerSessionId, threadId, detail: "Thread archived." });
+
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.deepEqual(yield* projectedSessionStatus(providerSessionId), ["stopped"]);
+        const request = (yield* projectionStore.getThreadProjection(threadId)).runtimeRequests.find(
+          (candidate) => candidate.id === pendingRequest.requestId,
+        );
+        assert.equal(request?.status, "cancelled");
+        assert.equal(request?.responseCapability.type, "not_resumable");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          Layer.merge(
+            layerTest({ state, idleTimeoutMs: 1_000, capabilities: ExclusiveCapabilities }),
+            layerTestDatabase,
+          ),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 records a shared session stopped when it idles out with no thread attached",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-shared-detach");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* manager.detach({ providerSessionId, threadId });
+        // A shared runtime outlives the detach until its idle timer fires.
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        assert.deepEqual(yield* projectedSessionStatus(providerSessionId), ["ready"]);
+
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.deepEqual(yield* projectedSessionStatus(providerSessionId), ["stopped"]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(Layer.merge(layerTest({ state, idleTimeoutMs: 1_000 }), layerTestDatabase)),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all sessions", () =>
