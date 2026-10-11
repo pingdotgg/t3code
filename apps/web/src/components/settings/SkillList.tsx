@@ -1,4 +1,4 @@
-import { ChevronRightIcon, PackageIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, PackageIcon } from "lucide-react";
 import { memo, useState, type MouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
@@ -45,12 +45,11 @@ interface RowHandlers {
 
 const SkillListItem = memo(function SkillListItem({
   item,
-  nested,
   agents,
   canWrite,
   onToggle,
   onOpen,
-}: RowHandlers & { item: SkillListRow; nested: boolean }) {
+}: RowHandlers & { item: SkillListRow }) {
   const { row, details, disabled, overridden } = item;
   const lockedOff = row.disabledByProvider;
   const warning = skillAttention(row, details, agents);
@@ -58,11 +57,7 @@ const SkillListItem = memo(function SkillListItem({
     <li className="min-w-0">
       <div
         onClick={() => onOpen(row.name)}
-        className={cn(
-          "flex cursor-pointer items-center gap-3 py-2 pr-3 hover:bg-muted/40 sm:pr-4",
-          // Nested rows start where their pack's name does: past its chevron and icon.
-          nested ? "pl-15 sm:pl-16" : "pl-3 sm:pl-4",
-        )}
+        className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/40 sm:px-4"
       >
         <button
           type="button"
@@ -118,7 +113,11 @@ const SkillListItem = memo(function SkillListItem({
   );
 });
 
-/** A pack's heading row and its skills: the first few, and a row that reveals the rest. */
+/**
+ * A pack's heading and its skills: the first few, and a row that reveals the
+ * rest. The heading is a tinted band rather than an indent, and its switch and
+ * chevron sit in the rows' switch and chevron columns.
+ */
 function SourceGroup({
   source,
   items,
@@ -135,26 +134,21 @@ function SourceGroup({
       <li>
         <div
           onClick={() => setOpen((value) => !value)}
-          className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-muted/40 sm:px-4"
+          className="flex cursor-pointer items-center gap-3 bg-muted/25 px-3 py-1.5 hover:bg-muted/40 sm:px-4"
         >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-              open && "rotate-90",
-            )}
-          />
           <button
             type="button"
             aria-expanded={open}
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {github ? (
-              <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+              <GitHubIcon className="size-3.5 shrink-0 text-muted-foreground" />
             ) : (
-              <PackageIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <PackageIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             )}
-            <span className="min-w-0 truncate text-sm font-medium">From {source}</span>
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+              From {source}
+            </span>
             <Badge variant="secondary" size="sm">
               {items.length}
             </Badge>
@@ -172,21 +166,24 @@ function SourceGroup({
               }
             />
           </span>
-          {/* The width of a row's chevron, so this switch sits over the rows' switches. */}
-          <span aria-hidden className="w-4 shrink-0" />
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+              open && "rotate-180",
+            )}
+          />
         </div>
       </li>
       {open
-        ? shown.map((item) => (
-            <SkillListItem key={item.row.name} item={item} nested {...handlers} />
-          ))
+        ? shown.map((item) => <SkillListItem key={item.row.name} item={item} {...handlers} />)
         : null}
       {open && items.length > SOURCE_GROUP_PREVIEW ? (
         <li>
           <button
             type="button"
             onClick={() => setShowAll((value) => !value)}
-            className="w-full cursor-pointer py-2 pr-3 pl-15 text-left text-xs text-muted-foreground outline-none hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:pr-4 sm:pl-16"
+            className="w-full cursor-pointer px-3 py-2 text-left text-xs text-muted-foreground outline-none hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4"
           >
             {hidden > 0 ? `${hidden} more` : "Show fewer"}
           </button>
@@ -231,9 +228,7 @@ export function SkillListSection({
           <ul className="divide-y divide-border/50">
             {groups.map(({ source, rows }) =>
               source === null ? (
-                rows.map((item) => (
-                  <SkillListItem key={item.row.name} item={item} nested={false} {...handlers} />
-                ))
+                rows.map((item) => <SkillListItem key={item.row.name} item={item} {...handlers} />)
               ) : (
                 <SourceGroup key={`source:${source}`} source={source} items={rows} {...handlers} />
               ),
