@@ -39,6 +39,9 @@ export const CodexScanState = Schema.Struct({
   sessionId: Schema.mutableKey(Schema.String),
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
+  modelProvider: Schema.mutableKey(Schema.String),
+  turnId: Schema.mutableKey(Schema.String),
+  sawThreadSettings: Schema.mutableKey(Schema.Boolean),
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: Schema.mutableKey(Schema.Boolean),
   forkCopyAnchorMs: Schema.mutableKey(Schema.Finite),
@@ -52,6 +55,9 @@ export function initialCodexScanState(): CodexScanState {
     sessionId: "",
     lastUsageSignature: null,
     sawSessionMeta: false,
+    modelProvider: "",
+    turnId: "",
+    sawThreadSettings: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
   };
@@ -96,7 +102,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   return parseCodexRecord(parsed, state);
 }
 
-function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
+export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
@@ -113,6 +119,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["model_provider"] === "string") {
+      state.modelProvider = payloadRecord["model_provider"];
+    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;
@@ -123,10 +132,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    state.turnId = typeof payloadRecord["turn_id"] === "string" ? payloadRecord["turn_id"] : "";
     return null;
   }
 
   if (payloadType === "thread_settings_applied") {
+    state.sawThreadSettings = true;
     const settings = payloadRecord["thread_settings"];
     if (typeof settings === "object" && settings !== null) {
       state.speed = codexSpeed((settings as Record<string, unknown>)["service_tier"]);
@@ -193,6 +204,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     speed: state.speed,
+    ...(!state.sawThreadSettings &&
+    state.modelProvider === "openai" &&
+    state.sessionId.length > 0 &&
+    state.turnId.length > 0
+      ? { unresolvedCodexTurnId: state.turnId }
+      : {}),
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
@@ -223,6 +240,8 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       id: true,
       session_id: true,
       model: true,
+      model_provider: true,
+      turn_id: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
