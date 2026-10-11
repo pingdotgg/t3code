@@ -30,9 +30,9 @@ export interface TransferBudgetRun {
   /** The second client resubscribes after the turn from the cursor it held before it. */
   readonly reconnectThread: WebSocketCatchUpMeasurement;
   readonly reconnectShell: WebSocketCatchUpMeasurement;
-  /** `sql.execute` spans opened server-wide during the measured turn. */
+  /** SQL statement spans opened server-wide during the measured turn. */
   readonly measuredTurnSqlStatements: number;
-  /** `sql.execute` spans opened while serving both reconnect catch-ups. */
+  /** SQL statement spans opened while serving both reconnect catch-ups. */
   readonly reconnectSqlStatements: number;
 }
 
@@ -200,7 +200,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "# T3 Code thread transfer budget",
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
-    "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are `sql.execute` spans counted across V2 persistence and the HTTP/WebSocket handlers.",
+    "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are the SQL client's per-statement spans, counted across V2 persistence and the HTTP/WebSocket handlers.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",

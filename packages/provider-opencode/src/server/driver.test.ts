@@ -7,7 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -156,7 +156,7 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
   () =>
     Effect.gen(function* () {
@@ -243,7 +243,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {

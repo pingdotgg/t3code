@@ -28,6 +28,7 @@ import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestStackMenu({
+  hostLabel,
   stack,
   reference,
   environmentId,
@@ -39,6 +40,8 @@ export function PullRequestStackMenu({
   notice,
   onRetry,
 }: {
+  /** The host's name, which reports what it did with the stack. */
+  hostLabel: string;
   notice?: string | null;
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
@@ -117,7 +120,7 @@ export function PullRequestStackMenu({
         title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
         description:
           action === "merge"
-            ? "GitHub merged the stack or added it to its merge queue."
+            ? `${hostLabel} merged the stack or added it to its merge queue.`
             : undefined,
       });
     }
@@ -232,7 +235,7 @@ export function PullRequestStackMenu({
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"
-                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
+                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. ${hostLabel} checks their rules before merging or queueing them and rebases the remaining stack after merging.`
                 : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
             </DialogDescription>
           </DialogHeader>

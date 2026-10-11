@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -67,7 +67,7 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
     yield* previousServer.exited;
   });
 
-const hostPlatform = HostProcessPlatform.defaultValue();
+const hostPlatform = HostProcess.Platform.defaultValue();
 // procps accepts the same `ps` flags as macOS, so Linux also covers the macOS path.
 const observedPlatforms: ReadonlyArray<NodeJS.Platform> =
   hostPlatform === "linux" ? ["linux", "darwin"] : hostPlatform === "darwin" ? ["darwin"] : [];
@@ -75,7 +75,7 @@ const observedPlatforms: ReadonlyArray<NodeJS.Platform> =
 describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platform) => {
   const provideHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(HostProcess.Platform, platform),
       Effect.provide(NodeServices.layer),
     );
 

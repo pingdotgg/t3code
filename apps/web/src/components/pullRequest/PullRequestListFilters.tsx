@@ -104,6 +104,7 @@ export function PullRequestSearchInput({
   busy?: boolean;
   onChange: (value: string) => void;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>
@@ -111,8 +112,13 @@ export function PullRequestSearchInput({
       </InputGroupAddon>
       <InputGroupInput
         type="search"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
+        value={draft ?? value}
+        onFocus={() => setDraft(value)}
+        onBlur={() => setDraft(null)}
+        onChange={(event) => {
+          setDraft(event.currentTarget.value);
+          onChange(event.currentTarget.value);
+        }}
         placeholder="Search pull requests, or label:bug"
         aria-label="Search pull requests"
       />

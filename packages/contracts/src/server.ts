@@ -69,6 +69,12 @@ export const ServerProviderAuth = Schema.Struct({
   canLogout: Schema.optional(Schema.Boolean),
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The workspace or organization whose quota the login draws on, such as a
+   * ChatGPT workspace or Claude organization id. One email can belong to
+   * several, each with its own quota.
+   */
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -350,6 +356,27 @@ export const ServerObservability = Schema.Struct({
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ServerObservability = typeof ServerObservability.Type;
+
+export const OtlpSignal = Schema.Literals(["traces", "metrics", "logs"]);
+export type OtlpSignal = typeof OtlpSignal.Type;
+
+export const OtlpEndpointCheckInput = Schema.Struct({
+  signal: OtlpSignal,
+  // Receivers are HTTP only; other schemes, such as data:, answer without contacting one.
+  url: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/./i)),
+});
+export type OtlpEndpointCheckInput = typeof OtlpEndpointCheckInput.Type;
+
+/**
+ * What the server saw when it sent an empty export to an endpoint: accepted,
+ * answered with an error status, or never answered.
+ */
+export const OtlpEndpointCheckResult = Schema.Union([
+  Schema.TaggedStruct("Accepted", { latencyMs: Schema.Number }),
+  Schema.TaggedStruct("Rejected", { status: Schema.Number }),
+  Schema.TaggedStruct("Unreachable", { timedOut: Schema.Boolean }),
+]);
+export type OtlpEndpointCheckResult = typeof OtlpEndpointCheckResult.Type;
 
 export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
   "trace-file-not-found",
