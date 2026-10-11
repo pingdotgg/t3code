@@ -15,6 +15,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { FilePreviewItem } from "../../components/FilePreviewModal";
+import { isBotBadgeImage } from "./botBadgeImages";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
@@ -35,7 +36,11 @@ export function PullRequestDescription(props: {
       parseMarkdownWithOptions(props.markdown, { gfm: true, html: true, math: false }),
       (markdown) => parseMarkdownWithOptions(markdown, { gfm: true, html: false, math: false }),
     );
-    return pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
+    const content = pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
+    return {
+      ...content,
+      attachments: content.attachments.filter((attachment) => !isBotBadgeImage(attachment.uri)),
+    };
   }, [props.markdown]);
   const gallery = useMemo<FilePreviewItem[]>(
     () =>
