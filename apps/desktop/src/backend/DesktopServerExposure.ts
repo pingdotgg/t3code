@@ -428,9 +428,8 @@ export const make = Effect.gen(function* () {
   // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
   // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
   // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
+  const cachedReadTailscaleStatus = yield* Effect.cachedWithTTL(
     readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
     ),
@@ -556,7 +555,7 @@ export const make = Effect.gen(function* () {
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
-      readMagicDnsName: cachedReadMagicDnsName,
+      readStatus: cachedReadTailscaleStatus,
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
