@@ -1,10 +1,9 @@
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, PackageIcon } from "lucide-react";
 import { memo, useState, type MouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
 import { getSourceControlPresentationForKind } from "../../sourceControlPresentation";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsGroup } from "./SettingsGroup";
@@ -61,7 +60,8 @@ const SkillListItem = memo(function SkillListItem({
         onClick={() => onOpen(row.name)}
         className={cn(
           "flex cursor-pointer items-center gap-3 py-2 pr-3 hover:bg-muted/40 sm:pr-4",
-          nested ? "pl-9 sm:pl-10" : "pl-3 sm:pl-4",
+          // Nested rows start where their pack's name does: past its chevron and icon.
+          nested ? "pl-15 sm:pl-16" : "pl-3 sm:pl-4",
         )}
       >
         <button
@@ -150,8 +150,10 @@ function SourceGroup({
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {github ? (
-              <GitHubIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            ) : null}
+              <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <PackageIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            )}
             <span className="min-w-0 truncate text-sm font-medium">From {source}</span>
             <Badge variant="secondary" size="sm">
               {items.length}
@@ -180,10 +182,14 @@ function SourceGroup({
           ))
         : null}
       {open && items.length > SOURCE_GROUP_PREVIEW ? (
-        <li className="py-1 pr-3 pl-9 sm:pr-4 sm:pl-10">
-          <Button size="xs" variant="ghost-muted" onClick={() => setShowAll((value) => !value)}>
+        <li>
+          <button
+            type="button"
+            onClick={() => setShowAll((value) => !value)}
+            className="w-full cursor-pointer py-2 pr-3 pl-15 text-left text-xs text-muted-foreground outline-none hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:pr-4 sm:pl-16"
+          >
             {hidden > 0 ? `${hidden} more` : "Show fewer"}
-          </Button>
+          </button>
         </li>
       ) : null}
     </>

@@ -37,55 +37,95 @@ const provider = (
   }) as ServerProvider;
 
 describe("collectSkillRows", () => {
-  it("merges one skill across providers and folders, grouped by its most specific location", () => {
-    const rows = collectSkillRows(
+  const codexSkills: ServerProvider["skills"] = [
+    {
+      name: "frontend-design",
+      path: "/home/me/.agents/skills/frontend-design/SKILL.md",
+      scope: "user",
+      enabled: true,
+    },
+    {
+      name: "test-t3-app",
+      path: "/work/t3/.agents/skills/test-t3-app/SKILL.md",
+      scope: "repo",
+      enabled: true,
+    },
+    // A repository folder that happens to be called `plugins`.
+    {
+      name: "release",
+      path: "/work/t3/packages/plugins/.agents/skills/release/SKILL.md",
+      scope: "repo",
+      enabled: true,
+    },
+    // A plugin skill the provider reports with no scope.
+    {
+      name: "docs",
+      path: "/home/me/.claude/plugins/cache/acme/docs/skills/docs/SKILL.md",
+      enabled: true,
+    },
+  ];
+  const providers = [
+    provider("claudeAgent", [
+      {
+        name: "frontend-design",
+        path: "/home/me/.claude/skills/frontend-design/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+    ]),
+    // Codex was launched in /work/other, whose repository skills it lists
+    // until a scan of the picked checkout arrives.
+    provider(
+      "codex",
       [
-        provider("claudeAgent", [
-          {
-            name: "frontend-design",
-            path: "/home/me/.claude/skills/frontend-design/SKILL.md",
-            scope: "user",
-            enabled: true,
-          },
-        ]),
-        provider("codex", [
-          {
-            name: "frontend-design",
-            path: "/home/me/.agents/skills/frontend-design/SKILL.md",
-            scope: "user",
-            enabled: true,
-          },
-          {
-            name: "test-t3-app",
-            path: "/work/t3/.agents/skills/test-t3-app/SKILL.md",
-            scope: "repo",
-            enabled: true,
-          },
-          // A repository folder that happens to be called `plugins`.
-          {
-            name: "release",
-            path: "/work/t3/packages/plugins/.agents/skills/release/SKILL.md",
-            scope: "repo",
-            enabled: true,
-          },
-          // A plugin skill the provider reports with no scope.
-          {
-            name: "docs",
-            path: "/home/me/.claude/plugins/cache/acme/docs/skills/docs/SKILL.md",
-            enabled: true,
-          },
-        ]),
-        provider("cursor", [], { enabled: false }),
+        ...codexSkills.filter((skill) => skill.scope !== "repo"),
+        {
+          name: "launch-folder-skill",
+          path: "/work/other/.agents/skills/launch-folder-skill/SKILL.md",
+          scope: "repo",
+          enabled: true,
+        },
       ],
-      null,
-    );
+      {
+        workspaceSnapshots: [
+          {
+            cwd: "/work/t3",
+            checkedAt: "2026-10-10T00:00:00.000Z",
+            slashCommands: [],
+            skills: codexSkills,
+          },
+        ],
+      },
+    ),
+    provider("cursor", [], { enabled: false }),
+  ];
+
+  it("merges one skill across providers and folders, grouped by its most specific location", () => {
     expect(
-      rows.map((row) => [row.name, row.group, row.paths.length, row.providers.length]),
+      collectSkillRows(providers, "/work/t3").map((row) => [
+        row.name,
+        row.group,
+        row.paths.length,
+        row.providers.length,
+      ]),
     ).toEqual([
       ["release", "project", 1, 1],
       ["test-t3-app", "project", 1, 1],
       ["frontend-design", "personal", 2, 2],
       ["docs", "plugin", 1, 1],
+    ]);
+  });
+
+  it("shows project skills only from a scan of the picked checkout", () => {
+    // No project picked: the launch folder's skills belong to no project here.
+    expect(collectSkillRows(providers, null).map((row) => row.name)).toEqual([
+      "frontend-design",
+      "docs",
+    ]);
+    // Before the checkout's scan arrives, nothing stands in for it.
+    expect(collectSkillRows(providers, "/work/elsewhere").map((row) => row.name)).toEqual([
+      "frontend-design",
+      "docs",
     ]);
   });
 

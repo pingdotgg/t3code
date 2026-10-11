@@ -10,10 +10,7 @@ import {
   type ServerProviderSkill,
   type SkillFolderInfo,
 } from "@t3tools/contracts";
-import {
-  resolveProviderSkillSourceKind,
-  resolveProviderSkillsForCwd,
-} from "@t3tools/client-runtime/providerSkills";
+import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
 
 export type ToolsTab = "skills" | "mcp";
 
@@ -96,8 +93,9 @@ const isFilePath = (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.t
 
 /**
  * The skills every enabled provider instance on one environment discovers,
- * for the checkout at `cwd` when one is given (falling back to each
- * provider's own launch directory until its snapshot for `cwd` arrives).
+ * for the checkout at `cwd` when one is given. A provider's own list is read
+ * in the folder it was launched from, so its project skills belong to no
+ * project picked here: they show only from a scan of `cwd`.
  * A skill reached from a project folder by any provider counts as a project
  * skill, so the group follows the most specific location.
  */
@@ -118,11 +116,15 @@ export function collectSkillRows(
   >();
   for (const provider of providers) {
     if (!provider.enabled) continue;
-    const skills = cwd === null ? provider.skills : resolveProviderSkillsForCwd(provider, cwd);
-    for (const skill of skills) {
+    const snapshot =
+      cwd === null
+        ? undefined
+        : provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+    for (const skill of snapshot?.skills ?? provider.skills) {
       const key = skill.name.trim().toLowerCase();
       if (key.length === 0) continue;
       const group = skillGroup(skill);
+      if (group === "project" && snapshot === undefined) continue;
       const ref: SkillProviderRef = {
         instanceId: provider.instanceId,
         driver: provider.driver,
