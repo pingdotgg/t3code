@@ -376,6 +376,7 @@ const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Sche
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
 export function PullRequestSummaryTab({
+  scrollerRef,
   environmentId,
   threadRef,
   reference,
@@ -390,6 +391,7 @@ export function PullRequestSummaryTab({
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
+  scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
@@ -657,7 +659,7 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+    <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">

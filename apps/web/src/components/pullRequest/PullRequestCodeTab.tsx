@@ -196,6 +196,7 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
  * drafted rather than being posted as it is typed.
  */
 function PullRequestCodeTab({
+  scrollerRef,
   environmentId,
   reference,
   detail,
@@ -208,6 +209,7 @@ function PullRequestCodeTab({
   onRefresh,
   refreshToken = 0,
 }: {
+  scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
@@ -1394,7 +1396,9 @@ function PullRequestCodeTab({
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      <div className="min-h-0 flex-1 overflow-auto">{body}</div>
+      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
+        {body}
+      </div>
     </div>
   );
 
@@ -1574,6 +1578,7 @@ function PullRequestCodeTab({
             // interaction, but its native host outline clips and competes with the focus
             // indicators on its actual controls.
             className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+            containerRef={scrollerRef}
             viewerRef={setViewer}
             items={items}
             selectedLines={selectedLines}
