@@ -37,6 +37,7 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
+import { ComposerThreadNameField } from "./chat/ComposerThreadNameField";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
@@ -2204,6 +2205,14 @@ export default function ChatView(props: ChatViewProps) {
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  // Names typed into a new thread's name field, by draft. The first send uses it as the title.
+  // It outlives the local draft so a retry after a partly failed launch keeps the name.
+  const [threadNamesByDraftId, setThreadNamesByDraftId] = useState<Record<string, string>>({});
+  const draftThreadNameInput = draftId ? (threadNamesByDraftId[draftId] ?? "") : "";
+  const draftThreadName = draftThreadNameInput.trim();
+  const setDraftThreadName = (id: string, name: string) => {
+    setThreadNamesByDraftId((names) => ({ ...names, [id]: name }));
+  };
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   // Prefer the larger of turn-item-committed ids and projection messages so
@@ -9545,6 +9554,14 @@ export default function ChatView(props: ChatViewProps) {
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
+        // Remove the name rather than empty it, so a restore can tell this apart from a user clear.
+        if (draftId) {
+          setThreadNamesByDraftId((names) => {
+            const next = { ...names };
+            delete next[draftId];
+            return next;
+          });
+        }
         clearedDraft = true;
         const clearedDraftSnapshot = useComposerDraftStore
           .getState()
@@ -9596,12 +9613,13 @@ export default function ChatView(props: ChatViewProps) {
                   },
                   modelSelection: target.selection,
                   titleSeed: title,
+                  ...(draftThreadName ? { title: draftThreadName } : {}),
                   runtimeMode,
                   interactionMode: target.interactionMode,
                   bootstrap: {
                     createThread: {
                       projectId: activeProject.id,
-                      title,
+                      title: draftThreadName || title,
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: target.interactionMode,
@@ -9711,6 +9729,14 @@ export default function ChatView(props: ChatViewProps) {
         const restoreFailedDraft = () => {
           setMultipleModelSelections(failedSelections);
           if (clearedDraft) {
+            // A name typed or cleared while the batch was sending wins over the one it sent.
+            if (draftId && draftThreadNameInput) {
+              setThreadNamesByDraftId((names) =>
+                names[draftId] !== undefined
+                  ? names
+                  : { ...names, [draftId]: draftThreadNameInput },
+              );
+            }
             setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
             addComposerDraftImages(
               composerDraftTarget,
@@ -9941,7 +9967,7 @@ export default function ChatView(props: ChatViewProps) {
                 ? {
                     createThread: {
                       projectId: activeProject.id,
-                      title,
+                      title: draftThreadName || title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
@@ -10006,6 +10032,7 @@ export default function ChatView(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
+          ...(draftThreadName ? { title: draftThreadName } : {}),
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
@@ -11721,6 +11748,15 @@ export default function ChatView(props: ChatViewProps) {
                                     onCancelEdit={cancelEditingQueuedRun}
                                   />
                                 ) : null
+                              }
+                              threadNameField={
+                                isLocalDraftThread && draftId ? (
+                                  <ComposerThreadNameField
+                                    name={draftThreadNameInput}
+                                    onNameChange={(name) => setDraftThreadName(draftId, name)}
+                                    onSubmit={scheduleComposerFocus}
+                                  />
+                                ) : undefined
                               }
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
