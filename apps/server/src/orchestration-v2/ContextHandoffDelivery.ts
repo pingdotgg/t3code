@@ -3,7 +3,6 @@ import type {
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -80,8 +79,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
-      return yield* new ContextHandoffBudgetError();
+      // Failing here wedges every later turn while the handoff stays ready.
+      // Keep it ready instead, like /compact, and let the user message through.
+      return { context: "", delivered: Effect.void, unsent: Effect.void };
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
     const persist = (status: "pending" | "injected" | "inline") =>

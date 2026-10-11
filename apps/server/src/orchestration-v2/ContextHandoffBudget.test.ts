@@ -669,23 +669,51 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
+  it.effect("defers instead of failing the turn when even the coverage marker cannot fit", () =>
     Effect.gen(function* () {
+      const budget = handoffBudget({
+        tokenCap: 16_000,
+        userText: "Status?",
+        attachments: [],
+        providerThread: { ...providerThread, contextUsage: { usedTokens: 581_117 } },
+        nativeContextEstimate: 0,
+      });
+      assert.equal(budget, 0);
+      let durable: OrchestrationV2ContextHandoff = { ...handoff, strategy: "manual_context" };
       let calls = 0;
-      const result = yield* deliverContextHandoffs({
-        handoffs: [handoff],
+      const deferred = yield* deliverContextHandoffs({
+        handoffs: [durable],
         providerThread,
-        budget: 0,
+        budget,
         alreadyDeliveredItemIds: new Set(),
         inject: () =>
           Effect.sync(() => {
             calls++;
             return true;
           }),
-        persist: () => Effect.void,
-      }).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      yield* deferred.delivered;
+      assert.equal(deferred.context, "");
       assert.equal(calls, 0);
+      assert.equal(durable.status, "ready");
+      assert.equal(durable.delivery, undefined);
+      const next = yield* deliverContextHandoffs({
+        handoffs: [durable],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      assert.include(next.context, messages[0]!.text);
+      yield* next.delivered;
+      assert.equal(durable.delivery?.status, "inline");
     }),
   );
 });
