@@ -5,6 +5,7 @@ import {
   AssetResource,
   EnvironmentId,
   type ProjectCloneSnapshot,
+  type ScopedThreadRef,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
@@ -24,6 +25,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { request } from "../rpc/client.ts";
 import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFaviconCache.ts";
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
+import { parseThreadKey, threadKey } from "./entities.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
@@ -106,16 +108,35 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly httpBaseUrl: string;
   } | null>,
+  mediaRevisionAtom?: (ref: ScopedThreadRef) => Atom.Atom<string | null>,
 ) {
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
-    const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
-    if (Result.isSuccess(result)) return result.success;
-    const error = result.failure;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const resource = input.resource;
+    const revision =
+      resource._tag === "media-file" && mediaRevisionAtom
+        ? (yield* AtomRegistry.AtomRegistry).get(
+            mediaRevisionAtom({
+              environmentId: supervisor.target.environmentId,
+              threadId: resource.threadId,
+            }),
+          )
+        : null;
+    const withRevision = (asset: AssetCreateUrlResult): AssetCreateUrlResult =>
+      revision === null
+        ? asset
+        : {
+            ...asset,
+            // Re-sign replacements (whose inode may change) and bypass cached bytes,
+            // even if the server produces the same token within one clock tick.
+            relativeUrl: `${asset.relativeUrl}${asset.relativeUrl.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(revision)}`,
+          };
+    const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
+    if (Result.isSuccess(result)) return withRevision(result.success);
+    const error = result.failure;
     const local = localMediaEnvironment
       ? (yield* AtomRegistry.AtomRegistry).get(localMediaEnvironment)
       : null;
-    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     if (
       !local ||
       local.environmentId === supervisor.target.environmentId ||
@@ -135,7 +156,21 @@ export function createAssetEnvironmentAtoms<R, E>(
       request(WS_METHODS.assetsCreateUrl, input),
     );
     // Callers resolve against the thread's server, so preserve the local server's origin.
-    return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
+    return withRevision({
+      ...asset,
+      relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href,
+    });
+  });
+  const mediaRefreshTrigger = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get) => {
+      const local = localMediaEnvironment ? get(localMediaEnvironment) : null;
+      return JSON.stringify([
+        local?.environmentId ?? null,
+        local?.httpBaseUrl ?? null,
+        mediaRevisionAtom ? get(mediaRevisionAtom(ref)) : null,
+      ]);
+    }).pipe(Atom.setIdleTTL(ASSET_URL_IDLE_TTL_MS));
   });
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",
@@ -143,8 +178,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     staleTimeMs: ASSET_URL_STALE_TIME_MS,
     idleTtlMs: ASSET_URL_IDLE_TTL_MS,
     refreshIntervalMs: ASSET_URL_REFRESH_INTERVAL_MS,
-    refreshTrigger: ({ input }) =>
-      input.resource._tag === "media-file" ? localMediaEnvironment : undefined,
+    refreshTrigger: ({ environmentId, input }) =>
+      input.resource._tag === "media-file" && (localMediaEnvironment || mediaRevisionAtom)
+        ? mediaRefreshTrigger(threadKey({ environmentId, threadId: input.resource.threadId }))
+        : undefined,
   });
   const createUrlsFamily = Atom.family((key: string) => {
     const [environmentId, resources] = parseAssetCollectionKey(key);

@@ -6,7 +6,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -38,6 +38,9 @@ vi.mock("./query", () => ({
   useEnvironmentQuery: () => ({ data: state.session, error: null }),
 }));
 vi.mock("./projectClones", () => ({ environmentProjectCloneListAtom: () => null }));
+vi.mock("./threads", () => ({
+  environmentThreadDetails: { mediaRevisionAtom: () => Atom.make(null) },
+}));
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),

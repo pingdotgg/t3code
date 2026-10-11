@@ -1,5 +1,8 @@
 import {
   EnvironmentId,
+  CheckpointId,
+  CheckpointScopeId,
+  CheckpointRef,
   NodeId,
   ProviderDriverKind,
   RuntimeRequestId,
@@ -32,6 +35,121 @@ function threadState(
 }
 
 describe("createEnvironmentThreadDetailAtoms", () => {
+  it("refreshes host media for settled mutations, checkpoints and new messages, not streamed output", () => {
+    const source = Atom.make(
+      AsyncResult.success(
+        threadState({ data: Option.some(v2Projection), status: "live", error: Option.none() }),
+      ),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => source);
+    const registry = AtomRegistry.make();
+    const revision = details.mediaRevisionAtom(ref);
+    const unmount = registry.mount(revision);
+    const updates: Array<string | null> = [];
+    registry.subscribe(revision, (value) => updates.push(value));
+    const setProjection = (projection: OrchestrationV2ThreadProjection) =>
+      registry.set(
+        source,
+        AsyncResult.success(
+          threadState({ data: Option.some(projection), status: "live", error: Option.none() }),
+        ),
+      );
+    const command = {
+      id: TurnItemId.make("overwrite"),
+      threadId: v2Projection.thread.id,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running" as const,
+      title: null,
+      startedAt: v2Now,
+      completedAt: null,
+      updatedAt: v2Now,
+      type: "command_execution" as const,
+      input: "cp blue.png chart.png",
+      output: "",
+      exitCode: undefined,
+    };
+    setProjection({ ...v2Projection, turnItems: [command] });
+    setProjection({ ...v2Projection, turnItems: [{ ...command, output: "streaming output" }] });
+    expect(registry.get(revision)).toBeNull();
+    expect(updates).toHaveLength(0);
+
+    const completed = { ...command, status: "completed" as const, completedAt: v2Now };
+    let projection: OrchestrationV2ThreadProjection = { ...v2Projection, turnItems: [completed] };
+    setProjection(projection);
+    expect(updates).toHaveLength(1);
+    // File changes must refresh even when a provider does not report a shell command.
+    projection = {
+      ...projection,
+      turnItems: [
+        {
+          ...completed,
+          id: TurnItemId.make("file-edit"),
+          type: "file_change",
+          fileName: "chart.png",
+        },
+      ],
+    };
+    setProjection(projection);
+    expect(updates).toHaveLength(2);
+
+    const message = {
+      id: MessageId.make("assistant-1"),
+      threadId: v2Projection.thread.id,
+      runId: null,
+      nodeId: null,
+      role: "assistant" as const,
+      text: "![chart](/tmp/chart.png)",
+      attachments: [],
+      streaming: true,
+      createdAt: v2Now,
+      updatedAt: v2Now,
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+    };
+    projection = { ...projection, messages: [message] };
+    setProjection(projection);
+    expect(updates).toHaveLength(3);
+    projection = { ...projection, messages: [{ ...message, text: `${message.text}\nMore text` }] };
+    setProjection(projection);
+    expect(updates).toHaveLength(3);
+    projection = {
+      ...projection,
+      messages: [message, { ...message, id: MessageId.make("assistant-2") }],
+    };
+    setProjection(projection);
+    expect(updates).toHaveLength(4);
+
+    projection = {
+      ...projection,
+      checkpoints: [
+        {
+          id: CheckpointId.make("checkpoint-1"),
+          threadId: v2Projection.thread.id,
+          scopeId: CheckpointScopeId.make("scope"),
+          runId: null,
+          nodeId: NodeId.make("node"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/test"),
+          status: "ready",
+          files: [],
+          capturedAt: v2Now,
+        },
+      ],
+    };
+    setProjection(projection);
+    expect(updates).toHaveLength(5);
+    unmount();
+    registry.dispose();
+  });
+
   it("adds environment scope while preserving the pristine projection", () => {
     const initial: AsyncResult.AsyncResult<EnvironmentThreadState, never> = AsyncResult.success(
       threadState({

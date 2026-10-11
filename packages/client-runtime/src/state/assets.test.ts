@@ -60,6 +60,88 @@ describe("asset collection keys", () => {
 });
 
 describe("createAssetEnvironmentAtoms", () => {
+  it.effect.each(["new token", "same token"])("reloads a cached host image with $0", (token) =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("image-host");
+      const threadId = ThreadId.make("image-thread");
+      const revision = Atom.make("command-1").pipe(Atom.keepAlive);
+      let version = "red";
+      const calls: unknown[] = [];
+      const client = {
+        [WS_METHODS.assetsCreateUrl]: (input: unknown) => {
+          calls.push(input);
+          return Effect.succeed({
+            relativeUrl: `/api/assets/${token === "same token" ? "fixed" : version}/chart.png`,
+            expiresAt: 999999,
+          });
+        },
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: new PrimaryConnectionTarget({
+          environmentId,
+          label: "Image host",
+          httpBaseUrl: "https://image-host.test",
+          wsBaseUrl: "wss://image-host.test",
+        }),
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "connected",
+        }),
+        session: yield* SubscriptionRef.make(Option.some({ client } as RpcSession)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+        run: (_id, effect) =>
+          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const assets = createAssetEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments)),
+        undefined,
+        () => revision,
+      );
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const input = { resource: { _tag: "media-file" as const, threadId, path: "/tmp/chart.png" } };
+      const image = assets.createUrl({ environmentId, input });
+      const unmount = registry.mount(image);
+      const read = AtomRegistry.getResult(registry, image, { suspendOnWaiting: true });
+      const first = (yield* read).relativeUrl;
+      expect(first).toBe(
+        `/api/assets/${token === "same token" ? "fixed" : "red"}/chart.png?workspace-revision=command-1`,
+      );
+
+      version = "blue";
+      registry.set(revision, "command-2");
+      const second = (yield* read).relativeUrl;
+      expect(second).toBe(
+        `/api/assets/${token === "same token" ? "fixed" : "blue"}/chart.png?workspace-revision=command-2`,
+      );
+      expect(second).not.toBe(first);
+      expect(calls).toEqual([input, input]);
+
+      // Another message with the same path gets the refreshed URL, without a second request.
+      const laterMessage = assets.createUrl({ environmentId, input });
+      expect((yield* AtomRegistry.getResult(registry, laterMessage)).relativeUrl).toBe(second);
+      registry.set(revision, "command-2");
+      yield* read;
+      expect(calls).toHaveLength(2);
+      unmount();
+
+      version = "green";
+      registry.set(revision, "command-3");
+      expect(calls).toHaveLength(2);
+      expect((yield* read).relativeUrl).toBe(
+        `/api/assets/${token === "same token" ? "fixed" : "green"}/chart.png?workspace-revision=command-3`,
+      );
+      expect(calls).toEqual([input, input, input]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.each([
     { name: "missing video", path: "/tmp/clip.mp4", fallback: true },
     { name: "literal filename characters", path: "/tmp/frame#one?two.png", fallback: true },

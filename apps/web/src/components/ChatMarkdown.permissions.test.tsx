@@ -8,7 +8,7 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -80,6 +80,7 @@ vi.mock("../state/server", () => ({
 }));
 vi.mock("../state/threads", () => ({
   threadEnvironment: { updateMetadata: "updateMetadata" },
+  environmentThreadDetails: { mediaRevisionAtom: () => Atom.make(null) },
 }));
 vi.mock("../state/entities", () => ({
   readEnvironmentSupportsServerBrowser: () => false,

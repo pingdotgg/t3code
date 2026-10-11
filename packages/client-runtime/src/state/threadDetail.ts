@@ -58,6 +58,27 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`));
   });
 
+  const mediaRevisionAtomFamily = Atom.family((key: string) =>
+    Atom.make((get): string | null => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) return null;
+      // Host paths are live references. Commands may rewrite them without emitting
+      // a file-change item; a new message may also reference an externally changed file.
+      const mutation = projection.turnItems.findLast(
+        (item) =>
+          (item.type === "command_execution" || item.type === "file_change") &&
+          item.status !== "pending" &&
+          item.status !== "running" &&
+          item.status !== "waiting",
+      );
+      const checkpoint = projection.checkpoints.findLast((item) => item.status === "ready");
+      const message = projection.messages.findLast((item) => item.role === "assistant");
+      return mutation === undefined && checkpoint === undefined && message === undefined
+        ? null
+        : JSON.stringify([mutation?.id ?? null, checkpoint?.id ?? null, message?.id ?? null]);
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-media-revision:${key}`)),
+  );
+
   const queueWorkflowAtomFamily = Atom.family((key: string) => {
     let previous: Pick<
       OrchestrationV2ThreadProjection,
@@ -192,6 +213,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
+    mediaRevisionAtom: (ref: ScopedThreadRef) => mediaRevisionAtomFamily(threadKey(ref)),
     statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
     errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),
     historyAtom: (ref: ScopedThreadRef) => historyAtomFamily(threadKey(ref)),
