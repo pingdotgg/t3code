@@ -2,6 +2,8 @@ import type { ProviderCloudConfiguration } from "@t3tools/contracts";
 import {
   CLOUD_RUN_OPTION_ID,
   CLOUD_ENVIRONMENT_OPTION_ID,
+  CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
+  isCloudRunOption,
   keepCloudRun,
   selectsCloudRun,
   selectedCloudEnvironment,
@@ -140,9 +142,7 @@ import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValid
 // Sticky picks seed new tasks; where one runs is picked per task, never carried over.
 function withoutCloudRun(selection: ModelSelection): ModelSelection {
   if (!selectsCloudRun(selection.options)) return selection;
-  const options = selection.options?.filter(
-    (option) => option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-  );
+  const options = selection.options?.filter((option) => !isCloudRunOption(option));
   return {
     instanceId: selection.instanceId,
     model: selection.model,
@@ -757,10 +757,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: {
           ...selectedModel,
           options: [
-            ...(selectedModel.options ?? []).filter(
-              (option) =>
-                option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-            ),
+            ...(selectedModel.options ?? []).filter((option) => !isCloudRunOption(option)),
             { id: CLOUD_RUN_OPTION_ID, value: true },
             { id: CLOUD_ENVIRONMENT_OPTION_ID, value: id },
           ],
@@ -816,6 +813,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         ...(selectedModel.options ?? []).filter(
           (option) =>
             option.id !== CLOUD_RUN_OPTION_ID &&
+            option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID &&
             (cloud || option.id !== CLOUD_ENVIRONMENT_OPTION_ID),
         ),
         ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
@@ -845,6 +843,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           options: [
             { id: CLOUD_RUN_OPTION_ID, value: true },
             { id: CLOUD_ENVIRONMENT_OPTION_ID, value: config.id },
+            { id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true },
           ],
         },
         runtimeMode: "full-access",

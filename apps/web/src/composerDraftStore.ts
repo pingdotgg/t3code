@@ -26,6 +26,7 @@ import {
   SnapShotSource,
   keepCloudRun,
   CLOUD_ENVIRONMENT_OPTION_ID,
+  CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -3043,7 +3044,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               normalized.instanceId,
               normalized.model,
               (normalized.options ?? current?.options)?.filter(
-                (option) => option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+                (option) =>
+                  option.id !== CLOUD_ENVIRONMENT_OPTION_ID &&
+                  option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
               ),
             );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
@@ -3304,7 +3307,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
               const stickyOptions = providerOpts?.filter(
-                (option) => option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+                (option) =>
+                  option.id !== CLOUD_ENVIRONMENT_OPTION_ID &&
+                  option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
               );
               if (stickyOptions?.length) {
                 nextStickyMap[instanceKey] = createModelSelection(

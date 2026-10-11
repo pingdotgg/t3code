@@ -17,7 +17,8 @@ choice per project and account. To create one inside T3:
 2. Select **Create and open setup**. T3 opens a separate setup draft and preserves
    your original prompt. Send the setup message to let Codex prepare and test the environment.
 3. When setup is done, select **Publish environment** above the composer in the
-   setup conversation. **Edit environment** shows its configuration first.
+   setup conversation. **Edit environment** shows its configuration first. These
+   controls appear only in setup conversations, not in ordinary cloud threads.
 4. Return to your original draft and choose the published environment.
 
 A published environment supplies repositories and a prepared filesystem to new

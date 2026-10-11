@@ -60,6 +60,26 @@ export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
  */
 export const CLOUD_RUN_OPTION_ID = "cloud";
 export const CLOUD_ENVIRONMENT_OPTION_ID = "cloudEnvironment";
+/**
+ * Marks the conversation that sets up or edits a Codex Cloud environment with
+ * the `$cloud-environment-onboarding:setup` skill. Only these threads offer
+ * Edit and Publish environment.
+ */
+export const CLOUD_ENVIRONMENT_SETUP_OPTION_ID = "cloudEnvironmentSetup";
+
+/** Whether an option belongs to the run location rather than the model. */
+export const isCloudRunOption = (option: ProviderOptionSelection): boolean =>
+  option.id === CLOUD_RUN_OPTION_ID ||
+  option.id === CLOUD_ENVIRONMENT_OPTION_ID ||
+  option.id === CLOUD_ENVIRONMENT_SETUP_OPTION_ID;
+
+/** Whether a selection's options mark a cloud environment setup conversation. */
+export const selectsCloudEnvironmentSetup = (
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): boolean =>
+  options?.some(
+    (option) => option.id === CLOUD_ENVIRONMENT_SETUP_OPTION_ID && option.value === true,
+  ) ?? false;
 
 /** The Codex Cloud destination saved with a thread's model selection. */
 export function selectedCloudEnvironment(
@@ -77,11 +97,12 @@ export function keepCloudRunOptions(
   if (!selectsCloudRun(current)) return next ?? undefined;
   const destination = selectedCloudEnvironment(next) ?? selectedCloudEnvironment(current);
   return [
-    ...(next ?? []).filter(
-      (option) => option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-    ),
+    ...(next ?? []).filter((option) => !isCloudRunOption(option)),
     { id: CLOUD_RUN_OPTION_ID, value: true },
     ...(destination ? [{ id: CLOUD_ENVIRONMENT_OPTION_ID, value: destination }] : []),
+    ...(selectsCloudEnvironmentSetup(current)
+      ? [{ id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true }]
+      : []),
   ];
 }
 

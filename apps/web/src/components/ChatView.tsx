@@ -93,8 +93,11 @@ import {
   type WorktreeSetupSnapshot,
   CLOUD_RUN_OPTION_ID,
   CLOUD_ENVIRONMENT_OPTION_ID,
+  CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
+  isCloudRunOption,
   isCloudEnvironmentConfig,
   selectedCloudEnvironment,
+  selectsCloudEnvironmentSetup,
   selectsCloudRun,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -3359,10 +3362,7 @@ export default function ChatView(props: ChatViewProps) {
       composerDraftTarget,
       selectedProvider,
       [
-        ...(activeModelOptions ?? []).filter(
-          (option) =>
-            option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-        ),
+        ...(activeModelOptions ?? []).filter((option) => !isCloudRunOption(option)),
         { id: CLOUD_RUN_OPTION_ID, value: true },
         { id: CLOUD_ENVIRONMENT_OPTION_ID, value: preferredId },
       ],
@@ -3385,7 +3385,9 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const openCloudEnvironmentReview = useCallback(() => setCloudSetupPage("review"), []);
   const cloudSetupBannerItem = useCloudEnvironmentSetupBannerItem(
-    cloudRunSelected && activeProviderInstanceId && isCloudEnvironmentConfig(cloudEnvironmentId)
+    selectsCloudEnvironmentSetup(activeModelOptions) &&
+      activeProviderInstanceId &&
+      isCloudEnvironmentConfig(cloudEnvironmentId)
       ? { environmentId, instanceId: activeProviderInstanceId, configId: cloudEnvironmentId }
       : null,
     openCloudEnvironmentReview,
@@ -3407,6 +3409,7 @@ export default function ChatView(props: ChatViewProps) {
           ...(activeModelOptions ?? []).filter(
             (option) =>
               option.id !== CLOUD_RUN_OPTION_ID &&
+              option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID &&
               (cloud || option.id !== CLOUD_ENVIRONMENT_OPTION_ID),
           ),
           ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
@@ -12318,6 +12321,7 @@ export default function ChatView(props: ChatViewProps) {
                 options: [
                   { id: CLOUD_RUN_OPTION_ID, value: true },
                   { id: CLOUD_ENVIRONMENT_OPTION_ID, value: config.id },
+                  { id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true },
                 ],
               });
               store.setPrompt(
@@ -12349,11 +12353,7 @@ export default function ChatView(props: ChatViewProps) {
                 composerDraftTarget,
                 selectedProvider,
                 [
-                  ...(activeModelOptions ?? []).filter(
-                    (option) =>
-                      option.id !== CLOUD_RUN_OPTION_ID &&
-                      option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-                  ),
+                  ...(activeModelOptions ?? []).filter((option) => !isCloudRunOption(option)),
                   { id: CLOUD_RUN_OPTION_ID, value: true },
                   { id: CLOUD_ENVIRONMENT_OPTION_ID, value: id },
                 ],

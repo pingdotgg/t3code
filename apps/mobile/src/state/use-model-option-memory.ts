@@ -1,8 +1,4 @@
-import {
-  CLOUD_RUN_OPTION_ID,
-  CLOUD_ENVIRONMENT_OPTION_ID,
-  type ProviderOptionSelection,
-} from "@t3tools/contracts";
+import { isCloudRunOption, type ProviderOptionSelection } from "@t3tools/contracts";
 import { appAtomRegistry } from "./atom-registry";
 import {
   modelOptionMemoryAtom,
@@ -44,9 +40,7 @@ export function rememberModelOptions(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
 ): void {
-  const modelOptions = options.filter(
-    (option) => option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
-  );
+  const modelOptions = options.filter((option) => !isCloudRunOption(option));
   if (modelOptions.length === 0) {
     return;
   }

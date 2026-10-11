@@ -47,7 +47,7 @@ import {
   isCloudEnvironmentConfig,
   isProviderNativeSubagentThread,
   selectedCloudEnvironment,
-  selectsCloudRun,
+  selectsCloudEnvironmentSetup,
 } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
@@ -1294,7 +1294,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       />
                     </Animated.View>
                   ) : null}
-                  {selectsCloudRun(props.selectedThread.modelSelection.options) &&
+                  {selectsCloudEnvironmentSetup(props.selectedThread.modelSelection.options) &&
                   isCloudEnvironmentConfig(cloudEnvironmentConfigId) ? (
                     <CloudEnvironmentSetupBar
                       environmentId={props.environmentId}

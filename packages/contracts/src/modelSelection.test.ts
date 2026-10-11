@@ -166,3 +166,20 @@ it("keeps the cloud destination through model edits and retains an explicit repl
     ],
   );
 });
+
+it("keeps a setup conversation marked as one through model edits", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const current = {
+    instanceId,
+    model: "gpt-a",
+    options: [
+      { id: "cloud", value: true },
+      { id: "cloudEnvironment", value: "asenvcfg_a" },
+      { id: "cloudEnvironmentSetup", value: true },
+    ],
+  };
+  assert.deepStrictEqual(
+    keepCloudRun({ instanceId, model: "gpt-b" }, current).options,
+    current.options,
+  );
+});
