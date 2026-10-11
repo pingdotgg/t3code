@@ -8,10 +8,13 @@ import type {
 } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -19,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
+  bufferShellLiveStream,
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
@@ -53,6 +57,63 @@ const emptyShellSnapshot = {
   threads: [],
   archivedThreads: [],
 } as OrchestrationV2ShellSnapshot;
+
+it.effect("buffers the latest shell state in sequence order across deletion and recreation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const input = yield* Queue.unbounded<
+        Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>,
+        Cause.Done
+      >();
+      const drained = yield* Deferred.make<void>();
+      const pull = yield* Stream.toPull(
+        bufferShellLiveStream(
+          Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(drained, undefined))),
+          { maxItems: 5 },
+        ),
+      );
+      const initial = {
+        kind: "project.removed" as const,
+        sequence: 1,
+        projectId: ProjectId.make("initial"),
+      };
+      yield* Queue.offer(input, initial);
+      expect(yield* pull).toEqual([initial]);
+      const shell = shellFixture({ id: ThreadId.make("same") });
+      const updates = [
+        {
+          kind: "thread.updated" as const,
+          sequence: 2,
+          location: "active" as const,
+          thread: shell,
+        },
+        {
+          kind: "thread.removed" as const,
+          sequence: 3,
+          location: "active" as const,
+          threadId: shell.id,
+        },
+        { kind: "project.removed" as const, sequence: 4, projectId: ProjectId.make("same") },
+        {
+          kind: "thread.updated" as const,
+          sequence: 5,
+          location: "active" as const,
+          thread: shell,
+        },
+        {
+          kind: "thread.removed" as const,
+          sequence: 6,
+          location: "archive" as const,
+          threadId: shell.id,
+        },
+      ];
+      yield* Queue.offerAll(input, updates);
+      yield* Queue.end(input);
+      yield* Deferred.await(drained);
+      expect(yield* pull).toEqual(updates.slice(2));
+    }),
+  ),
+);
 
 describe("buildActiveShellSnapshot", () => {
   it("never duplicates archived rows into the regular shell", () => {
