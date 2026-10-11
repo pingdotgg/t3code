@@ -1,13 +1,20 @@
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -71,12 +78,74 @@ export function isModelSelectionProviderEnabled(
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
 }
 
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+].map((driver) => ProviderDriverKind.make(driver));
+
+/**
+ * The text generation model on the first instance `isEnabled` accepts: the
+ * built-in default instances in preference order, then, when
+ * `includeConfiguredInstances` is set, configured instances of those
+ * drivers. `null` when none is.
+ *
+ * `includeConfiguredInstances` is for the project-scoped caller only: a
+ * project that disabled every built-in instance should still be able to
+ * fall back to one it configured itself. The machine-level caller leaves it
+ * unset, since widening the candidates there would change behavior for
+ * every user regardless of project scope.
+ */
+export function fallbackTextGenerationModelSelection(
+  providerInstances: ServerSettings["providerInstances"],
+  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
+  options?: { readonly includeConfiguredInstances?: boolean },
+): ModelSelection | null {
+  const candidates = [
+    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
+      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
+    ),
+    ...(options?.includeConfiguredInstances === true
+      ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+          TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
+            ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
+            : [],
+        )
+      : []),
+  ];
+  const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
+  if (match === undefined) return null;
+  const [instanceId, driver] = match;
+  return {
+    instanceId,
+    model:
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_TEXT_GENERATION_MODEL,
+  };
+}
+
+/**
+ * `projectId` has no default: a caller that forgets it would otherwise fall
+ * back to the machine's own writer choice, silently ignoring a project that
+ * turned the writer's instance off. Pass `null` explicitly outside a
+ * project's scope.
+ */
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
-  providers?: ReadonlyArray<ServerProvider>,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+  if (
+    !selection ||
+    !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
     return settings.textGenerationModelSelection;
   }
   if (providers === undefined) {
@@ -97,10 +166,14 @@ export function resolveSourceControlWriterModelSelection(
  */
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
-  providers?: ReadonlyArray<ServerProvider>,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.reviewGuideModelSelection;
-  if (selection && isModelSelectionProviderEnabled(settings, selection)) {
+  if (
+    selection &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
     const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
     if (
       providers === undefined ||
@@ -111,7 +184,7 @@ export function resolveReviewGuideModelSelection(
       return selection;
     }
   }
-  return resolveSourceControlWriterModelSelection(settings, providers);
+  return resolveSourceControlWriterModelSelection(settings, providers, projectId);
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -187,6 +260,36 @@ function mergeSettingsEntries<Value>(
     } else {
       next.set(id, config);
     }
+  }
+  return Object.fromEntries(next);
+}
+
+/**
+ * `projectSettingsOverrides` entries otherwise replace whole (see the field's
+ * doc comment in contracts), but `providerInstances` was added after clients
+ * already round-trip a project's entry on every edit. A client built before
+ * that addition sends an entry that never mentions the key, and a whole
+ * replace would silently wipe it. When an incoming entry omits the key, keep
+ * what is stored; a client that means to clear every provider override for
+ * the project says so explicitly with `providerInstances: {}`.
+ */
+function mergeProjectSettingsOverridesPatch(
+  current: Readonly<Record<string, ProjectSettingsOverrides>>,
+  patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
+): Record<string, ProjectSettingsOverrides> {
+  const next = new Map(Object.entries(current));
+  for (const [projectId, entry] of Object.entries(patch)) {
+    if (entry === null) {
+      next.delete(projectId);
+      continue;
+    }
+    const storedProviderInstances = current[projectId]?.providerInstances;
+    next.set(projectId, {
+      ...entry,
+      ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
+        ? {}
+        : { providerInstances: storedProviderInstances }),
+    });
   }
   return Object.fromEntries(next);
 }
@@ -463,7 +566,10 @@ export function applyServerSettingsPatch(
       ? {
           projectSettingsOverrides: Object.fromEntries(
             Object.entries(
-              mergeSettingsEntries(current.projectSettingsOverrides, projectSettingsOverridesPatch),
+              mergeProjectSettingsOverridesPatch(
+                current.projectSettingsOverrides,
+                projectSettingsOverridesPatch,
+              ),
             ).filter(([, entry]) => Object.keys(entry).length > 0),
           ),
         }

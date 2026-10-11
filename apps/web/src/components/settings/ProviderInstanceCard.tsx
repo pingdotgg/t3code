@@ -4,10 +4,12 @@ import { Spinner } from "~/components/ui/spinner";
 
 import {
   AlertTriangleIcon,
+  CheckIcon,
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  LayersIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -55,7 +57,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
@@ -472,6 +474,93 @@ export function ProviderEnvironmentSection(props: {
   );
 }
 
+/**
+ * When a project is in scope, the enable control reads and writes that
+ * project's override instead of the environment's `instance.enabled`.
+ * `value` is the project's explicit override (`undefined` means it
+ * inherits the environment); `effectiveEnabled` is what the Switch shows.
+ */
+/**
+ * The project-scope counterpart of a settings row's inheritance indicator:
+ * hover for the summary, open for the project and device values side by side.
+ */
+function ProjectOverrideInheritance({
+  projectEnabled,
+  deviceEnabled,
+}: {
+  readonly projectEnabled: boolean;
+  readonly deviceEnabled: boolean;
+}) {
+  const layers = [
+    { key: "project", label: "Project", enabled: projectEnabled, effective: true },
+    { key: "device", label: "Device", enabled: deviceEnabled, effective: false },
+  ];
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  aria-label="Overridden for this project. Show where this value comes from"
+                />
+              }
+            />
+          }
+        >
+          <LayersIcon className="size-3 text-primary" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Overridden for this project</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup align="end" width="md" padding="none">
+        <ol role="list" className="px-3 py-2.5 text-sm">
+          {layers.map((layer) => (
+            <li
+              key={layer.key}
+              className={cn(
+                "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1",
+                layer.effective && "bg-foreground/[0.06]",
+              )}
+            >
+              <span
+                className={cn(
+                  "min-w-0 truncate",
+                  layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {layer.label}
+              </span>
+              <span
+                className={cn(
+                  "flex items-center gap-1.5",
+                  layer.effective ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {layer.enabled ? "On" : "Off"}
+                {layer.effective ? (
+                  <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
+                ) : (
+                  <span aria-hidden className="size-3.5 shrink-0" />
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+interface ProjectOverrideControl {
+  readonly value: boolean | undefined;
+  readonly effectiveEnabled: boolean;
+  readonly onChange: (next: boolean) => void;
+  readonly onReset: () => void;
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -515,6 +604,8 @@ interface ProviderInstanceCardProps {
   readonly isUpdating?: boolean | undefined;
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
+  /** Omit this prop entirely for environment-wide editing. */
+  readonly projectOverride?: ProjectOverrideControl | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -544,6 +635,9 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
  *     driver-specific `config.enabled` into the envelope on load and both
  *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
  *     false wins, then envelope, then config, then the driver default).
+ *     With `projectOverride` set, the Switch instead reads and writes
+ *     that project's override, leaving the environment's `instance.enabled`
+ *     untouched.
  */
 export function ProviderInstanceCard({
   instanceId,
@@ -573,8 +667,9 @@ export function ProviderInstanceCard({
   onAcceptUrlAuth,
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
+  projectOverride,
 }: ProviderInstanceCardProps) {
-  const enabled = resolveProviderInstanceEnabled(instance);
+  const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -582,8 +677,9 @@ export function ProviderInstanceCard({
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
+  // `liveProvider.enabled` is machine-wide; a project override can turn it on.
   const summary = enabled
-    ? getProviderSummary(liveProvider)
+    ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
@@ -670,6 +766,10 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
+    if (projectOverride) {
+      projectOverride.onChange(value);
+      return;
+    }
     onUpdate({ ...instance, enabled: value });
   };
 
@@ -968,10 +1068,24 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center">
+        <span className="flex h-5 shrink-0 items-center gap-1">
+          {projectOverride?.value !== undefined ? (
+            <span className="flex items-center">
+              <ProjectOverrideInheritance
+                projectEnabled={projectOverride.value}
+                deviceEnabled={resolveProviderInstanceEnabled(instance)}
+              />
+              <SettingResetButton
+                label={`${displayName} enablement`}
+                tooltip="Reset to the device setting"
+                disabled={readOnly || !canWriteSettings}
+                onClick={projectOverride.onReset}
+              />
+            </span>
+          ) : null}
           <Switch
             checked={enabled}
-            disabled={readOnly}
+            disabled={readOnly || (projectOverride !== undefined && !canWriteSettings)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />

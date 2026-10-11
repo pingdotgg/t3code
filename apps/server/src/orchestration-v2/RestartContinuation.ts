@@ -159,28 +159,45 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         : note.settled
           ? noteText
           : `${noteText}\n\n${CONTINUE_PROMPT}`;
-    yield* threads.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
-      threadId: input.threadId,
-      messageId,
-      text,
-      // Shown as a work log row; the prompt the agent got is its detail.
-      notification: {
-        source: { kind: "system" },
-        outcome: "updated",
-        summary: note.settled
-          ? "T3 Code restarted and stopped background work"
-          : "T3 Code restarted and resumed this turn",
-        detail: text,
-      },
-      attachments: [],
-      modelSelection: source.modelSelection,
-      dispatchMode: { type: "start_immediately" },
-      createdBy: "agent",
-      creationSource: "server",
-      restartContinuationOfRunId: input.sourceRunId,
-    });
+    yield* threads
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
+        threadId: input.threadId,
+        messageId,
+        text,
+        // Shown as a work log row; the prompt the agent got is its detail.
+        notification: {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: note.settled
+            ? "T3 Code restarted and stopped background work"
+            : "T3 Code restarted and resumed this turn",
+          detail: text,
+        },
+        attachments: [],
+        modelSelection: source.modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+        restartContinuationOfRunId: input.sourceRunId,
+      })
+      .pipe(
+        // The project turned this instance off since the restart. No turn
+        // resumes, and the success path below still runs so a delegated
+        // child waiting on this run is recovered immediately instead of
+        // after EffectWorker exhausts its retries on a refusal that will
+        // not change.
+        Effect.catchTags({
+          ThreadManagementProviderInstanceDisabledError: (error) =>
+            Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
+              projectId: error.projectId,
+              instanceId: error.instanceId,
+            }),
+        }),
+      );
   },
   // A delegated child this declined to continue still owes its parent a
   // result. Once a continuation run exists this is a no-op; that run settles it.

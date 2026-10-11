@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  resolveProjectProviderInstanceEnabled,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import type {
   EnvironmentId,
@@ -582,7 +585,10 @@ function TaskForm({
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
-  const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
+  const modelOptions = useMemo(
+    () => buildModelOptions(config, null, undefined, draft.projectId),
+    [config, draft.projectId],
+  );
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -757,14 +763,24 @@ function TaskForm({
           }))}
           onSelect={(id) => {
             const project = projects.find((item) => item.id === id);
-            if (project)
-              setDraft({
-                ...draft,
-                projectId: project.id,
-                modelSelection: draft.modelSelectionIsExplicit
-                  ? draft.modelSelection
-                  : scheduledTaskDefaultModel(config, project),
-              });
+            if (!project) return;
+            const keepsExplicitModel =
+              draft.modelSelectionIsExplicit &&
+              (draft.modelSelection === null ||
+                !config?.settings ||
+                resolveProjectProviderInstanceEnabled(
+                  config.settings,
+                  project.id,
+                  draft.modelSelection.instanceId,
+                ));
+            setDraft({
+              ...draft,
+              projectId: project.id,
+              modelSelection: keepsExplicitModel
+                ? draft.modelSelection
+                : scheduledTaskDefaultModel(config, project),
+              modelSelectionIsExplicit: keepsExplicitModel,
+            });
           }}
         />
         <PickerRow

@@ -23,6 +23,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -87,6 +88,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );

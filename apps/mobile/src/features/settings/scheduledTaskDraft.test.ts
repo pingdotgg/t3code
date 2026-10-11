@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
   ScheduledTaskId,
@@ -339,6 +340,12 @@ describe("scheduled task model defaults", () => {
       resolve(
         {
           ...config,
+          settings: {
+            ...config.settings,
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+            },
+          },
           providers: config.providers.map((provider) => ({ ...provider, enabled: false })),
         },
         null,

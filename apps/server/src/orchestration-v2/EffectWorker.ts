@@ -256,41 +256,61 @@ export const layerExecutor: Layer.Layer<
                     if (message === undefined || run === undefined) return yield* error;
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
-                    yield* threads.dispatch({
-                      type: "message.dispatch",
-                      commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
-                      threadId: effect.threadId,
-                      messageId: message.id,
-                      text: message.text,
-                      ...(message.context ? { context: message.context } : {}),
-                      attachments: message.attachments,
-                      // A user's follow-up starts on the thread's saved selection,
-                      // which already holds the steer's choice. A delegated
-                      // completion stays pinned to the run it reports to.
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { modelSelection: run.modelSelection }),
-                      dispatchMode: {
-                        type:
-                          message.delegatedCompletion === undefined
-                            ? "start_immediately"
-                            : "queue_after_active",
-                      },
-                      createdBy: message.createdBy,
-                      creationSource: message.creationSource,
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { delegatedCompletion: message.delegatedCompletion }),
-                      ...(message.notification === undefined
-                        ? {}
-                        : { notification: message.notification }),
-                      ...(message.scheduledTaskId === undefined
-                        ? {}
-                        : { scheduledTaskId: message.scheduledTaskId }),
-                      ...(message.senderThreadId === undefined
-                        ? {}
-                        : { senderThreadId: message.senderThreadId }),
-                    });
+                    yield* threads
+                      .dispatch({
+                        type: "message.dispatch",
+                        commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+                        threadId: effect.threadId,
+                        messageId: message.id,
+                        text: message.text,
+                        ...(message.context ? { context: message.context } : {}),
+                        attachments: message.attachments,
+                        // A user's follow-up starts on the thread's saved selection,
+                        // which already holds the steer's choice. A delegated
+                        // completion stays pinned to the run it reports to.
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { modelSelection: run.modelSelection }),
+                        dispatchMode: {
+                          type:
+                            message.delegatedCompletion === undefined
+                              ? "start_immediately"
+                              : "queue_after_active",
+                        },
+                        createdBy: message.createdBy,
+                        creationSource: message.creationSource,
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { delegatedCompletion: message.delegatedCompletion }),
+                        ...(message.notification === undefined
+                          ? {}
+                          : { notification: message.notification }),
+                        ...(message.scheduledTaskId === undefined
+                          ? {}
+                          : { scheduledTaskId: message.scheduledTaskId }),
+                        ...(message.senderThreadId === undefined
+                          ? {}
+                          : { senderThreadId: message.senderThreadId }),
+                      })
+                      .pipe(
+                        // The turn that just completed leaves no further retry
+                        // target once the instance is off: the completed turn
+                        // stands as the thread's result instead of going
+                        // through the outbox's bounded retry on a refusal that
+                        // retrying cannot change.
+                        Effect.catchTags({
+                          ThreadManagementProviderInstanceDisabledError: (disabledError) =>
+                            Effect.logInfo(
+                              "orchestration-v2.effect-worker.steer-follow-up-disabled",
+                              {
+                                threadId: effect.threadId,
+                                messageId: message.id,
+                                projectId: disabledError.projectId,
+                                instanceId: disabledError.instanceId,
+                              },
+                            ),
+                        }),
+                      );
                   }),
                 ),
                 Effect.mapError(

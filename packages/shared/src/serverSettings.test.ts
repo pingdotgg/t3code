@@ -13,6 +13,7 @@ import { createModelSelection } from "./model.ts";
 import { resolveProjectScripts, projectScriptsInheritDefaults } from "./projectScripts.ts";
 import {
   applyServerSettingsPatch,
+  fallbackTextGenerationModelSelection,
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
@@ -24,6 +25,32 @@ import {
 
 /** Settings after the server has folded legacy per-project fields into `projectSettingsOverrides`. */
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
+
+describe("fallbackTextGenerationModelSelection", () => {
+  it("ignores a configured non-default instance at machine scope, matching no fallback", () => {
+    const configured = ProviderInstanceId.make("codex_work");
+    const providerInstances = {
+      [configured]: { driver: ProviderDriverKind.make("codex"), config: {} },
+    };
+    const fallback = fallbackTextGenerationModelSelection(providerInstances, (instanceId) =>
+      instanceId === configured ? true : false,
+    );
+    expect(fallback).toBeNull();
+  });
+
+  it("considers a configured non-default instance only when asked to", () => {
+    const configured = ProviderInstanceId.make("codex_work");
+    const providerInstances = {
+      [configured]: { driver: ProviderDriverKind.make("codex"), config: {} },
+    };
+    const fallback = fallbackTextGenerationModelSelection(
+      providerInstances,
+      (instanceId) => instanceId === configured,
+      { includeConfiguredInstances: true },
+    );
+    expect(fallback?.instanceId).toBe(configured);
+  });
+});
 
 describe("serverSettings helpers", () => {
   it("changes a cleanup rule without replacing the machine's other rules", () => {
@@ -442,7 +469,7 @@ describe("serverSettings helpers", () => {
     expect(isModelSelectionProviderEnabled(settings, sourceControlWriterModelSelection)).toBe(
       false,
     );
-    expect(resolveSourceControlWriterModelSelection(settings)).toBe(
+    expect(resolveSourceControlWriterModelSelection(settings, undefined, null)).toBe(
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
@@ -477,7 +504,7 @@ describe("serverSettings helpers", () => {
       skills: [],
     } satisfies ServerProvider;
 
-    expect(resolveSourceControlWriterModelSelection(settings, [unavailableProvider])).toBe(
+    expect(resolveSourceControlWriterModelSelection(settings, [unavailableProvider], null)).toBe(
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
@@ -512,10 +539,84 @@ describe("serverSettings helpers", () => {
       skills: [],
     } satisfies ServerProvider;
 
-    expect(resolveSourceControlWriterModelSelection(settings, [incapableProvider])).toBe(
+    expect(resolveSourceControlWriterModelSelection(settings, [incapableProvider], null)).toBe(
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("falls back from a writer provider a project turned off, keeping it for other projects", () => {
+    const instanceId = ProviderInstanceId.make("codex_writer");
+    const projectId = ProjectId.make("project-a");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true, config: {} },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const provider = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], projectId)).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], null)).toBe(
+      sourceControlWriterModelSelection,
+    );
+  });
+
+  it("keeps a writer on an instance the project turned on while the machine has it off", () => {
+    const instanceId = ProviderInstanceId.make("codex_writer");
+    const projectId = ProjectId.make("project-a");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false, config: {} },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const provider = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], projectId)).toBe(
+      sourceControlWriterModelSelection,
+    );
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], null)).toBe(
+      settings.textGenerationModelSelection,
+    );
   });
 
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
@@ -549,6 +650,62 @@ describe("serverSettings helpers", () => {
       displayName: "Codex Work",
       enabled: true,
       config: { homePath: "~/.codex" },
+    });
+  });
+
+  it("keeps a project's providerInstances override when a patch entry omits the key", () => {
+    // An older client that predates per-project provider overrides reads and
+    // resends a project's whole entry without knowing about the field. A
+    // naive whole-entry replace would silently wipe it.
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: { [instanceId]: { enabled: false } },
+        },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { newWorktreesStartFromOrigin: false },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      newWorktreesStartFromOrigin: false,
+      providerInstances: { [instanceId]: { enabled: false } },
+    });
+  });
+
+  it("clears a project's providerInstances override when a patch entry sends an empty map", () => {
+    // A client that knows the field expresses "clear every provider override
+    // for this project" by sending providerInstances explicitly, not by
+    // omitting it.
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: { [instanceId]: { enabled: false } },
+        },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      newWorktreesStartFromOrigin: true,
+      providerInstances: {},
     });
   });
 

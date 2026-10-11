@@ -328,6 +328,7 @@ const make = Effect.gen(function* () {
     const modelSelection = ServerSettings.resolveReviewGuideModelSelection(
       projectSettings,
       providers,
+      input.projectId,
     );
     // The checkout lives only as long as the model is reading it. The change's hunks are read
     // from it too, so the guide can be held to the lines the change actually touched.

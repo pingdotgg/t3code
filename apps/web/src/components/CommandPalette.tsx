@@ -725,9 +725,12 @@ function OpenCommandPaletteDialog(props: {
         (environment.environmentId === primaryEnvironmentId ? providers : []);
       const derived = deriveProviderInstanceEntries(environmentProviders);
       // Settings fill the ACP registry identity (agent id, icon URL) the
-      // derived entries alone do not carry.
+      // derived entries alone do not carry. This map is keyed by environment,
+      // not project, because it backs thread rows across every project on
+      // that environment; `enabled` stays machine-scoped (`null`) since no
+      // single project applies.
       const entries = serverConfig
-        ? applyProviderInstanceSettings(derived, serverConfig.settings)
+        ? applyProviderInstanceSettings(derived, serverConfig.settings, null)
         : derived;
       for (const entry of entries) {
         map.set(`${environment.environmentId}:${entry.instanceId}`, entry);

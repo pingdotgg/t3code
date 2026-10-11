@@ -39,7 +39,10 @@ import { composerContextSendBlockReason, reidentifyComposerContext } from "../li
 import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
-import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import {
+  describeUnavailableModelSelection,
+  isModelSelectionUnavailable,
+} from "../lib/modelOptions";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import {
   convertPastedImagesToAttachments,
@@ -616,12 +619,14 @@ export function useThreadComposerState() {
       const serverConfig = selectedEnvironmentRuntime?.serverConfig;
       if (
         selectedEnvironmentRuntime?.connectionState === "connected" &&
-        isModelSelectionUnavailable(serverConfig, modelSelection)
+        isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
       ) {
-        Alert.alert(
-          "Antigravity model unavailable",
-          "Set up Antigravity on web or desktop, or choose another model.",
+        const { title, detail } = describeUnavailableModelSelection(
+          serverConfig,
+          modelSelection,
+          thread.projectId,
         );
+        Alert.alert(title, detail);
         return null;
       }
       const provider = serverConfig?.providers.find(

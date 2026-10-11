@@ -28,6 +28,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -63,6 +64,7 @@ const layerServices = Layer.mergeAll(
       ),
     ),
   ),
+  Layer.provideMerge(ServerSettings.layerTest()),
 );
 const layerDatabase = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-deletion-test-" })),
@@ -493,4 +495,32 @@ it.effect("deletes a project without force once its imported threads were delete
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
     }).pipe(Effect.provide(layerServices));
   }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect(
+  "clears a deleted project's settings overrides so a machine-disabled instance cannot stay alive",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:overrides-cleanup");
+      const instanceId = ProviderInstanceId.make("codex_work");
+      yield* seedProject(projectId);
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProjectService.make;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+          },
+        });
+
+        yield* service.delete({
+          commandId: CommandId.make("command:overrides-cleanup:project-delete"),
+          projectId,
+        });
+
+        const settingsAfterDelete = yield* serverSettings.getSettings;
+        assert.isUndefined(settingsAfterDelete.projectSettingsOverrides[projectId]);
+      }).pipe(Effect.provide(layerServices));
+    }).pipe(Effect.provide(layerDatabase)),
 );

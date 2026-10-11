@@ -972,10 +972,24 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
+export const ProjectProviderInstanceOverride = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOverride.Type;
+
 /**
  * One project's overrides. An absent key inherits the environment value;
  * `null` is a real value where the environment type is nullable (no default
  * model, no dedicated writer model, never auto-settle).
+ *
+ * `providerInstances` sits outside `PROJECT_SCOPED_SERVER_SETTING_KEYS`:
+ * every other key replaces its `ServerSettings` field whole, while this one
+ * keeps the settings.json shape but overrides field by field, per
+ * `ProviderInstanceId`. Only `enabled` is overridable today. An instance id
+ * or field absent here inherits the machine value, and a present `enabled`
+ * wins in either direction, so a project can turn on an instance the machine
+ * disabled, or turn off one the machine enabled. See
+ * `resolveProjectProviderInstanceEnabled` for the combined resolution.
  */
 export const ProjectSettingsOverrides = Schema.Struct({
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
@@ -1002,7 +1016,10 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
-} satisfies Record<ProjectScopedServerSettingKey, unknown>);
+  providerInstances: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
+  ),
+} satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 /**
@@ -1126,10 +1143,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
   /**
-   * Per-project overrides of the keys in `PROJECT_SCOPED_SERVER_SETTING_KEYS`.
-   * The source of truth for project settings; `projectAgentBrowserAccessOverrides`,
-   * `projectAutoPullOverrides` and `projectScriptOverrides` are derived views
-   * kept for one release so older clients keep reading them.
+   * Per-project overrides of the keys in `PROJECT_SCOPED_SERVER_SETTING_KEYS`,
+   * plus `providerInstances`. The source of truth for project
+   * settings; `projectAgentBrowserAccessOverrides`, `projectAutoPullOverrides`
+   * and `projectScriptOverrides` are derived views kept for one release so
+   * older clients keep reading them.
    */
   projectSettingsOverrides: Schema.Record(ProjectId, ProjectSettingsOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1371,6 +1389,30 @@ export const resolveProviderInstanceEnabled = (
   return instance.enabled ?? configEnabled ?? defaultEnabledForDriver(instance.driver);
 };
 
+/**
+ * Effective enablement for a provider instance within a project: the
+ * project's `providerInstances[id].enabled` override when set, otherwise the
+ * machine-wide `resolveProviderInstanceEnabled` value. `projectId` of `null`
+ * (no project in scope) always resolves to the machine-wide value.
+ */
+export const resolveProjectProviderInstanceEnabled = (
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null,
+  instanceId: ProviderInstanceId,
+): boolean => {
+  const override =
+    projectId === null
+      ? undefined
+      : settings.projectSettingsOverrides[projectId]?.providerInstances?.[instanceId]?.enabled;
+  if (override !== undefined) return override;
+  const instanceConfig = Object.hasOwn(settings.providerInstances, instanceId)
+    ? settings.providerInstances[instanceId]
+    : undefined;
+  return instanceConfig !== undefined
+    ? resolveProviderInstanceEnabled(instanceConfig)
+    : isUnconfiguredDefaultInstanceEnabled(instanceId);
+};
+
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
@@ -1498,6 +1540,11 @@ export const ServerSettingsPatch = Schema.Struct({
    * the entry without that key. Per-key null cannot express "clear" for the
    * keys whose value type is itself nullable, and clients always hold the
    * current entry from the last settings snapshot.
+   *
+   * `providerInstances` is the one exception: an entry that omits the key
+   * keeps the stored value instead of clearing it, so a client built before
+   * that field existed cannot wipe it by editing another key. Clearing every
+   * provider override for a project means sending `providerInstances: {}`.
    */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),

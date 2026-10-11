@@ -33,7 +33,12 @@ export class ThreadTitleRegenerationService extends Context.Service<
         | { readonly type: "regenerate" };
     }) => Effect.Effect<
       void,
-      OrchestratorV2Error | ProjectStore.ProjectStoreV2Error | ServerSettingsError
+      | OrchestratorV2Error
+      | ProjectStore.ProjectStoreV2Error
+      | ServerSettingsError
+      // `complete` dispatches thread.title.regeneration.complete, a command
+      // the enablement chokepoint never gates; the type stays accurate anyway.
+      | ThreadManagementService.ThreadManagementProviderInstanceDisabledError
     >;
   }
 >()("t3/orchestration-v2/ThreadTitleRegenerationService") {}
