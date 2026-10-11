@@ -299,7 +299,7 @@ function PullRequestBadge({
     },
   });
   return (
-    <Tooltip>
+    <Tooltip key={opensList ? "list" : "link"}>
       <TooltipTrigger render={control}>
         <span
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
