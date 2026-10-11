@@ -5,7 +5,7 @@ import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
 import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
@@ -72,6 +72,7 @@ const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
+  extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } },
 } as const;
 const CODEX_REPLAY_DEFAULT_MODEL = "gpt-6-luna";
 const CODEX_REPLAY_MODEL_OVERRIDE = readArgValue("--model") ?? process.env.T3_CODEX_REPLAY_MODEL;
@@ -1210,7 +1211,8 @@ function layerCodex({ recorder }: { readonly recorder: Recorder }) {
     Effect.gen(function* () {
       // The vp node shim marks its children with VP_TOOL_RECURSION, which makes every
       // `node` the agent runs through a shell fail. Codex must not inherit it.
-      const { VP_TOOL_RECURSION: _vpToolRecursion, ...environment } = yield* HostProcessEnvironment;
+      const { VP_TOOL_RECURSION: _vpToolRecursion, ...environment } =
+        yield* HostProcess.Environment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const commandName = environment.T3_CODEX_BIN ?? environment.CODEX_BIN ?? "codex";
       const spawnCommand = yield* resolveSpawnCommand(commandName, ["app-server"], {

@@ -37,8 +37,23 @@ describe("serverSettings helpers", () => {
       worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
+    });
+  });
+  it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
+    const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sourceControlHosts: {
+        github: { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {} },
+      },
+    });
+    const unpinned = applyServerSettingsPatch(pinned, {
+      sourceControlHosts: { github: { hosts: { "github.com": { enabled: false } } } },
+    });
+    expect(unpinned.sourceControlHosts.github).toEqual({
+      hosts: { "github.com": { enabled: false } },
+      tokens: {},
     });
   });
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {

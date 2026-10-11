@@ -1,10 +1,11 @@
 import type * as Path from "effect/Path";
 
-import { expandHomePathWith } from "./pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 /**
  * Directory new worktrees are created under: the `worktreesDirectory`
- * setting, or `defaultDir` (`<T3 home>/worktrees`) when it is empty. Null when
+ * setting (`~` expands to `home`), or `defaultDir` (`<T3 home>/worktrees`)
+ * when it is empty. Null when
  * the setting is not an absolute path on this machine, such as `D:\worktrees`
  * configured for a Windows server and synced to a Linux one, or when it is a
  * filesystem root, which would make every path on that drive look managed.
@@ -13,9 +14,10 @@ export function resolveWorktreesDirectory(
   setting: string,
   defaultDir: string,
   path: Path.Path,
+  home: string,
 ): string | null {
   if (setting === "") return defaultDir;
-  const expanded = expandHomePathWith(setting, path);
+  const expanded = expandHomePath(setting, home);
   if (!path.isAbsolute(expanded)) return null;
   const resolved = path.resolve(expanded);
   return isFilesystemRoot(resolved, path) ? null : resolved;
@@ -34,10 +36,11 @@ export function managedWorktreesDirectories(
   },
   defaultDir: string,
   path: Path.Path,
+  home: string,
 ): ReadonlyArray<string> {
   const directories = new Set([defaultDir]);
   for (const setting of [settings.worktreesDirectory, ...settings.previousWorktreesDirectories]) {
-    const directory = resolveWorktreesDirectory(setting, defaultDir, path);
+    const directory = resolveWorktreesDirectory(setting, defaultDir, path, home);
     if (directory !== null) directories.add(directory);
   }
   return [...directories];

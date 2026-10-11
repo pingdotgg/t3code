@@ -293,7 +293,6 @@ describe("mobile cloud link environment client", () => {
       const bodies: Array<unknown> = [];
       const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
         if (init?.body) {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)));
         }
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
@@ -348,7 +347,6 @@ describe("mobile cloud link environment client", () => {
       const bodies: Array<Record<string, unknown>> = [];
       const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
         if (init?.body) {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)) as Record<string, unknown>);
         }
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {

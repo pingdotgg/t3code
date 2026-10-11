@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -111,7 +111,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         );
       });
       const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
       expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
@@ -122,11 +122,11 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
       const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
       const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
       expect([darwin, limited]).toEqual([undefined, undefined]);
@@ -147,7 +147,7 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
       version: "2.1.0",
       ...ids,
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.result,
     );
@@ -228,7 +228,7 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         grantId: "grant_a",
         requestId: "r-1",
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.result,
         Effect.forkChild,

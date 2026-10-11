@@ -1,14 +1,22 @@
-import { defineConfig } from "@coderabbitai/config";
+import { defineConfig, type CodeRabbitContext } from "@coderabbitai/config";
 
-export default defineConfig({
+// Org members and collaborators merge their own pull requests. On anyone else's, CodeRabbit
+// requests changes until its comments are resolved, then approves.
+const UNGATED_AUTHORS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const isGated = ({ pr }: CodeRabbitContext) => !UNGATED_AUTHORS.has(pr?.authorAssociation ?? "");
+
+export default defineConfig((ctx) => ({
   reviews: {
     high_level_summary: false,
     review_status: false,
+    request_changes_workflow: isGated(ctx),
+    allow_author_approval: !isGated(ctx),
     auto_review: {
       enabled: true,
     },
     pre_merge_checks: {
       docstrings: { mode: "off" },
+      override_requested_reviewers_only: isGated(ctx),
     },
     path_filters: [
       // Vendored read-only reference checkouts of upstream Effect and Alchemy
@@ -34,4 +42,4 @@ export default defineConfig({
       ],
     },
   },
-});
+}));

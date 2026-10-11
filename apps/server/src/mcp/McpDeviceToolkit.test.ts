@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DeviceHostUnavailableError,
+  DeviceId,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
@@ -14,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
@@ -92,7 +94,21 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
       platform: input.platform,
       openedAt: "2026-09-08T00:00:00.000Z",
     }),
-  sessionsForThread: () => Effect.succeed([]),
+  // UDID-1 is open in the test thread; UDID-2 exists but belongs to another thread.
+  sessionsForThread: (id) =>
+    Effect.succeed(
+      id === threadId
+        ? [
+            {
+              threadId,
+              hostId: "local",
+              deviceId: DeviceId.make("UDID-1"),
+              platform: "ios" as const,
+              openedAt: "2026-09-08T00:00:00.000Z",
+            },
+          ]
+        : [],
+    ),
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
   agentCli: Effect.succeed("/cli"),
@@ -102,6 +118,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
@@ -132,6 +149,12 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(shot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 1206, height: 2622 },
       });
+
+      const foreign = yield* server
+        .callTool({ name: "device_screenshot", arguments: { deviceId: "UDID-2" } })
+        .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
+      expect(foreign.isError).toBe(true);
+      expect(foreign.content.map((entry) => entry.type)).toEqual(["text"]);
 
       const denied = yield* server
         .callTool({ name: "device_list", arguments: {} })
@@ -172,7 +195,11 @@ it.effect("rejects unavailable agent access before booting or opening a device",
     Effect.provide(
       McpHttpServer.layerDeviceToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
         Layer.provide(NodeServices.layer),
       ),
     ),
