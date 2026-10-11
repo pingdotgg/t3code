@@ -176,6 +176,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     queuedRuns.map(({ run }) => ({ id: run.id, ...rowLayouts.current.get(run.id) }));
   const content = (
     <ScrollView
+      nestedScrollEnabled
       className="flex-1"
       scrollEnabled={draggedRunId === null}
       // The iOS header is translucent and floats over this view; UIKit has to
