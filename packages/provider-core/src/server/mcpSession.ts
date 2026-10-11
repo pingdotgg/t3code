@@ -51,7 +51,7 @@ export function withAgentDeviceEnvironment(
  * such a child's terminal inherits them, and everything it spawns would pass
  * them on, into crash dumps too.
  */
-export const LEGACY_RAW_MCP_CREDENTIAL_ENV = [
+const LEGACY_RAW_MCP_CREDENTIAL_ENV = [
   "T3_ACP_MCP_AUTHORIZATION",
   "T3_MCP_BEARER_TOKEN",
   "T3_CODE_MCP_AUTHORIZATION",
