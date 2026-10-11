@@ -2787,7 +2787,7 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
 );
 
 it.effect(
-  "ProviderSessionManagerV2 keeps pinned work that reports progress and records a pin expiry",
+  "ProviderSessionManagerV2 keeps pinned work that reports progress",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -2795,7 +2795,6 @@ it.effect(
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const threadId = yield* idAllocator.allocate.thread({
           fixtureName: "provider-session-manager-pin-progress",
@@ -2836,16 +2835,11 @@ it.effect(
         }
         assert.equal((yield* Ref.get(state)).closeCount, 0);
 
-        // Work that goes silent past the cap is stopped, and says so.
+        // Work that goes silent past the cap is still stopped.
         for (let tick = 0; tick < 6; tick += 1) {
           yield* step("1 second");
         }
         assert.equal((yield* Ref.get(state)).closeCount, 1);
-        const released = (yield* projectionStore.getThreadProjection(
-          threadId,
-        )).providerSessions.find((session) => session.id === providerSessionId);
-        assert.equal(released?.status, "stopped");
-        assert.include(released?.lastError ?? "", "no progress");
       });
 
       yield* effect.pipe(

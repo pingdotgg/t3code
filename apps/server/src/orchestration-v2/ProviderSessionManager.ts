@@ -52,8 +52,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
-const PIN_EXPIRED_RELEASE_DETAIL =
-  "Stopped background work that reported no progress for too long. Send a message to resume.";
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
@@ -658,10 +656,7 @@ export const layerWithOptions = (
             lastError:
               input.reason === "runtime_error"
                 ? (input.detail ?? "Provider runtime failed.")
-                : // Only a pin expiry gives an idle release a detail: work was cut off.
-                  input.reason === "idle_timeout"
-                  ? (input.detail ?? null)
-                  : null,
+                : null,
           };
           yield* writeProviderSessionEvents({
             runtime: input.entry.runtime,
@@ -1117,9 +1112,6 @@ export const layerWithOptions = (
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
             reason: "idle_timeout",
-            // Past the pin cap this stops work that is still running, so the
-            // session records why instead of looking like it finished.
-            ...(hasPendingWork ? { detail: PIN_EXPIRED_RELEASE_DETAIL } : {}),
             cancelIdleFiber: false,
             onlyIfIdleGeneration: input.generation,
           }).pipe(
