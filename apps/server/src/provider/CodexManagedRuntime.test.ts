@@ -163,6 +163,8 @@ it.effect.each(
             'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
           );
           assert.include(args, "features.api_key_model_discovery=true");
+          assert.include(args, "features.multi_agent=false");
+          assert.include(args, "features.multi_agent_v2=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(args, "model_providers.openai_token_sharing.supports_websockets=false");
