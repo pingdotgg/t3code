@@ -62,6 +62,35 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("replaces the windows outright when the update is the account's whole state", () => {
+    // Muse reports a window that has reset since with no reset time; a sparse
+    // merge would keep the expired one.
+    const restarted = {
+      id: "five_hour",
+      kind: "session",
+      label: "Session",
+      usedPercent: 0,
+      windowDurationMins: 300,
+    } as const;
+    expect(
+      applyUsageLimitsUpdate({
+        previous: published,
+        checkedAt: "2026-09-03T15:00:00.000Z",
+        update: { windows: [restarted] },
+        replace: true,
+      }),
+    ).toEqual({ checkedAt: "2026-09-03T15:00:00.000Z", windows: [restarted] });
+    // The same whole state again publishes nothing new.
+    expect(
+      applyUsageLimitsUpdate({
+        previous: published,
+        checkedAt: "2026-09-03T12:00:05.000Z",
+        update: { windows: [session, weekly] },
+        replace: true,
+      }),
+    ).toBe(published);
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({

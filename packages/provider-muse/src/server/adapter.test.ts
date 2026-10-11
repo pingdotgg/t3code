@@ -33,7 +33,7 @@ import * as Stream from "effect/Stream";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { MuseItem } from "./protocol.ts";
+import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -173,6 +173,11 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
+    /** A notification about the host or account rather than a session, as `usage/changed` is. */
+    emitHostWide: (method: string, params: Record<string, unknown>) =>
+      Effect.sync(() => {
+        notify({ jsonrpc: "2.0", method, params });
+      }),
     takeCall: Effect.fnUntraced(function* (method: string) {
       while (true) {
         const call = yield* Queue.take(requests);
@@ -191,7 +196,13 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
+    | "createHost"
+    | "nativeEventLogger"
+    | "modelCatalog"
+    | "continuationRequests"
+    | "onSubscriptionUsage"
+    | "latestSubscriptionUsage"
+    | "usageAccountGeneration"
   > = {},
 ) {
   let hostCount = 0;
@@ -338,6 +349,17 @@ const startConversation = Effect.fnUntraced(function* (
   );
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
+
+// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
+const SUBSCRIPTION_USAGE = {
+  window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
+  weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
+  tier: "tier-1",
+  observedAtMs: 1791447762610,
+} satisfies MuseSubscriptionUsage;
+// How Muse 1.4.3 ends a turn Meta refuses for quota (from a simulated Meta 429).
+const QUOTA_MESSAGE =
+  "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
 
 const approval = (turnId: string) => ({
   approvalId: "approval-1",
@@ -545,6 +567,92 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "completed");
       assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("hands Meta's subscription usage to the instance, with or without a turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const reports: Array<readonly [MuseSubscriptionUsage, number]> = [];
+      let generation = 3;
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          onSubscriptionUsage: (usage, accountGeneration) =>
+            Effect.sync(() => void reports.push([usage, accountGeneration])),
+          usageAccountGeneration: Effect.sync(() => generation),
+        },
+      );
+      // A report counts for the generation its host started under, not the current one.
+      generation = 4;
+      yield* fake.emitHostWide("usage/changed", SUBSCRIPTION_USAGE);
+      yield* fake.emitHostWide("usage/changed", { window: "not usage" });
+      // A reset no Date can hold would throw once formatted, so the report is skipped too.
+      yield* fake.emitHostWide("usage/changed", {
+        ...SUBSCRIPTION_USAGE,
+        weekly: { usedPercent: 5, resetsAtMs: 1e16 },
+      });
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "completed");
+      assert.deepStrictEqual(reports, [[SUBSCRIPTION_USAGE, 3]]);
+      assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          latestSubscriptionUsage: Effect.succeed({
+            ...SUBSCRIPTION_USAGE,
+            window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
+          }),
+        },
+      );
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", {
+        turnId: nativeId,
+        terminal: "failed",
+        reason: QUOTA_MESSAGE,
+        error: { kind: "modelError", message: QUOTA_MESSAGE, retryable: false },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "failed");
+      assert.strictEqual(terminal.threadDisposition, "reusable");
+      assert.strictEqual(terminal.failure?.class, "usage_limit");
+      // The exhausted session window's reset, not the weekly one.
+      assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
+      assert.isTrue(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.title === "Usage limit reached",
+        ),
+      );
+
+      const next = yield* startConversation(harness, fake, 2);
+      yield* fake.emit("turn/completed", {
+        turnId: next.nativeId,
+        terminal: "failed",
+        error: { message: "API error 429: Rate limit exceeded. (rate_limit_error)" },
+      });
+      const throttled = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(throttled.failure?.class, "provider_error");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

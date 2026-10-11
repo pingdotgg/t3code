@@ -118,6 +118,10 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+Muse Code reports your Meta subscription's session and weekly windows with each reply, not on
+request, so they appear after Muse's first reply since the server started. A CLIProxyAPI hub
+reports a Meta account the same way, once Muse requests have gone through it.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 

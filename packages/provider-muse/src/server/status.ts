@@ -1,4 +1,4 @@
-import { ServerProviderModel } from "@t3tools/contracts";
+import { type ServerProvider, ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -9,7 +9,8 @@ import * as ChildProcess from "effect/process/ChildProcess";
 
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
-import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
+import { museModelCapabilities, probeMuseHost } from "./modelCatalog.ts";
+import type { MuseAccountState } from "./protocol.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -30,6 +31,33 @@ const MUSE_PRESENTATION = {
 } as const;
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();
+
+/**
+ * The credential `account/read` reports. A login names its account, which is
+ * how Limits counts one Meta subscription once across environments and hubs.
+ * States this version does not know stay `unknown`, as without the method.
+ */
+export function museAccountAuth(account: MuseAccountState | undefined): ServerProvider["auth"] {
+  const label = account?.label?.trim();
+  switch (account?.state) {
+    case "accountLogin":
+      return {
+        status: "authenticated",
+        type: "accountLogin",
+        ...(label ? (label.includes("@") ? { email: label } : { label }) : {}),
+      };
+    case "apiKey":
+    case "envKey":
+      return { status: "authenticated", type: "apiKey", label: "API key" };
+    case "loggedOut":
+      // A keyless endpoint needs no login, and nothing here can vouch for it.
+      return account.credentialRequired === false
+        ? { status: "unknown" }
+        : { status: "unauthenticated" };
+    default:
+      return { status: "unknown" };
+  }
+}
 
 export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(function* (
   settings: MuseSettings,
@@ -118,12 +146,12 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
 
-  const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
+  const probe = yield* probeMuseHost(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
     Effect.timeoutOption(12_000),
     Effect.result,
   );
-  if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {
+  if (Result.isFailure(probe) || Option.isNone(probe.success)) {
     return snapshot({
       installed: true,
       version,
@@ -133,14 +161,27 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
     });
   }
-  const models = catalog.success.value;
-  // MSP has no auth signal, and model/list answers from Muse's cache even when logged out.
-  // Auth failures surface on the first turn instead.
+  const { models, account } = probe.success.value;
+  // model/list answers from Muse's cache even when logged out, so the login comes from
+  // the experimental account/read. Without it, auth failures surface on the first turn.
+  const auth = museAccountAuth(account);
+  if (auth.status === "unauthenticated") {
+    return snapshot(
+      {
+        installed: true,
+        version,
+        status: "error",
+        auth,
+        message: "Muse Code is not signed in. Run `muse login` on this T3 server host.",
+      },
+      models,
+    );
+  }
   return snapshot(
     {
       installed: true,
       version,
-      auth: { status: "unknown" },
+      auth,
       ...(models.length > 0
         ? { status: "ready" }
         : {

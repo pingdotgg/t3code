@@ -48,7 +48,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: ReadonlyArray<Record<string, unknown>>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -178,6 +178,99 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
+    }),
+  );
+
+  it.effect("reads Meta usage from the hub's own observations without an upstream call", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1791447762610);
+      const meta = {
+        id: "meta-person.json",
+        auth_index: "m",
+        provider: "meta",
+        email: "person@example.com",
+        // CLIProxyAPI records the subscription usage Meta sends after each response.
+        quota: {
+          observed_at: "2026-10-08T08:22:42.610Z",
+          signals: {
+            "X-Meta-Tier": "tier-1",
+            "X-Meta-Window-Used-Percent": "12",
+            "X-Meta-Window-Minutes": "300",
+            "X-Meta-Window-Reset-At": "1791465557",
+            "X-Meta-Weekly-Used-Percent": "5",
+            "X-Meta-Weekly-Reset-At": "1791763200",
+          },
+        },
+      };
+      const test = fixture({
+        accounts: [
+          accounts[0]!,
+          meta,
+          // Not used through the hub yet, so there is nothing to report.
+          { ...meta, id: "meta-idle.json", auth_index: "i", quota: { signals: {} } },
+        ],
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      const muse = result.filter((account) => account.driver === "muse");
+      expect(muse).toEqual([
+        {
+          id: "meta-person.json",
+          driver: "muse",
+          email: "person@example.com",
+          usageLimits: {
+            checkedAt: "2026-10-08T08:22:42.610Z",
+            windows: [
+              {
+                id: "window",
+                kind: "session",
+                label: "Session",
+                windowDurationMins: 300,
+                usedPercent: 12,
+                resetsAt: "2026-10-08T13:19:17.000Z",
+              },
+              {
+                id: "weekly",
+                kind: "weekly",
+                label: "Weekly",
+                windowDurationMins: 10080,
+                usedPercent: 5,
+                resetsAt: "2026-10-12T00:00:00.000Z",
+              },
+            ],
+          },
+        },
+      ]);
+      expect(test.requests.some((request) => request.body?.auth_index === "m")).toBe(false);
+    }),
+  );
+
+  it.effect("drops a Meta reset time no Date can hold instead of failing the read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1791447762610);
+      const test = fixture({
+        accounts: [
+          accounts[0]!,
+          {
+            id: "meta-person.json",
+            auth_index: "m",
+            provider: "meta",
+            quota: {
+              observed_at: "2026-10-08T08:22:42.610Z",
+              signals: {
+                "X-Meta-Window-Used-Percent": "12",
+                "X-Meta-Window-Minutes": "300",
+                // 1e13 seconds is later than the latest instant a Date holds.
+                "X-Meta-Window-Reset-At": "10000000000000",
+                "X-Meta-Weekly-Used-Percent": "5",
+                "X-Meta-Weekly-Reset-At": "1791763200",
+              },
+            },
+          },
+        ],
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result.map((account) => account.driver)).toEqual(["codex", "muse"]);
+      expect(result[1]?.usageLimits.windows.map((window) => window.id)).toEqual(["weekly"]);
     }),
   );
 

@@ -9,14 +9,16 @@ import { vi } from "vite-plus/test";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import type { MuseSdkHost } from "./sdk.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import { checkMuseProviderStatus } from "./status.ts";
+import { checkMuseProviderStatus, museAccountAuth } from "./status.ts";
 
 const settings = Schema.decodeSync(MuseSettings);
-const makeHost = (catalog: Record<string, unknown>) => {
+const makeHost = (catalog: Record<string, unknown>, account?: Record<string, unknown>) => {
   const host: MuseSdkHost = {
     initializeResult: { grantedCapabilities: [] },
     connection: {
-      request: vi.fn(async () => catalog),
+      request: vi.fn(async (method: string) =>
+        method === "account/read" && account ? account : catalog,
+      ),
       command: vi.fn(async () => ({})),
       mintCommandId: () => "test-command",
       onNotification: () => {},
@@ -145,6 +147,74 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(host.close).toHaveBeenCalledOnce();
       }),
     ),
+  );
+
+  it.effect("names the signed-in account from the experimental account/read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const binaryPath = yield* fakeCli();
+        const host = makeHost(metaCatalog, {
+          state: "accountLogin",
+          label: "person@example.com",
+          credentialRequired: true,
+        });
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          undefined,
+          undefined,
+          async () => host,
+        );
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.auth).toEqual({
+          status: "authenticated",
+          type: "accountLogin",
+          email: "person@example.com",
+        });
+        expect(host.connection.request).toHaveBeenCalledWith("account/read", {});
+      }),
+    ),
+  );
+
+  it.effect("reports a signed-out Muse instead of waiting for the first turn to fail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const binaryPath = yield* fakeCli();
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          undefined,
+          undefined,
+          async () => makeHost(metaCatalog, { state: "loggedOut", credentialRequired: true }),
+        );
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.auth).toEqual({ status: "unauthenticated" });
+        expect(snapshot.message).toContain("muse login");
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["muse-discovered"]);
+      }),
+    ),
+  );
+
+  it.effect("maps every account/read credential lane", () =>
+    Effect.sync(() => {
+      expect(museAccountAuth({ state: "apiKey" })).toEqual({
+        status: "authenticated",
+        type: "apiKey",
+        label: "API key",
+      });
+      expect(museAccountAuth({ state: "envKey", label: "META_API_KEY" })).toMatchObject({
+        type: "apiKey",
+      });
+      expect(museAccountAuth({ state: "accountLogin", label: "Team login" })).toEqual({
+        status: "authenticated",
+        type: "accountLogin",
+        label: "Team login",
+      });
+      // A keyless endpoint needs no login, and a lane this version does not know stays unknown.
+      expect(museAccountAuth({ state: "loggedOut", credentialRequired: false })).toEqual({
+        status: "unknown",
+      });
+      expect(museAccountAuth({ state: "somethingNew" })).toEqual({ status: "unknown" });
+      expect(museAccountAuth(undefined)).toEqual({ status: "unknown" });
+    }),
   );
 
   it.effect("keeps an empty discovered catalog empty instead of advertising a fallback model", () =>

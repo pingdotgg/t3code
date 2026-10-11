@@ -61,31 +61,44 @@ export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
   readonly checkedAt: string;
+  /**
+   * The update is the account's whole state: windows it leaves out are
+   * dropped, and a reset time it omits is cleared rather than kept.
+   */
+  readonly replace?: boolean;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
+  const replace = input.replace === true;
   if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
     return previous;
   }
-  const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
+  const published = new Map(previous?.windows.map((window) => [window.id, window] as const));
+  const merged = replace
+    ? new Map<ServerProviderUsageWindow["id"], ServerProviderUsageWindow>()
+    : new Map(published);
   // Codex sends this notification beside every token-usage tick, almost
   // always with unchanged numbers. Decide "nothing changed" per window on
   // the way through so the no-op case never allocates a new snapshot.
-  let changed = false;
+  let changed = replace && update.windows.length !== published.size;
   for (const window of update.windows) {
-    const existing = merged.get(window.id);
+    const existing = published.get(window.id);
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
-      ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
+      ...(!replace && window.resetsAt === undefined && existing?.resetsAt !== undefined
         ? { resetsAt: existing.resetsAt }
         : {}),
-      ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
+      ...(!replace &&
+      window.windowDurationMins === undefined &&
+      existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
       changed = true;
+    } else if (replace) {
+      merged.set(window.id, existing);
     }
   }
   if (!changed && previous !== undefined && previous.unavailable === undefined) {

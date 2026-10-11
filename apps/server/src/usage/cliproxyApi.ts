@@ -15,6 +15,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import { museUsageLimits, museUsageObservationFromHubSignals } from "@t3tools/provider-muse/server";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
@@ -27,6 +28,13 @@ const AuthFile = Schema.Struct({
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
       chatgpt_plan_type: Schema.optional(Schema.String),
+    }),
+  ),
+  /** The quota the hub last observed on the account's own traffic. */
+  quota: Schema.optional(
+    Schema.Struct({
+      observed_at: Schema.optional(Schema.String),
+      signals: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     }),
   ),
 });
@@ -103,6 +111,28 @@ const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
   0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
 ]);
+
+/**
+ * Meta has no usage endpoint. The hub records the subscription usage Meta
+ * sends with each response (`X-Meta-*` quota signals), so a Meta account
+ * reports only once something has used it through the hub.
+ */
+function readMetaAccount(
+  account: typeof AuthFile.Type,
+  nowMs: number,
+): UsageLimitSourceAccount | undefined {
+  const observedAtMs = account.quota?.observed_at ? Date.parse(account.quota.observed_at) : NaN;
+  const observation = Number.isFinite(observedAtMs)
+    ? museUsageObservationFromHubSignals(account.quota?.signals ?? {}, observedAtMs)
+    : undefined;
+  if (!observation) return undefined;
+  return {
+    id: account.id,
+    driver: ProviderDriverKind.make("muse"),
+    ...(account.email ? { email: account.email } : {}),
+    usageLimits: museUsageLimits(observation, nowMs),
+  };
+}
 
 // UUIDv5 per account and credit also deduplicates retries across T3 environments.
 const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(function* (
@@ -313,7 +343,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         () => new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
-    return yield* Effect.forEach(
+    const polled = yield* Effect.forEach(
       accounts.filter(
         (account) =>
           !account.disabled && (account.provider === "codex" || account.provider === "claude"),
@@ -321,6 +351,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
       (account) => readAccount(config, account),
       { concurrency: 4 },
     );
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const meta = accounts.flatMap((account) =>
+      account.disabled || account.provider !== "meta"
+        ? []
+        : (readMetaAccount(account, nowMs) ?? []),
+    );
+    return [...polled, ...meta];
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
