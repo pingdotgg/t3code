@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,7 +36,7 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
     });
 
     assert.deepStrictEqual(changeRequest, {
-      provider: "azure-devops",
+      provider: SourceControlProviderKind.make("azure-devops"),
       number: 42,
       title: "Add Azure provider",
       url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",

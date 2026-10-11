@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -11,13 +12,12 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  // Bitbucket has no endpoint that reopens a declined pull request, and nothing documented that
-  // moves one in or out of draft, so neither is offered rather than failing when pressed.
-  actions: ["merge", "close"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
   // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
@@ -122,7 +122,7 @@ export const make = Effect.gen(function* () {
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
       new PullRequestProviderError({
-        provider: "bitbucket",
+        provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
         // Every Bitbucket failure states its own fact; this names the operation around it, so
@@ -157,7 +157,7 @@ export const make = Effect.gen(function* () {
   };
 
   const provider: PullRequestProviderApi = {
-    kind: "bitbucket",
+    kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
 
     // Bitbucket credentials come from the server's environment rather than a checkout, so the
@@ -363,7 +363,7 @@ export const make = Effect.gen(function* () {
     setReaction: () =>
       Effect.fail(
         new PullRequestProviderError({
-          provider: "bitbucket",
+          provider: SourceControlProviderKind.make("bitbucket"),
           operation: "setReaction",
           reason: "failed",
           detail: "Bitbucket does not support reactions.",

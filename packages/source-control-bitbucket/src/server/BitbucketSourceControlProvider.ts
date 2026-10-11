@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
@@ -9,7 +10,7 @@ import type { SourceControlApiDiscoverySpec } from "@t3tools/source-control-core
 
 function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeRequest {
   return {
-    provider: "bitbucket",
+    provider: SourceControlProviderKind.make("bitbucket"),
     number: summary.number,
     title: summary.title,
     url: summary.url,
@@ -34,7 +35,7 @@ export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "bitbucket",
+    kind: SourceControlProviderKind.make("bitbucket"),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return bitbucket
@@ -51,7 +52,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "bitbucket",
+                provider: SourceControlProviderKind.make("bitbucket"),
                 operation: "listChangeRequests",
                 cwd: input.cwd,
                 reference: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -69,7 +70,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "bitbucket",
+              provider: SourceControlProviderKind.make("bitbucket"),
               operation: "getChangeRequest",
               cwd: input.cwd,
               reference: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -97,7 +98,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "bitbucket",
+                provider: SourceControlProviderKind.make("bitbucket"),
                 operation: "createChangeRequest",
                 cwd: input.cwd,
                 reference: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -114,7 +115,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "bitbucket",
+              provider: SourceControlProviderKind.make("bitbucket"),
               operation: "getRepositoryCloneUrls",
               cwd: input.cwd,
               repository: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -130,7 +131,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "bitbucket",
+              provider: SourceControlProviderKind.make("bitbucket"),
               operation: "createRepository",
               cwd: input.cwd,
               repository: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -151,7 +152,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "bitbucket",
+                provider: SourceControlProviderKind.make("bitbucket"),
                 operation: "getDefaultBranch",
                 cwd: input.cwd,
                 detail: "Failed to get default branch.",
@@ -171,7 +172,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "bitbucket",
+                provider: SourceControlProviderKind.make("bitbucket"),
                 operation: "checkoutChangeRequest",
                 cwd: input.cwd,
                 reference: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -190,7 +191,7 @@ export const makeDiscovery = Effect.gen(function* () {
 
   return {
     type: "api",
-    kind: "bitbucket",
+    kind: SourceControlProviderKind.make("bitbucket"),
     label: "Bitbucket",
     installHint: "Add a Bitbucket token in Settings → Source Control.",
     probeAuth: bitbucket.probeAuth,

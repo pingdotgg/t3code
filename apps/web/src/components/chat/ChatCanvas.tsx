@@ -47,6 +47,9 @@ export function ChatCanvas({
     minChatWidth: 640,
     composerHeight: 0,
     timelineGutter: 0,
+    findBarLeft: 0,
+    findBarRight: 0,
+    findBarBottom: 0,
   });
   const reportPreview = useCallback((next: ChatCanvasPreview) => {
     setPreview((current) =>
@@ -69,9 +72,16 @@ export function ChatCanvas({
     const element = elementRef.current;
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
+    const findBar =
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
     const measure = () => {
+      const canvasBounds = element.getBoundingClientRect();
+      const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
       const next = {
+        findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
+        findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
+        findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
         width: element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
@@ -92,22 +102,37 @@ export function ChatCanvas({
     };
     measure();
     const observed: Element[] = [element, probe];
+    if (findBar) observed.push(findBar);
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
     return observeResize(observed, measure);
-  }, [composerOverlayElement, timelineElement]);
+  }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
+    const findBar =
+      detailsCardTopInset > 0
+        ? {
+            left: measurements.findBarLeft,
+            right: measurements.findBarRight,
+            bottom: measurements.findBarBottom,
+          }
+        : null;
     return {
       container,
       lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
+      layout: resolveChatCanvasLayout({
+        ...measurements,
+        container,
+        preview,
+        detailsCard,
+        findBar,
+      }),
       previewKey: preview?.key ?? null,
       reportPreview,
       clearPreview,
       registerTimeline,
       reportDetailsCard,
-      detailsCardTopInset,
+      detailsCardTopInset: findBar?.bottom ?? 0,
     };
   }, [
     measurements,

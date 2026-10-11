@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -137,7 +138,11 @@ const makeProvider = (api: Partial<GitHubApi.GitHubApi["Service"]>) =>
   GitHubSourceControlProvider.make.pipe(Effect.provide(harness({ remotes: "", api }).layer));
 
 const githubContext = (host: string) => ({
-  provider: { kind: "github" as const, name: "GitHub", baseUrl: `https://${host}` },
+  provider: {
+    kind: SourceControlProviderKind.make("github"),
+    name: "GitHub",
+    baseUrl: `https://${host}`,
+  },
   remoteName: "origin",
   remoteUrl: `git@${host}:acme/web.git`,
 });
@@ -512,6 +517,47 @@ describe("GitHubSourceControlProvider writes", () => {
       });
       assert.deepStrictEqual(requests, ["GET user", "POST orgs/acme/repos"]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("looks up a bare repository name under the signed-in account on that host", () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const gh = yield* makeProvider({
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(`${input.host} ${input.method ?? "GET"} ${input.path}`);
+            return input.path === "user"
+              ? restResponse({ login: "me" })
+              : restResponse({
+                  full_name: "me/notes",
+                  html_url: `https://${input.host}/me/notes`,
+                  ssh_url: `git@${input.host}:me/notes.git`,
+                });
+          }),
+      });
+
+      const urls = yield* gh.getRepositoryCloneUrls({
+        cwd: "/repo",
+        context: githubContext("code.example.test"),
+        repository: " notes.git ",
+      });
+
+      assert.deepStrictEqual(urls, {
+        nameWithOwner: "me/notes",
+        url: "https://code.example.test/me/notes",
+        sshUrl: "git@code.example.test:me/notes.git",
+      });
+      assert.deepStrictEqual(requests, [
+        "code.example.test GET user",
+        "code.example.test GET repos/me/notes",
+      ]);
+      // Malformed names are still refused before any request.
+      for (const repository of ["me/", "/notes", "a/b/c/d", "", "two words"]) {
+        const error = yield* Effect.flip(gh.getRepositoryCloneUrls({ cwd: "/repo", repository }));
+        assert.include(error.message, "Repositories are named owner/name.");
+      }
+      assert.strictEqual(requests.length, 2);
+    });
   });
 });
 
@@ -1026,7 +1072,7 @@ it.live.each([
       cwd: "/repo",
       context: {
         provider: {
-          kind: "github" as const,
+          kind: SourceControlProviderKind.make("github"),
           name: "GitHub Self-Hosted",
           baseUrl: "https://code.example.test",
         },
@@ -1143,7 +1189,11 @@ it.effect.each([
       const input = {
         cwd: "/repo",
         context: {
-          provider: { kind: "github" as const, name: "GitHub", baseUrl: `https://${host}` },
+          provider: {
+            kind: SourceControlProviderKind.make("github"),
+            name: "GitHub",
+            baseUrl: `https://${host}`,
+          },
           remoteName: "origin",
           remoteUrl: `git@${host}:me/web.git`,
         },
