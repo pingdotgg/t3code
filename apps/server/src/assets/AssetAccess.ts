@@ -36,6 +36,8 @@ import {
   PROJECT_FAVICON_FALLBACK_MARKER,
 } from "@t3tools/shared/projectFavicon";
 import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
+import { injectMcpAppCookieBootstrap, MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
+import * as Stream from "effect/Stream";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -128,6 +130,7 @@ const AssetClaimsSchema = Schema.Union([
         download filename and Content-Type. */
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
+    renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -180,6 +183,7 @@ export type ResolvedAsset =
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
+      readonly renderIntent?: "mcp-app";
     }
   | {
       readonly kind: "bytes";
@@ -622,6 +626,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           : input.resource.mimeType !== undefined
             ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
             : {}),
+        ...(inlinePreviewMimeType === "text/html" && input.resource.renderIntent !== undefined
+          ? { renderIntent: input.resource.renderIntent }
+          : {}),
         expiresAt,
       };
       fileName = input.resource.fileName ?? path.basename(attachmentPath);
@@ -810,6 +817,28 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+/** Read and prepare a saved MCP document without trusting its file length. */
+export const readMcpAppDocument = Effect.fn("AssetAccess.readMcpAppDocument")(function* (
+  path: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  // Saved captures also contain a bounded CSP meta tag added after the raw HTML limit.
+  const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
+  const chunks = yield* fs.stream(path, { bytesToRead: limit + 1 }).pipe(Stream.runCollect);
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  if (size > limit) return { _tag: "TooLarge" as const };
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return {
+    _tag: "Document" as const,
+    html: injectMcpAppCookieBootstrap(new TextDecoder().decode(bytes)),
+  };
+});
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -853,6 +882,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.download ? { download: true } : {}),
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+          ...(claims.renderIntent !== undefined ? { renderIntent: claims.renderIntent } : {}),
         } satisfies ResolvedAsset)
       : null;
   }

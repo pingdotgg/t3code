@@ -40,6 +40,8 @@ export const AssetResource = Schema.Union([
     /** Generic attachments download by default. Document viewers opt into an
         inline response after deciding the file type is safe to preview. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+    /** Apply MCP App document compatibility when rendering a saved capture. */
+    renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
   // An image a tool returned inline, such as a device screenshot, by its order
   // in the stored output. The timeline never carries these bytes.

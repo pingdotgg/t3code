@@ -1,3 +1,8 @@
+import {
+  injectMcpAppCookieBootstrap,
+  injectMcpAppCsp,
+  MCP_APP_MAX_HTML_BYTES,
+} from "@t3tools/shared/mcpApp";
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -308,6 +313,64 @@ it.layer(
       yield* Queue.take(closed);
       expect(active.size).toBe(0);
     }),
+  );
+});
+
+describe("MCP App asset responses", () => {
+  it.effect("transforms saved MCP captures while preserving the CSP and ordinary HTML bytes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-response-" });
+      const file = path.join(directory, "saved.html");
+      const saved = injectMcpAppCsp(
+        '<script>document.cookie.split(";");</script><div>Résumé</div>',
+        undefined,
+      );
+      yield* fs.writeFileString(file, saved);
+      const transformed = injectMcpAppCookieBootstrap(saved);
+      const asset = { path: file, mimeType: "text/html", renderIntent: "mcp-app" as const };
+      for (const method of ["GET", "HEAD"] as const) {
+        const response = HttpServerResponse.toWeb(
+          yield* assetFileResponse(asset, undefined, undefined, method),
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-security-policy")).toBe(
+          "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+        );
+        expect(response.headers.get("content-length")).toBe(
+          String(new TextEncoder().encode(transformed).byteLength),
+        );
+        expect(response.headers.get("etag")).toBeNull();
+        expect(response.headers.get("last-modified")).toBeNull();
+        expect(yield* Effect.promise(() => response.text())).toBe(
+          method === "GET" ? transformed : "",
+        );
+      }
+      for (const ordinary of [
+        { path: file, mimeType: "text/html" },
+        { ...asset, download: true },
+      ]) {
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(ordinary));
+        expect(yield* Effect.promise(() => response.text())).toBe(saved);
+      }
+      expect(yield* fs.readFileString(file)).toBe(saved);
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+
+  it.effect("bounds transformed capture reads by the MCP document limit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-response-limit-" });
+      const file = path.join(directory, "saved.html");
+      const asset = { path: file, renderIntent: "mcp-app" as const };
+      const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
+      yield* fs.writeFileString(file, "x".repeat(limit));
+      expect((yield* assetFileResponse(asset)).status).toBe(200);
+      yield* fs.writeFileString(file, "x".repeat(limit + 1));
+      expect((yield* assetFileResponse(asset)).status).toBe(413);
+    }).pipe(Effect.provide(layerFileResponse)),
   );
 });
 
