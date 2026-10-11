@@ -404,6 +404,64 @@ const history = {
 };
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect.each([false, true])(
+    "follows a surviving execution after a T3 restart (buffered=%s) without another prompt",
+    (buffered) =>
+      Effect.gen(function* () {
+        const duringRestart = { data: history.data.slice(0, 2).toReversed(), cursor: {} };
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(buffered ? [event("session.execution.started", { sessionID: SESSION })] : []),
+            out("session.active"),
+            replyData("session.active", { [SESSION]: { type: "running" } }),
+            out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+            reply("message.list", duringRestart),
+            out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+            reply("message.list", duringRestart),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { external: true },
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          restartContinuationOfRunId: RunId.make("interrupted-run"),
+        });
+        const collected = yield* Fiber.join(events);
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+        assert.include(
+          collected.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text]
+              : [],
+          ),
+          "391 is not prime: it's the product 17 × 23.",
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("prompts after a restart when the native execution did not survive", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.active"),
+        replyData("session.active", {}),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        restartContinuationOfRunId: RunId.make("interrupted-run"),
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

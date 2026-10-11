@@ -3231,6 +3231,65 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 lastRunOrdinal: turnInput.runOrdinal,
               });
               yield* updateProviderSession("running", null);
+              if (turnInput.restartContinuationOfRunId !== undefined) {
+                const statuses = unwrapData(
+                  "session.status",
+                  yield* sdkCall("session.status", { sessionID: sessionId }, () =>
+                    client.session.status(),
+                  ).pipe(
+                    Effect.tapError((cause) =>
+                      finalizeTurn(state, turn, "failed", {
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      }),
+                    ),
+                  ),
+                );
+                if (statuses[sessionId] !== undefined && statuses[sessionId]?.type !== "idle") {
+                  // A server that outlived T3 still owns this turn; follow it
+                  // instead of adding another prompt to its running execution.
+                  turn.admissionMessageId = null;
+                  advanceOpenCodePromptAdmission(turn, "busy");
+                  const admissionAction = advanceOpenCodePromptAdmission(turn, "accepted");
+                  yield* Deferred.succeed(admissionSettled, undefined);
+                  turn.admissionAbortController = null;
+                  const history = unwrapData(
+                    "session.messages",
+                    yield* sdkCall("session.messages", { sessionID: sessionId }, () =>
+                      client.session.messages({ sessionID: sessionId }),
+                    ).pipe(
+                      Effect.tapError((cause) =>
+                        finalizeTurn(state, turn, "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        }),
+                      ),
+                    ),
+                  );
+                  const userIndex = history.findLastIndex((entry) => entry.info.role === "user");
+                  for (const entry of userIndex < 0 ? [] : history.slice(userIndex)) {
+                    if (turn.finalized) break;
+                    yield* handleMessageUpdated({
+                      id: entry.info.id,
+                      type: "message.updated",
+                      properties: { sessionID: sessionId, info: entry.info },
+                    });
+                    for (const part of entry.parts) {
+                      yield* handlePartUpdated({
+                        id: part.id,
+                        type: "message.part.updated",
+                        properties: {
+                          sessionID: sessionId,
+                          part,
+                          time: DateTime.toEpochMillis(startedAt),
+                        },
+                      });
+                    }
+                  }
+                  if (admissionAction === "reconcile-idle") {
+                    yield* reconcilePromptAdmission(state, turn);
+                  }
+                  return;
+                }
+              }
               if (isCompaction) {
                 yield* sdkCall(
                   "session.summarize",

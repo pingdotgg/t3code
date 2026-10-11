@@ -3742,6 +3742,46 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               }
               // OpenCode already ran this turn on its own; it prompts nothing.
               if (isContinuation(turnInput)) return yield* runWake(state, turnInput);
+              if (turnInput.restartContinuationOfRunId !== undefined && !state.unsettled) {
+                const followed = yield* lock.withPermit(
+                  Effect.gen(function* () {
+                    const active = yield* client.session
+                      .active()
+                      .pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT));
+                    if (!(sessionId in active)) return false;
+                    // A surviving server is still executing the interrupted
+                    // run. Attach its events without enqueuing another prompt.
+                    const history = yield* OpenCode2Client.paginate(
+                      { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
+                      client.message.list,
+                    ).pipe(
+                      Stream.takeUntil((message) => message.type === "user"),
+                      Stream.runCollect,
+                    );
+                    const prompt = history.at(-1);
+                    const turn = yield* beginTurn(state, turnInput, false);
+                    yield* takeRunningWake(state);
+                    if (state.active !== turn) return true;
+                    if (prompt?.type === "user") {
+                      turn.providerTurn = {
+                        ...turn.providerTurn,
+                        nativeTurnRef: ref(prompt.id, "weak"),
+                      };
+                      yield* emitProviderTurn(state, turn, turn.providerTurn);
+                      yield* backfill(sessionId, state).pipe(
+                        Effect.tapError((cause) =>
+                          finishTurn(state, {
+                            status: "failed",
+                            failure: makeProviderFailure({ cause, class: "provider_error" }),
+                          }),
+                        ),
+                      );
+                    }
+                    return true;
+                  }),
+                );
+                if (followed) return;
+              }
               // After a timed-out Stop the server says whether that run is gone. A
               // run still going is stopped again and this turn fails so it can be
               // sent again; a run that is gone may still have its end on the
