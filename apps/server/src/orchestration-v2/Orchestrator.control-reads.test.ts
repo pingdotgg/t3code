@@ -28,6 +28,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { continueRestartedRun } from "./RestartContinuation.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -47,6 +50,167 @@ const layerTest = Layer.mergeAll(
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
+);
+
+it.effect.each([
+  "snoozed",
+  "settled",
+  "pending",
+  "expired",
+  "secret",
+  "resolved",
+  "completed",
+  "failed",
+  "interrupted",
+] as const)("rechecks %s state when dispatching recorded restart intent", (state) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(`thread:restart-${state}`);
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create-restart-${state}`),
+      threadId,
+      projectId: ProjectId.make("project:control-dispatch"),
+      title: "Restart",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`original-restart-${state}`),
+      threadId,
+      messageId: MessageId.make(`original-restart-${state}`),
+      text: "Make a plan.",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const source = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    yield* projections.apply({
+      id: EventId.make(`cut-restart-${state}`),
+      type: "run.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...source, status: "cancelled", completedAt: now },
+    });
+    const turnId = ProviderTurnId.make(`turn:restart-${state}`);
+    yield* projections.apply({
+      id: EventId.make(`turn-restart-${state}`),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: turnId,
+        providerThreadId: source.providerThreadId!,
+        nodeId: source.rootNodeId!,
+        runAttemptId: source.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "cancelled",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    // The service reads eligible state before a user choice or provider state lands.
+    const before = yield* projections.getThreadProjection(threadId);
+    if (state === "snoozed" || state === "settled") {
+      yield* orchestrator.dispatch(
+        state === "snoozed"
+          ? {
+              type: "thread.snooze",
+              commandId: CommandId.make(`hold-restart-${state}`),
+              threadId,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            }
+          : {
+              type: "thread.settle",
+              commandId: CommandId.make(`hold-restart-${state}`),
+              threadId,
+            },
+      );
+    } else if (state === "completed" || state === "failed" || state === "interrupted") {
+      yield* projections.apply({
+        id: EventId.make(`settled-turn-restart-${state}`),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...before.providerTurns[0]!, status: state },
+      });
+    } else if (state === "secret") {
+      yield* projections.apply({
+        id: EventId.make(`secret-restart-${state}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`secret-restart-${state}`),
+          threadId,
+          runId: source.id,
+          nodeId: source.rootNodeId,
+          providerThreadId: source.providerThreadId,
+          providerTurnId: turnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "cancelled",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "secret_request",
+          label: "API key",
+          reason: "Connect to the provider.",
+          secretStatus: "cancelled",
+        },
+      });
+    } else {
+      yield* projections.apply({
+        id: EventId.make(`request-restart-${state}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(`request-restart-${state}`),
+          nodeId: source.rootNodeId!,
+          providerTurnId: turnId,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: state,
+          responseCapability:
+            state === "pending"
+              ? { type: "live", providerSessionId: ProviderSessionId.make("session:restart") }
+              : { type: "not_resumable", reason: "The server restarted." },
+          createdAt: now,
+          resolvedAt: state === "pending" ? null : now,
+        },
+      });
+    }
+    yield* continueRestartedRun({ threadId, sourceRunId: source.id }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(before),
+            dispatch: orchestrator.dispatch,
+            recoverDelegatedTask: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    const after = yield* projections.getThreadProjection(threadId);
+    assert.lengthOf(after.runs, state === "resolved" ? 2 : 1);
+    assert.equal(after.thread.interactionMode, "plan");
+    if (state === "snoozed") assert.isNotNull(after.thread.snoozedUntil);
+    if (state === "settled") assert.equal(after.thread.settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(

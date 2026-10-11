@@ -1189,9 +1189,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "terminalizes the linked subagent and node for a stale subagent item on a settled run",
-  () => {
+it.effect.each([true, false])(
+  "terminalizes a native subagent on a settled run with a turn item: %s",
+  (hasTurnItem) => {
     const threadId = ThreadId.make("thread_recovery_subagent");
     const settledRunId = RunId.make("run_recovery_subagent_settled");
     const providerThreadId = ProviderThreadId.make("provider_thread_recovery_subagent");
@@ -1245,16 +1245,20 @@ it.effect(
       ],
       messages: [],
       turnItems: [
-        {
-          id: staleItemId,
-          runId: settledRunId,
-          nodeId: staleSubagentNodeId,
-          providerThreadId,
-          type: "subagent",
-          status: "running",
-          subagentId: staleSubagentNodeId,
-          providerInstanceId: claudeInstanceId,
-        },
+        ...(hasTurnItem
+          ? [
+              {
+                id: staleItemId,
+                runId: settledRunId,
+                nodeId: staleSubagentNodeId,
+                providerThreadId,
+                type: "subagent",
+                status: "running",
+                subagentId: staleSubagentNodeId,
+                providerInstanceId: claudeInstanceId,
+              },
+            ]
+          : []),
         {
           id: doneItemId,
           runId: settledRunId,
@@ -1287,6 +1291,8 @@ it.effect(
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
             listByCommandId: () => Effect.succeed([]),
+            cancelUnsettled: () => Effect.succeed([]),
+            signalCancellations: () => Effect.void,
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -1301,7 +1307,7 @@ it.effect(
       const turnItemCancels = events.filter(
         (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
       );
-      assert.equal(turnItemCancels.length, 1);
+      assert.equal(turnItemCancels.length, hasTurnItem ? 1 : 0);
 
       // The linked subagent entity is terminalized alongside its turn item.
       const subagentCancels = events.filter((event) => event.type === "subagent.updated");

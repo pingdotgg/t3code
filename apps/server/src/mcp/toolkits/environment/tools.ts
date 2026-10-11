@@ -19,6 +19,7 @@ const PreferenceFields = {
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
   automaticUpdates: ServerSettings.fields.automaticUpdates,
+  continueThreadsAfterServerUpdate: ServerSettings.fields.continueThreadsAfterServerUpdate,
   backgroundActivity: Schema.Struct({ profile: BackgroundActivityProfileSelection }),
   sourceControlWritingStyle: Schema.Struct({
     mode: Schema.String,
@@ -61,6 +62,7 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,
     automaticUpdates: ServerSettingsPatch.fields.automaticUpdates,
+    continueThreadsAfterServerUpdate: ServerSettingsPatch.fields.continueThreadsAfterServerUpdate,
     backgroundActivity: Schema.optionalKey(Schema.Struct({ profile: BackgroundActivityProfile })),
     sourceControlWritingStyle: ServerSettingsPatch.fields.sourceControlWritingStyle,
   }),

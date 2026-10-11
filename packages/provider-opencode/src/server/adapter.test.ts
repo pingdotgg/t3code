@@ -186,8 +186,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   const startTurn = (
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
+    restartContinuationOfRunId?: RunId,
   ) =>
     runtime.startTurn({
+      ...(restartContinuationOfRunId === undefined ? {} : { restartContinuationOfRunId }),
       appThread: {
         id: threadId,
         projectId: ProjectId.make(`project-opencode-${suffix}`),
@@ -241,6 +243,107 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each(["busy", "retry", "idle"] as const)(
+    "does not prompt a surviving %s session again after a T3 restart",
+    (status) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const livePart = {
+          type: "text",
+          id: "part-live",
+          sessionID: "root",
+          messageID: "assistant-gap",
+          text: "live",
+        };
+        let prompts = 0;
+        const harness = yield* makeOpenCodeRuntimeHarness(`restart-${status}`, "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            status: async () => ({ data: { root: { type: status } } }),
+            messages: async () => {
+              // A live update lands while history loads; the older snapshot must not undo it.
+              await nativeEvents.push({
+                type: "message.part.updated",
+                properties: { sessionID: "root", part: { ...livePart, text: "live, then more" } },
+              });
+              return {
+                data: [
+                  {
+                    info: {
+                      id: "original-prompt",
+                      role: "user",
+                      sessionID: "root",
+                      time: { created: 1 },
+                    },
+                    parts: [],
+                  },
+                  {
+                    info: {
+                      id: "assistant-gap",
+                      role: "assistant",
+                      sessionID: "root",
+                      parentID: "original-prompt",
+                      time: { created: 2 },
+                    },
+                    parts: [
+                      {
+                        type: "text",
+                        id: "part-gap",
+                        sessionID: "root",
+                        messageID: "assistant-gap",
+                        text: "work during restart",
+                      },
+                      livePart,
+                    ],
+                  },
+                ],
+              };
+            },
+            promptAsync: async () => {
+              prompts++;
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        const thread = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+        });
+        const terminal = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* harness.startTurn(
+          "Continue where you left off.",
+          thread,
+          RunId.make("interrupted-run"),
+        );
+        assert.equal(prompts, status === "idle" ? 1 : 0);
+        if (status !== "idle") {
+          yield* Effect.promise(() =>
+            nativeEvents.push({ type: "session.idle", properties: { sessionID: "root" } }),
+          );
+          const collected = yield* Fiber.join(terminal);
+          assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+          const texts = collected.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text]
+              : [],
+          );
+          assert.include(texts, "work during restart");
+          assert.include(texts, "live, then more");
+          assert.notInclude(texts, "live");
+        }
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>

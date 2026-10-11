@@ -746,13 +746,42 @@ export const layer = Layer.effect(
       }
 
       return yield* Effect.gen(function* () {
-        const startedAt = yield* localNow;
-        const startedAtIso = iso(startedAt);
-
         // The in-memory snapshot may be stale: re-read before touching run
         // state. The task may have been deleted, paused, or postponed since
         // the poll loaded it — none of those may fire.
-        const active = yield* findTask(task.id);
+        let active = yield* findTask(task.id);
+        // Recovery cancels the old run before its continuation is dispatched.
+        // In that gap, queue mode would start a new run and suppress the continuation.
+        while (active !== null && active.threadId !== null) {
+          if (
+            trigger === "manual" ||
+            !active.enabled ||
+            (webhook !== undefined &&
+              (active.createdAt !== task.createdAt || active.schedule.type !== "webhook"))
+          )
+            break;
+          const pending = yield* sql`
+            SELECT 1 FROM orchestration_v2_effect_outbox
+            WHERE thread_id = ${active.threadId}
+              AND effect_type = 'provider-runtime.continue'
+              AND status IN ('pending', 'running')
+            LIMIT 1
+          `.pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not check schedule task restart continuation.", {
+                taskId: task.id,
+                cause,
+              }),
+            ),
+          );
+          if (pending.length === 0) break;
+          if (trigger === "scheduled") return active;
+          // Keep the accepted delivery and its rendered body while recovery runs.
+          yield* Effect.sleep("5 seconds");
+          active = yield* findTask(task.id);
+        }
+        const startedAt = yield* localNow;
+        const startedAtIso = iso(startedAt);
         if (active === null) {
           if (webhook !== undefined) {
             return yield* new WebhookDeliverySkipped({

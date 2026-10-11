@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -23,9 +24,13 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
 const layerTest = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
@@ -160,6 +165,43 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       },
     });
     const outboxOnly = yield* createThread("outbox-only");
+    const orphanSubagent = yield* createThread("orphan-native-subagent");
+    for (const origin of ["provider_native", "app_owned"] as const) {
+      const threadId =
+        origin === "provider_native" ? orphanSubagent : yield* createThread("app-owned-subagent");
+      const runId = yield* createRun(threadId, "completed");
+      const nodeId = NodeId.make(`node:recovery:orphan:${origin}`);
+      yield* projections.apply({
+        id: EventId.make(`event:recovery:orphan:${origin}`),
+        type: "subagent.updated",
+        threadId,
+        runId,
+        nodeId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId,
+          parentNodeId: NodeId.make(`node:recovery:orphan-root:${origin}`),
+          origin,
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId:
+            origin === "app_owned" ? ThreadId.make("thread:recovery:delegated-child") : null,
+          nativeTaskRef: null,
+          prompt: "unfinished native work",
+          title: null,
+          model: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+    }
     yield* outbox.enqueue([
       {
         id: "effect:recovery:outbox-only",
@@ -208,11 +250,14 @@ it.effect("selects unfinished recovery work without reading settled thread histo
     assert.deepEqual(yield* projections.getRecoveryThreadIds("queued-runs"), [queued]);
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
-      new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
+      new Set([queued, archived, blocked, background, outboxOnly, requestOnly, orphanSubagent]),
     );
     assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
     const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
+    const orphanState = yield* projections.getRuntimeRecoveryProjection(orphanSubagent);
+    assert.equal(orphanState.subagents.length, 1);
+    assert.equal(orphanState.runs[0]?.id, orphanState.subagents[0]?.runId);
     assert.deepEqual(
       recoveryState.runs.map((run) => run.id),
       [RunId.make(`run:${queued}:2`)],
@@ -222,6 +267,141 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       ThreadId.make("thread:recovery:settled-599"),
     ]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["startup", "shutdown"] as const)(
+  "recovers native child turns and their runless streaming descendants on %s",
+  (trigger) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* createThread("native-child");
+      const rootNodeId = NodeId.make("node:recovery:native-root");
+      const textNodeId = NodeId.make("node:recovery:native-text");
+      const providerThreadId = ProviderThreadId.make("provider-thread:recovery:native-child");
+      const providerTurnId = ProviderTurnId.make("turn:recovery:native-child");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:native-turn"),
+        type: "provider-turn.updated",
+        threadId,
+        nodeId: rootNodeId,
+        occurredAt: now,
+        payload: {
+          id: providerTurnId,
+          providerThreadId,
+          nodeId: rootNodeId,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), [threadId]);
+      for (const [id, kind] of [
+        [rootNodeId, "root_turn"],
+        [textNodeId, "assistant_message"],
+      ] as const) {
+        yield* projections.apply({
+          id: EventId.make(`event:${id}`),
+          type: "node.updated",
+          threadId,
+          nodeId: id,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId: null,
+            parentNodeId: id === rootNodeId ? null : rootNodeId,
+            rootNodeId,
+            kind,
+            status: "running",
+            countsForRun: false,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+      }
+      const itemId = TurnItemId.make("item:recovery:native-text");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:native-text-item"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: itemId,
+          threadId,
+          runId: null,
+          nodeId: textNodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          type: "assistant_message",
+          status: "running",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          messageId: MessageId.make("message:recovery:native-text"),
+          text: "unfinished native child output",
+          streaming: true,
+        },
+      });
+      const recovered = yield* projections.getRuntimeRecoveryProjection(threadId);
+      assert.deepEqual(
+        recovered.providerTurns.map((turn) => turn.id),
+        [providerTurnId],
+      );
+      assert.deepEqual(
+        new Set(recovered.nodes.map((node) => node.id)),
+        new Set([rootNodeId, textNodeId]),
+      );
+      assert.deepEqual(
+        recovered.turnItems.map((item) => item.id),
+        [itemId],
+      );
+      yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.flatMap((recovery) => recovery.reconcile(trigger)),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (event) => projections.apply(event), {
+                  discard: true,
+                }).pipe(
+                  Effect.orDie,
+                  Effect.as({ committed: true, cancelledEffectCount: 0 } as never),
+                ),
+            }),
+            IdAllocator.layer,
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+      const after = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.providerTurns.map((turn) => turn.status),
+        ["cancelled"],
+      );
+      assert.deepEqual(
+        after.nodes.map((node) => node.status),
+        ["cancelled", "cancelled"],
+      );
+      assert.equal(after.turnItems[0]?.status, "cancelled");
+      assert.equal(
+        after.turnItems[0]?.type === "assistant_message" && after.turnItems[0].streaming,
+        false,
+      );
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("recovers terminal subagent results until their cross-thread transfer exists", () =>
@@ -502,7 +682,10 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       preparedState.providerSessions.map((session) => session.id),
       [preparedSessionId],
     );
-    assert.equal(restartContinuationRun(preparedState)?.id, preparedRunId);
+    assert.equal(
+      restartContinuationRun(preparedState, DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"))?.id,
+      preparedRunId,
+    );
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`

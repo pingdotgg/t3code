@@ -234,6 +234,9 @@ interface OpenCodeTurnTokenUsageAccumulator {
   reasoningTokens: number;
   hasSubagents: boolean;
   complete: boolean;
+  // While a restart follows a surviving run, its prompt is not known yet, so
+  // no assistant message can be ruled out.
+  followingRestart: boolean;
 }
 
 function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumulator {
@@ -242,6 +245,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
     promptMessageIds: new Set(),
     assistantOwnershipByMessageId: new Map(),
     unresolvedStepsByMessageId: new Map(),
+    followingRestart: false,
     inputTokens: 0,
     cachedInputTokens: 0,
     cacheCreationTokens: 0,
@@ -2423,7 +2427,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   ? "unknown"
                   : usage.promptMessageIds.has(message.parentID)
                     ? "owned"
-                    : "other";
+                    : usage.followingRestart
+                      ? "unknown"
+                      : "other";
             usage.assistantOwnershipByMessageId.set(message.id, ownership);
             if (ownership !== "unknown") {
               if (ownership === "owned") {
@@ -3231,6 +3237,79 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 lastRunOrdinal: turnInput.runOrdinal,
               });
               yield* updateProviderSession("running", null);
+              if (turnInput.restartContinuationOfRunId !== undefined) {
+                turn.usage.followingRestart = true;
+                const statuses = unwrapData(
+                  "session.status",
+                  yield* sdkCall("session.status", { sessionID: sessionId }, () =>
+                    client.session.status(),
+                  ).pipe(
+                    Effect.tapError((cause) =>
+                      finalizeTurn(state, turn, "failed", {
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      }),
+                    ),
+                  ),
+                );
+                // Live events may have finished the surviving run meanwhile.
+                if (turn.finalized || state.activeTurn !== turn) return;
+                if (statuses[sessionId] === undefined || statuses[sessionId]?.type === "idle") {
+                  turn.usage.followingRestart = false;
+                } else {
+                  // A server that outlived T3 still owns this turn; follow it
+                  // instead of adding another prompt to its running execution.
+                  turn.admissionMessageId = null;
+                  advanceOpenCodePromptAdmission(turn, "busy");
+                  const admissionAction = advanceOpenCodePromptAdmission(turn, "accepted");
+                  yield* Deferred.succeed(admissionSettled, undefined);
+                  turn.admissionAbortController = null;
+                  const history = unwrapData(
+                    "session.messages",
+                    yield* sdkCall("session.messages", { sessionID: sessionId }, () =>
+                      client.session.messages({ sessionID: sessionId }),
+                    ).pipe(
+                      Effect.tapError((cause) =>
+                        finalizeTurn(state, turn, "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        }),
+                      ),
+                    ),
+                  );
+                  const userIndex = history.findLastIndex((entry) => entry.info.role === "user");
+                  for (const entry of userIndex < 0 ? [] : history.slice(userIndex)) {
+                    if (turn.finalized) break;
+                    yield* handleMessageUpdated({
+                      id: entry.info.id,
+                      type: "message.updated",
+                      properties: { sessionID: sessionId, info: entry.info },
+                    });
+                    for (const part of entry.parts) {
+                      // Live events since this turn became active already
+                      // hold a newer copy; the snapshot would roll it back.
+                      if (
+                        part.type === "tool"
+                          ? turn.toolNamesByCallId.has(part.callID)
+                          : turn.parts.has(part.id)
+                      )
+                        continue;
+                      yield* handlePartUpdated({
+                        id: part.id,
+                        type: "message.part.updated",
+                        properties: {
+                          sessionID: sessionId,
+                          part,
+                          time: DateTime.toEpochMillis(startedAt),
+                        },
+                      });
+                    }
+                  }
+                  turn.usage.followingRestart = false;
+                  if (admissionAction === "reconcile-idle") {
+                    yield* reconcilePromptAdmission(state, turn);
+                  }
+                  return;
+                }
+              }
               if (isCompaction) {
                 yield* sdkCall(
                   "session.summarize",

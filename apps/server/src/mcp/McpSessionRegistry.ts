@@ -130,7 +130,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
       const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
-        requestNamespace: providerSessionId,
+        // Retrying an accepted write after a restart must reuse its receipt.
+        requestNamespace: `thread:${encodeURIComponent(request.threadId)}:${encodeURIComponent(request.providerInstanceId)}`,
         thread: {
           threadId: ThreadId.make(request.threadId),
           providerSessionId,

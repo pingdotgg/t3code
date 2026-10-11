@@ -99,6 +99,126 @@ const layerTest = Layer.mergeAll(
 );
 
 describe("AcpRegistryAdapterV2", () => {
+  it.effect("preserves portable recovery when the restarted agent cannot reload sessions", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-no-reload-",
+      });
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const transcripts = yield* Effect.forEach([false, true], (fresh) =>
+        decodeAcpReplayTranscript(
+          {
+            provider: ACP_REGISTRY_PROVIDER,
+            protocol: "acp.ndjson-jsonrpc",
+            version: "1",
+            scenario: fresh ? "fresh-session" : "unsupported-reload",
+            entries: [
+              {
+                type: "expect_outbound",
+                frame: { kind: "request", method: "initialize", params: "<any>" },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "initialize",
+                  result: { protocolVersion: 1, agentCapabilities: { loadSession: false } },
+                },
+              },
+              ...(fresh
+                ? [
+                    {
+                      type: "expect_outbound",
+                      frame: { kind: "request", method: "session/new", params: "<any>" },
+                    },
+                    {
+                      type: "emit_inbound",
+                      frame: {
+                        kind: "response",
+                        method: "session/new",
+                        result: { sessionId: "replacement-session" },
+                      },
+                    },
+                  ]
+                : []),
+            ] as never,
+          },
+          ACP_REGISTRY_PROVIDER,
+        ),
+      );
+      const instanceId = ProviderInstanceId.make("acp-registry-no-reload");
+      const threadId = ThreadId.make("thread-acp-registry-no-reload");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      let runtimeOrdinal = 0;
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "fixture-agent" }),
+        environment: {},
+        makeRuntime: (input) =>
+          makeAcpReplayRuntime({
+            transcript: transcripts[runtimeOrdinal]!,
+            statusPath: path.join(replayDir, `${runtimeOrdinal++}.json`),
+            scriptPath,
+            childProcessSpawner,
+            fileSystem,
+          })(input),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      yield* Effect.gen(function* () {
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-no-reload"),
+          modelSelection,
+          runtimePolicy,
+          initialNativeThreadId: "saved-session",
+        });
+        const freshThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const savedThread = {
+          ...freshThread,
+          nativeThreadRef: {
+            driver: ACP_REGISTRY_PROVIDER,
+            nativeId: "saved-session",
+            strength: "strong" as const,
+          },
+        };
+        const resumeError = yield* session
+          .resumeThread({ providerThread: savedThread, modelSelection, runtimePolicy })
+          .pipe(Effect.flip);
+        assert.equal(resumeError._tag, "ProviderAdapterResumeThreadError");
+        const recovered = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          existingProviderThread: { ...savedThread, nativeThreadRef: null },
+        });
+        assert.equal(recovered.id, savedThread.id);
+        assert.equal(recovered.nativeThreadRef?.nativeId, "replacement-session");
+      }).pipe(Effect.scoped);
+      assert.equal(runtimeOrdinal, 2);
+      for (const [index, transcript] of transcripts.entries()) {
+        yield* makeAcpReplayCompletenessAssertion(
+          fileSystem,
+          path.join(replayDir, `${index}.json`),
+          transcript,
+        );
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
     const limit = new EffectAcpErrors.AcpRequestError({
       code: -31001,

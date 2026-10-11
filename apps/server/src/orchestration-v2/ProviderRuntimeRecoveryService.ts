@@ -29,6 +29,7 @@ import {
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  isWorktreeContinuationRun,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
@@ -286,8 +287,20 @@ export const make = Effect.gen(function* () {
       };
       // Queued runs have not started provider work. Preserve their execution
       // identities and order, but require explicit consent before draining them.
+      // A handoff's sole continuation already has that consent, and the old
+      // session was detached to run it in the newly bound worktree.
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const handoffContinuation =
+        continueAfterRestart &&
+        projection.thread.worktreePath != null &&
+        queuedRuns.length === 1 &&
+        queuedRuns[0]!.queueHeld !== true &&
+        isWorktreeContinuationRun(queuedRuns[0]!)
+          ? queuedRuns[0]
+          : undefined;
       for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued" || run.queueHeld === true || run === handoffContinuation)
+          continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -494,6 +507,78 @@ export const make = Effect.gen(function* () {
           allocateEventId,
         })),
       );
+      // The child's other runless nodes, their streaming items, and its runless
+      // provider turn died with it too.
+      const cancelledStaleItemIds = new Set(
+        events.flatMap((event) => (event.type === "turn-item.updated" ? [event.payload.id] : [])),
+      );
+      for (const event of events) {
+        if (event.type === "node.updated") cancelledStaleNodeIds.add(event.payload.id);
+      }
+      for (const node of projection.nodes) {
+        if (
+          node.runId !== null ||
+          messageRequestNodeIds.has(node.id) ||
+          delegatedTaskNodeIds.has(node.id) ||
+          !isNonterminalNodeStatus(node.status) ||
+          cancelledStaleNodeIds.has(node.id)
+        ) {
+          continue;
+        }
+        cancelledStaleNodeIds.add(node.id);
+        events.push({
+          id: yield* allocateEventId(),
+          type: "node.updated",
+          threadId: projection.thread.id,
+          nodeId: node.id,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...node, status: "cancelled", completedAt: now },
+        });
+        for (const item of projection.turnItems) {
+          if (
+            item.nodeId !== node.id ||
+            item.runId !== null ||
+            !isNonterminalTurnItemStatus(item.status) ||
+            cancelledStaleItemIds.has(item.id)
+          ) {
+            continue;
+          }
+          cancelledStaleItemIds.add(item.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "turn-item.updated",
+            threadId: projection.thread.id,
+            nodeId: node.id,
+            providerInstanceId: projection.thread.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              status: "cancelled",
+              completedAt: now,
+              updatedAt: now,
+              ...(item.type === "reasoning" ||
+              item.type === "assistant_message" ||
+              item.type === "proposed_plan"
+                ? { streaming: false }
+                : {}),
+            },
+          });
+        }
+      }
+      for (const turn of projection.providerTurns ?? []) {
+        if (turn.runAttemptId !== null || (turn.status !== "pending" && turn.status !== "running"))
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "provider-turn.updated",
+          threadId: projection.thread.id,
+          nodeId: turn.nodeId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...turn, status: "cancelled", completedAt: now },
+        });
+      }
       // All provider processes are gone on startup/shutdown: clear any
       // persisted Waiting roster (including idle threads from settled roots)
       // and idle active threads without resurrecting active status.
@@ -561,7 +646,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? (handoffContinuation ?? restartContinuationRun(projection, now))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -578,6 +663,18 @@ export const make = Effect.gen(function* () {
       ).length;
       let retiredEffects: number;
       if (events.length === 0) {
+        if (effects.length > 0) {
+          yield* eventSink.writeWithEffects({ commandId, events: [], effects }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "reconcile",
+                  threadId: projection.thread.id,
+                  cause,
+                }),
+            ),
+          );
+        }
         const retiredEffectIds = yield* outbox
           .cancelUnsettled({
             threadId: projection.thread.id,
@@ -697,7 +794,7 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        const run = restartContinuationRun(projection);
+        const run = restartContinuationRun(projection, yield* DateTime.now);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({

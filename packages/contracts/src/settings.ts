@@ -1082,9 +1082,10 @@ export const ServerSettings = Schema.Struct({
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Install updates in the background once nothing is running and nobody is using the app. */
   automaticUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  // Retain the update-era key; recovery now needs an environment-owned opt-in.
+  // Retain the update-era key. On by default so background updates and
+  // crashes resume the work they interrupted.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off

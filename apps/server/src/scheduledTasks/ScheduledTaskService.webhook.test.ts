@@ -13,6 +13,8 @@ import * as Metric from "effect/Metric";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -140,6 +142,86 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
     }),
   ),
+);
+
+it.effect.each(["pending", "running"] as const)(
+  "holds a bound webhook while its restart continuation is %s",
+  (continuationStatus) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const sends =
+        yield* Queue.unbounded<
+          Parameters<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>[0]
+        >();
+      const gate = yield* Deferred.make<void>();
+      const dependencies = Layer.mergeAll(
+        NodePlatformCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          sendToThread: (input) =>
+            Queue.offer(sends, input).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.as({} as never),
+            ),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            threadId: "thread:restart",
+            prompt: "Handle {{body.action}}: {{body}}.",
+          }),
+        );
+        yield* sql`INSERT INTO orchestration_v2_effect_outbox (
+          effect_id, command_id, thread_id, effect_type, payload_json, status,
+          available_at, created_at, updated_at
+        ) VALUES (
+          'effect:restart-continuation:cut', 'command:restart', 'thread:restart',
+          'provider-runtime.continue', '{"type":"provider-runtime.continue","sourceRunId":"cut"}',
+          ${continuationStatus}, ${task.createdAt}, ${task.createdAt}, ${task.createdAt}
+        )`;
+        const subscribed = yield* Deferred.make<void>();
+        const completed = yield* service.subscribeList().pipe(
+          Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+          Stream.filter((list) => list.tasks.some((task) => task.lastRunStatus === "succeeded")),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(subscribed);
+        const bodyText = JSON.stringify({ action: "opened", number: 7 });
+        const request = requestFor(task, {
+          relayDeliveryId: "held-after-restart",
+          body: new TextEncoder().encode(bodyText),
+          bodyText,
+        });
+        const accepted = yield* service.triggerWebhook(request);
+        assert.equal(accepted._tag, "accepted");
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.size(sends), 0);
+        assert.equal((yield* service.list()).tasks[0]?.runCount, 0);
+
+        yield* service.upsert(
+          yield* webhookTaskInput({ threadId: "thread:restart", prompt: "Changed {{body}}" }),
+        );
+        yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+        yield* TestClock.adjust("5 seconds");
+        const sent = yield* Queue.take(sends);
+        assert.equal(sent.threadId, "thread:restart");
+        assert.equal(sent.mode, "queue");
+        assert.equal(sent.scheduledTaskId, task.id);
+        assert.equal(sent.text, "Handle opened: " + bodyText + ".");
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(completed);
+        assert.equal((yield* service.list()).tasks[0]?.runCount, 1);
+        assert.equal((yield* service.list()).tasks[0]?.lastRunStatus, "succeeded");
+        const duplicate = yield* service.triggerWebhook(request);
+        assert.equal(duplicate._tag === "accepted" && duplicate.outcome, "duplicate");
+        assert.equal(yield* Queue.size(sends), 0);
+      }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it("builds the relay hook URL from the managed tunnel's key, never the environment id", () => {

@@ -95,6 +95,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -395,6 +396,10 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
 
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
+  readonly hasSession: (input: {
+    readonly sessionId: string;
+    readonly configDir: string;
+  }) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
     input: ClaudeAgentSdkQueryOpenInput,
   ) => Effect.Effect<ClaudeAgentSdkQuerySession, ClaudeAgentSdkQueryRunnerError>;
@@ -630,17 +635,41 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
 export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => queryRunnerError(cause, "allocateSessionId")),
+      ),
+      hasSession: Effect.fn("ClaudeAgentSdkQueryRunner.hasSession")(
+        function* (input: { readonly sessionId: string; readonly configDir: string }) {
+          if (path.basename(input.sessionId) !== input.sessionId) return false;
+          const projectsDir = path.join(input.configDir, "projects");
+          const directories = yield* fileSystem.readDirectory(projectsDir).pipe(
+            Effect.catchIf(
+              (error) => error.reason._tag === "NotFound",
+              () => Effect.succeed([]),
+            ),
+          );
+          for (const directory of directories) {
+            if (
+              yield* fileSystem.exists(
+                path.join(projectsDir, directory, `${input.sessionId}.jsonl`),
+              )
+            )
+              return true;
+          }
+          return false;
+        },
+        (effect) => effect.pipe(Effect.mapError((cause) => queryRunnerError(cause, "hasSession"))),
       ),
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(function* (
         input: ClaudeAgentSdkQueryOpenInput,
@@ -2850,6 +2879,7 @@ interface ActiveClaudeTurnContext {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
+  nativeConversationHeadConsumed: boolean;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
@@ -5460,7 +5490,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         nativeThreadId,
                       );
                 const clearConversationHead =
-                  input.status === "completed" &&
+                  (input.status === "completed" || input.context.nativeConversationHeadConsumed) &&
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
                 // While a goal is set, Claude ends a turn on its own only after the
                 // goal's Stop hook passes. It defers that check while background
@@ -5903,9 +5933,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return false;
           }
 
+          // A rollback cursor this turn consumed must not come back with the roster.
           const baseThread =
-            input.activeContext?.input.providerThread ??
-            (yield* Ref.get(lastProviderThreadByNativeThread)).get(input.nativeThreadId);
+            input.activeContext === null
+              ? (yield* Ref.get(lastProviderThreadByNativeThread)).get(input.nativeThreadId)
+              : input.activeContext.nativeConversationHeadConsumed
+                ? { ...input.activeContext.input.providerThread, nativeConversationHeadRef: null }
+                : input.activeContext.input.providerThread;
           if (baseThread === undefined) {
             return true;
           }
@@ -6221,6 +6255,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 emitEmpty: false,
               });
             }
+          }
+
+          // A rollback cursor applies once. Persist its consumption before
+          // a restart can resume past it and discard this turn's progress.
+          if (
+            input.replayed !== true &&
+            !context.nativeConversationHeadConsumed &&
+            context.input.providerThread.nativeConversationHeadRef !== null &&
+            ((message.type === "assistant" &&
+              message.parent_tool_use_id === null &&
+              message.error === undefined) ||
+              (message.type === "system" && message.subtype === "compact_boundary"))
+          ) {
+            context.nativeConversationHeadConsumed = true;
+            const providerThread: OrchestrationV2ProviderThread = {
+              ...((yield* Ref.get(lastProviderThreadByNativeThread)).get(context.nativeThreadId) ??
+                context.input.providerThread),
+              nativeConversationHeadRef: null,
+              updatedAt: yield* DateTime.now,
+            };
+            yield* rememberProviderThread(providerThread);
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver: CLAUDE_PROVIDER,
+              providerThread,
+            });
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
@@ -7833,6 +7893,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeThreadId,
               nativeTurnId,
               nativeMessageCursor: null,
+              nativeConversationHeadConsumed: false,
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
@@ -8238,6 +8299,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+              const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const existing = yield* Ref.get(queryContext);
+              // query.open reports a missing transcript asynchronously, too late
+              // for ProviderTurnStartService's portable-context fallback.
+              if (existing?.nativeThreadId !== nativeThreadId || existing.stopping) {
+                const configDir = yield* resolveClaudeHomePath(
+                  adapterOptions.settings,
+                  adapterOptions.environment,
+                ).pipe(Effect.provideService(Path.Path, path));
+                if (!(yield* queryRunner.hasSession({ sessionId: nativeThreadId, configDir }))) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "The saved Claude session transcript is missing.",
+                  });
+                }
+              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,
