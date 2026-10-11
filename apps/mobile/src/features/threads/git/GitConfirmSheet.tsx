@@ -141,6 +141,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
       <MaterialScreenContent fitToContents>
         <ScrollView
+          nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"
           showsVerticalScrollIndicator={false}
           contentContainerClassName="android:gap-2 android:p-2"

@@ -54,15 +54,15 @@ function ConfiguredConnectOnboardingRouteScreen() {
     cloudEnvironments: null,
   });
 
-  // Pull-to-refresh tracks its own spinner instead of discovery's refreshing
-  // flag, so background refreshes (e.g. the sign-in one) don't yank the
-  // content down.
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullRefresh = useCallback(() => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = useCallback(() => {
     void (async () => {
-      setIsPullRefreshing(true);
-      await refreshRelayEnvironments();
-      setIsPullRefreshing(false);
+      setIsRefreshing(true);
+      try {
+        await refreshRelayEnvironments();
+      } finally {
+        setIsRefreshing(false);
+      }
     })();
   }, [refreshRelayEnvironments]);
 
@@ -87,7 +87,16 @@ function ConfiguredConnectOnboardingRouteScreen() {
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
           title="Set up T3 Connect"
-          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+          actions={[
+            {
+              accessibilityLabel: "Refresh environments",
+              disabled: isRefreshing,
+              icon: "arrow.clockwise",
+              loading: isRefreshing,
+              onPress: handleRefresh,
+            },
+            { accessibilityLabel: "Close", icon: "xmark", onPress: handleClose },
+          ]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
@@ -95,6 +104,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         </NativeHeaderToolbar>
       )}
       <ScrollView
+        nestedScrollEnabled
         alwaysBounceVertical
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -106,7 +116,9 @@ function ConfiguredConnectOnboardingRouteScreen() {
           paddingTop: 16,
         }}
         refreshControl={
-          <RefreshControl refreshing={isPullRefreshing} onRefresh={handlePullRefresh} />
+          Platform.OS === "ios" ? (
+            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+          ) : undefined
         }
       >
         {isSignedIn ? (
