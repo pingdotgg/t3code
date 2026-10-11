@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -655,6 +655,93 @@ describe("threadHistoryPaging", () => {
     expect(bounded.payloadBudgetExceeded).toBe(true);
     expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
+  });
+
+  it.each([
+    ["ASCII", "a".repeat(8_192)],
+    ["JSON escapes", '\\"\n'.repeat(4_096)],
+    ["Unicode", "🦉界".repeat(4_096)],
+    ["unpaired surrogates", "\ud800".repeat(4_096)],
+  ])("keeps exact overflow boundaries for %s text", (_name, text) => {
+    const base = makeRow(0);
+    const item = {
+      ...base.item,
+      type: "assistant_message",
+      messageId: MessageId.make("large-answer"),
+      text,
+      streaming: false,
+    } as OrchestrationV2TurnItem;
+    for (const inherited of [false, true]) {
+      const row = {
+        ...base,
+        visibility: inherited ? "inherited" : "local",
+        sourceThreadId: inherited ? ThreadId.make("ancestor") : THREAD,
+        item,
+      } as OrchestrationV2ProjectedTurnItem;
+      const projection = makeProjection([row]);
+      const initial = buildBoundedThreadProjection({ projection, snapshotSequence: 9 });
+      const bytes = Buffer.byteLength(JSON.stringify(initial.projection), "utf8");
+      for (const maxEncodedBytes of [bytes, bytes - 1, 6_000]) {
+        const stringify = vi.spyOn(JSON, "stringify");
+        try {
+          const bounded = buildBoundedThreadProjection({
+            projection,
+            snapshotSequence: 9,
+            policy: { maxItems: 75, maxEncodedBytes },
+          });
+          expect(bounded.payloadBudgetExceeded).toBe(bytes > maxEncodedBytes);
+          expect(bounded.projection).toEqual(initial.projection);
+          expect(bounded.historyCursor).toBe(initial.historyCursor);
+          expect(bounded.hasMoreHistory).toBe(initial.hasMoreHistory);
+          const minimumTextBytes = text.length * (inherited ? 1 : 2);
+          if (minimumTextBytes > maxEncodedBytes) {
+            expect(stringify).not.toHaveBeenCalledWith(bounded.projection);
+          } else {
+            expect(stringify).toHaveBeenCalledWith(bounded.projection);
+          }
+        } finally {
+          stringify.mockRestore();
+        }
+      }
+    }
+  });
+
+  it("reports overflow from combined duplicated text while preserving complete turns", () => {
+    const user = {
+      ...makeRow(0),
+      item: {
+        ...makeRow(0).item,
+        type: "user_message",
+        messageId: MessageId.make("large-question"),
+        inputIntent: "turn_start",
+        createdBy: "user",
+        creationSource: "web",
+        text: "q".repeat(20_000),
+        attachments: [],
+      },
+    } as OrchestrationV2ProjectedTurnItem;
+    const answer = {
+      ...makeRow(1),
+      item: {
+        ...makeRow(1).item,
+        type: "assistant_message",
+        messageId: MessageId.make("large-answer"),
+        text: "a".repeat(20_000),
+        streaming: false,
+      },
+    } as OrchestrationV2ProjectedTurnItem;
+    const projection = makeProjection([user, answer]);
+    const bounded = buildBoundedThreadProjection({
+      projection,
+      snapshotSequence: 9,
+      policy: { maxUserTurns: 1, maxItems: 75, maxEncodedBytes: 65_536 },
+    });
+
+    expect(bounded.payloadBudgetExceeded).toBe(true);
+    expect(bounded.projection.visibleTurnItems).toEqual([user, answer]);
+    expect(bounded.projection.turnItems).toEqual([user.item, answer.item]);
+    expect(bounded.historyCursor).toBeNull();
+    expect(bounded.hasMoreHistory).toBe(false);
   });
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {

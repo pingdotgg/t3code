@@ -82,6 +82,28 @@ function bytesOfJson(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
+function timelineTextExceedsBudget(
+  projection: OrchestrationV2ThreadProjection,
+  budget: number,
+): boolean {
+  // JSON UTF-8 encoding cannot use fewer bytes than a string's UTF-16 length.
+  // Count both copies of local items, just as they appear in the projection.
+  let length = 0;
+  for (const row of projection.visibleTurnItems) {
+    if ("text" in row.item && typeof row.item.text === "string") {
+      length += row.item.text.length;
+      if (length > budget) return true;
+    }
+  }
+  for (const item of projection.turnItems) {
+    if ("text" in item && typeof item.text === "string") {
+      length += item.text.length;
+      if (length > budget) return true;
+    }
+  }
+  return false;
+}
+
 /** Ordinary history-page cost: one projected row (item is nested once). */
 export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
@@ -570,6 +592,8 @@ export function buildBoundedThreadProjection(input: {
     // Adding timeline rows and historical summaries cannot shrink control state.
     // Avoid serializing the whole timeline when control state already exceeds the cap.
     payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
+      controlBytes > policy.maxEncodedBytes ||
+      timelineTextExceedsBudget(projection, policy.maxEncodedBytes) ||
+      bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
