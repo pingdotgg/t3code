@@ -1,10 +1,13 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -66,6 +69,9 @@ type CodexRateLimitsProbe =
   | { readonly failure: string };
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
+const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
+const CODEX_CLIENT_NAME = "T3 Code";
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -347,11 +353,81 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   return models;
 });
 
+const decodeCodexModelsCacheStamp = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ fetched_at: Schema.String })),
+);
+
+/** When Codex last wrote `models_cache.json`, in epoch millis; NaN when unreadable. */
+const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")(function* (
+  codexHome: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fileSystem
+    .readFileString(path.join(codexHome, "models_cache.json"))
+    .pipe(Effect.option);
+  return Option.flatMap(text, decodeCodexModelsCacheStamp).pipe(
+    Option.flatMap((stamp) => DateTime.make(stamp.fetched_at)),
+    Option.match({ onNone: () => Number.NaN, onSome: DateTime.toEpochMillis }),
+  );
+});
+
+/**
+ * Lists the ChatGPT model catalog as fetched for T3 Code.
+ *
+ * `model/list` serves `CODEX_HOME/models_cache.json` while it is under five
+ * minutes old. Every Codex client on the machine shares that file, and the
+ * backend tailors the catalog to each client's originator: the plain CLI does
+ * not get Sol Ultrafast. So the first answer can be another client's catalog.
+ * App-server refreshes the catalog online at startup, so wait until a write
+ * newer than this process's spawn lands, then list again. If no refresh
+ * lands in time, keep the first answer. Another client writing in the same
+ * few hundred milliseconds can still win; the next probe corrects it.
+ */
+const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly codexHome: string;
+  readonly spawnedAtMs: number;
+}) {
+  const models = yield* requestAllCodexModels(input.client);
+  const refreshed = yield* readCodexModelsCacheFetchedAt(input.codexHome).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(CODEX_CATALOG_REFRESH_POLL),
+      until: (fetchedAtMs) => fetchedAtMs >= input.spawnedAtMs,
+    }),
+    Effect.timeoutOption(CODEX_CATALOG_REFRESH_TIMEOUT),
+  );
+  if (Option.isNone(refreshed)) {
+    yield* Effect.logWarning(
+      "Codex did not refresh its model catalog in time; using the cached catalog.",
+    );
+    return models;
+  }
+  return yield* requestAllCodexModels(input.client);
+});
+
+/**
+ * Environment for every `codex app-server` T3 Code spawns.
+ *
+ * Codex sends its client name as the `originator` header, and the backend
+ * tailors the model catalog to it. App-server starts its catalog refresh
+ * before `initialize` names the client, so that first fetch goes out as the
+ * plain CLI, misses tiers like Sol Ultrafast, and overwrites the shared
+ * `models_cache.json`. Naming the originator at spawn closes that race.
+ * A value the user already set wins.
+ */
+export const codexAppServerEnvironment = (
+  environment: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv => ({
+  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
+  ...environment,
+});
+
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "T3 Code",
-      title: "T3 Code",
+      name: CODEX_CLIENT_NAME,
+      title: CODEX_CLIENT_NAME,
       version: packageJson.version,
     },
     capabilities: {
@@ -382,7 +458,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
     : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
-    ...input.environment,
+    ...codexAppServerEnvironment(input.environment),
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
   const spawnCommand = yield* resolveSpawnCommand(
@@ -427,6 +503,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly environment?: NodeJS.ProcessEnv;
   readonly skipNativeUsage?: boolean;
 }) {
+  const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const { client, initialize } = yield* withCodexAppServerClient(input);
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
@@ -448,7 +525,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
-      requestAllCodexModels(client),
+      accountResponse.account?.type === "chatgpt"
+        ? requestCodexChatGptModels({ client, codexHome: initialize.codexHome, spawnedAtMs })
+        : requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       input.skipNativeUsage
@@ -589,14 +668,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   managedAuth?: ServerProvider["auth"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
