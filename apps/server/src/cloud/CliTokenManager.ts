@@ -198,6 +198,15 @@ export class CloudCliCredentialRefreshError extends Schema.TaggedError<CloudCliC
   }
 }
 
+export class CloudCliMissingRefreshToken extends Schema.TaggedError<CloudCliMissingRefreshToken>()(
+  "CloudCliMissingRefreshToken",
+  {},
+) {
+  override get message(): string {
+    return "The stored T3 Connect CLI credential has no refresh token.";
+  }
+}
+
 export class CloudCliCredentialReadError extends Schema.TaggedError<CloudCliCredentialReadError>()(
   "CloudCliCredentialReadError",
   { cause: Schema.Defect() },
@@ -237,12 +246,15 @@ export class CloudCliAuthorizationDeniedError extends Schema.TaggedError<CloudCl
 export const CloudCliTokenManagerError = Schema.Union([
   CloudCliCredentialRemovalError,
   CloudCliCredentialRefreshError,
+  CloudCliMissingRefreshToken,
   CloudCliCredentialReadError,
   CloudCliAuthorizationError,
   CloudCliAuthorizationTimeoutError,
   CloudCliAuthorizationDeniedError,
 ]);
 export type CloudCliTokenManagerError = typeof CloudCliTokenManagerError.Type;
+
+const isCloudCliMissingRefreshToken = Schema.is(CloudCliMissingRefreshToken);
 
 export class CloudCliTokenManager extends Context.Service<
   CloudCliTokenManager,
@@ -445,6 +457,13 @@ export const make = Effect.gen(function* () {
   });
 
   const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
+    // A stored credential without a refresh token (the server omitted
+    // refresh_token on a grant that has none to carry over) can never be
+    // refreshed: fail before the network round trip so callers fall through
+    // to a fresh login instead of posting refresh_token="".
+    if (token.refreshToken.length === 0) {
+      return yield* new CloudCliMissingRefreshToken();
+    }
     const metadata = yield* cloudCliOAuthConfig;
     const { token: refreshed } = yield* exchangeToken(metadata, {
       grant_type: "refresh_token",
@@ -537,7 +556,14 @@ export const make = Effect.gen(function* () {
 
   const getExisting = semaphore.withPermits(1)(
     getExistingNoLock().pipe(
-      Effect.mapError((cause) => new CloudCliCredentialRefreshError({ cause })),
+      // A missing refresh token is domain state, not a wrapped underlying
+      // failure: pass it through so callers can fall through to a fresh
+      // login without an obscured cause chain.
+      Effect.mapError((cause) =>
+        isCloudCliMissingRefreshToken(cause)
+          ? cause
+          : new CloudCliCredentialRefreshError({ cause }),
+      ),
       Effect.provide(services),
     ),
   );
