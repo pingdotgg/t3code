@@ -5933,9 +5933,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return false;
           }
 
+          // A rollback cursor this turn consumed must not come back with the roster.
           const baseThread =
-            input.activeContext?.input.providerThread ??
-            (yield* Ref.get(lastProviderThreadByNativeThread)).get(input.nativeThreadId);
+            input.activeContext === null
+              ? (yield* Ref.get(lastProviderThreadByNativeThread)).get(input.nativeThreadId)
+              : input.activeContext.nativeConversationHeadConsumed
+                ? { ...input.activeContext.input.providerThread, nativeConversationHeadRef: null }
+                : input.activeContext.input.providerThread;
           if (baseThread === undefined) {
             return true;
           }

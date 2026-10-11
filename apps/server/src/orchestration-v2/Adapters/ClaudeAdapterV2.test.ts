@@ -2605,11 +2605,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 session_id: WAKE_NATIVE_SESSION,
               }),
         );
+        // A later roster frame must not bring the consumed cursor back.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "post-rollback-roster",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.shutdown(harness.sdkMessages);
         yield* Queue.take(harness.terminalReceipts);
         const updates = harness.events.filter((event) => event.type === "provider_thread.updated");
-        assert.lengthOf(updates, 2);
-        assert.isNull(updates[0]?.providerThread.nativeConversationHeadRef);
+        assert.lengthOf(updates, 3);
+        for (const update of updates)
+          assert.isNull(update.providerThread.nativeConversationHeadRef);
         const saved = updates.at(-1);
         assert.equal(saved?.type, "provider_thread.updated");
         if (saved?.type !== "provider_thread.updated") return;
