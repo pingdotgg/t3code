@@ -145,6 +145,31 @@ describe("compactDynamicToolOutput", () => {
     });
     expect(compactDynamicToolOutput(compact)).toEqual(compact);
   });
+
+  it("keeps htmlRender through the established text envelopes", () => {
+    const htmlRender = {
+      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
+      title: "Chart",
+      height: 420,
+    };
+    const json = JSON.stringify({ htmlRender });
+    expect(compactDynamicToolOutput([{ type: "text", text: json }])).toEqual({ htmlRender });
+    expect(compactDynamicToolOutput({ content: [{ text: { text: json } }] })).toEqual({
+      htmlRender,
+    });
+  });
+
+  it("extracts htmlRender from the ACP registry content envelope", () => {
+    const htmlRender = {
+      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
+      title: "Chart",
+      height: 420,
+    };
+    const json = JSON.stringify({ htmlRender });
+    expect(
+      compactDynamicToolOutput([{ type: "content", content: { type: "text", text: json } }]),
+    ).toEqual({ htmlRender });
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {
