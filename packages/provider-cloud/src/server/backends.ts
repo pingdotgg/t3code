@@ -1,13 +1,12 @@
 /**
- * The two cloud runtimes behind one shape: start remote work from a prompt,
- * wait for it, and say what happened. Each backend drives its provider's
- * own CLI, so sign-in, environments, and repository access stay the CLI's.
+ * A cloud runtime behind one shape: start remote work from a prompt, wait for
+ * it, and say what happened. The backend drives its provider's own CLI, so
+ * sign-in, environments, and repository access stay the CLI's.
  *
  * @module provider-cloud/server/backends
  */
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
 import { CloudCliError, lastLine, type CloudCli } from "./cli.ts";
 
@@ -21,14 +20,11 @@ export interface CloudRunInput {
   readonly prompt: string;
   /** The Codex Cloud environment the thread chose, for runtimes that need one. */
   readonly cloudEnvironment?: string;
-  /** The cloud session earlier turns of this thread ran in, for runtimes that continue one. */
-  readonly session: string | undefined;
   /** Called once the remote task exists, before the run waits on it. */
   readonly onTask: (task: CloudTask) => Effect.Effect<void>;
 }
 
 export interface CloudRunResult {
-  readonly task: CloudTask;
   /** What the thread shows as the agent's reply. */
   readonly text: string;
 }
@@ -36,8 +32,6 @@ export interface CloudRunResult {
 export interface CloudBackend {
   /** Product name used in messages, such as "Codex Cloud". */
   readonly label: string;
-  /** Whether later turns continue the task `onTask` reported, rather than starting a new one. */
-  readonly continuesSessions: boolean;
   readonly run: (input: CloudRunInput) => Effect.Effect<CloudRunResult, CloudCliError>;
 }
 
@@ -106,7 +100,6 @@ export const makeCodexCloudBackend = (options: {
     );
   return {
     label: "Codex Cloud",
-    continuesSessions: false,
     run: Effect.fnUntraced(function* (input) {
       if (!input.cloudEnvironment)
         return yield* fail("Choose a Codex Cloud environment from Run on before sending.");
@@ -135,7 +128,6 @@ export const makeCodexCloudBackend = (options: {
         );
       if (current.summary === "no diff")
         return {
-          task,
           text: `**${title}** finished in Codex Cloud with no changes.\n\n${task.url}`,
         };
 
@@ -148,92 +140,8 @@ export const makeCodexCloudBackend = (options: {
         );
       const summary = current.summary ? ` (${current.summary})` : "";
       return {
-        task,
         text: `**${title}** finished in Codex Cloud. Its changes${summary} are applied to this workspace.\n\n${task.url}`,
       };
     }),
   };
 };
-
-const ClaudeCloudOutput = Schema.Union([
-  // Created and waited for the result: the same shape as a local `-p` result.
-  Schema.Struct({
-    type: Schema.Literal("result"),
-    is_error: Schema.Boolean,
-    result: Schema.optional(Schema.String),
-    session_id: Schema.String,
-    session_url: Schema.optional(Schema.String),
-  }),
-  // Created or messaged without waiting.
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    session_id: Schema.String,
-    url: Schema.String,
-    title: Schema.optional(Schema.String),
-  }),
-  Schema.Struct({ ok: Schema.Literal(false), error: Schema.optional(Schema.String) }),
-]);
-const decodeClaudeCloudOutput = Schema.decodeUnknownOption(
-  Schema.fromJsonString(ClaudeCloudOutput),
-);
-
-// Printed on stderr as soon as `claude -p --cloud` has a session, before it waits.
-const CLAUDE_SESSION_LINE = /^Cloud session: (\S+) \((https?:\/\/\S+)\)$/;
-
-/** The session a `claude -p --cloud` stderr line announces. */
-const parseClaudeSessionLine = (line: string): CloudTask | undefined => {
-  const match = CLAUDE_SESSION_LINE.exec(line.trim());
-  return match?.[1] && match[2] ? { id: match[1], url: match[2] } : undefined;
-};
-
-const claudeSessionUrl = (id: string) => `https://claude.ai/code/${id}`;
-
-/**
- * Claude Code Cloud: the first turn creates a cloud session for the thread's
- * repository, and later turns message that same session. Claude Code waits
- * for the cloud reply where the account supports it; otherwise the turn ends
- * once the message is delivered and the session keeps working on claude.ai.
- */
-export const makeClaudeCloudBackend = (options: { readonly cli: CloudCli }): CloudBackend => ({
-  label: "Claude Code Cloud",
-  continuesSessions: true,
-  run: Effect.fnUntraced(function* (input) {
-    let announced: CloudTask | undefined;
-    const result = yield* options.cli({
-      args: ["-p", "--output-format", "json", "--cloud", ...(input.session ? [input.session] : [])],
-      cwd: input.cwd,
-      stdin: input.prompt,
-      onStderrLine: (line) => {
-        const task = announced ? undefined : parseClaudeSessionLine(line);
-        if (!task) return Effect.void;
-        announced = task;
-        return input.onTask(task);
-      },
-    });
-    const line = lastLine(result.stdout);
-    const output = line === undefined ? undefined : decodeClaudeCloudOutput(line);
-    if (output === undefined || output._tag === "None")
-      return yield* failure("Claude Code could not reach the cloud session.", result);
-    const parsed = output.value;
-    if ("type" in parsed) {
-      const task = {
-        id: parsed.session_id,
-        url: parsed.session_url ?? announced?.url ?? claudeSessionUrl(parsed.session_id),
-      };
-      if (!announced) yield* input.onTask(task);
-      if (parsed.is_error)
-        return yield* fail(`${parsed.result || "The cloud session failed."} (${task.url})`);
-      return { task, text: parsed.result ?? "" };
-    }
-    if (!parsed.ok)
-      return yield* fail(parsed.error ?? lastLine(result.stderr) ?? "Claude Code Cloud failed.");
-    const task = { id: parsed.session_id, url: parsed.url };
-    yield* input.onTask(task);
-    return {
-      task,
-      text: input.session
-        ? `Sent to the Claude Code Cloud session. It replies there: ${task.url}`
-        : `Started ${parsed.title ? `**${parsed.title}**` : "a session"} in Claude Code Cloud. Follow its progress there, and send follow-ups from here: ${task.url}`,
-    };
-  }),
-});

@@ -11,7 +11,7 @@ session or catalog state. For a new driver, start with [adding a provider](./add
 
 ## Cloud runs
 
-Codex Cloud and Claude Code cloud are places a thread runs, not providers. The thread's model
+Codex Cloud is a place a thread runs, not a provider. The thread's model
 selection carries the `cloud` option, which clients offer under Run on when the snapshot has
 `cloudRun`; no model descriptor declares it, so option editors must keep it with `keepCloudRun`.
 The driver [wraps its adapter](../../packages/provider-cloud/src/server/cloudRun.ts) to open cloud

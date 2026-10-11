@@ -72,13 +72,6 @@ import {
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  makeClaudeCloudBackend,
-  makeCloudAdapterV2,
-  makeCloudCli,
-  withCloudRun,
-  withCloudRunOption,
-} from "@t3tools/provider-cloud/server";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -115,8 +108,6 @@ export type ClaudeDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig;
-
-const NON_SUBSCRIPTION_AUTH_TYPES = new Set(["apiKey", "bedrock"]);
 
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
@@ -170,25 +161,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ? configDir
           : undefined,
       );
-      const stampInstance = withInstanceIdentity({
+      const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey,
       });
-      // Cloud sessions need a claude.ai subscription; API keys and third-party providers cannot start them.
-      const stampIdentity: typeof stampInstance = (draft) => {
-        const stamped = stampInstance(draft);
-        return stamped.auth.status === "authenticated" &&
-          stamped.auth.type !== undefined &&
-          !NON_SUBSCRIPTION_AUTH_TYPES.has(stamped.auth.type)
-          ? withCloudRunOption(stamped, "Claude Code cloud")
-          : stamped;
-      };
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
-      const nativeAdapter = yield* createClaudeAdapterV2(
+      const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
           displayName,
@@ -208,18 +190,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               cause,
             }),
         ),
-      );
-      const cloudCli = yield* makeCloudCli(effectiveConfig.binaryPath, {
-        ...processEnv,
-        ...(effectiveConfig.homePath.trim() ? { CLAUDE_CONFIG_DIR: configDir } : {}),
-      });
-      const orchestrationAdapter = withCloudRun(
-        nativeAdapter,
-        yield* makeCloudAdapterV2({
-          instanceId,
-          driver: DRIVER_KIND,
-          backend: makeClaudeCloudBackend({ cli: cloudCli }),
-        }),
       );
       const textGeneration = yield* makeClaudeTextGeneration(
         effectiveConfig,

@@ -19,8 +19,6 @@ export interface CloudCliRequest {
   readonly cwd: string;
   /** Written to the child's stdin, which then closes. */
   readonly stdin?: string;
-  /** Sees each stderr line as it arrives, for progress a command prints before it exits. */
-  readonly onStderrLine?: (line: string) => Effect.Effect<void>;
 }
 
 export interface CloudCliResult {
@@ -53,23 +51,15 @@ export const makeCloudCli = (
               request.stdin === undefined ? "ignore" : Stream.make(encoder.encode(request.stdin)),
           }),
         );
-        const stderrLines: Array<string> = [];
-        const [stdout, , code] = yield* Effect.all(
+        const [stdout, stderr, code] = yield* Effect.all(
           [
             child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-            child.stderr.pipe(
-              Stream.decodeText(),
-              Stream.splitLines,
-              Stream.runForEach((line) => {
-                stderrLines.push(line);
-                return request.onStderrLine?.(line) ?? Effect.void;
-              }),
-            ),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
             child.exitCode.pipe(Effect.map(Number)),
           ],
           { concurrency: "unbounded" },
         );
-        return { stdout, stderr: stderrLines.join("\n"), code };
+        return { stdout, stderr, code };
       }).pipe(
         Effect.scoped,
         Effect.mapError(

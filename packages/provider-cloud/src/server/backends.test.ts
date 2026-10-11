@@ -2,35 +2,27 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { makeClaudeCloudBackend, makeCodexCloudBackend, type CloudTask } from "./backends.ts";
+import { makeCodexCloudBackend, type CloudTask } from "./backends.ts";
 import { CloudCliError } from "./cli.ts";
 import type { CloudCli, CloudCliRequest, CloudCliResult } from "./cli.ts";
 
 /** A CLI that answers each command with the next scripted result and records what ran. */
-const scriptedCli = (
-  script: ReadonlyArray<CloudCliResult & { readonly stderrLines?: ReadonlyArray<string> }>,
-) => {
+const scriptedCli = (script: ReadonlyArray<CloudCliResult>) => {
   const calls: Array<CloudCliRequest> = [];
   const cli: CloudCli = (request) =>
     Effect.gen(function* () {
       const next = script[calls.length];
       calls.push(request);
       if (!next) return yield* Effect.die(`unexpected command: ${request.args.join(" ")}`);
-      for (const line of next.stderrLines ?? []) yield* request.onStderrLine?.(line) ?? Effect.void;
       return next;
     });
   return { cli, calls };
 };
 
-const ok = (stdout: string, stderrLines?: ReadonlyArray<string>) => ({
-  stdout,
-  stderr: "",
-  code: 0,
-  ...(stderrLines ? { stderrLines } : {}),
-});
+const ok = (stdout: string) => ({ stdout, stderr: "", code: 0 });
 const TASK_URL = "https://chatgpt.com/codex/tasks/task_e_123";
 
-const runInput = (session?: string) => {
+const runInput = () => {
   const tasks: Array<CloudTask> = [];
   return {
     tasks,
@@ -38,7 +30,6 @@ const runInput = (session?: string) => {
       cwd: "/repo",
       prompt: "--fix the flaky test",
       cloudEnvironment: "my-env",
-      session,
       onTask: (task: CloudTask) => Effect.sync(() => void tasks.push(task)),
     },
   };
@@ -158,88 +149,6 @@ describe("Codex Cloud backend", () => {
       const exit = yield* makeCodexCloudBackend({ cli }).run(input).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit));
       assert.strictEqual(calls.length, 0);
-    }),
-  );
-});
-
-describe("Claude Code Cloud backend", () => {
-  const SESSION_URL = "https://claude.ai/code/session_01abc";
-
-  it.effect("creates a session from stdin and returns the cloud reply", () =>
-    Effect.gen(function* () {
-      const { cli, calls } = scriptedCli([
-        ok(
-          JSON.stringify({
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            result: "Fixed the flaky test.",
-            session_id: "session_01abc",
-            session_url: SESSION_URL,
-          }),
-          [`Cloud session: session_01abc (${SESSION_URL})`],
-        ),
-      ]);
-      const { tasks, input } = runInput();
-
-      const result = yield* makeClaudeCloudBackend({ cli }).run(input);
-
-      assert.deepStrictEqual(calls[0]?.args, ["-p", "--output-format", "json", "--cloud"]);
-      assert.strictEqual(calls[0]?.stdin, "--fix the flaky test");
-      assert.deepStrictEqual(tasks, [{ id: "session_01abc", url: SESSION_URL }]);
-      assert.strictEqual(result.text, "Fixed the flaky test.");
-    }),
-  );
-
-  it.effect("sends follow-ups to the thread's session", () =>
-    Effect.gen(function* () {
-      const { cli, calls } = scriptedCli([
-        ok(JSON.stringify({ ok: true, session_id: "session_01abc", url: SESSION_URL })),
-      ]);
-      const { tasks, input } = runInput("session_01abc");
-
-      const result = yield* makeClaudeCloudBackend({ cli }).run(input);
-
-      assert.deepStrictEqual(calls[0]?.args, [
-        "-p",
-        "--output-format",
-        "json",
-        "--cloud",
-        "session_01abc",
-      ]);
-      assert.deepStrictEqual(tasks, [{ id: "session_01abc", url: SESSION_URL }]);
-      assert.include(result.text, SESSION_URL);
-    }),
-  );
-
-  it.effect("fails with Claude Code's own error", () =>
-    Effect.gen(function* () {
-      const rejected = scriptedCli([
-        { stdout: "", stderr: "Error: Cloud sessions need a claude.ai sign-in.", code: 1 },
-      ]);
-      const archived = scriptedCli([
-        {
-          stdout: JSON.stringify({ ok: false, session_id: "s", error: "session is archived" }),
-          stderr: "",
-          code: 1,
-        },
-      ]);
-
-      const rejectedExit = yield* makeClaudeCloudBackend({ cli: rejected.cli })
-        .run(runInput().input)
-        .pipe(Effect.exit);
-      const archivedExit = yield* makeClaudeCloudBackend({ cli: archived.cli })
-        .run(runInput("s").input)
-        .pipe(Effect.exit);
-
-      assert.include(
-        String(Exit.isFailure(rejectedExit) && rejectedExit.cause),
-        "claude.ai sign-in",
-      );
-      assert.include(
-        String(Exit.isFailure(archivedExit) && archivedExit.cause),
-        "session is archived",
-      );
     }),
   );
 });

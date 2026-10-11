@@ -1,8 +1,8 @@
 # Cloud runs
 
-Choose **Run on** above the composer to run a thread in Codex Cloud or Claude
-Code cloud. Each provider uses your subscription. The destination stays fixed
-once the thread starts; start a new thread to move work between cloud and a machine.
+Choose **Run on → Codex Cloud** above the composer to run a Codex thread in
+Codex Cloud with your ChatGPT subscription. The destination stays fixed once the
+thread starts; start a new thread to move work between the cloud and a machine.
 
 ## Codex Cloud
 
@@ -29,20 +29,6 @@ its cloud filesystem; it is not automatically applied to your machine.
 Older Codex environments continue to use the CLI task workflow: each message
 starts a new task, waits for completion, and applies its diff to your local
 workspace. Push local commits before using that workflow. Conflicts leave the
-task's diff on chatgpt.com. **Stop** stops waiting for a legacy task without
-cancelling it.
-
-## Claude Code cloud
-
-Claude Code must be signed in with a claude.ai subscription. Connect GitHub at
-claude.ai/code or run `/web-setup` in Claude Code. API keys and third-party providers
-such as Bedrock cannot start cloud sessions.
-
-The first message starts a cloud session and later messages continue it. If your
-account supports waiting, T3 shows Claude's reply; otherwise it ends once the
-session accepts the message, and Claude keeps working on claude.ai. Bring its
-branch back with `claude --teleport <session-id>` in a terminal.
-
-Claude cloud and legacy Codex tasks work unattended and accept text only. They
-cannot use T3's local tools or ask questions through T3. Stopping the T3 turn
-stops waiting; the remote task keeps running.
+task's diff on chatgpt.com. These tasks work unattended and accept text only:
+they cannot use T3's local tools or ask questions through T3. **Stop** stops
+waiting for a task without cancelling it.

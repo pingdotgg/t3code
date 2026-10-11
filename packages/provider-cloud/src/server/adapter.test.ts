@@ -32,10 +32,10 @@ const testLayer = Layer.mergeAll(
   IdAllocator.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
-const DRIVER = ProviderDriverKind.make("claudeAgent");
-const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
+const DRIVER = ProviderDriverKind.make("codex");
+const INSTANCE_ID = ProviderInstanceId.make("codex");
 const THREAD_ID = ThreadId.make("thread-cloud-test");
-const TASK = { id: "session_01abc", url: "https://claude.ai/code/session_01abc" };
+const TASK = { id: "task_e_123", url: "https://chatgpt.com/codex/tasks/task_e_123" };
 const modelSelection = { instanceId: INSTANCE_ID, model: "cloud" };
 const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
@@ -50,8 +50,7 @@ const makeControlledBackend = Effect.fnUntraced(function* () {
     readonly settle: Deferred.Deferred<CloudRunResult, CloudCliError>;
   }>();
   const backend: CloudBackend = {
-    label: "Claude Code Cloud",
-    continuesSessions: true,
+    label: "Codex Cloud",
     run: (input) =>
       Effect.gen(function* () {
         const settle = yield* Deferred.make<CloudRunResult, CloudCliError>();
@@ -151,7 +150,7 @@ const turnInput = Effect.fnUntraced(function* (
 });
 
 describe("cloud adapter", () => {
-  it.effect("shows the remote task, then its reply, and continues the session next turn", () =>
+  it.effect("shows the remote task, then its reply", () =>
     Effect.gen(function* () {
       const { backend, runs } = yield* makeControlledBackend();
       const harness = yield* makeHarness(backend);
@@ -160,21 +159,16 @@ describe("cloud adapter", () => {
       const first = yield* Queue.take(runs);
       assert.strictEqual(first.input.prompt, "Fix the flaky test");
       assert.strictEqual(first.input.cwd, "/repo");
-      assert.isUndefined(first.input.session);
       yield* first.input.onTask(TASK);
-      yield* Deferred.succeed(first.settle, { task: TASK, text: "Fixed it." });
+      yield* Deferred.succeed(first.settle, { text: "Fixed it." });
       const settled = yield* harness.settleTurn();
 
       assert.deepStrictEqual(settled.texts, [
-        "Starting in Claude Code Cloud…",
-        `Working in Claude Code Cloud: ${TASK.url}`,
+        "Starting in Codex Cloud…",
+        `Working in Codex Cloud: ${TASK.url}`,
         "Fixed it.",
       ]);
       assert.strictEqual(settled.terminal.status, "completed");
-
-      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 2, "Add a test"));
-      const second = yield* Queue.take(runs);
-      assert.strictEqual(second.input.session, TASK.id);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -185,13 +179,16 @@ describe("cloud adapter", () => {
 
       yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 1));
       const run = yield* Queue.take(runs);
-      yield* Deferred.fail(run.settle, new CloudCliError({ detail: "Needs a claude.ai sign-in." }));
+      yield* Deferred.fail(
+        run.settle,
+        new CloudCliError({ detail: "Sign in to Codex with ChatGPT." }),
+      );
       const { terminal } = yield* harness.settleTurn();
 
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(
         terminal.status === "failed" ? terminal.failure.message : undefined,
-        "Needs a claude.ai sign-in.",
+        "Sign in to Codex with ChatGPT.",
       );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
@@ -212,13 +209,8 @@ describe("cloud adapter", () => {
       const settled = yield* harness.settleTurn();
 
       assert.strictEqual(settled.terminal.status, "interrupted");
-      assert.include(settled.texts.at(-1), "keeps running in Claude Code Cloud");
+      assert.include(settled.texts.at(-1), "keeps running in Codex Cloud");
       assert.include(settled.texts.at(-1), TASK.url);
-
-      // The stopped turn's session is still the thread's: the next message continues it.
-      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 2, "Keep going"));
-      const next = yield* Queue.take(runs);
-      assert.strictEqual(next.input.session, TASK.id);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

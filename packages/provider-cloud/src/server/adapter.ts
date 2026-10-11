@@ -288,13 +288,7 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
           threadId: run.input.threadId,
           providerTurn: run.providerTurn,
         });
-        // A session the cloud created stays this thread's even when the turn failed or
-        // stopped, so the next message continues it instead of starting another.
-        const cloudSession = options.backend.continuesSessions ? run.task?.id : undefined;
-        yield* updateThread({
-          status: "idle",
-          ...(cloudSession ? { nativeConversationHeadRef: nativeRef(cloudSession) } : {}),
-        });
+        yield* updateThread({ status: "idle" });
         yield* updateSession("ready", outcome.status === "failed" ? outcome.detail : null);
         const terminal = {
           type: "turn.terminal" as const,
@@ -345,14 +339,12 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
             cwd,
             prompt,
             ...(cloudEnvironment ? { cloudEnvironment } : {}),
-            session: thread?.nativeConversationHeadRef?.nativeId ?? undefined,
             onTask: (task) => {
               run.task = task;
               return publishMessage(run, `Working in ${backend.label}: ${task.url}`, true);
             },
           });
           yield* publishMessage(run, result.text, false);
-          run.task = result.task;
           yield* finish(run, { status: "completed" });
         }).pipe(
           Effect.catchCause((cause) => {
@@ -424,9 +416,7 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
           return yield* protocolError("Cloud runs take text only; remove the attachments");
         if (!turnInput.message.text.trim())
           return yield* protocolError("Cloud runs need a message");
-        // Keep this session's copy when it is the same thread: it already has the
-        // cloud session an earlier turn started, which the orchestrator may not have yet.
-        if (thread?.id !== turnInput.providerThread.id) thread = turnInput.providerThread;
+        thread = turnInput.providerThread;
         const nativeId = `${turnInput.runId}:${turnInput.attemptId}`;
         const startedAt = yield* DateTime.now;
         const run: ActiveRun = {

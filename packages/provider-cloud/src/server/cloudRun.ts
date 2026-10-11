@@ -1,6 +1,6 @@
 /**
  * Cloud as a place a thread runs, not a provider. A driver that has a cloud
- * (Codex, Claude) marks its snapshot with `withCloudRunOption` and wraps its
+ * (Codex) marks its snapshot with `withCloudRunOption` and wraps its
  * adapter with `withCloudRun`, so threads whose selection asks for the cloud
  * run their turns there while every other thread runs natively.
  *
