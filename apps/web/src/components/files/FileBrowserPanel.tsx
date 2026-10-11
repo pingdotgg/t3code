@@ -304,6 +304,8 @@ export default function FileBrowserPanel({
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);
+  // Pierre restores the unfiltered tree when a search has no matches.
+  const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, directoryPaths),
   );
@@ -563,12 +565,20 @@ export default function FileBrowserPanel({
           Loading files…
         </div>
       )}
-      <FileTree
-        model={model}
-        aria-label={`${projectName} files`}
-        className="min-h-0 flex-1 overflow-hidden"
-        style={pierreTreeStyle(resolvedTheme)}
-      />
+      {hasNoSearchMatches ? (
+        ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
+          <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
+            No matching files.
+          </div>
+        ) : null
+      ) : (
+        <FileTree
+          model={model}
+          aria-label={`${projectName} files`}
+          className="min-h-0 flex-1 overflow-hidden"
+          style={pierreTreeStyle(resolvedTheme)}
+        />
+      )}
     </div>
   );
 }
