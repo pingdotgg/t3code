@@ -483,6 +483,74 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   ),
 );
 
+it.effect("approves a pending request only with an offered decision and full access", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const respond = (decision: string, access: McpInvocationContext.McpClientCaller["access"]) =>
+      server
+        .callTool({
+          name: "t3_pending_request_respond",
+          arguments: { threadId: "other-project-thread", requestId: "approval-1", decision },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope(access)),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    expect(declaredFailure(yield* respond("accept", "auto"))).toMatchObject({
+      code: "capability_denied",
+    });
+    expect(declaredFailure(yield* respond("acceptForSession", "full-access"))).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(approvalResponses).toEqual([]);
+    expect((yield* respond("decline", "auto")).isError).toBe(false);
+    expect((yield* respond("accept", "full-access")).isError).toBe(false);
+    expect(approvalResponses).toEqual(["decline", "accept"]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  deletedAt: null,
+                },
+                runtimeRequests: [{ id: "approval-1", kind: "command", status: "pending" }],
+                turnItems: [
+                  {
+                    type: "approval_request",
+                    requestId: "approval-1",
+                    options: [
+                      { decision: "accept", label: "Allow" },
+                      { decision: "decline", label: "Deny" },
+                    ],
+                  },
+                ],
+              } as never),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "runtime-request.respond" && command.decision !== undefined)
+                  approvalResponses.push(command.decision);
+                return { sequence: 7, storedEvents: [] } as never;
+              }),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+const approvalResponses: Array<string> = [];
+
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

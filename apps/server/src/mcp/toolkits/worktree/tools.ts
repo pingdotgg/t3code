@@ -1,4 +1,8 @@
 import {
+  ReviewDiffFileStat,
+  ReviewDiffPreviewSource,
+  ReviewDiffPreviewSourceKind,
+  TrimmedNonEmptyString,
   WorktreeMcpFailure,
   OrchestratorMcpFailure,
   VcsListRefsInput,
@@ -11,6 +15,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ReviewService from "../../../review/ReviewService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -82,8 +87,53 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+
+const MAX_DIFF_CHARACTERS = 100_000;
+
+const ThreadDiffTool = Tool.make("t3_thread_diff", {
+  description:
+    "Show what a thread changed in its checkout (omit threadId for this thread), as the diff panel does. Returns working-tree (uncommitted changes vs HEAD) and branch-range (changes since the merge base with baseRef, or the detected base branch), each with per-file stats and a unified diff cut to maxCharacters (default 20,000), with truncated set when cut. Pass source to return one.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    baseRef: Schema.optional(TrimmedNonEmptyString),
+    source: Schema.optional(ReviewDiffPreviewSourceKind),
+    maxCharacters: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_DIFF_CHARACTERS })),
+    ),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    cwd: Schema.String,
+    sources: Schema.Array(
+      Schema.Struct({
+        kind: ReviewDiffPreviewSource.fields.kind,
+        baseRef: ReviewDiffPreviewSource.fields.baseRef,
+        headRef: ReviewDiffPreviewSource.fields.headRef,
+        // Null when there were too many untracked files to count.
+        files: Schema.NullOr(Schema.Array(ReviewDiffFileStat)),
+        diff: Schema.String,
+        truncated: Schema.Boolean,
+      }),
+    ),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ProjectService.ProjectService,
+    ReviewService.ReviewService,
+  ],
+})
+  .annotate(Tool.Title, "Show thread diff")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  ThreadDiffTool,
 );
