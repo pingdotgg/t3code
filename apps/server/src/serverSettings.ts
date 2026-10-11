@@ -72,10 +72,7 @@ import {
   writeSecretFieldValues,
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
-export {
-  filterProvidersForProject,
-  resolveSourceControlWriterModelSelection,
-} from "@t3tools/shared/serverSettings";
+export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));

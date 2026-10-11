@@ -15,7 +15,6 @@ import {
   applyServerSettingsPatch,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
-  filterProvidersForProject,
   resolveSourceControlWriterModelSelection,
   resolveProjectAgentBrowserAccess,
   resolveProjectAutoPull,
@@ -546,18 +545,49 @@ describe("serverSettings helpers", () => {
       skills: [],
     } satisfies ServerProvider;
 
-    expect(
-      resolveSourceControlWriterModelSelection(
-        settings,
-        filterProvidersForProject(settings, [provider], projectId),
-      ),
-    ).toBe(settings.textGenerationModelSelection);
-    expect(
-      resolveSourceControlWriterModelSelection(
-        settings,
-        filterProvidersForProject(settings, [provider], null),
-      ),
-    ).toBe(sourceControlWriterModelSelection);
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], projectId)).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], null)).toBe(
+      sourceControlWriterModelSelection,
+    );
+  });
+
+  it("keeps a writer on an instance the project turned on while the machine has it off", () => {
+    const instanceId = ProviderInstanceId.make("codex_writer");
+    const projectId = ProjectId.make("project-a");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false, config: {} },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const provider = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], projectId)).toBe(
+      sourceControlWriterModelSelection,
+    );
+    expect(resolveSourceControlWriterModelSelection(settings, [provider], null)).toBe(
+      settings.textGenerationModelSelection,
+    );
   });
 
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
