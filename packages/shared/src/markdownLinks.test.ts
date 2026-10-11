@@ -326,3 +326,45 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 });
+
+describe("relative links with `..` segments", () => {
+  it("resolves a sibling of the workspace to a host file", () => {
+    expect(resolveMarkdownFileLinkTarget("../other/notes.md", "/home/me/project")).toBe(
+      "/home/me/other/notes.md",
+    );
+  });
+
+  it("keeps an in-workspace `..` link inside the workspace with its line suffix", () => {
+    expect(resolveMarkdownFileLinkTarget("docs/guide/../readme.md:12", "/home/me/project")).toBe(
+      "/home/me/project/docs/readme.md:12",
+    );
+  });
+
+  it("climbs from the rendered file's directory", () => {
+    expect(resolveMarkdownFileLinkTarget("../src/a.ts#L3", "/repo", "/repo/docs")).toBe(
+      "/repo/src/a.ts:3",
+    );
+  });
+
+  it("normalizes the base directory's own `..` before climbing", () => {
+    expect(resolveMarkdownFileLinkTarget("../note.md", "/tmp/repo", "/tmp/repo/docs/..")).toBe(
+      "/tmp/note.md",
+    );
+  });
+
+  it.each([
+    ["C:\\Users\\me\\project", "../other/notes.md", "C:\\Users\\me\\other\\notes.md"],
+    ["\\\\server\\share\\project", "../notes.md", "\\\\server\\share\\notes.md"],
+    ["//server/share/project", "../notes.md", "//server/share/notes.md"],
+  ])("trims only trailing segments of %s", (cwd, href, expected) => {
+    expect(resolveMarkdownFileLinkTarget(href, cwd)).toBe(expected);
+  });
+
+  it.each([
+    ["/home/me", "../../x.md", "/home/me/../../x.md"],
+    ["C:\\project", "../x.md", "C:\\project\\..\\x.md"],
+    ["\\\\server\\share\\project", "../../x.md", "\\\\server\\share\\project\\..\\..\\x.md"],
+  ])("keeps today's join when %s would climb to a root", (cwd, href, expected) => {
+    expect(resolveMarkdownFileLinkTarget(href, cwd)).toBe(expected);
+  });
+});

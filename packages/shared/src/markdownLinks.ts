@@ -351,7 +351,44 @@ export function resolveMarkdownFileLinkTarget(
   const pathWithPosition = formatFilePathPosition(target);
   if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
   if (!baseDir) return null;
-  return resolvePathLinkTarget(pathWithPosition, baseDir);
+  const climbed = target.path.startsWith("~/") ? null : climbRelativePath(target.path, baseDir);
+  return climbed
+    ? formatFilePathPosition({ ...target, path: climbed })
+    : resolvePathLinkTarget(pathWithPosition, baseDir);
+}
+
+/**
+ * Lexically applies a relative link's `..` segments to `baseDir` by trimming its
+ * trailing segments, so `../other/notes.md` from `/home/me/project` becomes
+ * `/home/me/other/notes.md`. `baseDir`'s own `.`/`..` segments are normalized
+ * first. Returns null (keep the plain join) when the link has no `..` or would
+ * climb to a filesystem root; POSIX bases may keep one segment, drive and UNC
+ * bases two, so the root itself never has to be parsed.
+ */
+function climbRelativePath(path: string, baseDir: string): string | null {
+  const parts = path.split(/[\\/]/);
+  if (!parts.includes("..")) return null;
+  const minBaseSegments = /^\/[^\\/]/.test(baseDir) ? 1 : 2;
+  const baseSegments: string[] = [];
+  for (const segment of baseDir.match(/[\\/]*[^\\/]+/g) ?? []) {
+    const name = segment.replace(/^[\\/]+/, "");
+    if (name === "..") baseSegments.pop();
+    else if (name !== ".") baseSegments.push(segment);
+  }
+  let base = baseSegments.join("");
+  const segments: string[] = [];
+  for (const part of parts) {
+    if (part === ".." && segments.length > 0) {
+      segments.pop();
+    } else if (part === "..") {
+      base = base.replace(/[\\/]+[^\\/]+$/, "");
+      if (base.split(/[\\/]/).filter(Boolean).length < minBaseSegments) return null;
+    } else if (part !== "" && part !== ".") {
+      segments.push(part);
+    }
+  }
+  const separator = base.includes("\\") ? "\\" : "/";
+  return segments.length > 0 ? `${base}${separator}${segments.join(separator)}` : null;
 }
 
 export function isWindowsDrivePathHref(href: string): boolean {

@@ -77,6 +77,32 @@ describe("rewriteMarkdownFileUriHref", () => {
   });
 });
 
+describe("relative links with `..` segments", () => {
+  it("resolves a sibling of the workspace to a host file", () => {
+    expect(resolveMarkdownFileLinkMeta("../other/notes.md", "/home/me/project")).toMatchObject({
+      filePath: "/home/me/other/notes.md",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps an in-workspace `..` link a workspace file with its line suffix", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("docs/guide/../readme.md:12", "/home/me/project"),
+    ).toMatchObject({
+      targetPath: "/home/me/project/docs/readme.md:12",
+      workspaceRelativePath: "docs/readme.md",
+      line: 12,
+    });
+  });
+
+  it("climbs from the rendered file's directory", () => {
+    expect(resolveMarkdownFileLinkMeta("../src/a.ts#L3", "/repo", "/repo/docs")).toMatchObject({
+      targetPath: "/repo/src/a.ts:3",
+      workspaceRelativePath: "src/a.ts",
+    });
+  });
+});
+
 describe("relative links inside a rendered host file", () => {
   it("anchor to the file's directory while workspace membership follows cwd", () => {
     const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/tmp/report");
