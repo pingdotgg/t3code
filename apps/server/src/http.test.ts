@@ -18,6 +18,7 @@ import { openMediaFile } from "./assets/MediaFile.ts";
 
 import {
   injectMcpAppCsp,
+  injectMcpAppCookieBootstrap,
   injectMcpAppThemeBootstrap,
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
@@ -58,7 +59,7 @@ describe("MCP app asset responses", () => {
               method,
             ),
           );
-          const expected = injectMcpAppThemeBootstrap(html);
+          const expected = injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(html));
           expect(response.status).toBe(200);
           expect(response.headers.get("content-length")).toBe(
             String(new TextEncoder().encode(expected).byteLength),
