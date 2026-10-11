@@ -1,14 +1,19 @@
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
+import { Alert } from "react-native";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
 import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { resolveLinkedPullRequestHeaderAction } from "./git/linkedPullRequestStatus";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    readonly linkedPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -22,6 +27,10 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const linkedPullRequestAction = useMemo(
+    () => resolveLinkedPullRequestHeaderAction(props.linkedPullRequests),
+    [props.linkedPullRequests],
+  );
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
     if (props.onReturnToThread) {
@@ -52,6 +61,24 @@ export function ThreadHeader(
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
+    if (linkedPullRequestAction !== null) {
+      actions.push({
+        accessibilityLabel: linkedPullRequestAction.label,
+        icon: "arrow.triangle.pull",
+        onPress:
+          linkedPullRequestAction.kind === "open"
+            ? () => {
+                void tryOpenExternalUrl(linkedPullRequestAction.url, "pull-request").then(
+                  (opened) => {
+                    if (!opened) {
+                      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+                    }
+                  },
+                );
+              }
+            : props.onOpenGitInspector,
+      });
+    }
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -61,6 +88,7 @@ export function ThreadHeader(
     }
     return actions;
   }, [
+    linkedPullRequestAction,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

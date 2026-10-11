@@ -43,6 +43,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
+import { withLinkedPullRequest } from "./linkedPullRequestStatus";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -102,18 +103,24 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  // The ref-derived status misses a linked PR that lives on another ref (e.g. a fork branch).
+  const gitStatusData = useMemo(
+    () => withLinkedPullRequest(gitStatus.data ?? null, selectedThread?.pullRequests),
+    [gitStatus.data, selectedThread?.pullRequests],
+  );
+
+  const currentBranchLabel = gitStatusData?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  const currentStatusSummary = statusSummary(gitStatusData);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
-  const isRepo = gitStatus.data?.isRepo ?? true;
-  const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
-  const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
+  const isRepo = gitStatusData?.isRepo ?? true;
+  const hasPrimaryRemote = gitStatusData?.hasPrimaryRemote ?? false;
+  const isDefaultRef = gitStatusData?.isDefaultRef ?? false;
 
   const menuItems = useMemo(
-    () => (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []),
-    [busy, gitStatus.data, hasPrimaryRemote, isRepo],
+    () => (isRepo ? buildMenuItems(gitStatusData, busy, hasPrimaryRemote) : []),
+    [busy, gitStatusData, hasPrimaryRemote, isRepo],
   );
 
   const sheetMenuItems = useMemo(
@@ -128,16 +135,16 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             ? "This connection cannot change source control."
             : getGitActionDisabledReason({
                 item,
-                gitStatus: gitStatus.data,
+                gitStatus: gitStatusData,
                 isBusy: busy,
                 hasOriginRemote: hasPrimaryRemote,
               }),
       })),
-    [busy, canWriteSourceControl, gitStatus.data, hasPrimaryRemote, menuItems],
+    [busy, canWriteSourceControl, gitStatusData, hasPrimaryRemote, menuItems],
   );
 
   const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
+    const prUrl = gitStatusData?.pr?.state === "open" ? gitStatusData.pr.url : null;
     if (!prUrl) {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
@@ -145,7 +152,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
       Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus.data]);
+  }, [gitStatusData]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
@@ -157,7 +164,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         input.action === "commit_push_pr"
           ? input.action
           : null;
-      const branchName = gitStatus.data?.refName;
+      const branchName = gitStatusData?.refName;
       if (
         branchName &&
         confirmableAction &&
@@ -185,7 +192,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       canWriteSourceControl,
       environmentId,
       gitActions,
-      gitStatus.data,
+      gitStatusData,
       isDefaultRef,
       isInspector,
       navigation,
@@ -230,7 +237,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   // subtitle: files changed → Commit, ahead → Push, PR → View PR, behind → Pull.
   const rowStatusDetail = useCallback(
     (item: (typeof menuItems)[number]): string | undefined => {
-      const status = gitStatus.data;
+      const status = gitStatusData;
       if (status == null) {
         return undefined;
       }
@@ -247,10 +254,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       }
       return undefined;
     },
-    [gitStatus.data, menuItems],
+    [gitStatusData, menuItems],
   );
 
-  const behindCount = gitStatus.data?.behindCount ?? 0;
+  const behindCount = gitStatusData?.behindCount ?? 0;
 
   // Deterministic pull-to-refresh state. Tying RefreshControl to the query's
   // isPending flag left the spinner stuck (the status query reports pending
