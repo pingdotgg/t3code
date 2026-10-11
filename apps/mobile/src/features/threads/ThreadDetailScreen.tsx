@@ -43,7 +43,12 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import {
+  isCloudEnvironmentConfig,
+  isProviderNativeSubagentThread,
+  selectedCloudEnvironment,
+  selectsCloudRun,
+} from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -144,6 +149,7 @@ import {
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { CloudEnvironmentSetupBar } from "./CloudEnvironmentSetup";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -399,6 +405,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const nativeMetrics = usesNativeWorkspaceColumns ? columnMetrics : screenMetrics;
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
+  const cloudEnvironmentConfigId = selectedCloudEnvironment(
+    props.selectedThread.modelSelection.options,
+  );
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
@@ -1284,6 +1293,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         }}
                       />
                     </Animated.View>
+                  ) : null}
+                  {selectsCloudRun(props.selectedThread.modelSelection.options) &&
+                  isCloudEnvironmentConfig(cloudEnvironmentConfigId) ? (
+                    <CloudEnvironmentSetupBar
+                      environmentId={props.environmentId}
+                      instanceId={props.selectedThread.modelSelection.instanceId}
+                      configId={cloudEnvironmentConfigId}
+                    />
                   ) : null}
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}

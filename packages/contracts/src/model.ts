@@ -85,6 +85,10 @@ export function keepCloudRunOptions(
   ];
 }
 
+/** Whether a Codex Cloud environment id names an editable configuration, which can be set up and published. */
+export const isCloudEnvironmentConfig = (id: string | null | undefined): id is string =>
+  /(?:^|~)asenvcfg_/.test(id ?? "");
+
 /** Whether a selection's options ask for the provider's cloud. */
 export const selectsCloudRun = (
   options: ReadonlyArray<ProviderOptionSelection> | null | undefined,

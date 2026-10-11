@@ -1,4 +1,5 @@
 import { CloudEnvironmentDialog } from "./chat/CloudEnvironmentDialog";
+import { useCloudEnvironmentSetupBannerItem } from "./chat/CloudEnvironmentSetupBanner";
 import {
   preferredCloudEnvironment,
   providerCloudEnvironments,
@@ -92,6 +93,7 @@ import {
   type WorktreeSetupSnapshot,
   CLOUD_RUN_OPTION_ID,
   CLOUD_ENVIRONMENT_OPTION_ID,
+  isCloudEnvironmentConfig,
   selectedCloudEnvironment,
   selectsCloudRun,
 } from "@t3tools/contracts";
@@ -3301,7 +3303,7 @@ export default function ChatView(props: ChatViewProps) {
     ? composerModelOptionsByInstance?.[activeProviderInstanceId]
     : undefined;
   const cloudRunSelected = selectsCloudRun(activeModelOptions);
-  const [cloudSetupOpen, setCloudSetupOpen] = useState(false);
+  const [cloudSetupPage, setCloudSetupPage] = useState<"choose" | "review" | null>(null);
   const cloudEnvironmentId = selectedCloudEnvironment(activeModelOptions);
   const cloudRequiresEnvironment = activeProviderStatus?.cloudRun?.requiresEnvironment === true;
   const cloudRepositoryIdentity = activeProject?.repositoryIdentity;
@@ -3381,6 +3383,13 @@ export default function ChatView(props: ChatViewProps) {
     activeModelOptions,
     composerSelectedModel,
   ]);
+  const openCloudEnvironmentReview = useCallback(() => setCloudSetupPage("review"), []);
+  const cloudSetupBannerItem = useCloudEnvironmentSetupBannerItem(
+    cloudRunSelected && activeProviderInstanceId && isCloudEnvironmentConfig(cloudEnvironmentId)
+      ? { environmentId, instanceId: activeProviderInstanceId, configId: cloudEnvironmentId }
+      : null,
+    openCloudEnvironmentReview,
+  );
   const cloudSendBlockReason =
     cloudRunSelected && cloudRequiresEnvironment && !envLocked && !chosenCloudEnvironment
       ? "Choose a Codex Cloud environment in Run on"
@@ -3390,7 +3399,7 @@ export default function ChatView(props: ChatViewProps) {
   const onCloudRunChange = useCallback(
     (cloud: boolean) => {
       if (!activeProviderInstanceId) return;
-      if (cloud && cloudRequiresEnvironment) setCloudSetupOpen(true);
+      if (cloud && cloudRequiresEnvironment) setCloudSetupPage("choose");
       setProviderModelOptions(
         composerDraftTarget,
         selectedProvider,
@@ -3424,19 +3433,9 @@ export default function ChatView(props: ChatViewProps) {
               : cloudRunLabel,
             selected: cloudRunSelected,
             ...(envLocked ? {} : { onChange: onCloudRunChange }),
-            ...(cloudRunSelected && /(?:^|~)asenvcfg_/.test(cloudEnvironmentId ?? "")
-              ? { onManage: () => setCloudSetupOpen(true) }
-              : {}),
           }
         : undefined,
-    [
-      cloudRunLabel,
-      cloudRunSelected,
-      cloudEnvironmentId,
-      chosenCloudEnvironment,
-      envLocked,
-      onCloudRunChange,
-    ],
+    [cloudRunLabel, cloudRunSelected, chosenCloudEnvironment, envLocked, onCloudRunChange],
   );
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
@@ -7985,12 +7984,14 @@ export default function ChatView(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const cloudSetupItems = cloudSetupBannerItem === null ? [] : [cloudSetupBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...cloudSetupItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
       ];
@@ -8000,6 +8001,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...cloudSetupItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
       {
@@ -8056,6 +8058,7 @@ export default function ChatView(props: ChatViewProps) {
     goalBannerItem,
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
+    cloudSetupBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
     usageLimitsBanner,
@@ -8989,7 +8992,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (cloudSendBlockReason) {
-      setCloudSetupOpen(true);
+      setCloudSetupPage("choose");
       return;
     }
     if (needsLoadBalancing) {
@@ -12282,7 +12285,7 @@ export default function ChatView(props: ChatViewProps) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-      {cloudSetupOpen &&
+      {cloudSetupPage &&
         cloudRunSelected &&
         cloudRequiresEnvironment &&
         activeProviderInstanceId && (
@@ -12292,6 +12295,7 @@ export default function ChatView(props: ChatViewProps) {
             instanceId={activeProviderInstanceId}
             repository={cloudRepository}
             readOnly={envLocked}
+            initialPage={cloudSetupPage}
             onSetup={async (config) => {
               if (!activeProject || !activeProviderInstanceId) return;
               const nextDraftId = newDraftId();
@@ -12320,7 +12324,7 @@ export default function ChatView(props: ChatViewProps) {
                 nextDraftId,
                 `Use $cloud-environment-onboarding:setup to set up this cloud environment: ${config.name}`,
               );
-              setCloudSetupOpen(false);
+              setCloudSetupPage(null);
               await navigate({
                 to: "/draft/$draftId",
                 params: buildDraftThreadRouteParams(nextDraftId),
@@ -12328,13 +12332,13 @@ export default function ChatView(props: ChatViewProps) {
             }}
             environments={availableCloudEnvironments}
             preferredId={
-              chosenCloudEnvironment?.id ??
+              cloudEnvironmentId ??
               preferredCloudEnvironment(availableCloudEnvironments, rememberedCloudEnvironment)
             }
             loading={cloudEnvironmentsQuery.isPending}
             error={cloudEnvironmentsQuery.error}
             onRefresh={cloudEnvironmentsQuery.refresh}
-            onClose={() => setCloudSetupOpen(false)}
+            onClose={() => setCloudSetupPage(null)}
             onSelect={(id) => {
               if (
                 !activeProviderInstanceId ||
@@ -12356,7 +12360,7 @@ export default function ChatView(props: ChatViewProps) {
                 { instanceId: activeProviderInstanceId, model: composerSelectedModel },
               );
               rememberCloudEnvironment(cloudPreferenceKey, id);
-              setCloudSetupOpen(false);
+              setCloudSetupPage(null);
             }}
           />
         )}

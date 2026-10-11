@@ -24,7 +24,12 @@
 import { makeCodexCloud } from "../CodexCloud.ts";
 import { makeCodexCloudClientFactory } from "../CodexCloudConversation.ts";
 import { makeCodexCloudEnvironments } from "../CodexCloudEnvironments.ts";
-import { CodexSettings, ProviderDriverKind, selectedCloudEnvironment } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  isCloudEnvironmentConfig,
+  ProviderDriverKind,
+  selectedCloudEnvironment,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -329,7 +334,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         }),
       });
       const isModernCloud = (selection: import("@t3tools/contracts").ModelSelection) =>
-        /(?:^|~)asenvcfg_/.test(selectedCloudEnvironment(selection.options) ?? "");
+        isCloudEnvironmentConfig(selectedCloudEnvironment(selection.options));
       const orchestrationAdapter = withCloudRun(nativeAdapter, {
         ...legacyCloudAdapter,
         capabilitiesFor: (selection) =>

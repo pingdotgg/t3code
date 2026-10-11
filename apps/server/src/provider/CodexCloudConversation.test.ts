@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ProviderCloudConfiguration } from "@t3tools/contracts";
-import { codexCloudMessage } from "./CodexCloudConversation";
+import { codexCloudMessage } from "./CodexCloudConversation.ts";
 const config: ProviderCloudConfiguration = {
   id: "asenvcfg_test",
   name: "T3 Code",

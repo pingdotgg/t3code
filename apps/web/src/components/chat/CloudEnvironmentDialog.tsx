@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type {
-  EnvironmentId,
-  ProviderInstanceId,
-  ProviderCloudConfiguration,
-  ProviderCloudEnvironment,
+import {
+  isCloudEnvironmentConfig,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ProviderCloudConfiguration,
+  type ProviderCloudEnvironment,
 } from "@t3tools/contracts";
 import { PlusIcon, RefreshCwIcon } from "lucide-react";
 
@@ -24,6 +25,8 @@ interface CloudEnvironmentDialogProps {
   instanceId: ProviderInstanceId;
   repository?: string | undefined;
   readOnly?: boolean | undefined;
+  /** "review" opens straight onto the selected environment's setup and publish controls. */
+  initialPage?: "choose" | "review" | undefined;
   onSetup: (config: ProviderCloudConfiguration) => void;
   environments: readonly ProviderCloudEnvironment[];
   preferredId: string | undefined;
@@ -37,7 +40,7 @@ interface CloudEnvironmentDialogProps {
 /** Resolve cloud setup beside the draft; closing the dialog never sends or clears it. */
 export function CloudEnvironmentDialog(props: CloudEnvironmentDialogProps) {
   const [choice, setChoice] = useState<string>();
-  const [page, setPage] = useState<"choose" | "create" | "review">("choose");
+  const [page, setPage] = useState<"choose" | "create" | "review">(props.initialPage ?? "choose");
   const selectedId = choice ?? props.preferredId;
   const setupSelected = props.environments.some((entry) => entry.id === selectedId && entry.setup);
   const available =
@@ -137,7 +140,7 @@ export function CloudEnvironmentDialog(props: CloudEnvironmentDialogProps) {
                     <PlusIcon /> Create environment
                   </Button>
                 ) : null}
-                {selectedId && /(?:^|~)asenvcfg_/.test(selectedId) ? (
+                {isCloudEnvironmentConfig(selectedId) ? (
                   <Button variant="outline" size="sm" onClick={() => setPage("review")}>
                     Review environment
                   </Button>

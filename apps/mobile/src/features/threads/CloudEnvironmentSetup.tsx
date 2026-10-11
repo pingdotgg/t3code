@@ -9,6 +9,7 @@ import type {
   ProviderCloudEnvironmentMutation,
 } from "@t3tools/contracts";
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import {
   mutateCloudEnvironment,
   providerCloudConfiguration,
@@ -210,6 +211,60 @@ export function CloudEnvironmentSetup(props: {
         </Text>
       ) : null}
       {button("Back to environments", props.onBack, busy)}
+    </View>
+  );
+}
+
+/**
+ * Sits above the composer in a thread that runs in a Codex Cloud environment
+ * configuration, such as its setup conversation, so the environment can be
+ * published from where it was prepared.
+ */
+export function CloudEnvironmentSetupBar(props: {
+  environmentId: EnvironmentId;
+  instanceId: ProviderInstanceId;
+  configId: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const canOperate = useAtomValue(mutateCloudEnvironment.permissionAtom(props.environmentId));
+  const mutate = useAtomCommand(mutateCloudEnvironment);
+  const configuration = useEnvironmentQuery(
+    providerCloudConfiguration({
+      environmentId: props.environmentId,
+      input: { instanceId: props.instanceId, id: props.configId },
+    }),
+  );
+  const config = configuration.data;
+  if (!config) return null;
+  const publish = async () => {
+    setBusy(true);
+    try {
+      const result = await mutate({
+        environmentId: props.environmentId,
+        input: { instanceId: props.instanceId, operation: "publish", id: config.id },
+      });
+      if (result._tag === "Success") configuration.refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View className="flex-row items-center gap-2 px-4 pb-2">
+      <SymbolView name="cloud" size={12} tintColorClassName="accent-foreground-muted" />
+      <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+        {config.name} · {config.published ? "Published" : "Setup draft"}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        disabled={busy || !canOperate || config.revision === null}
+        onPress={() => void publish()}
+        hitSlop={8}
+        className="min-h-8 justify-center px-1 active:opacity-70 disabled:opacity-40"
+      >
+        <Text className="font-t3-medium text-xs text-primary">
+          {busy ? "Publishing…" : config.published ? "Republish" : "Publish environment"}
+        </Text>
+      </Pressable>
     </View>
   );
 }

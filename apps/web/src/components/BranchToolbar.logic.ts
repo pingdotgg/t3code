@@ -31,7 +31,6 @@ export interface CloudRunOption {
   label: string;
   selected: boolean;
   onChange?: (cloud: boolean) => void;
-  onManage?: () => void;
 }
 
 export const CLOUD_RUN_VALUE = "cloud";

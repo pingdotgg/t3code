@@ -763,6 +763,10 @@ describe("CodexAdapterV2 process spawning", () => {
               ...DEFAULT_CODEX_SETTINGS,
               launchArgs: " --strict-config -c model_reasoning_summary=detailed ",
             },
+            modelSelection: {
+              instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+              model: "gpt-5.4",
+            },
             environment,
           })
           .pipe(Effect.scoped, Effect.exit);

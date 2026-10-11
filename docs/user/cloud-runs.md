@@ -16,8 +16,8 @@ choice per project and account. To create one inside T3:
 1. Select **Create environment**, name it, and choose connected GitHub repositories.
 2. Select **Create and open setup**. T3 opens a separate setup draft and preserves
    your original prompt. Send the setup message to let Codex prepare and test the environment.
-3. Open **Review environment** from the cloud destination, inspect the setup
-   conversation and configuration, then select **Publish environment**.
+3. When setup is done, select **Publish environment** above the composer in the
+   setup conversation. **Edit environment** shows its configuration first.
 4. Return to your original draft and choose the published environment.
 
 A published environment supplies repositories and a prepared filesystem to new

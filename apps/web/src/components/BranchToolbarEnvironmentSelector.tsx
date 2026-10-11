@@ -1,4 +1,3 @@
-import { Button } from "./ui/button";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
@@ -79,18 +78,6 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   // the glass seam joining it to the composer assumes a fixed strip height, so
   // a shorter label would drag the seam out of line whenever this label is the
   // only thing in the strip.
-  if (envLocked && cloudRun?.selected && cloudRun.onManage)
-    return (
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={cloudRun.onManage}
-        aria-label="Review cloud environment"
-      >
-        {runOnIcon}
-        <ComposerContextLabel>{runOnLabel}</ComposerContextLabel>
-      </Button>
-    );
   if (envLocked || (onEnvironmentChange === undefined && cloudRun?.onChange === undefined)) {
     const lockedRow = (
       <span

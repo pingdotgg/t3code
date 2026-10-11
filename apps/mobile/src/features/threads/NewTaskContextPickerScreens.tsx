@@ -3,7 +3,11 @@ import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  isCloudEnvironmentConfig,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -336,7 +340,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                   onPress={flow.cloudEnvironments.refresh}
                 />
               </PickerSurface>
-              {flow.cloudEnvironmentId && /(?:^|~)asenvcfg_/.test(flow.cloudEnvironmentId) ? (
+              {isCloudEnvironmentConfig(flow.cloudEnvironmentId) ? (
                 <SelectionRow
                   title="Review environment"
                   selected={false}
