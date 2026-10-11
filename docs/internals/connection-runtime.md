@@ -25,6 +25,16 @@ until it times out. That fresh attempt runs even while the network reports
 offline. Foregrounding also wakes a pending retry immediately and
 leaves an ordinary in-flight attempt alone.
 
+A desktop or web foreground probe that misses its 15-second deadline keeps the
+lease while the supervisor waits five seconds and probes once more. Only a second
+miss reconnects, so a busy backend does not disable the composer over one stall,
+and a backend that never answers is replaced within roughly 35 seconds. A
+successful probe resets this tolerance. Definite probe failures and session
+closure still reconnect immediately. Mobile resume probes, explicit retries, and
+network changes retain their three-second deadline without retrying. An explicit
+retry or network signal during a foreground probe also shortens its deadline;
+disconnect and long mobile resume signals still interrupt the delay or retry.
+
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
 and cached data. Explicit removal closes the scope and clears credentials,

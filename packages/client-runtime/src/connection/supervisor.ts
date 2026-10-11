@@ -42,6 +42,8 @@ const RETRY_MAX_DELAY_MS = 300_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
+// Give a busy desktop/web backend time to recover before probing once more.
+const CONNECTION_PROBE_RETRY_DELAY = "5 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
 // the user is waiting, or the network may be gone.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
@@ -630,7 +632,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
-      const probe = yield* Effect.forkChild(lease.session.probe);
+      let retryForegroundProbe = next._tag === "Wakeup" && next.reason === "application-active";
+      let probe = yield* Effect.forkChild(lease.session.probe);
       // Monotonic nanoseconds, so a wall-clock correction cannot move the deadline.
       let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
@@ -646,6 +649,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         ]);
         if (probeEvent._tag === "TimedOut") {
           yield* Fiber.interrupt(probe);
+          if (retryForegroundProbe) {
+            retryForegroundProbe = false;
+            yield* Effect.logWarning(
+              "Environment health check timed out; retrying before reconnecting.",
+            ).pipe(Effect.annotateLogs({ "environment.kind": target._tag }));
+            // Keep handling signals during the delay and the retry. A second
+            // missed deadline replaces the lease even without another wakeup.
+            probe = yield* Effect.forkChild(
+              Effect.sleep(CONNECTION_PROBE_RETRY_DELAY).pipe(Effect.andThen(lease.session.probe)),
+            );
+            deadline =
+              (yield* Clock.monotonicTimeNanos) +
+              Duration.toNanosUnsafe(CONNECTION_PROBE_RETRY_DELAY) +
+              Duration.toNanosUnsafe(CONNECTION_PROBE_TIMEOUT);
+            continue;
+          }
           return yield* new ConnectionTransientError({
             reason: "timeout",
             detail: `${target.label} did not respond to a connection health check.`,
@@ -667,6 +686,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         // its quicker answer, so it shortens the running probe.
         const signalTimeout = probeTimeoutFor(probeEvent.signal);
         if (signalTimeout !== undefined) {
+          if (signalTimeout === QUICK_CONNECTION_PROBE_TIMEOUT) {
+            retryForegroundProbe = false;
+          }
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
           if (signalDeadline < deadline) deadline = signalDeadline;
