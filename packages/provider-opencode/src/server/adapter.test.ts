@@ -148,6 +148,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  interactionMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"] = "default",
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
@@ -156,7 +157,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     model: "anthropic/claude-sonnet",
     options: [],
   };
-  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const policy = runtimePolicy("full-access", { cwd: "/workspace", interactionMode });
   const adapter = yield* makeOpenCodeAdapterV2({
     instanceId,
     settings: OPEN_CODE_TEST_SETTINGS,
@@ -729,6 +730,242 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
         Effect.scoped,
       ),
+  );
+
+  it.effect("recognizes proposed plan blocks and supersedes earlier ones", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-proposed-plan";
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "proposed-plan",
+        nativeSessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+        },
+        "plan",
+      );
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const part = (id: string, text: string, end?: number) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID: nativeSessionId,
+          part: {
+            id,
+            sessionID: nativeSessionId,
+            messageID: "plan-assistant",
+            type: "text",
+            text,
+            time: { start: 1, ...(end === undefined ? {} : { end }) },
+          },
+        },
+      });
+      const delta = (partID: string, value: string) => ({
+        type: "message.part.delta",
+        properties: {
+          sessionID: nativeSessionId,
+          messageID: "plan-assistant",
+          partID,
+          field: "text",
+          delta: value,
+        },
+      });
+      yield* push(part("p1", "Looking good."));
+      yield* push(delta("p1", "\n<propo"));
+      yield* push(delta("p1", "sed_plan>\n# Plan A"));
+      yield* push(delta("p1", "\n</proposed_plan>"));
+      yield* push(part("p2", "<proposed_plan>\n# Plan B", 3));
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: nativeSessionId,
+          info: {
+            id: "plan-assistant",
+            sessionID: nativeSessionId,
+            role: "assistant",
+            time: { created: 1, completed: 4 },
+          },
+        },
+      });
+      yield* push({ type: "session.compacted", properties: { sessionID: nativeSessionId } });
+      const events = Array.from(yield* Fiber.join(received));
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const assistant = items.filter((item) => item.type === "assistant_message");
+      assert.isTrue(assistant.every((item) => !item.text.includes("proposed_plan")));
+      assert.isTrue(assistant.every((item) => !item.text.includes("<propo")));
+      assert.equal(assistant.at(-1)?.text, "Looking good.");
+      const planItems = items.filter((item) => item.type === "proposed_plan");
+      assert.isTrue(planItems.some((item) => item.streaming));
+      const planA = planItems.filter((item) => item.markdown === "# Plan A");
+      assert.equal(planA.at(-1)?.streaming, false);
+      assert.equal(planItems.at(-1)?.markdown, "# Plan B");
+      const plans = events.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
+      );
+      const planAId = planA[0]!.planId;
+      assert.deepEqual(
+        plans
+          .filter((plan) => plan.id === planAId)
+          .map((plan) => plan.status)
+          .at(-1),
+        "superseded",
+      );
+      assert.equal(plans.at(-1)?.status, "active");
+      assert.equal(plans.at(-1)?.markdown, "# Plan B");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("does not offer an unfinished plan from a failed turn", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-failed-plan";
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "failed-plan",
+        nativeSessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+        },
+        "plan",
+      );
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: nativeSessionId,
+          part: {
+            id: "p1",
+            sessionID: nativeSessionId,
+            messageID: "plan-assistant",
+            type: "text",
+            text: "<proposed_plan>\n# Half a pl",
+            time: { start: 1 },
+          },
+        },
+      });
+      yield* push({
+        type: "session.error",
+        properties: {
+          sessionID: nativeSessionId,
+          error: { name: "UnknownError", data: { message: "failed" } },
+        },
+      });
+      const events = Array.from(yield* Fiber.join(received));
+      const plans = events.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
+      );
+      assert.equal(plans.at(-1)?.status, "superseded");
+      const planItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.equal(planItems.at(-1)?.streaming, false);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("leaves plan tags alone outside plan mode", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-plain-tags";
+      const harness = yield* makeOpenCodeRuntimeHarness("plain-tags", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const text = "Example:\n<proposed_plan>\n# x\n</proposed_plan>";
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            part: {
+              id: "p1",
+              sessionID: nativeSessionId,
+              messageID: "assistant",
+              type: "text",
+              text,
+              time: { start: 1, end: 2 },
+            },
+          },
+        }),
+      );
+      const events = Array.from(yield* Fiber.join(received));
+      assert.isFalse(
+        events.some((e) => e.type === "turn_item.updated" && e.turnItem.type === "proposed_plan"),
+      );
+      const last = events.at(-1);
+      assert.equal(
+        last?.type === "turn_item.updated" && last.turnItem.type === "assistant_message"
+          ? last.turnItem.text
+          : null,
+        text,
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
   );
 
   // Event order from a live OpenCode 1.18.32 run of a `task` call with
