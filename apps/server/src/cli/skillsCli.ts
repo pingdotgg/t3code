@@ -10,15 +10,14 @@ import { Argument, Command } from "effect/cli";
  */
 export async function runSkillsCli(args: ReadonlyArray<string>): Promise<void> {
   // The CLI prints its `--json` result and calls `process.exit` straight
-  // away. Writes to a pipe are asynchronous, so whatever hasn't flushed would
-  // be lost: a large result is cut at 64 KiB. Exit only once stdout drained.
-  const exit = process.exit.bind(process);
-  process.exit = ((code?: number | string | null) => {
-    process.exitCode = code ?? process.exitCode;
-    if (process.stdout.writableLength === 0) return exit(process.exitCode);
-    process.stdout.once("drain", () => exit(process.exitCode));
-    return undefined as never;
-  }) as typeof process.exit;
+  // away. Writes to a pipe are asynchronous on POSIX, so whatever hasn't
+  // flushed would be lost: a large result is cut at 64 KiB. A blocking pipe
+  // finishes each write before the next statement, so exit loses nothing.
+  // (Windows pipes are already synchronous.)
+  const stdout = process.stdout as typeof process.stdout & {
+    readonly _handle?: { readonly setBlocking?: (blocking: boolean) => void };
+  };
+  stdout._handle?.setBlocking?.(true);
   // The CLI reads its command from argv[2] onward.
   process.argv = [process.argv[0] ?? "node", "skills", ...args];
   await import("skills/dist/cli.mjs");
