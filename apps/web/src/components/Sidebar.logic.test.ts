@@ -439,11 +439,17 @@ describe("sidebar thread lineage helpers", () => {
     });
 
     expect(
-      filterSidebarV2VisibleThreads(
-        [root, subagent, fork, archived, otherProject],
-        new Set([`${environmentId}:${projectId}`]),
-      ).map((thread) => thread.id),
+      filterSidebarV2VisibleThreads([root, subagent, fork, archived, otherProject], {
+        environmentId: null,
+        projectKeys: new Set([`${environmentId}:${projectId}`]),
+      }).map((thread) => thread.id),
     ).toEqual([parentId, fork.id]);
+    expect(
+      filterSidebarV2VisibleThreads([root, otherProject], {
+        environmentId: EnvironmentId.make("elsewhere"),
+        projectKeys: null,
+      }),
+    ).toEqual([]);
   });
 
   it("identifies subagent threads so the sidebar can hide them", () => {

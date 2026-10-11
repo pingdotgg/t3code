@@ -8,7 +8,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  ScopedProjectRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -23,6 +28,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import { sidebarScopeIncludes, type SidebarScopeFilter } from "./sidebar/sidebarScope";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -568,17 +574,13 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
-    environmentId: string;
-    projectId: string;
-  },
->(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & ScopedProjectRef,
+>(threads: readonly T[], scope: SidebarScopeFilter): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
       !isSidebarSubagentThread(thread) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      sidebarScopeIncludes(scope, thread),
   );
 }
 
@@ -1391,7 +1393,7 @@ export function sortLogicalProjectsForSidebar<
 
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
-  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "lineage">,
+  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "lineage"> & ScopedProjectRef,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],
@@ -1399,7 +1401,7 @@ export function sortSidebarV2ProjectGroups<
 ): TProject[] {
   return sortLogicalProjectsForSidebar(
     projects,
-    filterSidebarV2VisibleThreads(threads, null),
+    filterSidebarV2VisibleThreads(threads, { environmentId: null, projectKeys: null }),
     sortOrder,
   );
 }
