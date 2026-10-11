@@ -83,6 +83,34 @@ const decodeLock = Schema.decodeUnknownOption(
   fromLenientJson(Schema.Struct({ skills: Schema.Record(Schema.String, LockEntry) })),
 );
 
+/** The folder the CLI installs a skill into: its name lowercased, other characters as `-`. */
+function skillFolderName(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9._]+/g, "-")
+      .replace(/^[.-]+|[.-]+$/g, "")
+      .slice(0, 255) || "unnamed-skill"
+  );
+}
+
+/**
+ * A lock's entry for a skill folder. Locks key entries by the skill's own
+ * name (`Git Review`), which installs into its sanitized folder (`git-review`).
+ */
+function lockEntryFor(
+  lock: ReadonlyMap<string, LockEntry>,
+  name: string,
+): { readonly key: string; readonly entry: LockEntry } | undefined {
+  const exact = lock.get(name);
+  if (exact !== undefined) return { key: name, entry: exact };
+  const folder = skillFolderName(name);
+  for (const [key, entry] of lock) {
+    if (skillFolderName(key) === folder) return { key, entry };
+  }
+  return undefined;
+}
+
 const SCRIPT_EXTENSION = /\.(?:sh|bash|zsh|fish|ps1|bat|cmd|py|rb|pl|js|mjs|cjs|ts|mts|php)$/i;
 /** Bounds on the walk of one skill folder, so a huge tree costs a fixed amount. */
 const MAX_FILES = 500;
@@ -334,9 +362,12 @@ const make = Effect.gen(function* () {
             const folder = yield* realPath(path.dirname(skillPath));
             const name = path.basename(folder);
             const install = installs.find(
-              (candidate) => path.dirname(folder) === candidate.folder && candidate.lock.has(name),
+              (candidate) =>
+                path.dirname(folder) === candidate.folder &&
+                lockEntryFor(candidate.lock, name) !== undefined,
             );
-            const entry = install?.lock.get(name);
+            const entry =
+              install === undefined ? undefined : lockEntryFor(install.lock, name)?.entry;
             const { files, truncated } = yield* listFiles(folder);
             return {
               path: skillPath,
@@ -402,18 +433,27 @@ const make = Effect.gen(function* () {
             });
           }
           const folder = path.join(scratch, STANDARD_SKILL_FOLDER);
-          const names = yield* fileSystem
+          const folders = yield* fileSystem
             .readDirectory(folder)
             .pipe(Effect.orElseSucceed((): string[] => []));
-          const skills = yield* Effect.forEach(names.toSorted(), (name) =>
+          // The CLI's own name for each skill, which `--skill` matches, by the folder it chose.
+          const nameByFolder = new Map(
+            installed.flatMap((result) =>
+              result.name === undefined
+                ? []
+                : [[skillFolderName(result.name), result.name] as const],
+            ),
+          );
+          const skills = yield* Effect.forEach(folders.toSorted(), (skillFolder) =>
             Effect.gen(function* () {
-              const root = path.join(folder, name);
+              const root = path.join(folder, skillFolder);
               const contents = yield* fileSystem
                 .readFileString(path.join(root, "SKILL.md"))
                 .pipe(Effect.orElseSucceed(() => ""));
               const { files, truncated } = yield* listFiles(root);
               return {
-                name,
+                name: nameByFolder.get(skillFolder) ?? skillFolder,
+                folder: skillFolder,
                 description: describeSkill(contents),
                 files,
                 filesTruncated: truncated,
@@ -464,18 +504,19 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** The lock entry for a skill, by its CLI name or its folder, and the name the lock uses. */
   const lockedEntry = (target: SkillInstallTarget, name: string) =>
     readLock(targetPaths(target).lock).pipe(
       Effect.flatMap((lock) => {
-        const entry = lock.get(name);
-        return entry === undefined
+        const found = lockEntryFor(lock, name);
+        return found === undefined
           ? Effect.fail(
               new SkillLibraryError({
                 reason: "notInstalled",
                 message: "Only skills installed from a source can be updated or removed here.",
               }),
             )
-          : Effect.succeed(entry);
+          : Effect.succeed(found);
       }),
     );
 
@@ -488,7 +529,7 @@ const make = Effect.gen(function* () {
 
   const updateLocked = (target: SkillInstallTarget, name: string) =>
     Effect.gen(function* () {
-      const entry = yield* lockedEntry(target, name);
+      const { key, entry } = yield* lockedEntry(target, name);
       const from = lockedInstallSource(entry, target.kind === "environment" ? "home" : "project");
       if (from === null) {
         return yield* new SkillLibraryError({
@@ -497,7 +538,8 @@ const make = Effect.gen(function* () {
             "This skill's lock doesn't record which host it came from. Install it again from its URL.",
         });
       }
-      return yield* installInto(target, from.source, [name], from.fullDepth);
+      // The CLI matches `--skill` against the skill's own name, which the lock keys by.
+      return yield* installInto(target, from.source, [key], from.fullDepth);
     });
 
   const remove: SkillLibrary["Service"]["remove"] = Effect.fn("SkillLibrary.remove")(
@@ -509,11 +551,11 @@ const make = Effect.gen(function* () {
 
   const removeLocked = (target: SkillInstallTarget, name: string) =>
     Effect.gen(function* () {
-      yield* lockedEntry(target, name);
+      const { key } = yield* lockedEntry(target, name);
       const paths = targetPaths(target);
       yield* cli
         .remove({
-          skills: [name],
+          skills: [key],
           global: target.kind === "environment",
           cwd: paths.root,
         })
@@ -525,9 +567,9 @@ const make = Effect.gen(function* () {
       yield* refreshAgents(target);
       // The CLI reports a skill it couldn't delete without failing, so check what's left.
       const folderLeft = yield* fileSystem
-        .exists(path.join(paths.folder, name))
+        .exists(path.join(paths.folder, skillFolderName(key)))
         .pipe(Effect.orElseSucceed(() => false));
-      const lockLeft = (yield* readLock(paths.lock)).has(name);
+      const lockLeft = (yield* readLock(paths.lock)).has(key);
       if (folderLeft || lockLeft) {
         return yield* cliFailed(
           `Couldn't remove ${name}. Check the permissions of ${folderLeft ? paths.folder : paths.lock}.`,

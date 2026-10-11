@@ -27,10 +27,17 @@ export const SkillSource = TrimmedNonEmptyString.check(
   ),
 );
 
-/** A skill's folder name, the name agents invoke it by, as the CLI sanitizes it. */
+/**
+ * A skill as the `skills` CLI names it: the `name` in its SKILL.md, which the
+ * CLI matches `--skill` against and keys its lock files by. Its folder (and
+ * the name agents invoke it by) is that name sanitized, so `Git Review` lives
+ * in `git-review`. Either form identifies an installed skill.
+ */
 export const InstalledSkillName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(255),
-  Schema.isPattern(/^[a-z0-9._][a-z0-9._-]*$/),
+  Schema.makeFilter((name: string) =>
+    name.startsWith("-") ? "A skill name can't start with a dash." : true,
+  ),
 );
 export type InstalledSkillName = typeof InstalledSkillName.Type;
 
@@ -48,7 +55,10 @@ export const SkillPreviewInput = Schema.Struct({ source: SkillSource });
 export type SkillPreviewInput = typeof SkillPreviewInput.Type;
 
 export const SkillPreviewItem = Schema.Struct({
+  /** What to pass to install: the CLI's name for the skill. */
   name: InstalledSkillName,
+  /** The folder it installs into, the name agents invoke it by. */
+  folder: TrimmedNonEmptyString,
   description: Schema.String,
   /** Up to a limit; `filesTruncated` says when some were left out. */
   files: Schema.Array(SkillFileEntry),

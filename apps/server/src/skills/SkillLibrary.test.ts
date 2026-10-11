@@ -73,6 +73,12 @@ const withLibrary = <A, E>(
       path.join(source, "notes", "SKILL.md"),
       SKILL("notes", "Take notes."),
     );
+    // A name that isn't a folder name: the CLI installs it into `git-review`.
+    yield* fileSystem.makeDirectory(path.join(source, "gitreview"), { recursive: true });
+    yield* fileSystem.writeFileString(
+      path.join(source, "gitreview", "SKILL.md"),
+      SKILL("Git Review", "Review with git."),
+    );
 
     const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([claude]);
     const refreshed = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -150,14 +156,20 @@ it.effect(
         const fileSystem = yield* FileSystem.FileSystem;
         const preview = yield* library.preview({ source });
         assert.deepEqual(
-          preview.skills.map((skill) => [skill.name, skill.description, skill.scripts]),
+          preview.skills.map((skill) => [
+            skill.name,
+            skill.folder,
+            skill.description,
+            skill.scripts,
+          ]),
           [
-            ["notes", "Take notes.", false],
-            ["review", "Review a change.", true],
+            ["Git Review", "git-review", "Review with git.", false],
+            ["notes", "notes", "Take notes.", false],
+            ["review", "review", "Review a change.", true],
           ],
         );
         assert.deepEqual(
-          preview.skills[1]?.files.map((file) => [file.path, file.executable, file.script]),
+          preview.skills[2]?.files.map((file) => [file.path, file.executable, file.script]),
           [
             ["SKILL.md", false, false],
             ["bin/run", true, true],
@@ -322,6 +334,31 @@ it.effect(
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   120_000,
+);
+
+it.effect(
+  "installs, updates and removes a skill whose name isn't its folder",
+  () =>
+    withLibrary(({ library, project, source }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const target = { kind: "project", cwd: project } as const;
+        const preview = yield* library.preview({ source });
+        const gitReview = preview.skills.find((skill) => skill.folder === "git-review");
+        assert.equal(gitReview?.name, "Git Review");
+        const installed = yield* library.install({ source, skills: ["Git Review"], target });
+        assert.deepEqual(installed.outcomes, [{ name: "Git Review", status: "installed" }]);
+        const folder = path.join(project, ".agents", "skills", "git-review");
+        assert.isTrue(yield* fileSystem.exists(folder));
+        // The list knows the skill by its folder; update and remove find the lock's name.
+        const updated = yield* library.update({ name: "git-review", target });
+        assert.deepEqual(updated.outcomes, [{ name: "Git Review", status: "installed" }]);
+        yield* library.remove({ name: "git-review", target });
+        assert.isFalse(yield* fileSystem.exists(folder));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  180_000,
 );
 
 describe("lockedInstallSource", () => {

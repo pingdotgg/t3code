@@ -173,7 +173,7 @@ export function AddSkillsDialog({
                       />
                       <span className="grid min-w-0 gap-0.5">
                         <span className="flex items-center gap-1.5">
-                          <span className="truncate font-mono text-sm">{skill.name}</span>
+                          <span className="truncate font-mono text-sm">{skill.folder}</span>
                           {skill.scripts ? (
                             <Badge variant="warning" size="sm">
                               Includes scripts
