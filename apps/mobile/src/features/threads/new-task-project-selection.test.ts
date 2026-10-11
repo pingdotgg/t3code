@@ -4,10 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
+  filterProjectsInScope,
   filterProjectScopes,
   getProjectScopeSelectionTarget,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveProjectSubtitle,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -67,6 +69,41 @@ describe("getProjectScopeSelectionTarget", () => {
     expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("other"))).toBe(
       projects[0],
     );
+  });
+});
+
+describe("resolveProjectSubtitle", () => {
+  it("combines environment label and workspace root", () => {
+    expect(
+      resolveProjectSubtitle({
+        workspaceRoot: "C:\\Proyectos\\t3code",
+        environmentLabel: "Desktop",
+      }),
+    ).toBe("Desktop · C:\\Proyectos\\t3code");
+  });
+
+  it("falls back to workspace root when environment label is null or whitespace", () => {
+    expect(
+      resolveProjectSubtitle({
+        workspaceRoot: "/home/user/repo",
+        environmentLabel: null,
+      }),
+    ).toBe("/home/user/repo");
+    expect(
+      resolveProjectSubtitle({
+        workspaceRoot: "/home/user/repo",
+        environmentLabel: "   ",
+      }),
+    ).toBe("/home/user/repo");
+  });
+
+  it("falls back to environment label when workspace root is empty", () => {
+    expect(
+      resolveProjectSubtitle({
+        workspaceRoot: "",
+        environmentLabel: "Laptop",
+      }),
+    ).toBe("Laptop");
   });
 });
 
@@ -160,6 +197,10 @@ describe("filterProjectScopes", () => {
   const code = makeScope([mac, server]);
   const docs = { ...makeScope([makeProject("docs")]), key: "docs", title: "Documentation" };
   const scopes = [code, docs];
+  const envLabels = new Map([
+    [EnvironmentId.make("mac"), "MacBook"],
+    [EnvironmentId.make("server"), "Ubuntu Server"],
+  ]);
 
   it("keeps all projects for an empty or whitespace-only query", () => {
     expect(filterProjectScopes(scopes, "")).toBe(scopes);
@@ -174,10 +215,46 @@ describe("filterProjectScopes", () => {
     expect(filterProjectScopes(scopes, "missing-project")).toEqual([]);
   });
 
+  it("matches environment label when provided", () => {
+    expect(filterProjectScopes(scopes, "macbook", envLabels)).toEqual([code]);
+    expect(filterProjectScopes(scopes, "ubuntu", envLabels)).toEqual([code]);
+    expect(filterProjectScopes(scopes, "windows", envLabels)).toEqual([]);
+  });
+
   it("preserves the whole logical project and preferred environment when a workspace matches", () => {
     const matches = filterProjectScopes(scopes, "REMOTE-WORKSPACE");
     expect(matches[0]).toBe(code);
     expect(getProjectScopeSelectionTarget(matches[0]!, EnvironmentId.make("mac"))).toBe(mac);
     expect(code.projects).toEqual([mac, server]);
+  });
+});
+
+describe("filterProjectsInScope", () => {
+  const mac = makeProject("code", "mac", {
+    title: "Desktop checkout",
+    workspaceRoot: "/Users/me/code",
+  });
+  const server = makeProject("remote-code", "server", {
+    title: "Server repo",
+    workspaceRoot: "/srv/code",
+  });
+  const projects = [mac, server];
+  const envLabels = new Map([
+    [EnvironmentId.make("mac"), "MacBook"],
+    [EnvironmentId.make("server"), "Ubuntu Server"],
+  ]);
+
+  it("returns all projects when query is empty or matches scope title", () => {
+    expect(filterProjectsInScope(projects, "T3 Code", "")).toEqual(projects);
+    expect(filterProjectsInScope(projects, "T3 Code", "t3")).toEqual(projects);
+  });
+
+  it("filters specific projects matching environment label", () => {
+    expect(filterProjectsInScope(projects, "T3 Code", "ubuntu", envLabels)).toEqual([server]);
+    expect(filterProjectsInScope(projects, "T3 Code", "macbook", envLabels)).toEqual([mac]);
+  });
+
+  it("filters specific projects matching workspace root", () => {
+    expect(filterProjectsInScope(projects, "T3 Code", "/srv/code")).toEqual([server]);
   });
 });

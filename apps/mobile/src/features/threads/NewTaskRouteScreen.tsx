@@ -14,7 +14,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -23,16 +24,25 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useProjects, useServerConfigs } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import {
+  useRemoteConnectionStatus,
+  useSavedRemoteConnections,
+} from "../../state/use-remote-environment-registry";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
+import {
+  filterProjectsInScope,
+  filterProjectScopes,
+  resolveProjectSubtitle,
+} from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -157,6 +167,30 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
+  const { environments } = useEnvironments();
+  const { savedConnectionsById } = useSavedRemoteConnections();
+
+  const environmentLabelById = useMemo(() => {
+    const map = new Map<EnvironmentId, string>();
+    for (const env of environments) {
+      if (env.label) {
+        map.set(env.environmentId, env.label);
+      }
+    }
+    return map;
+  }, [environments]);
+
+  const getEnvLabel = useCallback(
+    (environmentId: EnvironmentId): string | null => {
+      return (
+        environmentLabelById.get(environmentId) ??
+        savedConnectionsById[environmentId]?.environmentLabel ??
+        null
+      );
+    },
+    [environmentLabelById, savedConnectionsById],
+  );
+
   // Scratch projects are reached through the No project row, never as rows
   // of their own.
   const listScopes = projectScopes.filter(
@@ -165,7 +199,28 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
       ),
   );
-  const visibleScopes = filterProjectScopes(listScopes, searchText);
+  const visibleScopes = filterProjectScopes(listScopes, searchText, environmentLabelById);
+
+  const selectableProjects = useMemo(() => {
+    return visibleScopes.flatMap((scope) => {
+      const projects = filterProjectsInScope(
+        scope.projects,
+        scope.title,
+        searchText,
+        environmentLabelById,
+      );
+      return projects.map((project) => ({
+        key: scopedProjectKey(project.environmentId, project.id),
+        project,
+        title: scope.projects.length === 1 ? scope.title : project.title || scope.title,
+        subtitle: resolveProjectSubtitle({
+          workspaceRoot: project.workspaceRoot,
+          environmentLabel: getEnvLabel(project.environmentId),
+        }),
+      }));
+    });
+  }, [visibleScopes, searchText, environmentLabelById, getEnvLabel]);
+
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
     ? (projects.find(
@@ -428,13 +483,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 </>
               )}
             </View>
-          ) : visibleScopes.length === 0 ? (
+          ) : selectableProjects.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
               <Text className="text-center text-lg font-t3-bold text-foreground">
                 No matching projects
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
+                Try a different project name, machine, or workspace path.
               </Text>
             </View>
           ) : (
@@ -446,33 +501,24 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   : "overflow-hidden rounded-[24px] bg-grouped-card"
               }
             >
-              {visibleScopes.map((scope, scopeIndex) => {
-                const hasMultipleProjects = scope.projects.length > 1;
-                const selectionTarget = getProjectScopeSelectionTarget(
-                  scope,
-                  selectedEnvironmentId,
-                );
+              {selectableProjects.map((item, itemIndex) => {
                 if (Platform.OS === "android") {
                   return (
                     <MaterialListRow
                       className="bg-grouped-card"
-                      key={scope.key}
-                      title={scope.title}
-                      subtitle={
-                        hasMultipleProjects
-                          ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot
-                      }
+                      key={item.key}
+                      title={item.title}
+                      subtitle={item.subtitle}
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => void selectProject(item.project)}
                       leading={
                         <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          projectIcon={scope.representative.projectIcon}
+                          environmentId={item.project.environmentId}
+                          faviconPath={item.project.faviconPath}
+                          projectIcon={item.project.projectIcon}
                           size={24}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
+                          projectTitle={item.title}
+                          workspaceRoot={item.project.workspaceRoot}
                         />
                       }
                     />
@@ -480,38 +526,36 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 }
                 return (
                   <View
-                    key={scope.key}
-                    className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
+                    key={item.key}
+                    className={cn(itemIndex > 0 && "border-t border-border-subtle")}
                   >
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={scope.title}
+                      accessibilityLabel={[item.title, item.subtitle].filter(Boolean).join(", ")}
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => void selectProject(item.project)}
                       className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                     >
                       <View className="h-7 w-7 items-center justify-center">
                         <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          projectIcon={scope.representative.projectIcon}
+                          environmentId={item.project.environmentId}
+                          faviconPath={item.project.faviconPath}
+                          projectIcon={item.project.projectIcon}
                           size={20}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
+                          projectTitle={item.title}
+                          workspaceRoot={item.project.workspaceRoot}
                         />
                       </View>
                       <View className="min-w-0 flex-1">
                         <Text className={cn("text-base leading-snug", "font-t3-bold")}>
-                          {scope.title}
+                          {item.title}
                         </Text>
                         <Text
                           className="text-xs leading-snug text-foreground-muted"
                           ellipsizeMode="middle"
                           numberOfLines={1}
                         >
-                          {hasMultipleProjects
-                            ? `${scope.projects.length} workspaces`
-                            : selectionTarget.workspaceRoot}
+                          {item.subtitle}
                         </Text>
                       </View>
                       <SymbolView
