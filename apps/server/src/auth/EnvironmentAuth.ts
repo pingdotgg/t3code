@@ -19,6 +19,7 @@ import {
   type AuthSessionId,
   type AuthSessionState,
   authScopeResponse,
+  expandLegacyScopeRequest,
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
@@ -903,7 +904,12 @@ export const make = Effect.gen(function* () {
   };
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
-    (credential, requestedScopes, requestMetadata, input) => {
+    (credential, requestedScopesInput, requestMetadata, input) => {
+      // Released clients still request the pre-split vocabulary.
+      const requestedScopes =
+        requestedScopesInput === undefined
+          ? undefined
+          : expandLegacyScopeRequest(requestedScopesInput);
       return resolveBootstrapGrant(credential, {
         ...input,
         ...(requestedScopes !== undefined ? { requestedScopes } : {}),
