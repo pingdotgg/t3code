@@ -147,10 +147,12 @@ export const layer = Layer.effectDiscard(
         }
         // The ordinal is display metadata only: allocate.message appends a
         // random UUID, so a stale projection read here cannot collide ids.
-        const messageId = yield* ids.allocate.message({
-          threadId: request.threadId,
-          ordinal: projection.messages.length + 1,
-        });
+        const messageId =
+          request.messageId ??
+          (yield* ids.allocate.message({
+            threadId: request.threadId,
+            ordinal: projection.messages.length + 1,
+          }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
         const dispatch = threads.dispatch({
           type: "message.dispatch",
