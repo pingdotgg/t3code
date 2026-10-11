@@ -137,7 +137,7 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   "TerminalProcessSignalError",
   {
     cause: Schema.optional(Schema.Defect()),
-    signal: Schema.Literals(["SIGTERM", "SIGKILL"]),
+    signal: Schema.Literals(["SIGHUP", "SIGKILL"]),
     terminalPid: Schema.Number,
   },
 ) {
@@ -1651,12 +1651,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
+    // Hang up the terminal so shells such as bash and zsh can clean up their jobs.
+    // Interactive bash and zsh normally ignore SIGTERM.
     const terminated = yield* Effect.try({
-      try: () => process.kill("SIGTERM"),
+      try: () => process.kill("SIGHUP"),
       catch: (cause) =>
         new TerminalProcessSignalError({
           cause,
-          signal: "SIGTERM",
+          signal: "SIGHUP",
           terminalPid: process.pid,
         }),
     }).pipe(
@@ -1665,7 +1667,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.logWarning("failed to kill terminal process", {
           threadId,
           terminalId,
-          signal: "SIGTERM",
+          signal: "SIGHUP",
           cause: error,
         }).pipe(Effect.as(false)),
       ),
