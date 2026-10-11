@@ -6939,6 +6939,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           className={composerProviderState.composerFrameClassName}
         >
+          {composerProviderState.composerFrameClassName ? (
+            <span aria-hidden="true" className="ultrathink-border" />
+          ) : null}
           <div
             ref={composerSurfaceRef}
             data-chat-composer-surface="true"

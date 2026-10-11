@@ -142,6 +142,11 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const ultrathinkActive =
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     promptInjectionState === "ultrathink";
+  const reasoningEffortDescriptor = descriptors.find(
+    (descriptor) => descriptor.type === "select" && descriptor.id === "reasoningEffort",
+  );
+  const codexUltraActive =
+    provider === "codex" && getProviderOptionCurrentValue(reasoningEffortDescriptor) === "ultra";
 
   return {
     provider,
@@ -150,7 +155,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
       descriptors,
       selections,
     ),
-    ...(ultrathinkActive
+    ...(ultrathinkActive || codexUltraActive
       ? {
           composerFrameClassName: "ultrathink-frame",
           composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
