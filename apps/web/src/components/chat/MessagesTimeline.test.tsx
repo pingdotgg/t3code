@@ -670,6 +670,69 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  it.each([true, false])(
+    "keeps the end in view when tool output toggles only at the end: %s",
+    async (isAtEnd) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const viewport = { scrollTop: 400, scrollHeight: 1000 };
+      const props = buildProps();
+      props.listRef.current = {
+        getState: () => ({ isAtEnd }),
+        getScrollableNode: () => viewport,
+      } as unknown as LegendListRef;
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...props}
+              timelineEntries={[
+                {
+                  id: "tool",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "tool",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Run command",
+                    tone: "tool",
+                    toolLifecycleStatus: "completed",
+                    detail: "Command output",
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        for (const scrollHeight of [1300, 900]) {
+          await act(() => toggle.props.onClick());
+          // The rows grow or shrink once the list measures them.
+          viewport.scrollHeight = scrollHeight;
+          await flushFrame();
+          await flushFrame();
+          expect(viewport.scrollTop).toBe(isAtEnd ? scrollHeight : 400);
+          viewport.scrollTop = 400;
+        }
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

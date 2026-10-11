@@ -718,34 +718,59 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [settlingListIdentity]);
 
+  // A toggle made at the end keeps the end in view while rows re-measure.
+  // Anywhere else, the toggled row holds its place.
+  const disclosurePinsEndRef = useRef(false);
+  const disclosureCollapsedRef = useRef(false);
+  const pinDisclosureToEnd = useCallback(() => {
+    if (!disclosurePinsEndRef.current) return;
+    const element = listRef.current?.getScrollableNode();
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [listRef]);
+
+  // Settles two frames after the last toggle, or after the last row resize
+  // while pinned to the end, since tool output can render a few frames late.
+  const scheduleDisclosureSettle = useCallback(() => {
+    if (disclosureSettleFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleFrameRef.current);
+    }
+    if (disclosureSettleSecondFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
+    }
+    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
+      pinDisclosureToEnd();
+      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
+        pinDisclosureToEnd();
+        disclosurePinsEndRef.current = false;
+        disclosureAnchorKeyRef.current = null;
+        setDisclosureToggleSettling(false);
+        disclosureSettleFrameRef.current = null;
+        disclosureSettleSecondFrameRef.current = null;
+        // Wait for row measurement and the disclosure click's blur check.
+        // Closing output can reveal the end without a scroll event.
+        if (
+          disclosureCollapsedRef.current &&
+          resolveTimelineIsAtEnd(listRef.current?.getState()) === true
+        ) {
+          onToolOutputCollapsedAtEnd?.();
+        }
+      });
+    });
+  }, [listRef, onToolOutputCollapsedAtEnd, pinDisclosureToEnd]);
+
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
       disclosureAnchorKeyRef.current = anchorKey;
+      disclosureCollapsedRef.current = collapsed;
+      disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
       setDisclosureToggleSettling(true);
-      if (disclosureSettleFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleFrameRef.current);
-      }
-      if (disclosureSettleSecondFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-      }
-      disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-        disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-          disclosureAnchorKeyRef.current = null;
-          setDisclosureToggleSettling(false);
-          disclosureSettleFrameRef.current = null;
-          disclosureSettleSecondFrameRef.current = null;
-          // Wait for row measurement and the disclosure click's blur check.
-          // Closing output can reveal the end without a scroll event.
-          if (collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true) {
-            onToolOutputCollapsedAtEnd?.();
-          }
-        });
-      });
+      scheduleDisclosureSettle();
     },
-    [listRef, onToolOutputCollapsedAtEnd],
+    [listRef, scheduleDisclosureSettle],
   );
 
   const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
+    if (disclosurePinsEndRef.current) return false;
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   }, []);
@@ -1165,6 +1190,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   }, [measureContentOverflow, onContentOverflowChange]);
+  const handleItemSizeChanged = useCallback(() => {
+    if (disclosurePinsEndRef.current) {
+      queueMicrotask(pinDisclosureToEnd);
+      scheduleDisclosureSettle();
+    }
+    reportContentOverflow();
+  }, [pinDisclosureToEnd, reportContentOverflow, scheduleDisclosureSettle]);
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -1615,7 +1647,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               }
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
-              onItemSizeChanged={reportContentOverflow}
+              onItemSizeChanged={handleItemSizeChanged}
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
