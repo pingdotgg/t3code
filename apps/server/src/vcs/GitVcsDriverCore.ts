@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -35,7 +36,13 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
-import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
+import {
+  gitCommandDuration,
+  gitCommandsTotal,
+  recordMetrics,
+  withMetrics,
+} from "../observability/Metrics.ts";
+import * as GitMetadataFastPath from "./GitMetadataFastPath.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
@@ -947,6 +954,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcess.Platform;
 
+  /**
+   * The command's result read from the repository files, or `null` when git has
+   * to run. Holds no git process permit.
+   */
+  const answerWithoutGit = Effect.fnUntraced(function* (input: GitVcsDriver.ExecuteGitInput) {
+    if (input.stdin !== undefined || input.progress !== undefined) return null;
+    const answer = yield* Effect.promise(() =>
+      GitMetadataFastPath.tryAnswerGitCommand({
+        cwd: input.cwd,
+        args: input.args,
+        env: input.env,
+        timeoutMs: input.timeoutMs,
+        maxOutputBytes: input.maxOutputBytes,
+      }),
+    );
+    // A failing exit code without allowNonZeroExit needs git's own error details.
+    if (answer === null || (answer.exitCode !== 0 && !input.allowNonZeroExit)) return null;
+    return {
+      exitCode: ChildProcessSpawner.ExitCode(answer.exitCode),
+      stdout: answer.stdout,
+      stderr: answer.stderr,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    } satisfies GitVcsDriver.ExecuteGitResult;
+  });
+
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
       const commandInput = {
@@ -1067,9 +1100,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         } satisfies GitVcsDriver.ExecuteGitResult;
       });
 
+      const fastPathInput = {
+        cwd: input.cwd,
+        args: input.args,
+        env: input.env,
+        timeoutMs: input.timeoutMs,
+      };
+      const memoKey =
+        input.stdin === undefined && input.progress === undefined
+          ? yield* Effect.promise(() => GitMetadataFastPath.gitAnswerMemoKey(fastPathInput))
+          : null;
+      // Runs after the timeout: timeoutMs bounds git, and a slow memo must not discard its answer.
+      const remember = (result: GitVcsDriver.ExecuteGitResult) =>
+        memoKey !== null && result.exitCode === 0 && !result.stdoutTruncated
+          ? Effect.promise(() =>
+              GitMetadataFastPath.rememberGitAnswer(fastPathInput, memoKey, result.stdout),
+            )
+          : Effect.void;
       const execution = runGitCommand().pipe(Effect.scoped);
       if (timeoutMs === null) {
-        return yield* execution;
+        return yield* execution.pipe(Effect.tap(remember));
       }
 
       return yield* execution.pipe(
@@ -1084,23 +1134,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         ),
+        Effect.tap(remember),
       );
     },
   );
 
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
-    executeRaw(input).pipe(
-      withMetrics({
-        counter: gitCommandsTotal,
-        timer: gitCommandDuration,
-        attributes: {
-          operation: input.operation,
-        },
-      }),
-      (execution) =>
-        input.timeoutMs === null || (input.timeoutMs ?? DEFAULT_TIMEOUT_MS) > DEFAULT_TIMEOUT_MS
-          ? execution
-          : gitProcesses.withPermits(1)(execution),
+  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) => {
+    // Times the command itself, not the wait for a process permit. An answered
+    // command took as long as its file reads; a miss is timed from its spawn.
+    const metrics = {
+      counter: gitCommandsTotal,
+      timer: gitCommandDuration,
+      attributes: {
+        operation: input.operation,
+      },
+    };
+    const spawnGit = executeRaw(input).pipe(withMetrics(metrics));
+    return Effect.flatMap(Clock.monotonicTimeNanos, (startedAt) =>
+      Effect.flatMap(answerWithoutGit(input), (answer) =>
+        answer !== null
+          ? recordMetrics(metrics, startedAt, Exit.succeed(answer)).pipe(Effect.as(answer))
+          : input.timeoutMs === null || (input.timeoutMs ?? DEFAULT_TIMEOUT_MS) > DEFAULT_TIMEOUT_MS
+            ? spawnGit
+            : gitProcesses.withPermits(1)(spawnGit),
+      ),
+    ).pipe(
       Effect.withSpan(input.operation, {
         kind: "client",
         attributes: {
@@ -1110,6 +1168,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         },
       }),
     );
+  };
 
   const executeGit = (
     operation: string,

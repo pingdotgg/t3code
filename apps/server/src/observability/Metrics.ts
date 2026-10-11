@@ -110,7 +110,7 @@ export interface WithMetricsOptions {
   ) => Readonly<Record<string, unknown>>;
 }
 
-const recordMetrics = (
+export const recordMetrics = (
   options: WithMetricsOptions,
   startedAt: bigint,
   exit: Exit.Exit<unknown, unknown>,
