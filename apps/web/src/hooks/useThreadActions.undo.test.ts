@@ -220,4 +220,42 @@ describe("settle and snooze Undo", () => {
       input: { threadId: target.threadId, reason: "user" },
     });
   });
+
+  it("restores the previous wake time when undoing a reschedule", async () => {
+    const previousWake = new Date(Date.now() + 60_000).toISOString();
+    const nextWake = new Date(Date.now() + 120_000).toISOString();
+    threadShell.snoozedUntil = previousWake;
+    const actions = useThreadActions();
+    await actions.snoozeThread(target, nextWake);
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({
+      action: "Rescheduled",
+      count: 1,
+    });
+    await currentUndo()();
+    expect(commands.unsnooze).not.toHaveBeenCalled();
+    expect(commands.snooze).toHaveBeenLastCalledWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, snoozedUntil: previousWake },
+    });
+  });
+
+  it("ignores an older reschedule Undo once a newer wake time was chosen", async () => {
+    const firstWake = new Date(Date.now() + 60_000).toISOString();
+    const secondWake = new Date(Date.now() + 120_000).toISOString();
+    const thirdWake = new Date(Date.now() + 180_000).toISOString();
+    threadShell.snoozedUntil = firstWake;
+    const actions = useThreadActions();
+    await actions.snoozeThread(target, secondWake);
+    const staleUndo = currentUndo();
+    threadShell.snoozedUntil = secondWake;
+    await actions.snoozeThread(target, thirdWake);
+    commands.snooze.mockClear();
+    await staleUndo();
+    expect(commands.snooze).not.toHaveBeenCalled();
+    await currentUndo()();
+    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, snoozedUntil: secondWake },
+    });
+  });
 });

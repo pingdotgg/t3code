@@ -24,6 +24,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { rescheduleUndoTarget } from "../components/Sidebar.snooze";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
@@ -955,6 +956,7 @@ export function useThreadActions() {
           ),
         );
       }
+      const previousWake = rescheduleUndoTarget(resolved?.thread ?? null, new Date());
       const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
       const result = await snoozeThreadMutation({
         environmentId: target.environmentId,
@@ -964,13 +966,27 @@ export function useThreadActions() {
         action.finish();
         return result;
       }
-      // Snooze hides the row, so keep its confirmation in the sidebar.
-      showThreadUndoNotice({
-        action: "Snoozed",
-        claim: action,
-        undo: () => unsnoozeThread(target),
-        failureTitle: "Failed to wake thread",
-      });
+      // Snooze hides the row, so keep its confirmation in the sidebar. Undoing
+      // a reschedule restores the previous wake time rather than waking.
+      showThreadUndoNotice(
+        previousWake
+          ? {
+              action: "Rescheduled",
+              claim: action,
+              undo: () =>
+                snoozeThreadMutation({
+                  environmentId: target.environmentId,
+                  input: { threadId: target.threadId, snoozedUntil: previousWake },
+                }),
+              failureTitle: "Failed to restore the previous wake time",
+            }
+          : {
+              action: "Snoozed",
+              claim: action,
+              undo: () => unsnoozeThread(target),
+              failureTitle: "Failed to wake thread",
+            },
+      );
       return result;
     },
     [resolveThreadTarget, snoozeThreadMutation, unsnoozeThread],

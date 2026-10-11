@@ -1,8 +1,10 @@
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  effectiveSnoozed,
   resolveSnoozePresets as resolveSharedSnoozePresets,
   snoozeWakeLabel,
   type SnoozePreset,
+  type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 
 import { formatShortTimestamp, parseTimestampDate } from "../timestampFormat";
@@ -54,4 +56,14 @@ export function snoozeWakeDescription(
   if (dayDelta < 7) return `${weekday} ${time}`;
   const date = wake.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${date}, ${time}`;
+}
+
+/**
+ * The wake time an Undo should restore when a snooze is a reschedule: the
+ * current wake time of an already-snoozed thread, or null when the thread
+ * is awake and Undo should wake it instead.
+ */
+export function rescheduleUndoTarget(shell: ThreadSnoozeShell | null, now: Date): string | null {
+  if (shell === null || !effectiveSnoozed(shell, { now: now.toISOString() })) return null;
+  return shell.snoozedUntil ?? null;
 }

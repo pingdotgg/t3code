@@ -4173,6 +4173,11 @@ export default function Sidebar() {
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
+  /**
+   * Snooze or reschedule one thread and move forward from it when it was the
+   * open thread. Returns the outcome without toasting so batch callers can
+   * summarize; a reschedule never navigates.
+   */
   const performSnooze = useCallback(
     async (
       threadRef: ScopedThreadRef,
@@ -4186,8 +4191,11 @@ export default function Sidebar() {
       snoozingThreadKeysRef.current.add(threadKey);
       try {
         // Snoozing the open thread moves you forward, same as settle —
-        // both park the thread you're done with for now.
-        const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+        // both park the thread you're done with for now. Rescheduling an
+        // already-snoozed thread parks nothing new, so you stay put.
+        const navigateAfterSnooze = snoozedThreadKeysRef.current.has(threadKey)
+          ? null
+          : planForwardNavigation(threadKey, opts.coSnoozingKeys);
         const result = await snoozeThread(threadRef, preset.snoozedUntil);
         if (result._tag === "Failure") {
           // Never navigate away from a thread that did not snooze.
@@ -4215,6 +4223,11 @@ export default function Sidebar() {
     },
     [planForwardNavigation, snoozeThread],
   );
+  /**
+   * Single-thread snooze entry point: performs the snooze and reports a
+   * failure. The success confirmation and its Undo live in the shared sidebar
+   * undo notice, which restores the previous wake time for a reschedule.
+   */
   const attemptSnooze = useCallback(
     (
       threadRef: ScopedThreadRef,
