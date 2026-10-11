@@ -1,13 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Check, Copy } from "lucide";
-import { AlertTriangleIcon, MoreHorizontalIcon } from "lucide-react";
+import { AlertTriangleIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useEffectEvent, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { MorphIcon } from "../MorphIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -117,22 +116,15 @@ export function SkillDetail({
             );
           })}
           <span className="flex-1" />
-          {onUpdate !== null || onRemove !== null ? (
-            <Menu>
-              <MenuTrigger
-                render={<Button size="icon-xs" variant="outline" aria-label="More actions" />}
-              >
-                <MoreHorizontalIcon />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {onUpdate !== null ? <MenuItem onClick={onUpdate}>Update</MenuItem> : null}
-                {onRemove !== null ? (
-                  <MenuItem variant="destructive" onClick={onRemove}>
-                    Remove
-                  </MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
+          {onUpdate !== null ? (
+            <Button size="xs" variant="outline" onClick={onUpdate}>
+              Update
+            </Button>
+          ) : null}
+          {onRemove !== null ? (
+            <Button size="xs" variant="destructive-outline" onClick={onRemove}>
+              Remove
+            </Button>
           ) : null}
         </div>
         {conflict !== null || scripts.length > 0 || details.installed !== null ? (
