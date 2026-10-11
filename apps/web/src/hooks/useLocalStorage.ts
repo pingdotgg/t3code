@@ -15,6 +15,8 @@ export class LocalStorageOperationError extends Schema.TaggedError<LocalStorageO
   }
 }
 
+const isLocalStorageOperationError = Schema.is(LocalStorageOperationError);
+
 const fallbackStorage: Storage = (() => {
   const store = new Map<string, string>();
   return {
@@ -150,7 +152,15 @@ export function useLocalStorage<T, E>(
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        const currentValue = getLocalStorageItem(key, schema) ?? initialValue;
+        let currentValue = initialValue;
+        try {
+          currentValue = getLocalStorageItem(key, schema) ?? initialValue;
+        } catch (error) {
+          if (!isLocalStorageOperationError(error) || error.operation !== "decode") {
+            throw error;
+          }
+          console.error("[LOCALSTORAGE] Could not decode stored value.", error);
+        }
         let valueToStore: T;
         if (typeof value === "function") {
           try {
