@@ -93,6 +93,7 @@ import {
   useProjects,
   useThreadShells,
   useThreadShellsForProjectRefs,
+  waitForProjectRemoval,
 } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -1559,6 +1560,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (result._tag === "Failure") {
         return result;
       }
+      await waitForProjectRemoval(memberProjectRef);
       const draftStore = useComposerDraftStore.getState();
       releaseProjectDraftUploads(
         memberProjectRef,
