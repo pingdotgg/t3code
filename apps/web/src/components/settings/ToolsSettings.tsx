@@ -18,8 +18,8 @@ import {
   skillsDisabledPatch,
 } from "@t3tools/shared/agentTools";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import { MoreHorizontalIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangleIcon, MoreHorizontalIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
@@ -182,27 +182,27 @@ export function ToolsSettings({
   readonly onTabChange: (tab: ToolsTab) => void;
   readonly onOpenSkill: (name: string | null) => void;
 }) {
-  const selectTab = onTabChange;
+  // Each tab puts these at the start of its own toolbar row.
+  const tabs = (
+    <ToggleGroup
+      aria-label="Tools"
+      variant="segmented"
+      value={[tab]}
+      onValueChange={(next) => {
+        const value = next[0];
+        if (value === "skills" || value === "mcp") onTabChange(value);
+      }}
+    >
+      <Toggle value="skills">Skills</Toggle>
+      <Toggle value="mcp">MCP servers</Toggle>
+    </ToggleGroup>
+  );
   return (
     <SettingsPageContainer>
-      <div className="px-3 sm:px-4">
-        <ToggleGroup
-          aria-label="Tools"
-          variant="segmented"
-          value={[tab]}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value === "skills" || value === "mcp") selectTab(value);
-          }}
-        >
-          <Toggle value="skills">Skills</Toggle>
-          <Toggle value="mcp">MCP servers</Toggle>
-        </ToggleGroup>
-      </div>
       {tab === "mcp" ? (
-        <McpServersPanel />
+        <McpServersPanel tabs={tabs} />
       ) : (
-        <SkillsPanel openName={skill ?? null} onOpen={onOpenSkill} />
+        <SkillsPanel tabs={tabs} openName={skill ?? null} onOpen={onOpenSkill} />
       )}
     </SettingsPageContainer>
   );
@@ -211,9 +211,11 @@ export function ToolsSettings({
 // ── Skills ───────────────────────────────────────────────────────────
 
 function SkillsPanel({
+  tabs,
   openName,
   onOpen,
 }: {
+  tabs: ReactNode;
   openName: string | null;
   onOpen: (name: string | null) => void;
 }) {
@@ -442,7 +444,8 @@ function SkillsPanel({
             className="px-3 sm:px-4"
           >
             <div className="flex flex-wrap items-center gap-2">
-              <InputGroup className="w-full min-w-0 sm:w-auto sm:flex-1">
+              {tabs}
+              <InputGroup className="min-w-48 flex-1">
                 <InputGroupAddon>
                   <SearchIcon />
                 </InputGroupAddon>
@@ -454,15 +457,28 @@ function SkillsPanel({
                   aria-label="Search skills"
                 />
               </InputGroup>
-              {rows.length > 0 ? (
-                <Button
-                  size="sm"
-                  variant={onlyAttention ? "secondary" : "outline"}
-                  aria-pressed={onlyAttention}
-                  onClick={() => setOnlyAttention((value) => !value)}
-                >
-                  Needs attention ({attentionNames.size})
-                </Button>
+              {attentionNames.size > 0 || onlyAttention ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="sm"
+                        variant={onlyAttention ? "secondary" : "outline"}
+                        aria-pressed={onlyAttention}
+                        aria-label={`Show only skills that need a look (${attentionNames.size})`}
+                        onClick={() => setOnlyAttention((value) => !value)}
+                      />
+                    }
+                  >
+                    <AlertTriangleIcon aria-hidden className="text-warning-foreground" />
+                    {attentionNames.size}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top" className="max-w-xs">
+                    {onlyAttention
+                      ? "Show all skills."
+                      : "Show only skills that need a look: one name used by different skills, or a skill some of your agents don't load."}
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
               <Tooltip>
                 <TooltipTrigger
@@ -607,7 +623,7 @@ type ServerEditor =
   | { readonly mode: "add" }
   | { readonly mode: "edit"; readonly row: McpServerRow };
 
-function McpServersPanel() {
+function McpServersPanel({ tabs }: { tabs: ReactNode }) {
   const { scope, target, connectedEnvironments } = useSettingsScope();
   const targets = useToolsTargets();
   const persist = usePersistToolsPatch();
@@ -707,17 +723,20 @@ function McpServersPanel() {
 
   return (
     <>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4">
+        {tabs}
+        {canEditServers ? (
+          <Button size="sm" variant="outline" onClick={() => setEditor({ mode: "add" })}>
+            <PlusIcon className="size-3.5" aria-hidden />
+            Add server
+          </Button>
+        ) : null}
+      </div>
       <SettingsSection
         {...searchableSetting("tools-mcp-servers")}
+        // The tab already says MCP servers; a project splits its own from inherited ones.
         title={isProjectScope ? "This project" : "MCP servers"}
-        headerAction={
-          canEditServers ? (
-            <Button size="xs" variant="outline" onClick={() => setEditor({ mode: "add" })}>
-              <PlusIcon className="size-3" aria-hidden />
-              Add server
-            </Button>
-          ) : null
-        }
+        hideTitle={!isProjectScope}
       >
         {ownRows.length === 0 ? (
           <SettingsRow

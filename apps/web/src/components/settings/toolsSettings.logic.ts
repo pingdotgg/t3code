@@ -312,7 +312,7 @@ export function availabilityNote(value: SkillAvailability): string {
 
 /**
  * Why a skill needs a look, in one plain sentence, or null. Only a conflict
- * marks the row itself; the rest show in the Needs attention filter and on
+ * marks the row itself; the rest show in the list's attention filter and on
  * the skill's page.
  */
 export interface SkillAttention {
