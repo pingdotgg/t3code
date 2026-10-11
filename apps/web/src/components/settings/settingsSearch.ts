@@ -410,6 +410,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Styled Context Menu",
     to: "/settings/appearance",
     searchTerms: ["context menu right click native styled custom system"],
+    desktopOnly: true,
   },
   {
     id: "project-grouping",
