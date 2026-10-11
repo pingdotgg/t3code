@@ -6612,11 +6612,34 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
-              yield* startNativeTurn(
-                turnInput,
-                turnInput.restartContinuationOfRunId === undefined
+              const input =
+                turnInput.restartContinuationOfRunId === undefined ||
+                turnInput.nativeThreadHasTurns === false
                   ? yield* toCodexInput(turnInput)
-                  : [],
+                  : [];
+              yield* startNativeTurn(turnInput, input).pipe(
+                Effect.catchTags({
+                  CodexAppServerRequestError: (cause) => {
+                    // A completed native goal turn can still hold the T3 run.
+                    // Codex rejects empty input there before starting a turn.
+                    if (
+                      input.length !== 0 ||
+                      turnInput.restartContinuationOfRunId === undefined ||
+                      cause.code !== -32603 ||
+                      cause.errorMessage !== "failed to submit turn input: EmptyInput"
+                    )
+                      return Effect.fail(cause);
+                    return Effect.gen(function* () {
+                      const current = yield* client
+                        .request("thread/goal/get", {
+                          threadId: yield* getNativeThreadId(turnInput.providerThread),
+                        })
+                        .pipe(Effect.orElseSucceed(() => null));
+                      if (current?.goal?.status !== "active") return yield* Effect.fail(cause);
+                      yield* startNativeTurn(turnInput, yield* toCodexInput(turnInput));
+                    });
+                  },
+                }),
               );
             }).pipe(
               Effect.mapError(

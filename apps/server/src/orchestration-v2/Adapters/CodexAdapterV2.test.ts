@@ -3124,90 +3124,215 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("continues an interrupted native thread with empty input and reasoning summaries", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const scenario = "codex-restart-promptless";
-        const nativeThreadId = "native-restart-promptless";
-        const nativeTurnId = "turn-restart-promptless";
-        const preamble = codexReplayPreamble({
-          nativeThreadId,
-          nativeTurnId,
-          prompt: "unused",
-        }).slice(0, 5);
-        const transcript = makeCodexReplayTranscript({
-          scenario,
-          entries: [
-            ...preamble,
-            {
-              type: "expect_outbound",
-              label: "resume",
-              frame: {
-                id: 3,
-                method: "thread/resume",
-                params: {
-                  threadId: nativeThreadId,
-                  excludeTurns: true,
-                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+  it.effect.each([
+    "interrupted",
+    "goal-hold",
+    "fresh-thread",
+    "other-error",
+    "settled",
+    "paused-goal",
+    "limited-goal",
+  ] as const)(
+    "continues a restarted %s without dropping context or duplicating accepted turns",
+    (state) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-restart-promptless";
+          const nativeThreadId = "native-restart-promptless";
+          const nativeTurnId = "turn-restart-promptless";
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "unused",
+          }).slice(0, 5);
+          const prompt =
+            state === "fresh-thread"
+              ? "Recovered request and partial work.\n\nContinue where you left off."
+              : "Continue where you left off.";
+          const params = {
+            threadId: nativeThreadId,
+            input: state === "fresh-thread" ? [{ type: "text", text: prompt }] : [],
+            cwd: "/workspace",
+            model: "gpt-5.4",
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "dangerFullAccess" },
+            summary: "detailed",
+          };
+          const emptyInputRejected = [
+            "goal-hold",
+            "settled",
+            "paused-goal",
+            "limited-goal",
+          ].includes(state);
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "resume",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
                 },
               },
-            },
-            {
-              type: "emit_inbound",
-              label: "resume",
-              frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
-            },
-            {
-              type: "expect_outbound",
-              label: "continue",
-              frame: {
-                id: 4,
-                method: "turn/start",
-                params: {
-                  threadId: nativeThreadId,
-                  input: [],
-                  cwd: "/workspace",
-                  model: "gpt-5.4",
-                  approvalPolicy: "never",
-                  approvalsReviewer: "user",
-                  sandboxPolicy: { type: "dangerFullAccess" },
-                  summary: "detailed",
+              {
+                type: "emit_inbound",
+                label: "resume",
+                frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+              {
+                type: "expect_outbound",
+                label: "continue",
+                frame: {
+                  id: 4,
+                  method: "turn/start",
+                  params,
                 },
               },
-            },
-            {
-              type: "emit_inbound",
-              label: "continue",
-              frame: {
-                id: 4,
-                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              {
+                type: "emit_inbound",
+                label: "continue",
+                frame:
+                  emptyInputRejected || state === "other-error"
+                    ? {
+                        id: 4,
+                        error: {
+                          code: -32603,
+                          message: emptyInputRejected
+                            ? "failed to submit turn input: EmptyInput"
+                            : "failed to submit turn input: unexpected failure",
+                        },
+                      }
+                    : {
+                        id: 4,
+                        result: {
+                          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                        },
+                      },
               },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        const resumed = yield* harness.runtime.resumeThread({
-          providerThread: harness.providerThread,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-        });
-        yield* harness.runtime.startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: resumed,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-restart-promptless"),
-            text: "Continue where you left off.",
-          }),
-          restartContinuationOfRunId: RunId.make("run-before-restart"),
-        });
-        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+              ...(emptyInputRejected
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "read current goal",
+                      frame: {
+                        id: 5,
+                        method: "thread/goal/get",
+                        params: { threadId: nativeThreadId },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "read current goal",
+                      frame: {
+                        id: 5,
+                        result: {
+                          goal:
+                            state === "settled"
+                              ? null
+                              : {
+                                  threadId: nativeThreadId,
+                                  objective: "Finish the work",
+                                  status:
+                                    state === "paused-goal"
+                                      ? "paused"
+                                      : state === "limited-goal"
+                                        ? "budgetLimited"
+                                        : "active",
+                                  tokenBudget: null,
+                                  tokensUsed: 10,
+                                  timeUsedSeconds: 3,
+                                  createdAt: 1782622440,
+                                  updatedAt: 1782622450,
+                                },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              ...(state === "goal-hold"
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "prompted continuation",
+                      frame: {
+                        id: 6,
+                        method: "turn/start",
+                        params: { ...params, input: [{ type: "text", text: prompt }] },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "prompted continuation",
+                      frame: {
+                        id: 6,
+                        result: {
+                          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                        },
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          });
+          const registered = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "provider_turn.updated"
+              ? Deferred.succeed(registered, undefined)
+              : Effect.void,
+          );
+          const resumed = yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          });
+          const started = yield* harness.runtime
+            .startTurn({
+              ...makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: resumed,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-restart-promptless"),
+                text: prompt,
+              }),
+              nativeThreadHasTurns: state !== "fresh-thread",
+              restartContinuationOfRunId: RunId.make("run-before-restart"),
+            })
+            .pipe(Effect.result);
+          if (state === "other-error" || (emptyInputRejected && state !== "goal-hold")) {
+            assert.equal(started._tag, "Failure");
+            if (started._tag === "Failure") {
+              assert.nestedPropertyVal(
+                started.failure,
+                "cause.errorMessage",
+                emptyInputRejected
+                  ? "failed to submit turn input: EmptyInput"
+                  : "failed to submit turn input: unexpected failure",
+              );
+            }
+            assert.isEmpty(
+              harness.events.filter((event) => event.type === "provider_turn.updated"),
+            );
+            return;
+          }
+          assert.equal(started._tag, "Success");
+          yield* Deferred.await(registered);
+          const turns = harness.events.filter((event) => event.type === "provider_turn.updated");
+          assert.lengthOf(turns, 1);
+          assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
