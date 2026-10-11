@@ -6,7 +6,7 @@ import {
   type ScopedProjectRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
-import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { ClientSettings, ServerSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
@@ -325,4 +325,78 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
     };
   });
+}
+
+export function resolveNewThreadProjectRef(input: {
+  readonly members: ReadonlyArray<Pick<EnvironmentProject, "environmentId" | "id">>;
+  readonly settingsByEnvironment: ReadonlyMap<
+    EnvironmentId,
+    Pick<ServerSettings, "projectSettingsOverrides">
+  >;
+  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly contextProjectRef?: ScopedProjectRef | null;
+  readonly primaryEnvironmentId?: EnvironmentId | null;
+  readonly manualProjectRef?: ScopedProjectRef | null;
+}) {
+  if (input.manualProjectRef) {
+    return { projectRef: input.manualProjectRef, environmentSelection: "manual" as const };
+  }
+  const orderedMembers = [...input.members].sort((left, right) => {
+    const connectionOrder =
+      Number(input.connectedEnvironmentIds.has(right.environmentId)) -
+      Number(input.connectedEnvironmentIds.has(left.environmentId));
+    if (connectionOrder !== 0) return connectionOrder;
+    const leftKey = scopedProjectKey(scopeProjectRef(left.environmentId, left.id));
+    const rightKey = scopedProjectKey(scopeProjectRef(right.environmentId, right.id));
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const defaultEnvironmentId = orderedMembers
+    .map(
+      (member) =>
+        input.settingsByEnvironment.get(member.environmentId)?.projectSettingsOverrides[member.id]
+          ?.defaultEnvironmentId,
+    )
+    .find((value) => value !== undefined);
+  const defaultMember =
+    defaultEnvironmentId && input.connectedEnvironmentIds.has(defaultEnvironmentId)
+      ? (input.members.find(
+          (member) =>
+            member.environmentId === defaultEnvironmentId &&
+            member.id === input.contextProjectRef?.projectId,
+        ) ?? input.members.find((member) => member.environmentId === defaultEnvironmentId))
+      : undefined;
+  if (defaultMember) {
+    return {
+      projectRef: scopeProjectRef(defaultMember.environmentId, defaultMember.id),
+      environmentSelection: "project-default" as const,
+    };
+  }
+  const contextMember = input.contextProjectRef
+    ? (input.members.find(
+        (member) =>
+          member.environmentId === input.contextProjectRef?.environmentId &&
+          member.id === input.contextProjectRef.projectId,
+      ) ??
+      input.members.find(
+        (member) => member.environmentId === input.contextProjectRef?.environmentId,
+      ))
+    : undefined;
+  const primaryMember = input.members.find(
+    (member) => member.environmentId === input.primaryEnvironmentId,
+  );
+  const connectedFallbackMember =
+    defaultEnvironmentId != null
+      ? ([contextMember, primaryMember].find(
+          (member) => member && input.connectedEnvironmentIds.has(member.environmentId),
+        ) ??
+        input.members.find((member) => input.connectedEnvironmentIds.has(member.environmentId)))
+      : undefined;
+  const fallbackMember =
+    connectedFallbackMember ?? contextMember ?? primaryMember ?? input.members[0];
+  return {
+    projectRef: fallbackMember
+      ? scopeProjectRef(fallbackMember.environmentId, fallbackMember.id)
+      : (input.contextProjectRef ?? null),
+    environmentSelection: "auto" as const,
+  };
 }
