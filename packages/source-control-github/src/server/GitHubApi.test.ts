@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -24,16 +23,20 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
+  let credentialReads = 0;
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
       get: (host) =>
-        Effect.sync(() => ({
-          host,
-          token: Redacted.make(tokens[0]!),
-          source: "gh" as const,
-          fingerprint: `${host}:${tokens[0]}`,
-        })),
+        Effect.sync(() => {
+          credentialReads++;
+          return {
+            host,
+            token: Redacted.make(tokens[0]!),
+            source: "gh" as const,
+            fingerprint: `${host}:${tokens[0]}`,
+          };
+        }),
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;
@@ -53,7 +56,12 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
-  return { layer, requests, invalidations: () => invalidations };
+  return {
+    layer,
+    requests,
+    invalidations: () => invalidations,
+    credentialReads: () => credentialReads,
+  };
 }
 
 const json = (body: unknown, init?: ResponseInit) =>
@@ -116,6 +124,34 @@ describe("GitHubApi", () => {
       expect(sent._tag === "Uint8Array" ? new TextDecoder().decode(sent.body) : "").toContain(
         '"query":"query { viewer { login } }"',
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("resolves GraphQL credentials once per request and refreshes after refusal", () => {
+    const { layer, requests, invalidations, credentialReads } = harness((request) =>
+      request.headers.authorization === "Bearer first"
+        ? new Response(null, { status: 401 })
+        : json({ data: { viewer: { login: "julius" } } }),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      const input = {
+        host: "github.com",
+        operation: "viewer",
+        query: "query { viewer { login } }",
+      };
+      const refused = yield* Effect.flip(api.graphql(input));
+      expect(refused._tag).toBe("GitHubApiAuthenticationError");
+      expect(credentialReads()).toBe(1);
+      expect(invalidations()).toBe(1);
+
+      const body = yield* api.graphql(input);
+      expect(body).toContain('"login":"julius"');
+      expect(credentialReads()).toBe(2);
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer first",
+        "Bearer second",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
