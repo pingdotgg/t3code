@@ -80,6 +80,18 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+type UpdaterListener = (...args: Array<unknown>) => void;
+// autoUpdater is a lazy getter that loads the platform updater on first access.
+const updaterEvents = () =>
+  autoUpdater as unknown as {
+    on: (eventName: string, listener: UpdaterListener) => void;
+    prependListener: (eventName: string, listener: UpdaterListener) => void;
+    removeListener: (eventName: string, listener: UpdaterListener) => void;
+  };
+
+// Errors that quitAndInstall captured and reports itself.
+const installErrors = new WeakSet<object>();
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
   setFeedURL: (options) =>
@@ -140,30 +152,45 @@ export const make = ElectronUpdater.of({
   quitAndInstall: ({ isSilent, isForceRunAfter }) =>
     Effect.suspend(() => {
       const channel = autoUpdater.channel;
-      return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
-        catch: (cause) =>
-          new ElectronUpdaterQuitAndInstallError({
-            channel,
-            isSilent,
-            isForceRunAfter,
-            cause,
-          }),
-      });
+      const fail = (cause: unknown) =>
+        Effect.fail(
+          new ElectronUpdaterQuitAndInstallError({ channel, isSilent, isForceRunAfter, cause }),
+        );
+      // electron-updater reports most install failures by emitting `error`
+      // synchronously and returning instead of throwing. Capture those as this
+      // call's failure so the caller can report it before returning.
+      const reported: Array<unknown> = [];
+      const captureInstallError = (error: unknown) => {
+        reported.push(error);
+        if (error instanceof Object) installErrors.add(error);
+      };
+      updaterEvents().prependListener("error", captureInstallError);
+      try {
+        autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+      } catch (cause) {
+        return fail(cause);
+      } finally {
+        updaterEvents().removeListener("error", captureInstallError);
+      }
+      return reported.length > 0 ? fail(reported[0]) : Effect.void;
     }),
   on: (eventName, listener) => {
-    const eventTarget = autoUpdater as unknown as {
-      on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-      removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-    };
-    const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
+    const untypedListener = listener as unknown as UpdaterListener;
+    // quitAndInstall already reports the errors it captured.
+    const filteredListener =
+      eventName === "error"
+        ? (error: unknown, ...rest: Array<unknown>) => {
+            if (error instanceof Object && installErrors.has(error)) return;
+            untypedListener(error, ...rest);
+          }
+        : untypedListener;
     return Effect.acquireRelease(
       Effect.sync(() => {
-        eventTarget.on(eventName, untypedListener);
+        updaterEvents().on(eventName, filteredListener);
       }),
       () =>
         Effect.sync(() => {
-          eventTarget.removeListener(eventName, untypedListener);
+          updaterEvents().removeListener(eventName, filteredListener);
         }),
     ).pipe(Effect.asVoid);
   },

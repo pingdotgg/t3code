@@ -233,8 +233,8 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provide(DesktopPreReadyFileSystem.layer),
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(layerDesktopEnvironment),
-  Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ElectronApp.layer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
