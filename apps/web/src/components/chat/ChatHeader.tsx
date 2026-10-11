@@ -9,7 +9,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, RefreshCwIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -46,6 +46,7 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
+  isRegeneratingTitle: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
@@ -80,6 +81,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   isServerThread,
+  isRegeneratingTitle,
   activeProject,
   parentThreadLink,
   onOpenThread,
@@ -413,9 +415,20 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                <h2 className="min-w-0">
+                <h2 className={cn("min-w-0", isRegeneratingTitle && "opacity-55")}>
                   <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
                 </h2>
+                {isRegeneratingTitle ? (
+                  <>
+                    <RefreshCwIcon
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                    <span role="status" className="sr-only">
+                      Regenerating title
+                    </span>
+                  </>
+                ) : null}
                 <ChevronDownIcon
                   aria-hidden
                   data-thread-title-chevron
