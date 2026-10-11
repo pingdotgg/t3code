@@ -167,7 +167,10 @@ export class ThreadLaunchService extends Context.Service<
   {
     readonly launch: (
       input: ThreadLaunchInput,
-    ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
+    ) => Effect.Effect<
+      ThreadLaunchResult,
+      ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
     /**
      * Fails when a new worktree's base ref cannot give provisioning a commit.
      * `launch` accepts such a launch and reports the failure inside the
@@ -743,6 +746,11 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
+      yield* ThreadManagement.assertProviderInstanceEnabledForProject(
+        serverSettings,
+        input.projectId,
+        input.modelSelection.instanceId,
+      );
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,

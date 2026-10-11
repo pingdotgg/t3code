@@ -193,12 +193,6 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
   input: ThreadLaunch.ThreadLaunchInput,
 ) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
-  yield* ThreadManagement.assertProviderInstanceEnabledForProject(
-    serverSettings,
-    input.projectId,
-    input.modelSelection.instanceId,
-  );
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
     return yield* launches.launch(input);
@@ -237,6 +231,10 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         ),
       ),
       Effect.tapError((error) => {
+        // A disabled-instance refusal happens before any dispatch is attempted.
+        if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
+          return AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths);
+        }
         // Project/receipt reads precede message dispatch. The create-thread error
         // also wraps post-message projection reads, so its tag alone is not proof.
         const notAccepted =

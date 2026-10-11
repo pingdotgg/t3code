@@ -472,6 +472,19 @@ export function ProviderEnvironmentSection(props: {
   );
 }
 
+/**
+ * When a project is in scope, the enable control reads and writes that
+ * project's override instead of the environment's `instance.enabled`.
+ * `value` is the project's explicit override (`undefined` means it
+ * inherits the environment); `effectiveEnabled` is what the Switch shows.
+ */
+interface ProjectEnablementControl {
+  readonly value: boolean | undefined;
+  readonly effectiveEnabled: boolean;
+  readonly onChange: (next: boolean) => void;
+  readonly onReset: () => void;
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -511,21 +524,8 @@ interface ProviderInstanceCardProps {
   readonly isUpdating?: boolean | undefined;
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
-  /**
-   * When a project is in scope, the enable control reads and writes that
-   * project's override instead of the environment's `instance.enabled`.
-   * `value` is the project's explicit override (`undefined` means it
-   * inherits the environment); `effectiveEnabled` is what the Switch shows.
-   * Omit this prop entirely for environment-wide editing.
-   */
-  readonly projectEnablement?:
-    | {
-        readonly value: boolean | undefined;
-        readonly effectiveEnabled: boolean;
-        readonly onChange: (next: boolean) => void;
-        readonly onReset: () => void;
-      }
-    | undefined;
+  /** Omit this prop entirely for environment-wide editing. */
+  readonly projectEnablement?: ProjectEnablementControl | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -598,8 +598,9 @@ export function ProviderInstanceCard({
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
+  // `liveProvider.enabled` is machine-wide; a project override can turn it on.
   const summary = enabled
-    ? getProviderSummary(liveProvider)
+    ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
@@ -993,13 +994,13 @@ export function ProviderInstanceCard({
             <SettingResetButton
               label={`${displayName} enablement`}
               tooltip="Reset to the device setting"
-              disabled={readOnly}
+              disabled={readOnly || !canWriteSettings}
               onClick={projectEnablement.onReset}
             />
           ) : null}
           <Switch
             checked={enabled}
-            disabled={readOnly}
+            disabled={readOnly || (projectEnablement !== undefined && !canWriteSettings)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />

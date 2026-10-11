@@ -54,6 +54,26 @@ function providerDisplayLabel(provider: {
   return provider.instanceId;
 }
 
+/**
+ * `provider.enabled` reflects the machine plus any project's keep-alive
+ * override, so it alone can't tell this project apart from one that merely
+ * shares the instance. Settings carry the real per-project view.
+ */
+function isProviderEnabledForProject(
+  config: T3ServerConfig | null | undefined,
+  provider:
+    | { readonly instanceId: ModelSelection["instanceId"]; readonly enabled: boolean }
+    | undefined,
+  projectId: ProjectId | null,
+): boolean {
+  if (!provider) {
+    return false;
+  }
+  return config?.settings
+    ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
+    : provider.enabled;
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -83,6 +103,7 @@ function normalizeSelectionOptions(
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
+  projectId: ProjectId | null = null,
 ): boolean {
   if (!config || !selection) {
     return false;
@@ -95,7 +116,7 @@ export function isModelSelectionUnavailable(
   return (
     driver === "antigravity" &&
     (!provider ||
-      !provider.enabled ||
+      !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       provider.availability === "unavailable" ||
@@ -111,6 +132,7 @@ export function isModelSelectionUnavailable(
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
+  projectId: ProjectId | null = null,
 ): ModelSelection | null {
   if (!selection || !config) {
     return selection;
@@ -124,7 +146,7 @@ export function resolveSelectableModelSelection(
     return selection;
   }
   return provider &&
-    provider.enabled &&
+    isProviderEnabledForProject(config, provider, projectId) &&
     provider.installed &&
     provider.auth.status !== "unauthenticated"
     ? selection
@@ -139,8 +161,9 @@ export function resolveSelectableModelSelection(
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
+  projectId: ProjectId | null = null,
 ): ModelSelection | null {
-  const usable = resolveSelectableModelSelection(config, selection);
+  const usable = resolveSelectableModelSelection(config, selection, projectId);
   if (!usable || !config) {
     return usable;
   }
@@ -174,15 +197,9 @@ export function buildModelOptions(
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
-    // `provider.enabled` reflects the machine plus any project's keep-alive
-    // override, so it alone can't tell this project apart from one that
-    // merely shares the instance. Settings carry the real per-project view.
-    const isEnabledForProject = config?.settings
-      ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
-      : provider.enabled;
     if (
       (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
-      !isEnabledForProject ||
+      !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")
@@ -260,7 +277,8 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection) ||
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
+        (provider !== undefined && !isProviderEnabledForProject(config, provider, projectId)) ||
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),

@@ -574,5 +574,43 @@ describe("mobile model options", () => {
 
       expect(buildModelOptions(configWith(settings), null, undefined, null)).toHaveLength(1);
     });
+
+    it("marks a project-disabled instance's fallback selection unavailable instead of reviving it", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+      const fallback = { instanceId, model: "model-a" };
+
+      const options = buildModelOptions(configWith(settings), fallback, undefined, projectId);
+
+      expect(options).toHaveLength(1);
+      expect(options[0]).toMatchObject({ selection: fallback, isUnavailable: true });
+    });
+
+    it("rejects a project-disabled instance's selection via resolveSelectableModelSelection", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+      const selection = { instanceId, model: "model-a" };
+
+      expect(
+        resolveSelectableModelSelection(configWith(settings), selection, projectId),
+      ).toBeNull();
+      expect(resolveSelectableModelSelection(configWith(settings), selection, null)).toBe(
+        selection,
+      );
+    });
   });
 });

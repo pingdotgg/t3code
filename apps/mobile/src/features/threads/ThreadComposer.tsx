@@ -435,7 +435,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
     props.connectionState === "connected" &&
-    isModelSelectionUnavailable(props.serverConfig, currentModelSelection);
+    isModelSelectionUnavailable(
+      props.serverConfig,
+      currentModelSelection,
+      props.selectedThread.projectId,
+    );
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (

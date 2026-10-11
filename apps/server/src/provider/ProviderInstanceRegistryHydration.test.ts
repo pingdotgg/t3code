@@ -32,6 +32,28 @@ describe("deriveProviderInstanceConfigMap", () => {
     expect(merged[instanceId]).toEqual({ driver: ProviderDriverKind.make("codex"), enabled: true });
   });
 
+  it("clears a nested config.enabled:false flag when a project enables the instance", () => {
+    const settings = settingsWith({
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { enabled: false },
+        },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+      },
+    });
+
+    const merged = deriveProviderInstanceConfigMap(settings);
+
+    expect(merged[instanceId]).toEqual({
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      config: { enabled: true },
+    });
+  });
+
   it("leaves an already machine-enabled instance untouched", () => {
     const settings = settingsWith({
       providerInstances: {

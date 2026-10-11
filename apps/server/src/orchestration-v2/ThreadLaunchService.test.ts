@@ -1769,6 +1769,33 @@ it.effect("replays a server-allocated launch", () =>
   }),
 );
 
+it.effect("refuses a launch when the project disables the model's provider instance", () => {
+  const harness = makeHarness({
+    serverSettings: {
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const failed = yield* launches
+      .launch(
+        launchInput({
+          command: "command:launch:project-disabled-instance",
+          thread: "thread:launch:project-disabled-instance",
+          message: "Hello",
+        }),
+      )
+      .pipe(Effect.flip);
+    if (failed._tag !== "ThreadManagementProviderInstanceDisabledError") {
+      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${failed._tag}`);
+    }
+    assert.equal(failed.projectId, projectId);
+    assert.equal(failed.instanceId, modelSelection.instanceId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("rejects a server-allocated launch replay with a mismatching thread id", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -1786,7 +1813,9 @@ it.effect("rejects a server-allocated launch replay with a mismatching thread id
       })
       .pipe(Effect.flip);
     assert.notEqual(first.threadId, ThreadId.make("thread:launch:allocated-mismatch"));
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.include(String(failed.cause), "cannot be replayed");
   }).pipe(Effect.provide(harness.layer));
@@ -1808,7 +1837,9 @@ it.effect("rejects a server-allocated launch receipt from another project", () =
         projectId: otherProjectId,
       })
       .pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "resolve-project");
     assert.equal(failed.threadId, first.threadId);
     assert.equal(failed.cause, "Project identity changed.");
@@ -1832,7 +1863,9 @@ it.effect("rejects a server-allocated launch retry after the thread is deleted",
       threadId: first.threadId,
     });
     const failed = yield* launches.launch(rest).pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.equal(failed.threadId, first.threadId);
     assert.equal(failed.cause, "Thread not found.");
@@ -1873,7 +1906,9 @@ it.effect("does not treat an unrelated accepted command receipt as a launch", ()
       message: "Should not become a launch",
     });
     const failed = yield* launches.launch(rest).pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.include(String(failed.cause), "cannot be replayed");
     const projection = yield* threads.getThreadProjection(threadId);
@@ -1918,7 +1953,9 @@ it.effect("bounds concurrent first launches to one thread per command", () =>
           continue;
         }
         const error = Cause.findErrorOption(result.cause).pipe(Option.getOrThrow);
-        assert.equal(error._tag, "ThreadLaunchError");
+        if (error._tag !== "ThreadLaunchError") {
+          assert.fail(`expected ThreadLaunchError, got ${error._tag}`);
+        }
         assert.equal(error.operation, "create-thread");
         assert.include(String(error.cause), "cannot be replayed");
         const retried = yield* launches.launch(rest);
