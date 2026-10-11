@@ -580,6 +580,30 @@ describe("ClientSettings appearance contrast", () => {
   });
 });
 
+describe("ClientSettings chat page scroll distance", () => {
+  it("defaults older saved settings to full-page scrolling", () => {
+    expect(decodeClientSettings({ wordWrap: false }).chatPageScrollFraction).toBe(1);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("chatPageScrollFraction");
+  });
+
+  it.each([1, 0.5])("accepts a supported page fraction: %s", (value) => {
+    expect(decodeClientSettings({ chatPageScrollFraction: value }).chatPageScrollFraction).toBe(
+      value,
+    );
+    expect(decodeClientSettingsPatch({ chatPageScrollFraction: value })).toEqual({
+      chatPageScrollFraction: value,
+    });
+  });
+
+  it.each([0, -0.5, 0.75, 2, NaN, Infinity, "0.5", null])(
+    "rejects an unsupported page fraction: %s",
+    (value) => {
+      expect(() => decodeClientSettings({ chatPageScrollFraction: value })).toThrow();
+      expect(() => decodeClientSettingsPatch({ chatPageScrollFraction: value })).toThrow();
+    },
+  );
+});
+
 describe("ClientSettings panel animations", () => {
   it("defaults to instant changes", () => {
     expect(decodeClientSettings({}).panelAnimationDurationMs).toBe(0);

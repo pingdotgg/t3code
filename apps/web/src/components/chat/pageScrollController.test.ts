@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
+import { ChatPageScrollFraction } from "@t3tools/contracts/settings";
 
 import {
   createPageScrollController,
@@ -103,6 +104,26 @@ describe("page scroll helpers", () => {
     expect(getTimelinePageScrollKey(composerPageScrollEvent({ keyCode: 229 }))).toBeNull();
   });
 
+  test.each(["altKey", "ctrlKey", "metaKey", "shiftKey", "defaultPrevented"] as const)(
+    "leaves modified or handled composer keys alone: %s",
+    (flag) => {
+      expect(getTimelinePageScrollKey(composerPageScrollEvent({ [flag]: true }))).toBeNull();
+    },
+  );
+
+  test.each([
+    [600, 24, 1, 540],
+    [600, 24, 0.5, 270],
+    [60, 40, 0.5, 0],
+  ] as const)(
+    "scales the usable page after composer padding and alignment: %s, %s, %s",
+    (containerHeightPx, scrollPaddingBottomPx, pageScrollFraction, expectedDistance) => {
+      expect(
+        getPageScrollDistancePx({ containerHeightPx, scrollPaddingBottomPx, pageScrollFraction }),
+      ).toBe(expectedDistance);
+    },
+  );
+
   test("leaves page keys to an overflowing composer until it reaches the boundary", () => {
     expect(
       getTimelinePageScrollKey(composerPageScrollEvent({ scrollHeight: 600, scrollTop: 0 })),
@@ -174,6 +195,111 @@ describe("page scroll helpers", () => {
 });
 
 describe("createPageScrollController", () => {
+  test.each(["PageUp", "PageDown"] as const)("scrolls half a usable page on a %s tap", (key) => {
+    const clock = new TestClock();
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 4_000,
+      scrollTop: 1_000,
+      getBoundingClientRect: () => ({ height: 600 }),
+    };
+    const controller = createPageScrollController({
+      getContainer: () => container,
+      getScrollPaddingBottomPx: () => 24,
+      getPageScrollFraction: () => 0.5,
+      env: clock.env,
+    });
+
+    controller.handleKeyDown(key);
+    controller.handleKeyUp(key);
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+
+    expect(container.scrollTop).toBeCloseTo(key === "PageUp" ? 730 : 1_270, 5);
+  });
+
+  test.each(["PageUp", "PageDown"] as const)(
+    "halves held %s scrolling through acceleration and stops on keyup",
+    (key) => {
+      const clock = new TestClock();
+      const cases = ChatPageScrollFraction.literals.map((fraction) => {
+        const container = {
+          clientHeight: 600,
+          scrollHeight: 20_000,
+          scrollTop: 10_000,
+          getBoundingClientRect: () => ({ height: 600 }),
+        };
+        const controller = createPageScrollController({
+          getContainer: () => container,
+          getScrollPaddingBottomPx: () => 24,
+          getPageScrollFraction: () => fraction,
+          env: clock.env,
+        });
+        controller.handleKeyDown(key);
+        return { container, controller };
+      });
+      const [full, half] = cases;
+      expect(full).toBeDefined();
+      expect(half).toBeDefined();
+      if (!full || !half) return;
+
+      for (const elapsed of [PAGE_SCROLL_ANIMATION_MS + 50, PAGE_SCROLL_ACCELERATION_MS * 2]) {
+        clock.advanceBy(elapsed);
+        expect(half.container.scrollTop - 10_000).toBeCloseTo(
+          (full.container.scrollTop - 10_000) / 2,
+          5,
+        );
+      }
+
+      const stoppedAt = cases.map(({ container, controller }) => {
+        controller.handleKeyUp(key);
+        return container.scrollTop;
+      });
+      clock.advanceBy(250);
+      expect(cases.map(({ container }) => container.scrollTop)).toEqual(stoppedAt);
+    },
+  );
+
+  test("reads changed fractions for the next tap and during a hold", () => {
+    const clock = new TestClock();
+    let fraction: ChatPageScrollFraction = 1;
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 20_000,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ height: 600 }),
+    };
+    const controller = createPageScrollController({
+      getContainer: () => container,
+      getScrollPaddingBottomPx: () => 24,
+      getPageScrollFraction: () => fraction,
+      env: clock.env,
+    });
+
+    controller.handleKeyDown("PageDown");
+    controller.handleKeyUp("PageDown");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+    expect(container.scrollTop).toBeCloseTo(540, 5);
+
+    fraction = 0.5;
+    controller.handleKeyDown("PageDown");
+    controller.handleKeyUp("PageDown");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+    expect(container.scrollTop).toBeCloseTo(810, 5);
+
+    fraction = 1;
+    controller.handleKeyDown("PageDown");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + PAGE_SCROLL_ACCELERATION_MS * 2);
+    const beforeFullFrame = container.scrollTop;
+    clock.advanceBy(16);
+    const fullFrameDistance = container.scrollTop - beforeFullFrame;
+
+    fraction = 0.5;
+    const beforeHalfFrame = container.scrollTop;
+    clock.advanceBy(16);
+    expect(container.scrollTop - beforeHalfFrame).toBeCloseTo(fullFrameDistance / 2, 5);
+    controller.dispose();
+  });
+
   test("keeps a single page scroll when the key is tapped", () => {
     const clock = new TestClock();
     const container = {
@@ -250,30 +376,34 @@ describe("createPageScrollController", () => {
     expect(started).toEqual(["PageUp"]);
   });
 
-  test("does not start a page scroll at the timeline boundary", () => {
-    const clock = new TestClock();
-    const started: string[] = [];
-    const container = {
-      clientHeight: 600,
-      scrollHeight: 1_800,
-      scrollTop: 0.5,
-      getBoundingClientRect: () => ({ height: 600 }),
-    };
-    const controller = createPageScrollController({
-      getContainer: () => container,
-      getScrollPaddingBottomPx: () => 24,
-      onScrollStart: (key) => started.push(key),
-      env: clock.env,
-    });
+  test.each(ChatPageScrollFraction.literals)(
+    "does not start a page scroll at the timeline boundary with fraction %s",
+    (fraction) => {
+      const clock = new TestClock();
+      const started: string[] = [];
+      const container = {
+        clientHeight: 600,
+        scrollHeight: 1_800,
+        scrollTop: 0.5,
+        getBoundingClientRect: () => ({ height: 600 }),
+      };
+      const controller = createPageScrollController({
+        getContainer: () => container,
+        getScrollPaddingBottomPx: () => 24,
+        getPageScrollFraction: () => fraction,
+        onScrollStart: (key) => started.push(key),
+        env: clock.env,
+      });
 
-    controller.handleKeyDown("PageUp");
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
+      controller.handleKeyDown("PageUp");
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
 
-    container.scrollTop = container.scrollHeight - container.clientHeight - 0.5;
-    controller.handleKeyDown("PageDown");
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
+      container.scrollTop = container.scrollHeight - container.clientHeight - 0.5;
+      controller.handleKeyDown("PageDown");
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
 
-    expect(started).toEqual([]);
-    expect(container.scrollTop).toBe(1_199.5);
-  });
+      expect(started).toEqual([]);
+      expect(container.scrollTop).toBe(1_199.5);
+    },
+  );
 });

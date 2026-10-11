@@ -39,6 +39,13 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Chat timeline
+
+Use Page Up and Page Down to scroll the chat timeline on web and desktop.
+In **Settings → General → Behavior → Chat page scroll distance**, choose **100%**
+for a full page or **50%** for half a page. The default is **100%**.
+Hold either key to keep scrolling. An overflowing composer scrolls first until it reaches its boundary.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

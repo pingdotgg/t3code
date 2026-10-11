@@ -45,6 +45,13 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["PageUp", "Page Down", "half page", "50%"])(
+    "finds the chat page scroll distance for %s",
+    (query) => {
+      expect(searchSettings(query)[0]?.id).toBe("chat-page-scroll-distance");
+    },
+  );
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

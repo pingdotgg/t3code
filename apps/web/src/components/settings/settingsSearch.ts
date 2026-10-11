@@ -452,6 +452,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "chat-page-scroll-distance",
+    title: "Chat page scroll distance",
+    to: "/settings/general",
+    searchTerms: ["page up page down pageup pagedown half full 50% 100% keyboard timeline scroll"],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/general",

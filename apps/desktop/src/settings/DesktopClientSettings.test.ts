@@ -21,6 +21,7 @@ const clientSettings: ClientSettings = {
   notificationMode: "notifications-and-sound",
   inAppNotificationsEnabled: true,
   appearanceContrast: 100,
+  chatPageScrollFraction: 0.5,
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
   browserDefaultZoomFactor: 1.25,
   browserDefaultAppearance: "dark",
@@ -113,6 +114,23 @@ const withClientSettings = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
+  it.effect("defaults older settings files to full-page scrolling", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, '{"wordWrap":false}');
+
+        assert.deepEqual(
+          yield* settings.get,
+          Option.some({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false }),
+        );
+      }),
+    ),
+  );
+
   it.effect("returns none when no client settings file exists", () =>
     withClientSettings(
       Effect.gen(function* () {

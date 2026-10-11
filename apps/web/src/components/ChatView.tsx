@@ -335,6 +335,7 @@ import {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import {
+  getClientSettings,
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
@@ -6489,6 +6490,7 @@ export default function ChatView(props: ChatViewProps) {
     const controller = createPageScrollController({
       getContainer: () => legendListRef.current?.getScrollableNode() ?? null,
       getScrollPaddingBottomPx: () => composerOverlayElement?.getBoundingClientRect().height ?? 0,
+      getPageScrollFraction: () => getClientSettings().chatPageScrollFraction,
       onScrollStart: handlePageScrollStart,
     });
     pageScrollControllerRef.current = controller;
@@ -6606,6 +6608,9 @@ export default function ChatView(props: ChatViewProps) {
         // the end on the next stream chunk. Clicking message text can leave
         // DOM focus on body, so these keys must also be heard at document.
         const handleKeyDown = (event: KeyboardEvent) => {
+          if (["Alt", "Control", "Meta", "Shift"].includes(event.key)) {
+            onComposerPageScrollRelease();
+          }
           if (
             !(event.target instanceof Node) ||
             (!scrollNode.contains(event.target) &&
@@ -6613,6 +6618,7 @@ export default function ChatView(props: ChatViewProps) {
               event.target !== document.documentElement) ||
             event.defaultPrevented ||
             event.isComposing ||
+            event.keyCode === 229 ||
             event.altKey ||
             event.ctrlKey ||
             event.metaKey ||
@@ -6630,8 +6636,12 @@ export default function ChatView(props: ChatViewProps) {
             !isTimelineScrollTarget(event.target, scrollNode, scrollDirection)
           )
             return;
+          if (event.key === "PageUp" || event.key === "PageDown") {
+            event.preventDefault();
+            onComposerPageScrollKeyDown(event.key);
+            return;
+          }
           switch (event.key) {
-            case "PageUp":
             case "Home":
             case "ArrowUp":
               timelineScrollIntentRef.current = "away-from-end";
@@ -6640,7 +6650,6 @@ export default function ChatView(props: ChatViewProps) {
                 composerRef.current?.collapseForTimelineScrollKey(event.key);
               }
               break;
-            case "PageDown":
             case "End":
             case "ArrowDown":
               timelineScrollIntentRef.current = "toward-end";
@@ -6666,11 +6675,19 @@ export default function ChatView(props: ChatViewProps) {
           passive: true,
         });
         document.addEventListener("keydown", handleKeyDown);
+        const handleKeyUp = (event: KeyboardEvent) => onComposerPageScrollKeyUp(event.key);
+        document.addEventListener("keyup", handleKeyUp);
+        document.addEventListener("focusin", onComposerPageScrollRelease);
+        window.addEventListener("blur", onComposerPageScrollRelease);
         removeListeners = () => {
+          onComposerPageScrollRelease();
           scrollNode.removeEventListener("wheel", handleWheel);
           scrollNode.removeEventListener("touchmove", handleTouchMove);
           scrollNode.removeEventListener("pointerdown", handlePointerDown);
           document.removeEventListener("keydown", handleKeyDown);
+          document.removeEventListener("keyup", handleKeyUp);
+          document.removeEventListener("focusin", onComposerPageScrollRelease);
+          window.removeEventListener("blur", onComposerPageScrollRelease);
         };
       });
     };
@@ -6682,7 +6699,14 @@ export default function ChatView(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
+  }, [
+    activeThread?.id,
+    isTimelineAtLogicalEnd,
+    timelineRealContentOverflowsViewport,
+    onComposerPageScrollKeyDown,
+    onComposerPageScrollKeyUp,
+    onComposerPageScrollRelease,
+  ]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
