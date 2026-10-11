@@ -2913,6 +2913,142 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each([
+    { status: "failed", completeItem: false },
+    { status: "interrupted", completeItem: false },
+    { status: "failed", completeItem: true },
+  ] as const)(
+    "settles automatic compaction on $status (item completed: $completeItem)",
+    ({ status, completeItem }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = `compact-${status}-thread`;
+          const nativeTurnId = `compact-${status}-turn`;
+          const item = { type: "contextCompaction", id: `compact-${status}-item` };
+          const error = {
+            message:
+              "Error running remote compact task: stream disconnected before completion: stream closed before response.completed",
+            codexErrorInfo: "other",
+            additionalDetails: null,
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: `automatic-compaction-${status}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              {
+                type: "emit_inbound",
+                label: "item/started/compaction",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item,
+                    startedAtMs: 1782622441000,
+                  },
+                },
+              },
+              ...([1, 2] as const).map((attempt) => ({
+                type: "emit_inbound" as const,
+                label: `error/retry-${attempt}`,
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: true,
+                    error: {
+                      message: `Reconnecting... ${attempt}/2`,
+                      additionalDetails: "stream disconnected before completion",
+                      codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                    },
+                  },
+                },
+              })),
+              ...(completeItem
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "item/completed/compaction",
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          item,
+                          completedAtMs: 1782622444000,
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              ...(status === "failed"
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "error/terminal",
+                      frame: {
+                        method: "error",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          willRetry: false,
+                          error,
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status }),
+                      error: status === "failed" ? error : null,
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`compact-${status}-attempt`),
+              text: "Continue.",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            items.map((entry) => entry.status),
+            ["running", completeItem ? "completed" : status],
+          );
+          assert.equal(items[0]?.id, items[1]?.id);
+          assert.deepEqual(items[1]?.startedAt, DateTime.makeUnsafe(1782622441000));
+          assert.deepEqual(
+            items[1]?.completedAt,
+            DateTime.makeUnsafe(completeItem ? 1782622444000 : 1782622450000),
+          );
+          assert.equal(harness.terminalEvents()[0]?.status, status);
+          if (status === "failed") {
+            assert.equal(harness.terminalEvents()[0]?.failure?.message, error.message);
+          }
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {

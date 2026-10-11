@@ -1122,6 +1122,7 @@ interface ActiveCodexTurnContext {
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
+  readonly runningCompactionItemIds: Set<string>;
   // Item positions allocated in this turn. Later turns never look items up
   // here: late background items resolve their settled turn's context, and a
   // subagent's approvals allocate on the owning root turn.
@@ -1998,6 +1999,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent: null,
               startedAt: input.startedAt,
               itemPositions: new Map(),
+              runningCompactionItemIds: new Set(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -2588,6 +2590,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              runningCompactionItemIds: new Set(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -4567,15 +4570,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitCompactionItem = Effect.fn("CodexAdapterV2.emitCompactionItem")(function* (
           context: ActiveCodexTurnContext,
           nativeItemId: string,
-          status: "running" | "completed",
-          nativeStartedAt?: DateTime.Utc,
+          status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
+          nativeTimestamp?: DateTime.Utc,
         ) {
-          const now = yield* DateTime.now;
+          const now = nativeTimestamp ?? (yield* DateTime.now);
           const { ordinal, startedAt } = yield* resolveItemPosition(
             context,
             nativeItemId,
-            nativeStartedAt,
+            nativeTimestamp,
           );
+          if (status === "running") context.runningCompactionItemIds.add(nativeItemId);
+          else context.runningCompactionItemIds.delete(nativeItemId);
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
@@ -4595,9 +4600,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "compaction",
               driver: CODEX_PROVIDER,
               status,
-              title: status === "completed" ? "Context compacted" : "Compacting context",
+              title:
+                status === "running"
+                  ? "Compacting context"
+                  : status === "completed"
+                    ? "Context compacted"
+                    : status === "failed"
+                      ? "Context compaction failed"
+                      : "Context compaction stopped",
               startedAt,
-              completedAt: status === "completed" ? now : null,
+              completedAt: status === "running" ? null : now,
               updatedAt: now,
             },
           });
@@ -4764,7 +4776,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "contextCompaction") {
-              yield* emitCompactionItem(context, payload.item.id, "completed");
+              yield* emitCompactionItem(
+                context,
+                payload.item.id,
+                "completed",
+                DateTime.makeUnsafe(payload.completedAtMs),
+              );
               return;
             }
 
@@ -5768,6 +5785,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               for (const [key, part] of reasoningParts) {
                 if (part.turnId === input.nativeTurnId) reasoningParts.delete(key);
               }
+              // Failed compaction can end the turn without item/completed.
+              for (const nativeItemId of input.context.runningCompactionItemIds) {
+                yield* emitCompactionItem(
+                  input.context,
+                  nativeItemId,
+                  providerTurnStatusToTerminal(input.status),
+                  input.completedAt,
+                );
+              }
               const nativeThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
               // Codex continues an active goal with another turn, so the run stays
               // open and this turn reads as running until that turn starts.
@@ -6030,6 +6056,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: now,
             itemPositions: new Map(),
+            runningCompactionItemIds: new Set(),
           };
           const providerTurn = {
             id: context.providerTurnId,
