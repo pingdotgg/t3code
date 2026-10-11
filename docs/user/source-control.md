@@ -209,6 +209,9 @@ about them; comments wait with the ones from the **Code** tab until you send the
 suggested question, or **Ask about this stop**, to open a thread that already knows which stop you
 are on. **Finish review** on the last stop opens the review with everything you collected.
 
+Agents can write guides too: ask one to prepare guides for a set of pull requests, and it starts
+them for you. Each is read through the project whose checkout has that repository.
+
 To shape guides to your taste, write **Review guide instructions** in Settings → Source Control,
 such as what to show first or what to skip; projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.

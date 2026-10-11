@@ -2,6 +2,8 @@ import {
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
   PositiveInt,
+  PullRequestReviewGuide,
+  PullRequestReviewGuideRun,
   PullRequestState,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
@@ -15,12 +17,18 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,
+];
+
+const guideDependencies = [
+  ...dependencies,
+  PullRequestReviewGuideService.PullRequestReviewGuideService,
 ];
 
 const REGISTER_EVERY_PR =
@@ -162,6 +170,24 @@ export class PullRequestListFailedError extends Schema.TaggedError<PullRequestLi
   }
 }
 
+export class PullRequestProjectNotFoundError extends Schema.TaggedError<PullRequestProjectNotFoundError>()(
+  "PullRequestProjectNotFoundError",
+  { repository: Schema.String },
+) {
+  override get message(): string {
+    return `No project in this environment is a checkout of ${this.repository}, so its pull requests cannot be read here. Add one with t3_project_create.`;
+  }
+}
+
+export class PullRequestGuideFailedError extends Schema.TaggedError<PullRequestGuideFailedError>()(
+  "PullRequestGuideFailedError",
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const PullRequestToolError = Schema.Union([
   OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
@@ -176,6 +202,8 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchFailedError,
   PullRequestNotOpenError,
   PullRequestWatchFromSubagentError,
+  PullRequestProjectNotFoundError,
+  PullRequestGuideFailedError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -319,10 +347,76 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+/** A pull request to write or read a guide for, by URL or by repository and number. */
+const GuideTarget = Schema.Struct({
+  url: PullRequestTargetInput.fields.url,
+  repository: PullRequestTargetInput.fields.repository,
+  number: PullRequestTargetInput.fields.number,
+  host: PullRequestTargetInput.fields.host,
+});
+
+const GuideOutcome = Schema.Struct({
+  ...PullRequestIdentity,
+  outcome: Schema.Literals(["started", "running", "failed"]).annotate({
+    description:
+      "started: a run began. running: one was already going for this head and the call joined it. failed: this pull request could not be guided; see detail.",
+  }),
+  detail: Schema.NullOr(Schema.String),
+});
+
+export const WritePullRequestGuidesResult = Schema.Struct({
+  guides: Schema.Array(GuideOutcome),
+});
+export type WritePullRequestGuidesResult = typeof WritePullRequestGuidesResult.Type;
+
+export const ReadPullRequestGuideResult = Schema.Struct({
+  ...PullRequestIdentity,
+  guide: Schema.NullOr(PullRequestReviewGuide),
+  run: Schema.NullOr(PullRequestReviewGuideRun),
+  currentHeadSha: Schema.NullOr(Schema.String),
+  stale: Schema.Boolean.annotate({
+    description:
+      "True when the guide was written for an earlier head than the pull request has now.",
+  }),
+});
+export type ReadPullRequestGuideResult = typeof ReadPullRequestGuideResult.Type;
+
+const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
+  description:
+    "Write review guides for up to 20 pull requests, the tour a maintainer reads in a pull request's Guide tab. Each run reads its change in a temporary checkout and takes minutes, so this returns once the runs are under way; read a guide with read_pull_request_guide to see when it is written. A guide for the same head that is already running is joined, not restarted; a pull request whose guide is current is written again. Each pull request is read through the project in this environment whose checkout has that repository. Fails while review guides are off on this server.",
+  parameters: Schema.Struct({
+    pullRequests: Schema.Array(GuideTarget).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  }),
+  success: WritePullRequestGuidesResult,
+  failure: PullRequestToolError,
+  dependencies: guideDependencies,
+})
+  .annotate(Tool.Title, "Write pull request guides")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
+  description:
+    "Read a pull request's stored review guide and its run: run.Running while one is being written, run.Failed with the reason when the last one failed, guide null when none was written. stale is true after a push the guide has not caught up with. Never starts a run.",
+  parameters: GuideTarget,
+  success: ReadPullRequestGuideResult,
+  failure: PullRequestToolError,
+  dependencies: guideDependencies,
+})
+  .annotate(Tool.Title, "Read pull request guide")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   UnlinkPullRequestTool,
   ListThreadPullRequestsTool,
   WatchPullRequestTool,
   UnwatchPullRequestTool,
+  WritePullRequestGuidesTool,
+  ReadPullRequestGuideTool,
 );

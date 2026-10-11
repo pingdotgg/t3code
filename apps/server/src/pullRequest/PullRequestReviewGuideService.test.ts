@@ -303,6 +303,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const started = yield* service.generate(reference);
         assert.strictEqual(started.run?._tag, "Running");
         assert.strictEqual(started.guide, null);
+        assert.isTrue(started.started);
 
         // A run that fails before reaching the model reports why rather than leaving this waiting.
         const failedRun = service.get(reference).pipe(
@@ -329,7 +330,8 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
 
         // A second press while running joins the run instead of starting another.
         const joined = yield* service.generate(reference);
-        assert.strictEqual(joined.run?._tag, "Running");
+        assert.strictEqual(joined.run, started.run);
+        assert.isFalse(joined.started);
 
         yield* Deferred.succeed(finish, undefined);
         yield* Deferred.await(stored);

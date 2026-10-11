@@ -158,6 +158,14 @@ export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>
   declare((params: P) => orchestratingCaller.pipe(Effect.flatMap(() => handle(params))));
 
 /**
+ * Changes something that belongs to no thread under a capability of the tool's own, such as
+ * writing a pull request's review guide. Unlike `writes` it does not need thread control; the
+ * handler checks its capability, as the capability toolkits do.
+ */
+export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare((params: P) => writingCaller.pipe(Effect.flatMap(() => handle(params))));
+
+/**
  * Changes the threads `threads` names. An omitted id is the caller's own
  * thread; any other thread must run within the caller's modes, checked here
  * and again by the orchestrator when it applies each command. A thread that

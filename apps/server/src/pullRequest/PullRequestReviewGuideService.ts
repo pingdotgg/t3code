@@ -62,11 +62,15 @@ export class PullRequestReviewGuideService extends Context.Service<
     /**
      * Start writing a guide for the current head and return once it is under way. Joins a run
      * already going for that head. A stored guide stays readable until the new one replaces it,
-     * so a reader can rewrite one after changing the guide model or instructions.
+     * so a reader can rewrite one after changing the guide model or instructions. `started` says
+     * whether this call began the run or joined one already going.
      */
     readonly generate: (
       input: PullRequestRef,
-    ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestService.PullRequestError>;
+    ) => Effect.Effect<
+      PullRequestReviewGuideResult & { readonly started: boolean },
+      PullRequestService.PullRequestError
+    >;
   }
 >()("t3/pullRequest/PullRequestReviewGuideService") {}
 
@@ -439,7 +443,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-    if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha };
+    if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha, started: false };
 
     // The run is identified by its own Running value: a later claim replaces it, and from then
     // on this run's completion leaves the newer run's state and guide alone.
@@ -475,7 +479,7 @@ const make = Effect.gen(function* () {
       ),
       Effect.forkIn(serviceScope),
     );
-    return { guide: stored, run: running, currentHeadSha };
+    return { guide: stored, run: running, currentHeadSha, started: true };
   });
 
   return PullRequestReviewGuideService.of({ get, generate });

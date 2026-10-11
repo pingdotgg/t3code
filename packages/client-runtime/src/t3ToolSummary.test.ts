@@ -28,6 +28,22 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Created 1 thread");
   });
 
+  it("reports review guides by outcome, and a call where none started as a failure", () => {
+    const guides = (...outcomes: ReadonlyArray<string>) => ({
+      guides: outcomes.map((outcome, index) => ({ number: index + 1, outcome })),
+    });
+    expect(
+      summarizeT3ToolCalls("write-pr-guides", [
+        completed({}, guides("started", "running", "failed")),
+      ]),
+    ).toEqual({ label: "Started 2 review guides, 1 failed", failedCount: 1 });
+    const allFailed = summarizeT3ToolCalls("write-pr-guides", [
+      completed({}, guides("failed", "failed")),
+    ]);
+    expect(allFailed.label).toBe("Could not start 2 review guides");
+    expect(allFailed.failedCount).toBe(2);
+  });
+
   it.each([
     ["queue-read", "Read 1 queued message"],
     ["queue-edit", "Edited 1 queued message"],
