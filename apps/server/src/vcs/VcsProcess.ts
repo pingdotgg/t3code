@@ -113,70 +113,98 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+// macOS maps core.fsyncMethod=fsync to F_FULLFSYNC. SMB, NFS, and AFP return
+// ENOTSUP for that flush; writeout-only is the strongest flush they support.
+const isUnsupportedFullFsync = (stderr: string) =>
+  /fsync error on [^\n]+: operation not supported/i.test(stderr);
+
+const WRITEOUT_ONLY_FSYNC = "core.fsyncMethod=writeout-only";
+const FULL_FSYNC = "core.fsyncMethod=fsync";
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
-    const baseError = {
-      operation: input.operation,
-      command: input.command,
-      cwd: input.cwd,
-      argumentCount: input.args.length,
+    const runAttempt = (attempt: VcsProcessInput) => {
+      const baseError = {
+        operation: attempt.operation,
+        command: attempt.command,
+        cwd: attempt.cwd,
+        argumentCount: attempt.args.length,
+      };
+      return processRunner
+        .run({
+          command: attempt.command,
+          args: attempt.args,
+          cwd: attempt.cwd,
+          ...(attempt.spawnCwd !== undefined ? { spawnCwd: attempt.spawnCwd } : {}),
+          ...(attempt.stdin !== undefined ? { stdin: attempt.stdin } : {}),
+          ...(attempt.onStdoutChunk !== undefined ? { onStdoutChunk: attempt.onStdoutChunk } : {}),
+          ...(attempt.env !== undefined ? { env: attempt.env } : {}),
+          timeout: attempt.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxOutputBytes: attempt.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+          outputMode: attempt.outputMode ?? "truncate",
+          truncatedMarker: attempt.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
+          timeoutBehavior: "error",
+        })
+        .pipe(
+          Effect.map((result) => ({ result, baseError })),
+          Effect.mapError(
+            Match.valueTags({
+              ProcessSpawnError: (error) =>
+                VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
+              ProcessOutputLimitError: (error) =>
+                new VcsProcessOutputLimitError({
+                  ...baseError,
+                  stream: error.stream,
+                  maxBytes: error.maxBytes,
+                  observedBytes: error.observedBytes,
+                }),
+              ProcessTimeoutError: (error) =>
+                VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
+              ProcessStdinError: (error) =>
+                new VcsProcessStdinWriteError({
+                  ...baseError,
+                  stdinBytes: error.stdinBytes,
+                  cause: error.cause,
+                }),
+              ProcessReadError: (error) =>
+                new VcsProcessOutputReadError({
+                  ...baseError,
+                  stream: error.stream,
+                  cause: error.cause,
+                }),
+            }),
+          ),
+        );
     };
 
-    const result = yield* processRunner
-      .run({
-        command: input.command,
-        args: input.args,
-        cwd: input.cwd,
-        ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
-        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        ...(input.env !== undefined ? { env: input.env } : {}),
-        timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-        outputMode: input.outputMode ?? "truncate",
-        truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
-        timeoutBehavior: "error",
-      })
-      .pipe(
-        Effect.mapError(
-          Match.valueTags({
-            ProcessSpawnError: (error) =>
-              VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
-            ProcessOutputLimitError: (error) =>
-              new VcsProcessOutputLimitError({
-                ...baseError,
-                stream: error.stream,
-                maxBytes: error.maxBytes,
-                observedBytes: error.observedBytes,
-              }),
-            ProcessTimeoutError: (error) =>
-              VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
-            ProcessStdinError: (error) =>
-              new VcsProcessStdinWriteError({
-                ...baseError,
-                stdinBytes: error.stdinBytes,
-                cause: error.cause,
-              }),
-            ProcessReadError: (error) =>
-              new VcsProcessOutputReadError({
-                ...baseError,
-                stream: error.stream,
-                cause: error.cause,
-              }),
-          }),
-        ),
-      );
+    let attempt = input;
+    let { result, baseError } = yield* runAttempt(attempt);
+    // One rewrite. Recursing through Effect.fn erases the error channel.
+    if (
+      result.code !== null &&
+      result.code !== 0 &&
+      !attempt.allowNonZeroExit &&
+      attempt.command === "git" &&
+      attempt.args.includes(FULL_FSYNC) &&
+      isUnsupportedFullFsync(result.stderr)
+    ) {
+      attempt = {
+        ...attempt,
+        args: attempt.args.map((arg) => (arg === FULL_FSYNC ? WRITEOUT_ONLY_FSYNC : arg)),
+      };
+      ({ result, baseError } = yield* runAttempt(attempt));
+    }
 
     if (result.code === null) {
       return yield* new VcsProcessMissingExitCodeError(baseError);
     }
 
-    if (!input.allowNonZeroExit && result.code !== 0) {
-      const failureKind = classifyNonZeroExit(input.command, result.stderr);
+    if (!attempt.allowNonZeroExit && result.code !== 0) {
+      const failureKind = classifyNonZeroExit(attempt.command, result.stderr);
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
         {
@@ -185,7 +213,7 @@ export const make = Effect.gen(function* () {
           stderrTruncated: result.stderrTruncated,
         },
         failureKind,
-        input.command === "git" &&
+        attempt.command === "git" &&
           failureKind === "command-failed" &&
           isTransientGitExit(result.stderr),
       );
