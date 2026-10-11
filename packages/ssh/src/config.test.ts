@@ -49,6 +49,7 @@ describe("ssh config", () => {
       yield* fs.writeFileString(
         path.join(sshDir, "known_hosts"),
         [
+          "devbox.example.com ssh-ed25519 AAAA",
           "known.example.com ssh-ed25519 AAAA",
           "|1|hashed|entry ssh-ed25519 AAAA",
           "[bastion.example.com]:2222 ssh-ed25519 AAAA",
@@ -67,7 +68,7 @@ describe("ssh config", () => {
         },
         {
           alias: "devbox",
-          hostname: "devbox",
+          hostname: "devbox.example.com",
           username: null,
           port: null,
           source: "ssh-config",
@@ -88,7 +89,7 @@ describe("ssh config", () => {
         },
         {
           alias: "staging",
-          hostname: "staging",
+          hostname: "staging.example.com",
           username: null,
           port: null,
           source: "ssh-config",

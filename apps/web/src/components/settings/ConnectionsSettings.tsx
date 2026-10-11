@@ -2273,7 +2273,8 @@ export function ConnectionsSettings() {
         const address = formatDesktopSshTarget(target);
         return (
           !savedDesktopSshEnvironmentKeys.has(target.alias) &&
-          !savedDesktopSshEnvironmentKeys.has(address)
+          // A configured alias keeps its own settings even when its hostname is saved.
+          (target.source === "ssh-config" || !savedDesktopSshEnvironmentKeys.has(address))
         );
       }),
     [discoveredSshHosts, savedDesktopSshEnvironmentKeys],
