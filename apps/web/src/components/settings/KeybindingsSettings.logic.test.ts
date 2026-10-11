@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { DEFAULT_RESOLVED_KEYBINDINGS, parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 
+import { resolveShortcutCommand } from "../../keybindings";
 import {
   buildKeybindingRows,
   buildKeybindingCommandOptions,
@@ -179,7 +180,7 @@ describe("KeybindingsSettings.logic", () => {
     ["@", "Digit2", "mod+shift+2"],
     ['"', "Digit2", "mod+shift+2"],
     ["@", "Quote", "mod+shift+'"],
-  ])("captures %s at %s by physical key", (key, code, expected) => {
+  ])("captures %s at %s by physical key for global shortcuts", (key, code, expected) => {
     expect(
       keybindingFromKeyboardEvent(
         {
@@ -193,6 +194,139 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe(expected);
+  });
+
+  const layoutModifiers = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
+
+  it.each([
+    ["~", "Backquote", "`"],
+    ["|", "Backslash", "\\"],
+    ["{", "BracketLeft", "["],
+    ["}", "BracketRight", "]"],
+    ["<", "Comma", ","],
+    [")", "Digit0", "0"],
+    ["!", "Digit1", "1"],
+    ["@", "Digit2", "2"],
+    ["#", "Digit3", "3"],
+    ["$", "Digit4", "4"],
+    ["%", "Digit5", "5"],
+    ["^", "Digit6", "6"],
+    ["&", "Digit7", "7"],
+    ["*", "Digit8", "8"],
+    ["(", "Digit9", "9"],
+    ["+", "Equal", "="],
+    ["_", "Minus", "-"],
+    [">", "Period", "."],
+    ['"', "Quote", "'"],
+    [":", "Semicolon", ";"],
+    ["?", "Slash", "/"],
+  ])("keeps unshifted %s on %s and maps it to %s only with Shift", (key, code, usName) => {
+    expect(
+      keybindingFromKeyboardEvent({ ...layoutModifiers, key, code }, "MacIntel", {
+        layoutCharacter: true,
+      }),
+    ).toBe(key);
+    expect(
+      keybindingFromKeyboardEvent({ ...layoutModifiers, key, code, shiftKey: true }, "MacIntel", {
+        layoutCharacter: true,
+      }),
+    ).toBe(`shift+${usName}`);
+  });
+
+  it("records the character a German layout types and still matches that press", () => {
+    const unshifted = {
+      ...layoutModifiers,
+      key: "#",
+      code: "Backslash",
+    };
+    expect(keybindingFromKeyboardEvent(unshifted, "MacIntel", { layoutCharacter: true })).toBe("#");
+
+    const pressed = {
+      ...layoutModifiers,
+      key: "'",
+      code: "Backslash",
+      shiftKey: true,
+    };
+    // The default path is the US name, which global shortcut recording still uses.
+    expect(keybindingFromKeyboardEvent(pressed, "MacIntel")).toBe("shift+\\");
+    const input = keybindingFromKeyboardEvent(pressed, "MacIntel", { layoutCharacter: true });
+    expect(input).toBe("shift+'");
+    const shortcut = parseKeybindingShortcut(input!)!;
+    expect(
+      resolveShortcutCommand(pressed, [{ command: "chat.new", shortcut }], {
+        platform: "MacIntel",
+      }),
+    ).toBe("chat.new");
+  });
+
+  it("keeps an unshifted { on BracketLeft and matches that press", () => {
+    const pressed = {
+      ...layoutModifiers,
+      key: "{",
+      code: "BracketLeft",
+      metaKey: true,
+    };
+    const input = keybindingFromKeyboardEvent(pressed, "MacIntel", { layoutCharacter: true });
+    expect(input).toBe("mod+{");
+    const shortcut = parseKeybindingShortcut(input!)!;
+    expect(shortcut.key).toBe("{");
+    expect(
+      resolveShortcutCommand(pressed, [{ command: "chat.new", shortcut }], {
+        platform: "MacIntel",
+      }),
+    ).toBe("chat.new");
+  });
+
+  it("maps Shift plus the US { glyph to [ and still matches that press", () => {
+    const pressed = {
+      ...layoutModifiers,
+      key: "{",
+      code: "BracketLeft",
+      metaKey: true,
+      shiftKey: true,
+    };
+    const input = keybindingFromKeyboardEvent(pressed, "MacIntel", { layoutCharacter: true });
+    expect(input).toBe("mod+shift+[");
+    const shortcut = parseKeybindingShortcut(input!)!;
+    expect(
+      resolveShortcutCommand(pressed, [{ command: "thread.previous", shortcut }], {
+        platform: "MacIntel",
+      }),
+    ).toBe("thread.previous");
+  });
+
+  it("records a Latin layout letter instead of the punctuation position", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "m",
+          code: "Semicolon",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+        { layoutCharacter: true },
+      ),
+    ).toBe("mod+m");
+  });
+
+  it("records a non-US shifted glyph instead of the US digit name", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: '"',
+          code: "Digit2",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
+        "MacIntel",
+        { layoutCharacter: true },
+      ),
+    ).toBe('mod+shift+"');
   });
 
   it("captures Latin layout keys instead of their punctuation position", () => {
