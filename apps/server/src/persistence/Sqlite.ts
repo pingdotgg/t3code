@@ -12,6 +12,11 @@ import * as ServerConfig from "../config.ts";
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
+// Upper bound on the connection's page cache. At SQLite's 2 MiB default, every
+// query on a large database re-reads its b-tree pages from the OS. The cache
+// only grows as pages are read, so a small database never reaches the bound.
+export const PAGE_CACHE_SIZE_KIB = 64 * 1024;
+
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -22,6 +27,8 @@ const layerSetup = Layer.effectDiscard(
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
+    // A negative cache_size is in KiB rather than pages.
+    yield* sql.unsafe(`PRAGMA cache_size = -${PAGE_CACHE_SIZE_KIB};`);
     yield* runMigrations();
   }),
 );

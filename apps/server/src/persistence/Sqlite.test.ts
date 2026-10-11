@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
+import { PAGE_CACHE_SIZE_KIB, WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const lockHolderSource = `
@@ -89,5 +89,13 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
     assert.equal(rows[0]?.timeout, 5000);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("applies the page cache bound in the shared persistence setup", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+    assert.equal(rows[0]?.cache_size, -PAGE_CACHE_SIZE_KIB);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
