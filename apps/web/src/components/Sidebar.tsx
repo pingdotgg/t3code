@@ -208,6 +208,7 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
+  shouldClearPersistedSidebarProjectScope,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
@@ -2681,12 +2682,28 @@ export default function Sidebar() {
   // A persisted scope whose project is gone falls back to all projects, but
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
+  // Scratch ("No project") is a live catalog project, so the same reset
+  // drops a scope that resolves only to those workspaces.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    if (
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: projectScopeKey,
+        snapshotsReady: allProjectSnapshotsReady,
+        scopedGroup: scopedProjectGroup,
+        scratchWorkspaceRootFor: (environmentId) =>
+          serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+      })
+    ) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    projectScopeKey,
+    scopedProjectGroup,
+    serverConfigs,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from

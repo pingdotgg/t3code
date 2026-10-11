@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -565,6 +566,40 @@ export function buildMultiSelectThreadContextMenuItems(input: {
 
 export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
+}
+
+/**
+ * Whether a persisted new-sidebar project scope should be cleared once
+ * project snapshots are ready.
+ *
+ * Clears a scope whose catalog group is gone, and a scope whose group is
+ * only Scratch ("No project") workspaces. Scratch is a real catalog
+ * project, so leaving that key set keeps the sidebar filtered to it.
+ */
+export function shouldClearPersistedSidebarProjectScope(input: {
+  readonly scopeKey: string | null;
+  readonly snapshotsReady: boolean;
+  readonly scopedGroup: {
+    readonly memberProjects: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly workspaceRoot: string;
+    }>;
+  } | null;
+  readonly scratchWorkspaceRootFor: (environmentId: EnvironmentId) => string | null | undefined;
+}): boolean {
+  if (input.scopeKey === null || !input.snapshotsReady) {
+    return false;
+  }
+  const group = input.scopedGroup;
+  if (group === null) {
+    return true;
+  }
+  return (
+    group.memberProjects.length > 0 &&
+    group.memberProjects.every((member) =>
+      isScratchProject(member, input.scratchWorkspaceRootFor(member.environmentId)),
+    )
+  );
 }
 
 export function filterSidebarV2VisibleThreads<
