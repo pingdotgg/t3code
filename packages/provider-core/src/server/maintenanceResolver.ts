@@ -386,6 +386,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
 
+  // Mise ownership wins over the native-installer path match below: a mise
+  // launcher script can live at a native-looking path such as
+  // `~/.local/bin/claude`, and the provider's own updater refuses those
+  // installs (e.g. `claude update` exits 0 with "managed by a package
+  // manager"), so offering it reports success without changing anything.
+  if (commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context))) {
+    return manual;
+  }
+
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
@@ -479,10 +488,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       ],
       updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
     });
-  }
-
-  if (commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context))) {
-    return manual;
   }
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
