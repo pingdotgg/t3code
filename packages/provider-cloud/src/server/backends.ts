@@ -19,6 +19,7 @@ export interface CloudTask {
 export interface CloudRunInput {
   readonly cwd: string;
   readonly prompt: string;
+  readonly cloudEnvironment?: string;
   /** The cloud session earlier turns of this thread ran in, for runtimes that continue one. */
   readonly session: string | undefined;
   /** Called once the remote task exists, before the run waits on it. */
@@ -90,6 +91,7 @@ const parseCodexTask = (stdout: string): CloudTask | undefined => {
 export const makeCodexCloudBackend = (options: {
   readonly cli: CloudCli;
   readonly environment: string;
+  readonly validateEnvironment?: (environment: string) => Effect.Effect<string, CloudCliError>;
   readonly pollInterval?: Duration.Input;
 }): CloudBackend => {
   const { cli } = options;
@@ -105,13 +107,15 @@ export const makeCodexCloudBackend = (options: {
     label: "Codex Cloud",
     continuesSessions: false,
     run: Effect.fnUntraced(function* (input) {
-      if (!options.environment)
-        return yield* fail(
-          "Set the Codex Cloud environment in this provider's settings. Run codex cloud to list yours.",
-        );
+      const requestedEnvironment = input.cloudEnvironment ?? options.environment;
+      if (!requestedEnvironment)
+        return yield* fail("Choose a Codex Cloud environment from Run on before sending.");
+      const environment = options.validateEnvironment
+        ? yield* options.validateEnvironment(requestedEnvironment)
+        : requestedEnvironment;
       // `-` reads the prompt from stdin, so no prompt text is ever parsed as an argument.
       const submitted = yield* cli({
-        args: ["cloud", "exec", "--env", options.environment, "-"],
+        args: ["cloud", "exec", "--env", environment, "-"],
         cwd: input.cwd,
         stdin: input.prompt,
       });

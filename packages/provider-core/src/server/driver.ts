@@ -32,6 +32,10 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
+  ProviderCloudEnvironment,
+  ProviderCloudRepository,
+  ProviderCloudConfiguration,
+  ProviderCloudEnvironmentMutation,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -91,6 +95,18 @@ export interface ProviderInstance {
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
+  readonly cloudEnvironments?: {
+    readonly listRepositories: (
+      query?: string,
+    ) => Effect.Effect<ReadonlyArray<ProviderCloudRepository>, ProviderDriverError>;
+    readonly read: (id: string) => Effect.Effect<ProviderCloudConfiguration, ProviderDriverError>;
+    readonly mutate: (
+      input: ProviderCloudEnvironmentMutation,
+    ) => Effect.Effect<ProviderCloudConfiguration | null, ProviderDriverError>;
+  };
+  readonly listCloudEnvironments?: (
+    repository?: string,
+  ) => Effect.Effect<ReadonlyArray<ProviderCloudEnvironment>, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;
   /**

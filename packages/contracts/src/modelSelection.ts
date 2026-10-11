@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { CLOUD_RUN_OPTION_ID, ProviderOptionSelections, selectsCloudRun } from "./model.ts";
+import { keepCloudRunOptions, ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -71,12 +71,10 @@ export function keepCloudRun(
   next: ModelSelection,
   current: ModelSelection | null | undefined,
 ): ModelSelection {
-  if (!selectsCloudRun(current?.options) || selectsCloudRun(next.options)) return next;
+  const options = keepCloudRunOptions(next.options, current?.options);
+  if (options === next.options) return next;
   return {
     ...next,
-    options: [
-      ...(next.options ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
-      { id: CLOUD_RUN_OPTION_ID, value: true },
-    ],
+    ...(options ? { options } : {}),
   };
 }

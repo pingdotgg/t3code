@@ -1,4 +1,5 @@
 import {
+  selectedCloudEnvironment,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -339,9 +340,11 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
         Effect.gen(function* () {
           const { backend } = options;
           yield* publishMessage(run, `Starting in ${backend.label}…`, true);
+          const cloudEnvironment = selectedCloudEnvironment(run.input.modelSelection.options);
           const result = yield* backend.run({
             cwd,
             prompt,
+            ...(cloudEnvironment ? { cloudEnvironment } : {}),
             session: thread?.nativeConversationHeadRef?.nativeId ?? undefined,
             onTask: (task) => {
               run.task = task;

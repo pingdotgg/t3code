@@ -2172,6 +2172,13 @@ const layerWsRpc = (
               }),
             ),
           ),
+        [WS_METHODS.providerListCloudRepositories]: ProviderInstanceRegistry.listCloudRepositories,
+        [WS_METHODS.providerReadCloudConfiguration]:
+          ProviderInstanceRegistry.readCloudConfiguration,
+        [WS_METHODS.providerMutateCloudEnvironment]:
+          ProviderInstanceRegistry.mutateCloudEnvironment,
+        [WS_METHODS.providerListCloudEnvironments]: (input) =>
+          ProviderInstanceRegistry.listCloudEnvironments(input),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
             // Only explicit catalog refreshes bypass T3's caches. Workspace

@@ -1,55 +1,47 @@
-# Run in the cloud
+# Cloud runs
 
-Codex and Claude threads can run in the provider's own cloud instead of on one
-of your machines. Pick **Codex Cloud** or **Claude Code cloud** under **Run on**
-in the composer, next to your machines, before you send the first message. The
-cloud entry follows the thread's provider. The work keeps running when your
-computer sleeps, and you can follow it on [chatgpt.com/codex](https://chatgpt.com/codex)
-or [claude.ai/code](https://claude.ai/code).
+Choose **Run on** above the composer to run a thread in Codex Cloud or Claude
+Code cloud. Each provider uses your subscription. The destination stays fixed
+once the thread starts; start a new thread to move work between cloud and a machine.
 
-Like a machine, the run location is fixed once the thread starts. To move work
-between the cloud and a machine, start a new thread.
+## Codex Cloud
 
-## Set up
+Sign in to the Codex CLI with ChatGPT on the machine hosting your T3 environment.
+T3 uses that account for cloud access. Codex instances using T3's managed
+ChatGPT sign-in do not offer cloud runs yet.
 
-T3 Code uses the provider's CLI on the machine hosting your environment, signed
-in with your subscription:
+Choose **Run on → Codex Cloud**, then select an environment. T3 remembers the
+choice per project and account. To create one inside T3:
 
-- **Codex Cloud** needs the Codex CLI signed in with ChatGPT and a
-  [Codex Cloud environment](https://chatgpt.com/codex/settings/environments) for
-  the repository. In **Settings → Providers**, set Codex's **Cloud environment**
-  to the environment's ID or label. Run `codex cloud` on the host to list yours.
-  Codex instances using T3 Code's managed ChatGPT sign-in do not offer it yet.
-- **Claude Code cloud** needs Claude Code signed in with a claude.ai
-  subscription. API keys and third-party providers such as Bedrock cannot start
-  cloud sessions. Connect GitHub at claude.ai/code, or run `/web-setup` in
-  Claude Code.
+1. Select **Create environment**, name it, and choose connected GitHub repositories.
+2. Select **Create and open setup**. T3 opens a separate setup draft and preserves
+   your original prompt. Send the setup message to let Codex prepare and test the environment.
+3. Open **Review environment** from the cloud destination, inspect the setup
+   conversation and configuration, then select **Publish environment**.
+4. Return to your original draft and choose the published environment.
 
-The cloud starts from your repository's remote at the thread's branch, not from
-your local files. Push local commits first. Claude Code uploads the repository
-instead when it has no GitHub remote it can clone.
+A published environment supplies repositories and a prepared filesystem to new
+cloud tasks. Messages in the same T3 thread continue the same cloud conversation,
+with streamed replies, tool activity, questions, and approvals. Work remains in
+its cloud filesystem; it is not automatically applied to your machine.
 
-## How a message runs
+Older Codex environments continue to use the CLI task workflow: each message
+starts a new task, waits for completion, and applies its diff to your local
+workspace. Push local commits before using that workflow. Conflicts leave the
+task's diff on chatgpt.com. **Stop** stops waiting for a legacy task without
+cancelling it.
 
-The thread shows a link to the cloud task as soon as it starts.
+## Claude Code cloud
 
-- **Codex Cloud** waits for the task to finish, then applies its changes to the
-  thread's workspace. They appear in the diff like any other turn's changes, and
-  you can revert them the same way. If they conflict with your local files, the
-  turn fails and the task keeps its diff on chatgpt.com. Each message starts a
-  new task, so include the context it needs.
-- **Claude Code cloud** starts one cloud session for the thread, and later
-  messages continue it. When your account supports waiting, the turn shows
-  Claude's reply. Otherwise it ends once the session has your message, and
-  Claude keeps working on claude.ai. Bring its branch back with
-  `claude --teleport <session-id>` in a terminal.
+Claude Code must be signed in with a claude.ai subscription. Connect GitHub at
+claude.ai/code or run `/web-setup` in Claude Code. API keys and third-party providers
+such as Bedrock cannot start cloud sessions.
 
-**Stop** stops waiting. It does not cancel the cloud task, which keeps running;
-the thread keeps its link.
+The first message starts a cloud session and later messages continue it. If your
+account supports waiting, T3 shows Claude's reply; otherwise it ends once the
+session accepts the message, and Claude keeps working on claude.ai. Bring its
+branch back with `claude --teleport <session-id>` in a terminal.
 
-## Limitations
-
-Cloud agents work unattended in their own sandbox: they cannot ask you
-questions, request approvals, or use T3 Code's tools, and the permission mode
-does not apply to them. Messages take text only, the model is whatever the
-cloud runs for your account, and conversations cannot be forked or rewound.
+Claude cloud and legacy Codex tasks work unattended and accept text only. They
+cannot use T3's local tools or ask questions through T3. Stopping the T3 turn
+stops waiting; the remote task keeps running.

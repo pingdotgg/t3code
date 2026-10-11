@@ -25,6 +25,7 @@ import {
   ThreadId,
   SnapShotSource,
   keepCloudRun,
+  CLOUD_ENVIRONMENT_OPTION_ID,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -3038,10 +3039,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
             // survives Composer 2 → 2.5 and new chats.
-            const nextSelection =
-              normalized.options !== undefined
-                ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+            const nextSelection = createModelSelection(
+              normalized.instanceId,
+              normalized.model,
+              (normalized.options ?? current?.options)?.filter(
+                (option) => option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+              ),
+            );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
@@ -3299,11 +3303,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // itself keeps preserving its current model on trait changes.
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
-              if (providerOpts) {
+              const stickyOptions = providerOpts?.filter(
+                (option) => option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+              );
+              if (stickyOptions?.length) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,
                   stickyBase.model,
-                  providerOpts,
+                  stickyOptions,
                 );
                 // Remember the pick for this model so switching models and
                 // coming back restores it instead of another model's effort.
@@ -3311,7 +3318,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   ...state.stickyOptionsByModelByProvider,
                   [instanceKey]: {
                     ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
+                    [rememberedModel]: stickyOptions,
                   },
                 };
               } else if ((stickyBase.options?.length ?? 0) > 0) {

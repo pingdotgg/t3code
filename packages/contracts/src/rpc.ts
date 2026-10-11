@@ -283,6 +283,13 @@ import {
 } from "./device.ts";
 import {} from "./previewAutomation.ts";
 import {
+  ProviderCloudEnvironment,
+  ProviderCloudEnvironmentsInput,
+  ProviderCloudRepositoriesInput,
+  ProviderCloudRepository,
+  ProviderCloudConfigurationInput,
+  ProviderCloudConfiguration,
+  ProviderCloudEnvironmentMutation,
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -468,6 +475,10 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
+  providerListCloudEnvironments: "provider.listCloudEnvironments",
+  providerListCloudRepositories: "provider.listCloudRepositories",
+  providerReadCloudConfiguration: "provider.readCloudConfiguration",
+  providerMutateCloudEnvironment: "provider.mutateCloudEnvironment",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -598,6 +609,28 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsProviderListCloudEnvironmentsRpc = Rpc.make(WS_METHODS.providerListCloudEnvironments, {
+  payload: ProviderCloudEnvironmentsInput,
+  success: Schema.Array(ProviderCloudEnvironment),
+  error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
+});
+
+const WsProviderListCloudRepositoriesRpc = Rpc.make(WS_METHODS.providerListCloudRepositories, {
+  payload: ProviderCloudRepositoriesInput,
+  success: Schema.Array(ProviderCloudRepository),
+  error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
+});
+const WsProviderReadCloudConfigurationRpc = Rpc.make(WS_METHODS.providerReadCloudConfiguration, {
+  payload: ProviderCloudConfigurationInput,
+  success: ProviderCloudConfiguration,
+  error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
+});
+const WsProviderMutateCloudEnvironmentRpc = Rpc.make(WS_METHODS.providerMutateCloudEnvironment, {
+  payload: ProviderCloudEnvironmentMutation,
+  success: Schema.NullOr(ProviderCloudConfiguration),
+  error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
 
 const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -1839,6 +1872,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsProviderListCloudEnvironmentsRpc,
+  WsProviderListCloudRepositoriesRpc,
+  WsProviderReadCloudConfigurationRpc,
+  WsProviderMutateCloudEnvironmentRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,

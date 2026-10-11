@@ -1,4 +1,16 @@
-import { CLOUD_RUN_OPTION_ID, keepCloudRun, selectsCloudRun } from "@t3tools/contracts";
+import type { ProviderCloudConfiguration } from "@t3tools/contracts";
+import {
+  CLOUD_RUN_OPTION_ID,
+  CLOUD_ENVIRONMENT_OPTION_ID,
+  keepCloudRun,
+  selectsCloudRun,
+  selectedCloudEnvironment,
+  preferredCloudEnvironment,
+  type ProviderCloudEnvironment,
+} from "@t3tools/contracts";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import * as Option from "effect/Option";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -49,7 +61,9 @@ import {
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
-import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
+import { providerCloudEnvironments } from "../../state/cloud-runs";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   appendComposerDraftAttachments,
@@ -126,7 +140,9 @@ import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValid
 // Sticky picks seed new tasks; where one runs is picked per task, never carried over.
 function withoutCloudRun(selection: ModelSelection): ModelSelection {
   if (!selectsCloudRun(selection.options)) return selection;
-  const options = selection.options?.filter((option) => option.id !== CLOUD_RUN_OPTION_ID);
+  const options = selection.options?.filter(
+    (option) => option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+  );
   return {
     instanceId: selection.instanceId,
     model: selection.model,
@@ -233,6 +249,12 @@ type NewTaskFlowContextValue = {
   /** The selected provider's cloud, offered beside the machines; null when it has none. */
   readonly cloudRunLabel: string | null;
   readonly cloudRunSelected: boolean;
+  readonly cloudRequiresEnvironment: boolean;
+  readonly cloudEnvironmentId: string | undefined;
+  readonly cloudEnvironments: EnvironmentQueryView<readonly ProviderCloudEnvironment[]>;
+  readonly cloudSendBlockReason: string | null;
+  readonly setCloudEnvironment: (id: string) => void;
+  readonly openCloudSetup: (config: ProviderCloudConfiguration) => void;
   /** Runs the task in the provider's cloud, or back on the selected machine. */
   readonly setCloudRun: (cloud: boolean) => void;
   readonly setSelectedModelKey: (
@@ -688,14 +710,114 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedModel, selectedProjectDraftKey],
   );
 
-  const cloudRunLabel = selectedProviderStatus?.cloudRun?.label ?? null;
-  const cloudRunSelected = cloudRunLabel !== null && selectsCloudRun(selectedModel?.options);
+  const cloudRequiresEnvironment = selectedProviderStatus?.cloudRun?.requiresEnvironment === true;
+  const cloudRunSelected =
+    selectedProviderStatus?.cloudRun !== undefined && selectsCloudRun(selectedModel?.options);
+  const cloudEnvironmentId = selectedCloudEnvironment(selectedModel?.options);
+  const repositoryIdentity = selectedProject?.repositoryIdentity;
+  const repository =
+    repositoryIdentity?.provider === "github"
+      ? `${repositoryIdentity.owner}/${repositoryIdentity.name}`
+      : undefined;
+  const cloudEnvironments = useEnvironmentQuery(
+    cloudRunSelected && cloudRequiresEnvironment && selectedProject && selectedModel
+      ? providerCloudEnvironments({
+          environmentId: selectedProject.environmentId,
+          input: { instanceId: selectedModel.instanceId, ...(repository ? { repository } : {}) },
+        })
+      : null,
+  );
+  const chosenCloudEnvironment = !cloudEnvironments.error
+    ? cloudEnvironments.data?.find((entry) => entry.id === cloudEnvironmentId)
+    : undefined;
+  const cloudRunLabel = chosenCloudEnvironment
+    ? `${selectedProviderStatus?.cloudRun?.label} · ${chosenCloudEnvironment.label}`
+    : (selectedProviderStatus?.cloudRun?.label ?? null);
+  const cloudSendBlockReason =
+    cloudRunSelected && cloudRequiresEnvironment && !chosenCloudEnvironment
+      ? "Choose a Codex Cloud environment in Run on."
+      : null;
+  const preferenceKey = JSON.stringify([
+    selectedProject?.environmentId,
+    selectedProject?.id,
+    selectedModel?.instanceId,
+  ]);
+  const preferences = Option.getOrUndefined(AsyncResult.value(useAtomValue(mobilePreferencesAtom)));
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const setCloudEnvironment = useCallback(
+    (id: string) => {
+      if (
+        !selectedModel ||
+        !selectedProjectDraftKey ||
+        cloudEnvironments.error ||
+        !cloudEnvironments.data?.some((entry) => entry.id === id)
+      )
+        return;
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        modelSelection: {
+          ...selectedModel,
+          options: [
+            ...(selectedModel.options ?? []).filter(
+              (option) =>
+                option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+            ),
+            { id: CLOUD_RUN_OPTION_ID, value: true },
+            { id: CLOUD_ENVIRONMENT_OPTION_ID, value: id },
+          ],
+        },
+      });
+      savePreferences({
+        transform: (current) => ({
+          cloudEnvironmentByProject: { ...current.cloudEnvironmentByProject, [preferenceKey]: id },
+        }),
+      });
+    },
+    [
+      selectedModel,
+      selectedProjectDraftKey,
+      cloudEnvironments.data,
+      cloudEnvironments.error,
+      savePreferences,
+      preferenceKey,
+    ],
+  );
+  useEffect(() => {
+    if (
+      !cloudRunSelected ||
+      !cloudRequiresEnvironment ||
+      cloudEnvironmentId ||
+      cloudEnvironments.error ||
+      cloudEnvironments.isPending ||
+      !cloudEnvironments.data ||
+      !preferences
+    )
+      return;
+    const preferredId = preferredCloudEnvironment(
+      cloudEnvironments.data,
+      preferences?.cloudEnvironmentByProject?.[preferenceKey],
+    );
+    if (preferredId) setCloudEnvironment(preferredId);
+  }, [
+    cloudRunSelected,
+    cloudRequiresEnvironment,
+    cloudEnvironmentId,
+    cloudEnvironments.data,
+    cloudEnvironments.error,
+    cloudEnvironments.isPending,
+    preferences,
+    preferenceKey,
+    setCloudEnvironment,
+  ]);
   // Not remembered as a model option or made sticky: each task picks where it runs.
   const setCloudRun = useCallback(
     (cloud: boolean) => {
       if (!selectedModel || !selectedProjectDraftKey) return;
       const options = [
-        ...(selectedModel.options ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
+        ...(selectedModel.options ?? []).filter(
+          (option) =>
+            option.id !== CLOUD_RUN_OPTION_ID &&
+            (cloud || option.id !== CLOUD_ENVIRONMENT_OPTION_ID),
+        ),
         ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
       ];
       updateComposerDraftSettings(selectedProjectDraftKey, {
@@ -707,6 +829,33 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       });
     },
     [selectedModel, selectedProjectDraftKey],
+  );
+
+  const openCloudSetup = useCallback(
+    (config: ProviderCloudConfiguration) => {
+      if (!selectedProject || !selectedModel) return;
+      const key = createNewTaskDraft({
+        environmentId: selectedProject.environmentId,
+        projectId: selectedProject.id,
+      });
+      updateComposerDraftSettings(key, {
+        modelSelection: {
+          instanceId: selectedModel.instanceId,
+          model: selectedModel.model,
+          options: [
+            { id: CLOUD_RUN_OPTION_ID, value: true },
+            { id: CLOUD_ENVIRONMENT_OPTION_ID, value: config.id },
+          ],
+        },
+        runtimeMode: "full-access",
+      });
+      setComposerDraftText(
+        key,
+        `Use $cloud-environment-onboarding:setup to set up this cloud environment: ${config.name}`,
+      );
+      setActiveDraftKey(key);
+    },
+    [selectedModel, selectedProject],
   );
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
@@ -1132,7 +1281,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       metadata: TurnCommandMetadata,
       options?: { readonly currentCheckoutBranch?: string | null },
     ): QueuedThreadMessage | null => {
-      if (!selectedProject || !selectedProjectDraftKey) {
+      if (!selectedProject || !selectedProjectDraftKey || cloudSendBlockReason) {
         return null;
       }
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
@@ -1214,6 +1363,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       defaultRuntimeMode,
       editingPendingProject,
       editingPendingTask,
+      cloudSendBlockReason,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
@@ -1371,6 +1521,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       switchingToEnvironmentId,
       cloudRunLabel,
       cloudRunSelected,
+      cloudRequiresEnvironment,
+      cloudEnvironmentId,
+      cloudEnvironments,
+      cloudSendBlockReason,
+      setCloudEnvironment,
+      openCloudSetup,
       setCloudRun,
       setSelectedModelKey,
       setWorkspaceMode,
@@ -1442,6 +1598,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       switchingToEnvironmentId,
       cloudRunLabel,
       cloudRunSelected,
+      cloudRequiresEnvironment,
+      cloudEnvironmentId,
+      cloudEnvironments,
+      cloudSendBlockReason,
+      setCloudEnvironment,
+      openCloudSetup,
       setCloudRun,
       setInteractionMode,
       setPrompt,

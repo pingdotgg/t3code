@@ -59,6 +59,31 @@ export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
  * model trait, so option editors that rebuild a selection must carry it over.
  */
 export const CLOUD_RUN_OPTION_ID = "cloud";
+export const CLOUD_ENVIRONMENT_OPTION_ID = "cloudEnvironment";
+
+/** The Codex Cloud destination saved with a thread's model selection. */
+export function selectedCloudEnvironment(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string | undefined {
+  const value = options?.find((option) => option.id === CLOUD_ENVIRONMENT_OPTION_ID)?.value;
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Carries run location options through editors that only know model traits. */
+export function keepCloudRunOptions(
+  next: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  current: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (!selectsCloudRun(current)) return next ?? undefined;
+  const destination = selectedCloudEnvironment(next) ?? selectedCloudEnvironment(current);
+  return [
+    ...(next ?? []).filter(
+      (option) => option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+    ),
+    { id: CLOUD_RUN_OPTION_ID, value: true },
+    ...(destination ? [{ id: CLOUD_ENVIRONMENT_OPTION_ID, value: destination }] : []),
+  ];
+}
 
 /** Whether a selection's options ask for the provider's cloud. */
 export const selectsCloudRun = (

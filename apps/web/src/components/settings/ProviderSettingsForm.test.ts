@@ -17,7 +17,6 @@ describe("ProviderSettingsForm helpers", () => {
       "homePath",
       "shadowHomePath",
       "launchArgs",
-      "cloudEnvironment",
     ]);
   });
 

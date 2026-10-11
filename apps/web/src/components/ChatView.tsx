@@ -1,3 +1,9 @@
+import { CloudEnvironmentDialog } from "./chat/CloudEnvironmentDialog";
+import {
+  preferredCloudEnvironment,
+  providerCloudEnvironments,
+  useCloudRunPreferences,
+} from "../cloudRunStore";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -85,6 +91,8 @@ import {
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
   CLOUD_RUN_OPTION_ID,
+  CLOUD_ENVIRONMENT_OPTION_ID,
+  selectedCloudEnvironment,
   selectsCloudRun,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -3293,15 +3301,105 @@ export default function ChatView(props: ChatViewProps) {
     ? composerModelOptionsByInstance?.[activeProviderInstanceId]
     : undefined;
   const cloudRunSelected = selectsCloudRun(activeModelOptions);
+  const [cloudSetupOpen, setCloudSetupOpen] = useState(false);
+  const cloudEnvironmentId = selectedCloudEnvironment(activeModelOptions);
+  const cloudRequiresEnvironment = activeProviderStatus?.cloudRun?.requiresEnvironment === true;
+  const cloudRepositoryIdentity = activeProject?.repositoryIdentity;
+  const cloudRepository =
+    cloudRepositoryIdentity?.provider === "github" &&
+    cloudRepositoryIdentity.owner &&
+    cloudRepositoryIdentity.name
+      ? `${cloudRepositoryIdentity.owner}/${cloudRepositoryIdentity.name}`
+      : undefined;
+  const cloudEnvironmentsQuery = useEnvironmentQuery(
+    cloudRunSelected && cloudRequiresEnvironment && activeProviderInstanceId
+      ? providerCloudEnvironments({
+          environmentId,
+          input: {
+            instanceId: activeProviderInstanceId,
+            ...(cloudRepository ? { repository: cloudRepository } : {}),
+          },
+        })
+      : null,
+  );
+  const cloudPreferenceKey = JSON.stringify([
+    environmentId,
+    activeProject?.id,
+    activeProviderInstanceId,
+  ]);
+  const rememberedCloudEnvironment = useCloudRunPreferences(
+    (state) => state.byProject[cloudPreferenceKey],
+  );
+  const rememberCloudEnvironment = useCloudRunPreferences((state) => state.remember);
+  const availableCloudEnvironments =
+    cloudEnvironmentsQuery.isSuccess && !cloudEnvironmentsQuery.error
+      ? (cloudEnvironmentsQuery.data ?? [])
+      : [];
+  const chosenCloudEnvironment = availableCloudEnvironments.find(
+    (entry) => entry.id === cloudEnvironmentId,
+  );
+  useEffect(() => {
+    if (
+      !cloudRunSelected ||
+      !cloudRequiresEnvironment ||
+      envLocked ||
+      cloudEnvironmentId ||
+      !activeProviderInstanceId ||
+      !cloudEnvironmentsQuery.isSuccess
+    )
+      return;
+    const preferredId = preferredCloudEnvironment(
+      availableCloudEnvironments,
+      rememberedCloudEnvironment,
+    );
+    if (!preferredId) return;
+    setProviderModelOptions(
+      composerDraftTarget,
+      selectedProvider,
+      [
+        ...(activeModelOptions ?? []).filter(
+          (option) =>
+            option.id !== CLOUD_RUN_OPTION_ID && option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+        ),
+        { id: CLOUD_RUN_OPTION_ID, value: true },
+        { id: CLOUD_ENVIRONMENT_OPTION_ID, value: preferredId },
+      ],
+      { instanceId: activeProviderInstanceId, model: composerSelectedModel },
+    );
+  }, [
+    cloudRunSelected,
+    cloudRequiresEnvironment,
+    envLocked,
+    cloudEnvironmentId,
+    activeProviderInstanceId,
+    cloudEnvironmentsQuery.isSuccess,
+    availableCloudEnvironments,
+    rememberedCloudEnvironment,
+    setProviderModelOptions,
+    composerDraftTarget,
+    selectedProvider,
+    activeModelOptions,
+    composerSelectedModel,
+  ]);
+  const cloudSendBlockReason =
+    cloudRunSelected && cloudRequiresEnvironment && !envLocked && !chosenCloudEnvironment
+      ? "Choose a Codex Cloud environment in Run on"
+      : null;
+
   // The cloud is chosen like a machine: before the thread starts, then fixed.
   const onCloudRunChange = useCallback(
     (cloud: boolean) => {
       if (!activeProviderInstanceId) return;
+      if (cloud && cloudRequiresEnvironment) setCloudSetupOpen(true);
       setProviderModelOptions(
         composerDraftTarget,
         selectedProvider,
         [
-          ...(activeModelOptions ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
+          ...(activeModelOptions ?? []).filter(
+            (option) =>
+              option.id !== CLOUD_RUN_OPTION_ID &&
+              (cloud || option.id !== CLOUD_ENVIRONMENT_OPTION_ID),
+          ),
           ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
         ],
         { instanceId: activeProviderInstanceId, model: composerSelectedModel },
@@ -3310,6 +3408,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeModelOptions,
       activeProviderInstanceId,
+      cloudRequiresEnvironment,
       composerDraftTarget,
       composerSelectedModel,
       selectedProvider,
@@ -3320,12 +3419,24 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       cloudRunLabel
         ? {
-            label: cloudRunLabel,
+            label: chosenCloudEnvironment
+              ? `${cloudRunLabel} · ${chosenCloudEnvironment.label}`
+              : cloudRunLabel,
             selected: cloudRunSelected,
             ...(envLocked ? {} : { onChange: onCloudRunChange }),
+            ...(cloudRunSelected && /(?:^|~)asenvcfg_/.test(cloudEnvironmentId ?? "")
+              ? { onManage: () => setCloudSetupOpen(true) }
+              : {}),
           }
         : undefined,
-    [cloudRunLabel, cloudRunSelected, envLocked, onCloudRunChange],
+    [
+      cloudRunLabel,
+      cloudRunSelected,
+      cloudEnvironmentId,
+      chosenCloudEnvironment,
+      envLocked,
+      onCloudRunChange,
+    ],
   );
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
@@ -8877,6 +8988,10 @@ export default function ChatView(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
+    if (cloudSendBlockReason) {
+      setCloudSetupOpen(true);
+      return;
+    }
     if (needsLoadBalancing) {
       toastManager.add({
         type: "warning",
@@ -11726,7 +11841,7 @@ export default function ChatView(props: ChatViewProps) {
                                           ? "Messages loading"
                                           : worktreeSetupBlocksSend
                                             ? "Preparing worktree"
-                                            : projectCloneSendBlockReason
+                                            : (cloudSendBlockReason ?? projectCloneSendBlockReason)
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={
@@ -12167,6 +12282,84 @@ export default function ChatView(props: ChatViewProps) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
+      {cloudSetupOpen &&
+        cloudRunSelected &&
+        cloudRequiresEnvironment &&
+        activeProviderInstanceId && (
+          <CloudEnvironmentDialog
+            key={`${routeThreadKey}:${activeProviderInstanceId}`}
+            environmentId={environmentId}
+            instanceId={activeProviderInstanceId}
+            repository={cloudRepository}
+            readOnly={envLocked}
+            onSetup={async (config) => {
+              if (!activeProject || !activeProviderInstanceId) return;
+              const nextDraftId = newDraftId();
+              const nextThreadId = newThreadId();
+              const store = useComposerDraftStore.getState();
+              const projectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
+              const logicalKey = `${deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)}:cloud-setup:${config.id}`;
+              store.setLogicalProjectDraftThreadId(logicalKey, projectRef, nextDraftId, {
+                threadId: nextThreadId,
+                createdAt: new Date().toISOString(),
+                runtimeMode: "full-access",
+                interactionMode: DEFAULT_INTERACTION_MODE,
+                branch: activeThread?.branch ?? null,
+                worktreePath: null,
+                envMode: "local",
+              });
+              store.setModelSelection(nextDraftId, {
+                instanceId: activeProviderInstanceId,
+                model: composerSelectedModel,
+                options: [
+                  { id: CLOUD_RUN_OPTION_ID, value: true },
+                  { id: CLOUD_ENVIRONMENT_OPTION_ID, value: config.id },
+                ],
+              });
+              store.setPrompt(
+                nextDraftId,
+                `Use $cloud-environment-onboarding:setup to set up this cloud environment: ${config.name}`,
+              );
+              setCloudSetupOpen(false);
+              await navigate({
+                to: "/draft/$draftId",
+                params: buildDraftThreadRouteParams(nextDraftId),
+              });
+            }}
+            environments={availableCloudEnvironments}
+            preferredId={
+              chosenCloudEnvironment?.id ??
+              preferredCloudEnvironment(availableCloudEnvironments, rememberedCloudEnvironment)
+            }
+            loading={cloudEnvironmentsQuery.isPending}
+            error={cloudEnvironmentsQuery.error}
+            onRefresh={cloudEnvironmentsQuery.refresh}
+            onClose={() => setCloudSetupOpen(false)}
+            onSelect={(id) => {
+              if (
+                !activeProviderInstanceId ||
+                !availableCloudEnvironments.some((entry) => entry.id === id)
+              )
+                return;
+              setProviderModelOptions(
+                composerDraftTarget,
+                selectedProvider,
+                [
+                  ...(activeModelOptions ?? []).filter(
+                    (option) =>
+                      option.id !== CLOUD_RUN_OPTION_ID &&
+                      option.id !== CLOUD_ENVIRONMENT_OPTION_ID,
+                  ),
+                  { id: CLOUD_RUN_OPTION_ID, value: true },
+                  { id: CLOUD_ENVIRONMENT_OPTION_ID, value: id },
+                ],
+                { instanceId: activeProviderInstanceId, model: composerSelectedModel },
+              );
+              rememberCloudEnvironment(cloudPreferenceKey, id);
+              setCloudSetupOpen(false);
+            }}
+          />
+        )}
       <LinkPullRequestDialogHost />
       {expandedImage && (
         <ExpandedImageDialog

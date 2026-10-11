@@ -89,4 +89,22 @@ describe("withCloudRun", () => {
       assert.strictEqual(yield* capabilitiesOf(local), "native");
     }),
   );
+
+  it.effect("keeps a started cloud thread in its selected environment", () =>
+    Effect.gen(function* () {
+      const adapter = withCloudRun(fakeAdapter("native", []), fakeAdapter("cloud", []));
+      const selection = (id: string) => ({
+        ...cloud,
+        options: [...cloud.options, { id: "cloudEnvironment", value: id }],
+      });
+      const plan = (id: string) =>
+        adapter.planSelectionTransition({
+          current: selection("original"),
+          target: selection(id),
+          sessionCapabilities: {} as never,
+        });
+      assert.strictEqual((yield* plan("other")).type, "reject");
+      assert.strictEqual((yield* plan("original")).type, "apply_on_next_turn");
+    }),
+  );
 });

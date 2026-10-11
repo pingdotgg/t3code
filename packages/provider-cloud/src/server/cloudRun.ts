@@ -6,7 +6,7 @@
  *
  * @module provider-cloud/server/cloudRun
  */
-import { selectsCloudRun, type ServerProvider } from "@t3tools/contracts";
+import { selectedCloudEnvironment, selectsCloudRun, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -14,9 +14,13 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 type AdapterService = ProviderAdapter.ProviderAdapterV2["Service"];
 
 /** Offers the provider's cloud under Run on, named by `label`. */
-export const withCloudRunOption = (snapshot: ServerProvider, label: string): ServerProvider => ({
+export const withCloudRunOption = (
+  snapshot: ServerProvider,
+  label: string,
+  requiresEnvironment = false,
+): ServerProvider => ({
   ...snapshot,
-  cloudRun: { label },
+  cloudRun: { label, ...(requiresEnvironment ? { requiresEnvironment } : {}) },
 });
 
 /**
@@ -29,7 +33,7 @@ export const withCloudRun = (native: AdapterService, cloud: AdapterService): Ada
   // A cloud thread gets its own session: the native one may be shared by every thread.
   capabilitiesFor: (modelSelection) =>
     selectsCloudRun(modelSelection.options)
-      ? cloud.getCapabilities()
+      ? (cloud.capabilitiesFor?.(modelSelection) ?? cloud.getCapabilities())
       : (native.capabilitiesFor?.(modelSelection) ?? native.getCapabilities()),
   planSelectionTransition: (input) => {
     const fromCloud = selectsCloudRun(input.current.options);
@@ -39,6 +43,15 @@ export const withCloudRun = (native: AdapterService, cloud: AdapterService): Ada
         reason: fromCloud
           ? "This thread runs in the cloud. Start a new thread to run on a machine."
           : "This thread runs on a machine. Start a new thread to run in the cloud.",
+      });
+    if (
+      fromCloud &&
+      selectedCloudEnvironment(input.current.options) !==
+        selectedCloudEnvironment(input.target.options)
+    )
+      return Effect.succeed({
+        type: "reject",
+        reason: "Start a new thread to change its cloud environment.",
       });
     return (fromCloud ? cloud : native).planSelectionTransition(input);
   },

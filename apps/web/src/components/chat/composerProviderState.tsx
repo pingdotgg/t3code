@@ -6,8 +6,7 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-  CLOUD_RUN_OPTION_ID,
-  selectsCloudRun,
+  keepCloudRunOptions,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -150,9 +149,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     selections,
   );
   // The cloud choice is a Run on location, not a model trait, so no descriptor carries it.
-  const modelOptionsForDispatch = selectsCloudRun(modelOptions)
-    ? [...(declaredOptions ?? []), { id: CLOUD_RUN_OPTION_ID, value: true }]
-    : declaredOptions;
+  const modelOptionsForDispatch = keepCloudRunOptions(declaredOptions, modelOptions);
 
   return {
     provider,

@@ -140,3 +140,29 @@ it("keeps a thread's cloud choice when its model or traits change", () => {
   const local = { instanceId, model: "gpt-b" };
   assert.strictEqual(keepCloudRun(local, { instanceId, model: "gpt-a" }), local);
 });
+
+it("keeps the cloud destination through model edits and retains an explicit replacement", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const current = {
+    instanceId,
+    model: "gpt-a",
+    options: [
+      { id: "cloud", value: true },
+      { id: "cloudEnvironment", value: "env-a" },
+    ],
+  };
+  assert.deepStrictEqual(
+    keepCloudRun({ instanceId, model: "gpt-b" }, current).options,
+    current.options,
+  );
+  assert.deepStrictEqual(
+    keepCloudRun(
+      { instanceId, model: "gpt-b", options: [{ id: "cloudEnvironment", value: "env-b" }] },
+      current,
+    ).options,
+    [
+      { id: "cloud", value: true },
+      { id: "cloudEnvironment", value: "env-b" },
+    ],
+  );
+});

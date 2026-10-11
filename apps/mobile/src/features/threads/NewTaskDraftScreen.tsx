@@ -1245,6 +1245,7 @@ export function NewTaskDraftScreen(props: {
     const initialMessageText = draft.text.trim();
 
     if (
+      flow.cloudSendBlockReason !== null ||
       attachmentBlockReason !== null ||
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
@@ -1393,6 +1394,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    flow.cloudSendBlockReason === null &&
     !isImportingContext &&
     !cloneBlocksStart &&
     taskPermissionReason === null &&
@@ -1675,8 +1677,10 @@ export function NewTaskDraftScreen(props: {
       ) : null}
       {flow.canChooseWorkspace ? <View className="pb-1">{workspaceControls}</View> : null}
 
-      {taskPermissionReason ? (
-        <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>
+      {taskPermissionReason || flow.cloudSendBlockReason ? (
+        <Text className="px-3 py-2 text-xs text-muted-foreground">
+          {taskPermissionReason ?? flow.cloudSendBlockReason}
+        </Text>
       ) : null}
 
       {modelUnavailable ? (
@@ -1819,6 +1823,7 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     taskPermissionReason ??
+                    flow.cloudSendBlockReason ??
                     attachmentBlockReason ??
                     (cloneBlocksStart
                       ? projectClone === null || projectClone.phase === "running"

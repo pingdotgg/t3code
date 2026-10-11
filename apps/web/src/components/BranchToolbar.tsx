@@ -1,3 +1,4 @@
+import { Button } from "./ui/button";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -279,6 +280,17 @@ const RunContextSelector = memo(function RunContextSelector({
     </>
   );
 
+  if (isLocked && cloudRun?.selected && cloudRun.onManage)
+    return (
+      <Button
+        variant="ghost"
+        size="xs"
+        onClick={cloudRun.onManage}
+        aria-label="Review cloud environment"
+      >
+        {triggerContent}
+      </Button>
+    );
   if (isLocked) {
     return (
       <span
@@ -389,6 +401,9 @@ const RunContextSelector = memo(function RunContextSelector({
                   <MenuRadioItem
                     disabled={envLocked || !cloudRun.onChange}
                     value={CLOUD_RUN_VALUE}
+                    onClick={() => {
+                      if (cloudRun.selected) cloudRun.onChange?.(true);
+                    }}
                     closeOnClick
                   >
                     <span className="flex min-w-0 items-center gap-1.5">

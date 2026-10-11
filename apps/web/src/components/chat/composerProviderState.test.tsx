@@ -114,6 +114,7 @@ describe("getComposerProviderState", () => {
       modelOptions: [
         { id: "effort", value: "low" },
         { id: "cloud", value: true },
+        { id: "cloudEnvironment", value: "env-test" },
       ],
       planModeEnabled: true,
     });
@@ -121,6 +122,7 @@ describe("getComposerProviderState", () => {
     expect(state.modelOptionsForDispatch).toEqual([
       { id: "effort", value: "low" },
       { id: "cloud", value: true },
+      { id: "cloudEnvironment", value: "env-test" },
     ]);
   });
 

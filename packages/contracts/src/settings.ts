@@ -639,8 +639,8 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Cloud environment",
         description:
-          "Codex Cloud environment ID or label. Set it to run threads in Codex Cloud from Run on. Run codex cloud to list yours.",
-        providerSettingsForm: { placeholder: "my-org/my-repo", clearWhenEmpty: "omit" },
+          "Legacy default for existing cloud threads. New threads choose their environment from Run on.",
+        providerSettingsForm: { hidden: true, clearWhenEmpty: "omit" },
       }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(

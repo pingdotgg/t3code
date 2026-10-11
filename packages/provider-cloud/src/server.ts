@@ -7,5 +7,5 @@
  */
 export { makeCloudAdapterV2 } from "./server/adapter.ts";
 export { makeClaudeCloudBackend, makeCodexCloudBackend } from "./server/backends.ts";
-export { makeCloudCli } from "./server/cli.ts";
+export { CloudCliError, makeCloudCli } from "./server/cli.ts";
 export { withCloudRun, withCloudRunOption } from "./server/cloudRun.ts";

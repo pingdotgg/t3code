@@ -243,6 +243,87 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ProviderCloudEnvironment = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  repository: Schema.optionalKey(TrimmedNonEmptyString),
+  setup: Schema.optionalKey(Schema.Boolean),
+});
+export type ProviderCloudEnvironment = typeof ProviderCloudEnvironment.Type;
+
+/** Prefer the project's last choice, then an unambiguous repository match. */
+export function preferredCloudEnvironment(
+  environments: readonly ProviderCloudEnvironment[],
+  rememberedId: string | undefined,
+): string | undefined {
+  if (environments.some((environment) => environment.id === rememberedId)) return rememberedId;
+  const matching = environments.filter((environment) => environment.repository);
+  return matching.length === 1 ? matching[0]?.id : undefined;
+}
+
+export const ProviderCloudEnvironmentsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  repository: Schema.optionalKey(
+    TrimmedNonEmptyString.check(
+      Schema.isPattern(/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/u),
+    ),
+  ),
+});
+export type ProviderCloudEnvironmentsInput = typeof ProviderCloudEnvironmentsInput.Type;
+
+export const ProviderCloudRepository = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  defaultBranch: TrimmedNonEmptyString,
+});
+export type ProviderCloudRepository = typeof ProviderCloudRepository.Type;
+export const ProviderCloudRepositoriesInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type ProviderCloudRepositoriesInput = typeof ProviderCloudRepositoriesInput.Type;
+export const ProviderCloudConfigurationInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  id: TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_~-]+$/u)),
+});
+export type ProviderCloudConfigurationInput = typeof ProviderCloudConfigurationInput.Type;
+export const ProviderCloudConfiguration = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  status: TrimmedNonEmptyString,
+  versionId: TrimmedNonEmptyString,
+  published: Schema.Boolean,
+  threadId: Schema.NullOr(TrimmedNonEmptyString),
+  draftId: Schema.NullOr(TrimmedNonEmptyString),
+  revision: Schema.NullOr(NonNegativeInt),
+  repositories: Schema.Array(
+    Schema.Struct({ id: TrimmedNonEmptyString, ref: TrimmedNonEmptyString }),
+  ),
+  installScript: Schema.String,
+  startSkill: Schema.String,
+  cwd: Schema.String,
+});
+export type ProviderCloudConfiguration = typeof ProviderCloudConfiguration.Type;
+export const ProviderCloudEnvironmentMutation = Schema.Union([
+  Schema.Struct({
+    instanceId: ProviderInstanceId,
+    operation: Schema.Literal("create"),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+    repositoryIds: Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
+    network: Schema.Literals(["disabled", "package_managers", "unrestricted"]),
+  }),
+  ProviderCloudConfigurationInput.pipe(
+    Schema.fieldsAssign({ operation: Schema.Literal("publish") }),
+  ),
+  ProviderCloudConfigurationInput.pipe(
+    Schema.fieldsAssign({ operation: Schema.Literal("delete") }),
+  ),
+]);
+export type ProviderCloudEnvironmentMutation = typeof ProviderCloudEnvironmentMutation.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -267,7 +348,12 @@ export const ServerProvider = Schema.Struct({
   supportsTextGeneration: Schema.optional(Schema.Boolean),
   // Present when this provider can run threads in its own cloud, such as
   // Codex Cloud. Clients offer it as Cloud under Run on; `label` names it.
-  cloudRun: Schema.optional(Schema.Struct({ label: TrimmedNonEmptyString })),
+  cloudRun: Schema.optional(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      requiresEnvironment: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,

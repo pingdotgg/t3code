@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import { makeClaudeCloudBackend, makeCodexCloudBackend, type CloudTask } from "./backends.ts";
+import { CloudCliError } from "./cli.ts";
 import type { CloudCli, CloudCliRequest, CloudCliResult } from "./cli.ts";
 
 /** A CLI that answers each command with the next scripted result and records what ran. */
@@ -43,6 +44,41 @@ const runInput = (session?: string) => {
 };
 
 describe("Codex Cloud backend", () => {
+  it.effect("uses the validated thread destination instead of the legacy provider default", () =>
+    Effect.gen(function* () {
+      const { cli, calls } = scriptedCli([
+        ok(TASK_URL),
+        ok("[READY] Explain\nproject  •  now\nno diff\n"),
+      ]);
+      const backend = makeCodexCloudBackend({
+        cli,
+        environment: "legacy",
+        validateEnvironment: (id) => {
+          assert.equal(id, "selected");
+          return Effect.succeed("canonical-id");
+        },
+      });
+      yield* backend.run({ ...runInput().input, cloudEnvironment: "selected" });
+      assert.deepStrictEqual(calls[0]?.args, ["cloud", "exec", "--env", "canonical-id", "-"]);
+    }),
+  );
+  it.effect("does not submit a task when destination validation fails", () =>
+    Effect.gen(function* () {
+      const { cli, calls } = scriptedCli([]);
+      const backend = makeCodexCloudBackend({
+        cli,
+        environment: "legacy",
+        validateEnvironment: () =>
+          Effect.fail(new CloudCliError({ detail: "Environment unavailable" })),
+      });
+      const result = yield* backend
+        .run({ ...runInput().input, cloudEnvironment: "deleted" })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(calls.length, 0);
+    }),
+  );
+
   it.effect("submits, waits for the task, and applies its diff to the workspace", () =>
     Effect.gen(function* () {
       const { cli, calls } = scriptedCli([
