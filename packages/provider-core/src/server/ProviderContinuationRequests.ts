@@ -41,6 +41,12 @@ export interface ProviderContinuationRequest {
    * reach the provider as a real prompt.
    */
   readonly delivery?: "adapter_buffered" | "message_text";
+  /**
+   * The message the continuation run starts from, when the adapter picks it:
+   * its turn input carries this id, so the adapter can tell which of its held
+   * wakes a run was dispatched for. Otherwise the service allocates one.
+   */
+  readonly messageId?: MessageId;
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
