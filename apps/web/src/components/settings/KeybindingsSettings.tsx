@@ -1528,7 +1528,7 @@ export function KeybindingsSettingsPanel() {
           This connection can view keybindings but cannot change them.
         </p>
       ) : null}
-      <div inert={!canWriteSettings}>
+      <div inert={!canWriteSettings} className="flex flex-col gap-8">
         {isAddingBinding ? (
           <SettingsGroup>
             <NewKeybindingSettingsRow
