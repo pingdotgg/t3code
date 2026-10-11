@@ -118,7 +118,10 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/**
+ * Whether the selection cannot be sent as is: the project turned its instance
+ * off, or a known Antigravity selection needs setup or a different model.
+ */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -126,6 +129,9 @@ export function isModelSelectionUnavailable(
 ): boolean {
   if (!config || !selection) {
     return false;
+  }
+  if (isProjectDisabledOverride(config, selection.instanceId, projectId)) {
+    return true;
   }
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,

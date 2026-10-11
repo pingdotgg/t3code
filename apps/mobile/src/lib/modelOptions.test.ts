@@ -551,6 +551,22 @@ describe("mobile model options", () => {
       );
     });
 
+    it("refuses to send a non-Antigravity model the project turned off", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+      const selection = { instanceId, model: "model-a" };
+
+      expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
+      expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(false);
+    });
+
     it("hides an instance the project disables even though the machine enables it", () => {
       const settings: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,
