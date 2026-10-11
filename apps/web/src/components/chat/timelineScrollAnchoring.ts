@@ -165,9 +165,16 @@ export function readTimelinePosition(threadKey: string) {
   return rememberedTimelinePositions.get(threadKey);
 }
 
-export function rememberTimelinePosition(threadKey: string, position: RememberedTimelinePosition) {
+export function rememberTimelinePosition(
+  threadKey: string,
+  position: RememberedTimelinePosition,
+  liveFollowEnabled: boolean,
+) {
   rememberedTimelinePositions.delete(threadKey);
-  rememberedTimelinePositions.set(threadKey, position);
+  rememberedTimelinePositions.set(threadKey, {
+    ...position,
+    atEnd: liveFollowEnabled || position.atEnd,
+  });
   if (rememberedTimelinePositions.size > 100) {
     const oldest = rememberedTimelinePositions.keys().next().value;
     if (oldest !== undefined) rememberedTimelinePositions.delete(oldest);
