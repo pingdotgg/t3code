@@ -844,6 +844,9 @@ importers:
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(supports-color@8.1.1)(zod@4.6.5)
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)

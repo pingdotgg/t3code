@@ -43,6 +43,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.skillsRemove]: "skills",
   [WS_METHODS.skillsExport]: "skills",
   [WS_METHODS.skillsImport]: "skills",
+  [WS_METHODS.mcpServersListTools]: "mcpServers",
   [WS_METHODS.serverUpdateProvider]: "server",
   [WS_METHODS.providerAuthStart]: "provider",
   [WS_METHODS.providerConsumeResetCredit]: "provider",

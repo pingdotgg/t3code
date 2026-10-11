@@ -171,6 +171,7 @@ import {
   SkillPreviewInput,
   SkillPreviewResult,
 } from "./skills.ts";
+import { McpServerToolsError, McpServerToolsInput, McpServerToolsResult } from "./agentTools.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -519,6 +520,7 @@ export const WS_METHODS = {
   skillsRemove: "skills.remove",
   skillsExport: "skills.export",
   skillsImport: "skills.import",
+  mcpServersListTools: "mcpServers.listTools",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -691,6 +693,12 @@ const WsSkillsImportRpc = Rpc.make(WS_METHODS.skillsImport, {
   payload: SkillImportInput,
   success: Schema.Struct({}),
   error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpServersListToolsRpc = Rpc.make(WS_METHODS.mcpServersListTools, {
+  payload: McpServerToolsInput,
+  success: McpServerToolsResult,
+  error: Schema.Union([McpServerToolsError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -2053,6 +2061,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSkillsRemoveRpc,
   WsSkillsExportRpc,
   WsSkillsImportRpc,
+  WsMcpServersListToolsRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,

@@ -151,6 +151,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.skillsPreview]: AuthFilesystemReadScope,
   // Packs a folder an agent reports for that skill, nothing a client names.
   [WS_METHODS.skillsExport]: AuthFilesystemReadScope,
+  // Listing a server's tools runs its command with its stored secrets, which
+  // only a connection allowed to add that command may do. A read the client
+  // caches as a query, so the client checks the scope itself (no guard entry).
+  [WS_METHODS.mcpServersListTools]: AuthProvidersManageScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,

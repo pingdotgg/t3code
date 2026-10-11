@@ -206,6 +206,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as McpServerTools from "./mcpServers/McpServerTools.ts";
 import * as SkillLibrary from "./skills/SkillLibrary.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -1405,6 +1406,7 @@ export const layerWsRpc = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const skillLibrary = yield* SkillLibrary.SkillLibrary;
+      const mcpServerTools = yield* McpServerTools.McpServerTools;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2875,6 +2877,7 @@ export const layerWsRpc = (
         [WS_METHODS.skillsRemove]: (input) => skillLibrary.remove(input).pipe(Effect.as({})),
         [WS_METHODS.skillsExport]: (input) => skillLibrary.exportSkill(input),
         [WS_METHODS.skillsImport]: (input) => skillLibrary.importSkill(input).pipe(Effect.as({})),
+        [WS_METHODS.mcpServersListTools]: (input) => mcpServerTools.listTools(input),
         [WS_METHODS.projectsReadFile]: (input) =>
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(

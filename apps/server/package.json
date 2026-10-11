@@ -38,6 +38,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@ff-labs/fff-node": "0.11.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@muse-code/sdk": "1.4.6",
     "@napi-rs/keyring": "^1.3.0",
     "@t3tools/provider-acp": "workspace:*",

@@ -1,7 +1,6 @@
 import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
-  type ServerConfig,
   type SkillFolderInfo,
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -18,7 +17,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export interface SkillEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly serverConfig: ServerConfig | null;
+  /** Only what picks the machine icon. */
+  readonly serverConfig: Parameters<typeof resolveEnvironmentMachineKind>[0];
   /** The project's checkout there, at project scope. */
   readonly cwd: string | null;
 }

@@ -18,8 +18,13 @@ import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts"
  */
 const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const MCP_SERVER_NAME_MAX_CHARS = 48;
-/** Reserved for T3's own servers, which every session already gets. */
-const RESERVED_MCP_SERVER_NAMES: ReadonlySet<string> = new Set(["t3-code", "t3-code-direct"]);
+/** T3's own server, which every session already gets. */
+export const T3_MCP_SERVER_NAME = "t3-code";
+/** Reserved for T3's own servers: Codex also gets a direct-only `t3-code-direct`. */
+const RESERVED_MCP_SERVER_NAMES: ReadonlySet<string> = new Set([
+  T3_MCP_SERVER_NAME,
+  "t3-code-direct",
+]);
 
 export const McpServerName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(MCP_SERVER_NAME_MAX_CHARS),
@@ -132,4 +137,90 @@ export function mcpServerTransportSummary(transport: McpServerTransport): string
   return transport.type === "stdio"
     ? [transport.command, ...transport.args].join(" ")
     : transport.url;
+}
+
+// ── A server's tools ─────────────────────────────────────────────────
+
+export const McpServerToolsInput = Schema.Struct({
+  /** A server from Settings → Tools, or `t3-code` for T3's own. */
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(MCP_SERVER_NAME_MAX_CHARS)),
+  /** A project's checkout: the server as that project's agents get it. */
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type McpServerToolsInput = typeof McpServerToolsInput.Type;
+
+/** One top-level property of a tool's input schema. */
+export const McpServerToolParameter = Schema.Struct({
+  name: Schema.String,
+  /** A short reading of its JSON Schema type, such as `string`, `number[]` or `"a" | "b"`. */
+  type: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  required: Schema.Boolean,
+});
+export type McpServerToolParameter = typeof McpServerToolParameter.Type;
+
+export const McpServerTool = Schema.Struct({
+  name: Schema.String,
+  title: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  parameters: Schema.Array(McpServerToolParameter),
+});
+export type McpServerTool = typeof McpServerTool.Type;
+
+export const McpServerToolsResult = Schema.Struct({
+  /** What the server called itself when it started, if it said. */
+  serverInfo: Schema.optionalKey(
+    Schema.Struct({ name: Schema.String, version: Schema.optionalKey(Schema.String) }),
+  ),
+  tools: Schema.Array(McpServerTool),
+});
+export type McpServerToolsResult = typeof McpServerToolsResult.Type;
+
+export const McpServerToolsErrorReason = Schema.Literals([
+  /** No server of that name at this scope. */
+  "not-found",
+  /** The folder isn't one of this environment's projects. */
+  "unknown-project",
+  /** The command couldn't be run at all. */
+  "spawn-failed",
+  /** The command ran but stopped before it listed its tools. */
+  "exited",
+  /** The URL couldn't be reached. */
+  "unreachable",
+  /** The URL answered 401 or 403: it wants a sign-in T3 can't do here. */
+  "unauthorized",
+  /** The server answered, with an error. */
+  "request-failed",
+  "timed-out",
+]);
+export type McpServerToolsErrorReason = typeof McpServerToolsErrorReason.Type;
+
+export class McpServerToolsError extends Schema.TaggedError<McpServerToolsError>()(
+  "McpServerToolsError",
+  {
+    server: Schema.String,
+    reason: McpServerToolsErrorReason,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "not-found":
+        return `There's no MCP server named "${this.server}" here.`;
+      case "unknown-project":
+        return "That folder isn't a project on this environment.";
+      case "spawn-failed":
+        return "The server's command couldn't be run. Check that it's installed on this environment.";
+      case "exited":
+        return "The server stopped before it listed its tools. Check its command, arguments and environment variables.";
+      case "unreachable":
+        return "The server's URL couldn't be reached.";
+      case "unauthorized":
+        return "The server wants a sign-in, which listing its tools can't do here. Add an access token as a header, or sign in from an agent.";
+      case "request-failed":
+        return "The server returned an error when asked for its tools.";
+      case "timed-out":
+        return "The server didn't list its tools within 30 seconds.";
+    }
+  }
 }

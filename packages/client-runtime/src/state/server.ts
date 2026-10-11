@@ -1437,6 +1437,13 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    // An MCP server's tools, read by starting it; needs `providers:manage`.
+    listMcpServerTools: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-servers:list-tools",
+      tag: WS_METHODS.mcpServersListTools,
+      staleTimeMs: 5 * 60_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     previewSkills: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:skills:preview",
       tag: WS_METHODS.skillsPreview,

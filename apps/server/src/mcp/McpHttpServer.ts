@@ -1161,6 +1161,29 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
+/**
+ * Every toolkit `layerTools` registers, for describing `t3-code` without a
+ * session (Settings → Tools). Add a toolkit here when you register one below;
+ * AgentContextBudget.test.ts checks the two match.
+ */
+export const T3_MCP_TOOLKITS: ReadonlyArray<Toolkit.Any> = [
+  PreviewStandardToolkit,
+  PreviewSnapshotToolkit,
+  OrchestratorToolkit,
+  ThreadToolkit,
+  AttachmentToolkit,
+  ProjectToolkit,
+  EnvironmentToolkit,
+  ToolsToolkit,
+  PreviewControlsToolkit,
+  WorktreeToolkit,
+  PullRequestsToolkit,
+  DeviceStandardToolkit,
+  DeviceScreenshotToolkit,
+  HtmlRenderToolkit,
+  HtmlPreviewToolkit,
+];
+
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,

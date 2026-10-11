@@ -140,3 +140,19 @@ it.effect("agent context matches the committed budget", () =>
     ),
   ),
 );
+
+// Settings → Tools lists t3-code's tools from T3_MCP_TOOLKITS, without a session.
+it.effect("Settings → Tools lists every tool the T3 MCP server registers", () =>
+  Effect.gen(function* () {
+    const mcp = yield* McpServer.McpServer;
+    const listed = McpHttpServer.T3_MCP_TOOLKITS.flatMap((toolkit) => Object.keys(toolkit.tools));
+    expect(listed.toSorted()).toEqual(mcp.tools.map(({ tool }) => tool.name).toSorted());
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerTools.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(toolHandlerServices),
+      ),
+    ),
+  ),
+);

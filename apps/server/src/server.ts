@@ -76,6 +76,7 @@ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as McpServerTools from "./mcpServers/McpServerTools.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
@@ -666,6 +667,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   SkillLibrary.layer.pipe(Layer.provide(ProcessRunner.layer)),
+  McpServerTools.layer,
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
