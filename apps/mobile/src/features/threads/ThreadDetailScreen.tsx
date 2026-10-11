@@ -717,6 +717,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const userInputCardProgress = useSharedValue(1);
   const userInputInsetProgress = useSharedValue(1);
   const userInputCardCoverage = useSharedValue(0);
+  const composerPopoverHeight = useSharedValue(0);
   const floatingControlCoverage = useSharedValue(
     showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
   );
@@ -743,11 +744,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [userInputCoverageApplies],
   );
-  // The floating control is anchored to the bar's top edge, so ride it up
-  // with the expanded card instead of drawing it over the questions.
+  const composerPopoverLift = useDerivedValue(() =>
+    withTiming(
+      !composerSlotHidden && composerPopoverHeight.value > 0 ? composerPopoverHeight.value + 8 : 0,
+      { duration: 180, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System },
+    ),
+  );
+  // Keep the status above expanded questions and composer suggestions.
+  // Suggestions remain overlays, so opening them does not move the feed.
   const floatingControlLift = useDerivedValue(
     () =>
-      userInputCoverageApplies ? userInputCardProgress.value * userInputCardCoverage.value : 0,
+      Math.max(
+        userInputCoverageApplies ? userInputCardProgress.value * userInputCardCoverage.value : 0,
+        composerPopoverLift.value,
+      ),
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
@@ -1221,7 +1231,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
           offset={{ closed: 0, opened: 0 }}
         >
-          <ComposerPopoverHost hidden={composerSlotHidden}>
+          <ComposerPopoverHost hidden={composerSlotHidden} popoverHeight={composerPopoverHeight}>
             {/* The fixed sticky host gives this bottom-anchored child a stable
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}

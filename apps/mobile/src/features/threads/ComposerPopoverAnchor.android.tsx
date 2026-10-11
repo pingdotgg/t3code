@@ -19,6 +19,13 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   const host = useComposerPopoverHost();
   const anchorRef = useRef<ViewInstance>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
+  const popoverHeight = host?.popoverHeight;
+  useEffect(
+    () => () => {
+      popoverHeight?.set(0);
+    },
+    [popoverHeight],
+  );
 
   const measure = () => {
     const hostView = host?.hostRef.current;
@@ -44,7 +51,13 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
           className="absolute top-0 justify-end"
           style={{ left: frame.x, width: frame.width, height: frame.y - COMPOSER_GAP }}
         >
-          {props.children}
+          <View
+            onLayout={(event) => {
+              popoverHeight?.set(event.nativeEvent.layout.height);
+            }}
+          >
+            {props.children}
+          </View>
         </View>
       ),
     );
