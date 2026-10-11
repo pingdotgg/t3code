@@ -159,9 +159,24 @@ describe("mobile composer context", () => {
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
     const reference = formatComposerContextReference(terminal);
     const text = `Use $playwright and [app.ts](src/app.ts) with ${reference} then ${reference}`;
-    const tokens = composerContextEditorTokens(text, collectComposerInlineTokens(text));
+    const tokens = composerContextEditorTokens(
+      text,
+      collectComposerInlineTokens(text),
+      new Set(["playwright"]),
+    );
     expect(tokens.map((token) => token.type)).toEqual(["skill", "mention", "context", "context"]);
     for (const token of tokens) expect(text.slice(token.start, token.end)).toBe(token.source);
+  });
+  it("leaves a $name that is not one of the provider's skills as plain text", () => {
+    const text = "Run $playwright then echo $HOME and $notaskill ";
+    const tokensFor = (skills: ReadonlyArray<string>) =>
+      composerContextEditorTokens(text, collectComposerInlineTokens(text), new Set(skills)).map(
+        (token) => token.source,
+      );
+    expect(tokensFor(["playwright"])).toEqual(["$playwright"]);
+    // The skill list loads after the editor opens, and differs per provider.
+    expect(tokensFor([])).toEqual([]);
+    expect(tokensFor(["playwright", "notaskill"])).toEqual(["$playwright", "$notaskill"]);
   });
 
   it("removes deleted payloads but keeps the screenshot linked to a remaining annotation", () => {
