@@ -2,7 +2,7 @@ import type { EnvironmentId, ProjectId, ServerSettings } from "@t3tools/contract
 
 export type AutoSettleSettings = Pick<
   ServerSettings,
-  "sidebarAutoSettleAfterDays" | "sidebarAutoSettleOnMerge"
+  "sidebarAutoSettleAfterDays" | "sidebarAutoSettleOnMerge" | "sidebarAutoSettleScope"
 >;
 
 interface AutoSettleSyncTarget {
@@ -10,6 +10,7 @@ interface AutoSettleSyncTarget {
   readonly projectId?: ProjectId | null;
   readonly label: string;
   readonly settings: AutoSettleSettings | null;
+  readonly supportsScope?: boolean;
 }
 
 /** Receives connected, capable targets. Applying these defaults must preserve other settings. */
@@ -18,12 +19,17 @@ export function planAutoSettleSettingsSync(
     readonly environmentId: EnvironmentId;
     readonly projectId?: ProjectId | null;
     readonly settings: AutoSettleSettings;
+    readonly supportsScope?: boolean;
   },
   targets: readonly AutoSettleSyncTarget[],
 ) {
-  const patch: AutoSettleSettings = {
+  const patch = {
     sidebarAutoSettleAfterDays: reference.settings.sidebarAutoSettleAfterDays,
     sidebarAutoSettleOnMerge: reference.settings.sidebarAutoSettleOnMerge,
+    // A reference without scope support settles every thread, so it stands for "all".
+    sidebarAutoSettleScope: reference.supportsScope
+      ? reference.settings.sidebarAutoSettleScope
+      : ("all" as const),
   };
   const mismatches = targets.filter(
     (target) =>
@@ -31,7 +37,9 @@ export function planAutoSettleSettingsSync(
         target.projectId !== reference.projectId) &&
       target.settings !== null &&
       (target.settings.sidebarAutoSettleAfterDays !== patch.sidebarAutoSettleAfterDays ||
-        target.settings.sidebarAutoSettleOnMerge !== patch.sidebarAutoSettleOnMerge),
+        target.settings.sidebarAutoSettleOnMerge !== patch.sidebarAutoSettleOnMerge ||
+        (target.supportsScope === true &&
+          target.settings.sidebarAutoSettleScope !== patch.sidebarAutoSettleScope)),
   );
   return { patch, mismatches };
 }
