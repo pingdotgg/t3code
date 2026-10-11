@@ -105,6 +105,23 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+### Run a second, separate app
+
+A second copy of the desktop app can run beside the first with its own
+connections and settings. Give it its own T3 home and its own app profile
+folder:
+
+```bash
+open -n -a "T3 Code (Alpha)" \
+  --env T3CODE_HOME="$HOME/.t3-work" \
+  --env T3CODE_DESKTOP_USER_DATA_DIR="$HOME/Library/Application Support/t3code-work"
+```
+
+On Windows and Linux, set the same two variables before starting the app. To
+have the copy show only a server you already run, turn off its local
+environment in **Settings → Connections** and add that server there. Browser
+sign-in can return to the first app, so sign in to T3 Connect from that one.
+
 ## Mobile app
 
 Install T3 Code from the

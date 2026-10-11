@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
@@ -70,4 +71,24 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         "existing V2 state",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses the configured profile without inspecting the default ones", () =>
+  Effect.gen(function* () {
+    const userDataPath = yield* resolveUserDataPath({
+      appDataDirectory: "/profiles",
+      isDevelopment: false,
+      platform: "win32",
+      userDataDirOverride: Option.some("/profiles/workhuman"),
+    });
+    assert.equal(userDataPath, "/profiles/workhuman");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.die("default profiles must not be inspected"),
+      }),
+    ),
+    Effect.provide(NodeServices.layer),
+  ),
 );

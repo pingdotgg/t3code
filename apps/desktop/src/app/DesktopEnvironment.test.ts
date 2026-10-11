@@ -181,6 +181,20 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("resolves a relative user data override against the working directory", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {},
+        { T3CODE_DESKTOP_USER_DATA_DIR: "profiles/work" },
+      );
+
+      assert.deepStrictEqual(
+        environment.userDataDirOverride,
+        Option.some(`${process.cwd()}/profiles/work`),
+      );
+    }),
+  );
+
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();

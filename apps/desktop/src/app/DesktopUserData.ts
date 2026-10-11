@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -31,13 +32,22 @@ export class DesktopUserDataInitializationError extends Schema.TaggedError<Deskt
   }
 }
 
-/** Select Electron's profile independently of the server's T3 home. */
+/**
+ * Select Electron's profile independently of the server's T3 home.
+ * `T3CODE_DESKTOP_USER_DATA_DIR` pins it, so a second app instance can run
+ * beside the default one. Instances cannot share a profile: Chromium locks its
+ * databases, and on Windows and Linux the single-instance lock quits the second.
+ */
 export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPath")(
   function* (input: {
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
     readonly platform: NodeJS.Platform;
+    readonly userDataDirOverride?: Option.Option<string>;
   }) {
+    if (input.userDataDirOverride !== undefined && Option.isSome(input.userDataDirOverride)) {
+      return input.userDataDirOverride.value;
+    }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const names = input.isDevelopment
