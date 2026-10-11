@@ -74,9 +74,20 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   );
 }
 
+/** Where the tick sits; kept 3px inside the ends so a fresh or spent window keeps its caps. */
+function tickPosition(percent: number): string {
+  return `clamp(3px, ${percent}%, calc(100% - 3px))`;
+}
+
+/** A mask that hides the bar for 3px either side of the tick. */
+function tickGap(percent: number): string {
+  const at = tickPosition(percent);
+  return `linear-gradient(to right, #000 calc(${at} - 3px), transparent calc(${at} - 3px), transparent calc(${at} + 3px), #000 calc(${at} + 3px))`;
+}
+
 /**
  * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
+ * The fill is the share of quota spent; the tick is how far into the
  * window the clock is, which is also where even spending would have put the
  * fill. Hover for the exact figures and reset time.
  */
@@ -114,18 +125,25 @@ function WindowBar({
           />
         }
       >
-        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
-          <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-        ) : null}
+        {/* The tick sits in a gap cut through the bar, so it reads over any fill
+            and on any surface, including the composer's translucent one. */}
+        <div
+          className="absolute inset-0"
+          style={timeLeft === null ? undefined : { maskImage: tickGap(timeLeft) }}
+        >
+          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+          {remaining > 0 ? (
+            <div
+              className="absolute inset-y-1.5 left-0 rounded-full"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+          ) : null}
+        </div>
         {timeLeft !== null ? (
           <span
             aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={{ left: tickPosition(timeLeft) }}
           />
         ) : null}
       </TooltipTrigger>
@@ -135,7 +153,7 @@ function WindowBar({
             {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
           </span>
           {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
+            <span className="text-muted-foreground">The tick is where even spending would be.</span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
