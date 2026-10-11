@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -816,6 +817,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "sparse.expectFilesOutsideOfPatterns=false",
       ];
+      // Git refuses to stage a directory its parent repository ignores, and forcing the add
+      // would capture the caches and secrets those rules exclude.
+      const ignored = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["check-ignore", "-q", "--", "."],
+        allowNonZeroExit: true,
+      });
+      if (ignored.exitCode === 0) {
+        return yield* new VcsUnsupportedOperationError({
+          operation,
+          kind: "git",
+          detail: "The workspace directory is ignored by its Git repository.",
+        });
+      }
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
       const indexId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
@@ -961,7 +977,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+        const stageFiles = (exclusions: ReadonlyArray<string>, mode: "-A" | "-u" = "-A") =>
           execute({
             operation,
             cwd: input.cwd,
@@ -971,7 +987,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...durableWrite,
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
-              "-A",
+              mode,
               "--",
               ".",
               ...exclusions,
@@ -992,9 +1008,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
                 });
                 if (untracked.stdoutTruncated) return yield* error;
-                const candidates = splitNullSeparatedGitStdoutPaths(untracked).filter((entry) =>
-                  entry.endsWith("/"),
-                );
+                const untrackedPaths = splitNullSeparatedGitStdoutPaths(untracked);
+                // A tracked directory ignored later fails `add -A` by name. With nothing
+                // untracked to capture, `add -u` stages exactly what `add -A` would.
+                if (untrackedPaths.length === 0 && error.retryable !== true) {
+                  return yield* stageFiles([], "-u").pipe(Effect.mapError(() => error));
+                }
+                const candidates = untrackedPaths.filter((entry) => entry.endsWith("/"));
                 // Refuse excessive recovery work before probing any nested repositories.
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 // Discover each child's repository instead of inheriting the server's Git bindings.
