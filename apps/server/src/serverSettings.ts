@@ -786,8 +786,12 @@ const make = Effect.gen(function* () {
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         settingsFileTrusted = false;
-        // The file may hold an opt-out we can no longer read; never install unattended on a guess.
-        settings = { ...DEFAULT_SERVER_SETTINGS, automaticUpdates: false };
+        // The file may hold an opt-out we can no longer read; never install or resume on a guess.
+        settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          automaticUpdates: false,
+          continueThreadsAfterServerUpdate: false,
+        };
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,

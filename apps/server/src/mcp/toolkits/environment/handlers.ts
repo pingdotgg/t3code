@@ -14,6 +14,7 @@ export function preferences(settings: ServerSettings) {
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
     automaticUpdates,
+    continueThreadsAfterServerUpdate,
     backgroundActivity,
     sourceControlWritingStyle,
   } = settings;
@@ -23,6 +24,7 @@ export function preferences(settings: ServerSettings) {
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
     automaticUpdates,
+    continueThreadsAfterServerUpdate,
     backgroundActivity: { profile: backgroundActivity.profile },
     sourceControlWritingStyle: {
       ...sourceControlWritingStyle,

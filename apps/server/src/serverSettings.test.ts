@@ -1035,7 +1035,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const raw = '{"addProjectBaseDirectory":42,"providers":{"codex":{"binaryPath":"/x"}}}';
+      const raw =
+        '{"addProjectBaseDirectory":42,"continueThreadsAfterServerUpdate":"false","providers":{"codex":{"binaryPath":"/x"}}}';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
 
       const settings = yield* serverSettings.getSettings;
@@ -1047,6 +1048,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
       // An unreadable file may hold an opt-out, so background updates stay off.
       assert.equal(settings.automaticUpdates, false);
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );
@@ -1899,6 +1901,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.deepEqual(settings.projectSettingsOverrides, {});
       // The user's file is still there to repair; nothing was written over it.
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
