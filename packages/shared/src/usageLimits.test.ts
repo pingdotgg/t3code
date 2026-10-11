@@ -56,6 +56,20 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
 }
 
 describe("pace", () => {
+  it.each([
+    ["2026-09-03T12:01:00.000Z", "resets in 1m"],
+    ["2026-09-03T12:00:59.999Z", "Resets momentarily"],
+    ["2026-09-03T12:00:00.001Z", "Resets momentarily"],
+    ["2026-09-03T12:00:00.000Z", "resets now"],
+    ["2026-09-03T11:59:59.999Z", "resets now"],
+  ])("formats the reset boundary at %s", (resetsAt, label) => {
+    expect(formatResetsIn({ ...window, resetsAt }, now)).toBe(label);
+  });
+
+  it("ignores invalid reset timestamps", () => {
+    expect(formatResetsIn({ ...window, resetsAt: "invalid" }, now)).toBeNull();
+  });
+
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceOf(window, now)).toBe("under");
