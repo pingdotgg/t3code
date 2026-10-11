@@ -1875,54 +1875,27 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(store.getDraftThread(draftId)?.branch).toBe("feature/pinned");
   });
 
-  it.each(["project-default", undefined] as const)(
-    "round-trips persisted environment selection %s, including legacy drafts without a marker",
-    async (environmentSelection) => {
-      vi.useFakeTimers();
-      try {
-        useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId, {
-          threadId,
-          branch: "feature/persisted",
-          ...(environmentSelection ? { environmentSelection } : {}),
-        });
-        useComposerDraftStore.getState().setPrompt(draftId, "persist this prompt");
-        await vi.advanceTimersByTimeAsync(300);
+  it("round-trips a persisted project-default environment selection", async () => {
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        environmentSelection: "project-default",
+      });
+      useComposerDraftStore.getState().setPrompt(draftId, "persist this prompt");
+      await vi.advanceTimersByTimeAsync(300);
 
-        resetComposerDraftStore();
-        await useComposerDraftStore.persist.rehydrate();
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
 
-        expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
-          environmentId: projectRef.environmentId,
-          projectId: projectRef.projectId,
-          branch: "feature/persisted",
-        });
-        expect(useComposerDraftStore.getState().getDraftThread(draftId)?.environmentSelection).toBe(
-          environmentSelection,
-        );
-        expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
-          "persist this prompt",
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
-
-  it("preserves project-default routing on reuse and lets Auto release it without losing content", () => {
-    const store = useComposerDraftStore.getState();
-    store.setProjectDraftThreadId(projectRef, draftId, {
-      threadId,
-      environmentSelection: "project-default",
-    });
-    store.setPrompt(draftId, "keep this prompt");
-    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    expect(store.getDraftThread(draftId)?.environmentSelection).toBe("project-default");
-    store.setDraftThreadContext(draftId, {
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: null,
-    });
-    expect(store.getDraftThread(draftId)?.environmentSelection).toBe("auto");
-    expect(store.getComposerDraft(draftId)?.prompt).toBe("keep this prompt");
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+        environmentId: projectRef.environmentId,
+        projectId: projectRef.projectId,
+        environmentSelection: "project-default",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {

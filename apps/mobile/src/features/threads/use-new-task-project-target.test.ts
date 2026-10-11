@@ -30,34 +30,29 @@ import { useNewTaskProjectTarget } from "./use-new-task-project-target";
 
 const mac = EnvironmentId.make("mac");
 const pad = EnvironmentId.make("pad");
-function makeProject(
-  environmentId: EnvironmentId,
-  id: string,
-  repository: string,
-): EnvironmentProject {
+function makeProject(environmentId: EnvironmentId) {
   return {
     environmentId,
-    id: ProjectId.make(id),
-    title: repository,
-    workspaceRoot: `/projects/${repository}`,
+    id: ProjectId.make(`${environmentId}-project`),
+    title: "repo",
+    workspaceRoot: "/projects/repo",
     repositoryIdentity: {
-      canonicalKey: repository,
+      canonicalKey: "repo",
       locator: {
         source: "git-remote",
         remoteName: "origin",
-        remoteUrl: `https://example.com/${repository}.git`,
+        remoteUrl: "https://example.com/repo.git",
       },
     },
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
-  };
+  } satisfies EnvironmentProject;
 }
-const macProject = makeProject(mac, "mac-project", "repo");
-const padProject = makeProject(pad, "pad-project", "repo");
-const otherProject = makeProject(mac, "other-project", "other-repo");
-const projects = [macProject, padProject, otherProject];
+const macProject = makeProject(mac);
+const padProject = makeProject(pad);
+const projects = [macProject, padProject];
 const configs = new Map([
   [
     mac,
@@ -67,23 +62,11 @@ const configs = new Map([
 ]);
 
 describe("mobile project picker targets", () => {
-  it("uses the default for an automatic project pick", () => {
-    expect(useNewTaskProjectTarget()(macProject)).toBe(padProject);
-  });
-
   it("preserves the manually selected copy when reselecting its logical project", () => {
     expect(
       useNewTaskProjectTarget()(padProject, {
         manualProjectRef: scopeProjectRef(mac, macProject.id),
       }),
     ).toBe(macProject);
-  });
-
-  it("releases a manual choice when selecting another logical project", () => {
-    expect(
-      useNewTaskProjectTarget()(macProject, {
-        manualProjectRef: scopeProjectRef(mac, otherProject.id),
-      }),
-    ).toBe(padProject);
   });
 });

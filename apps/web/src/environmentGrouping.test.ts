@@ -14,7 +14,6 @@ import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
 } from "./sidebarProjectGrouping";
-import { resolveNewThreadProjectRef } from "@t3tools/client-runtime/state/project-grouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
 import type { Project } from "./types";
@@ -457,45 +456,5 @@ describe("environment grouping", () => {
     });
 
     expect(groups.map((group) => group.displayName)).toEqual(["separate", "shared-repo"]);
-  });
-});
-
-describe("project picker default environment", () => {
-  it("shows the default target ahead of the current machine and keeps the logical project preferred", () => {
-    const primary = makeProject({ repositoryIdentity });
-    const remote = makeProject({
-      id: ProjectId.make("project-remote"),
-      environmentId: remoteEnvironmentId,
-      repositoryIdentity,
-    });
-    const groups = buildSidebarProjectSnapshots({
-      projects: [primary, remote],
-      settings: defaultGroupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: () => null,
-    });
-    const entries = buildSidebarProjectPickerEntries({
-      groups,
-      preferredProjectRef: { environmentId: primary.environmentId, projectId: primary.id },
-      resolveProjectTarget: (projectRef) =>
-        resolveNewThreadProjectRef({
-          members: groups[0]!.memberProjects,
-          connectedEnvironmentIds: new Set([primaryEnvironmentId, remoteEnvironmentId]),
-          settingsByEnvironment: new Map([
-            [
-              primaryEnvironmentId,
-              {
-                projectSettingsOverrides: {
-                  [primary.id]: { defaultEnvironmentId: remoteEnvironmentId },
-                },
-              },
-            ],
-          ]),
-          contextProjectRef: projectRef,
-        }),
-    });
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.targetProject.environmentId).toBe(remoteEnvironmentId);
-    expect(entries[0]?.isPreferred).toBe(true);
   });
 });

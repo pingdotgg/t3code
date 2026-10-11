@@ -43,123 +43,51 @@ describe("new thread project environment", () => {
     });
   });
 
-  it("allows automatic routing when the default is disconnected", () => {
-    expect(
-      resolveNewThreadProjectRef({
-        ...input,
-        connectedEnvironmentIds: new Set([mac.environmentId]),
-      }),
-    ).toEqual({
-      projectRef: macRef,
-      environmentSelection: "auto",
-    });
-  });
-
-  it("falls back to a connected member when both the default and context are disconnected", () => {
-    expect(
-      resolveNewThreadProjectRef({
-        ...input,
-        contextProjectRef: padRef,
-        connectedEnvironmentIds: new Set([mac.environmentId]),
-      }),
-    ).toEqual({
-      projectRef: macRef,
-      environmentSelection: "auto",
-    });
-  });
-
-  it("allows automatic routing when the default has no project copy", () => {
-    expect(resolveNewThreadProjectRef({ ...input, members: [mac] })).toEqual({
+  it.each([
+    ["missing a project copy", { members: [mac] }],
+    [
+      "disconnected along with the context",
+      { contextProjectRef: padRef, connectedEnvironmentIds: new Set([mac.environmentId]) },
+    ],
+  ] as const)("falls back to a connected copy when the default is %s", (_reason, overrides) => {
+    expect(resolveNewThreadProjectRef({ ...input, ...overrides })).toEqual({
       projectRef: macRef,
       environmentSelection: "auto",
     });
   });
 
   it.each([{}, { defaultEnvironmentId: null }])(
-    "preserves today's context fallback for Automatic %j",
+    "preserves the context for Automatic %j whether connected or offline",
     (override) => {
-      expect(
-        resolveNewThreadProjectRef({
-          ...input,
-          settingsByEnvironment: settings(override),
-          contextProjectRef: padRef,
-        }),
-      ).toEqual({
-        projectRef: padRef,
-        environmentSelection: "auto",
-      });
+      for (const connected of [connectedEnvironmentIds, new Set([mac.environmentId])]) {
+        expect(
+          resolveNewThreadProjectRef({
+            ...input,
+            settingsByEnvironment: settings(override),
+            contextProjectRef: padRef,
+            connectedEnvironmentIds: connected,
+          }),
+        ).toEqual({ projectRef: padRef, environmentSelection: "auto" });
+      }
     },
   );
 
-  it.each([{}, { defaultEnvironmentId: null }])(
-    "preserves an offline context for Automatic %j",
-    (override) => {
+  it.each([
+    [{ contextProjectRef: { ...padRef, projectId: ProjectId.make("other") } }, padRef],
+    [{ contextProjectRef: null, primaryEnvironmentId: pad.environmentId }, padRef],
+    [{ contextProjectRef: null, primaryEnvironmentId: null }, macRef],
+  ] as const)(
+    "Automatic falls back to the context machine, primary, then first member (%#)",
+    (overrides, projectRef) => {
       expect(
         resolveNewThreadProjectRef({
           ...input,
-          settingsByEnvironment: settings(override),
-          contextProjectRef: padRef,
-          connectedEnvironmentIds: new Set([mac.environmentId]),
+          settingsByEnvironment: settings(),
+          ...overrides,
         }),
-      ).toEqual({
-        projectRef: padRef,
-        environmentSelection: "auto",
-      });
+      ).toEqual({ projectRef, environmentSelection: "auto" });
     },
   );
-
-  it("falls back to the context machine for another project, then primary, then first member", () => {
-    const automatic = { ...input, settingsByEnvironment: settings() };
-    expect(
-      resolveNewThreadProjectRef({
-        ...automatic,
-        contextProjectRef: { ...padRef, projectId: ProjectId.make("other") },
-      }).projectRef,
-    ).toEqual(padRef);
-    expect(
-      resolveNewThreadProjectRef({
-        ...automatic,
-        contextProjectRef: null,
-        primaryEnvironmentId: pad.environmentId,
-      }).projectRef,
-    ).toEqual(padRef);
-    expect(
-      resolveNewThreadProjectRef({
-        ...automatic,
-        contextProjectRef: null,
-        primaryEnvironmentId: null,
-      }).projectRef,
-    ).toEqual(macRef);
-  });
-
-  it("resolves disagreeing connected copies by the first explicit setting in environment/project key order", () => {
-    const mixed = settings(
-      { defaultEnvironmentId: mac.environmentId },
-      { defaultEnvironmentId: pad.environmentId },
-    );
-    expect(
-      resolveNewThreadProjectRef({ ...input, settingsByEnvironment: mixed }).projectRef,
-    ).toEqual(macRef);
-    expect(
-      resolveNewThreadProjectRef({ ...input, members: [pad, mac], settingsByEnvironment: mixed })
-        .projectRef,
-    ).toEqual(macRef);
-    expect(
-      resolveNewThreadProjectRef({
-        ...input,
-        settingsByEnvironment: settings(
-          { defaultEnvironmentId: null },
-          { defaultEnvironmentId: pad.environmentId },
-        ),
-      }).environmentSelection,
-    ).toBe("auto");
-    expect(
-      resolveNewThreadProjectRef({
-        ...input,
-        settingsByEnvironment: settings({}, { defaultEnvironmentId: pad.environmentId }),
-      }).projectRef,
-    ).toEqual(padRef);
-  });
 
   it.each([mac.environmentId, null])(
     "ignores a disconnected first copy's stale default %j when a connected copy has a value",

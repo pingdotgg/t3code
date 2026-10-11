@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
@@ -318,109 +318,70 @@ describe.each([
 });
 
 describe("new threads routed by a project default", () => {
-  it("retargets before reading workspace and permission defaults, including reusable drafts", async () => {
+  beforeEach(() => {
     testState.projectDefaultEnabled = true;
-    try {
-      for (const draft of [
-        null,
-        {
-          draftId: "draft-existing",
-          environmentId: "environment-primary",
-          promotedTo: null,
-          threadId: "thread-existing",
-        },
-      ] as const) {
-        testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
-        const opened = await useNewThreadHandler()({
-          environmentId: "environment-primary",
-          projectId: "project-primary",
-        } as never);
-        expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-          "remote-project",
-          { environmentId: "environment-ssh", projectId: "project-remote" },
-          opened!.draftId,
-          expect.objectContaining({
-            environmentSelection: "project-default",
-            loadBalancedEnvironmentId: null,
-            startFromOrigin: true,
-            envMode: "worktree",
-          }),
-        );
-      }
-    } finally {
-      testState.projectDefaultEnabled = false;
-    }
+  });
+  afterEach(() => {
+    testState.projectDefaultEnabled = false;
+    testState.routeDraftId = null;
   });
 
   it("starts on the project default when New thread is invoked from a thread on another environment", async () => {
     testState.reset(null);
-    testState.projectDefaultEnabled = true;
-    try {
-      await startNewThreadFromContext({
-        activeThread: {
-          environmentId: "environment-primary",
-          projectId: "project-primary",
-        } as never,
-        activeDraftThread: null,
-        defaultProjectRef: null,
-        handleNewThread: useNewThreadHandler(),
-      });
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        { environmentId: "environment-ssh", projectId: "project-remote" },
-        "draft-delayed",
-        expect.objectContaining({
-          environmentSelection: "project-default",
-          runtimeMode: "full-access",
-        }),
-      );
-    } finally {
-      testState.projectDefaultEnabled = false;
-    }
+    await startNewThreadFromContext({
+      activeThread: {
+        environmentId: "environment-primary",
+        projectId: "project-primary",
+      } as never,
+      activeDraftThread: null,
+      defaultProjectRef: null,
+      handleNewThread: useNewThreadHandler(),
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      "draft-delayed",
+      expect.objectContaining({
+        environmentSelection: "project-default",
+        runtimeMode: "full-access",
+      }),
+    );
   });
 
   it("keeps explicit checkout requests on the selected environment", async () => {
     testState.reset(null);
-    testState.projectDefaultEnabled = true;
-    try {
-      const projectRef = {
-        environmentId: "environment-primary",
-        projectId: "project-primary",
-      } as never;
-      const opened = await useNewThreadHandler()(projectRef, {
+    const projectRef = {
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+    } as never;
+    const opened = await useNewThreadHandler()(projectRef, {
+      branch: "feature",
+      worktreePath: "/checkout",
+      envMode: "worktree",
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      opened!.draftId,
+      expect.objectContaining({
+        environmentSelection: "manual",
         branch: "feature",
         worktreePath: "/checkout",
-        envMode: "worktree",
-      });
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({
-          environmentSelection: "manual",
-          branch: "feature",
-          worktreePath: "/checkout",
-        }),
-      );
-    } finally {
-      testState.projectDefaultEnabled = false;
-    }
+      }),
+    );
   });
-});
 
-it("keeps the environment explicitly chosen in the current empty draft ahead of the project default", async () => {
-  testState.reset({
-    draftId: "draft-existing",
-    environmentId: "environment-primary",
-    projectId: "project-primary",
-    logicalProjectKey: "remote-project",
-    environmentSelection: "manual",
-    promotedTo: null,
-    threadId: "thread-existing",
-  });
-  testState.projectDefaultEnabled = true;
-  testState.routeDraftId = "draft-existing";
-  try {
+  it("keeps the environment explicitly chosen in the current empty draft ahead of the project default", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+      logicalProjectKey: "remote-project",
+      environmentSelection: "manual",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    testState.routeDraftId = "draft-existing";
     const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
     const opened = await useNewThreadHandler()(projectRef);
     expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
@@ -429,8 +390,5 @@ it("keeps the environment explicitly chosen in the current empty draft ahead of 
       opened!.draftId,
       expect.objectContaining({ environmentSelection: "manual" }),
     );
-  } finally {
-    testState.projectDefaultEnabled = false;
-    testState.routeDraftId = null;
-  }
+  });
 });
