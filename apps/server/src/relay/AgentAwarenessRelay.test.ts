@@ -209,6 +209,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     listProjectThreads: unused,
     sendToThread: unused,
     assertProviderInstanceEnabled: unused,
+    isProviderInstanceEnabledForProject: unused,
     waitForThread: unused,
     settleAfterRun: unused,
     settleThread: unused,
