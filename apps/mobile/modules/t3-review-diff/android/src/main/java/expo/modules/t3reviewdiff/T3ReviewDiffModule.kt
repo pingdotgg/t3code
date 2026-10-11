@@ -41,6 +41,9 @@ class T3ReviewDiffModule : Module() {
       Prop("contentWidth") { view: T3ReviewDiffView, contentWidth: Double ->
         view.setContentWidth(contentWidth.toFloat())
       }
+      Prop("scrollEnabled") { view: T3ReviewDiffView, enabled: Boolean ->
+        view.setScrollEnabled(enabled)
+      }
       Prop("initialRowIndex") { view: T3ReviewDiffView, initialRowIndex: Double ->
         view.setInitialRowIndex(initialRowIndex)
       }

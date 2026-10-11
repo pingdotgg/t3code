@@ -1,3 +1,5 @@
+import Animated from "react-native-reanimated";
+import { PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -21,9 +23,12 @@ import { usePullRequestAgentActions } from "./usePullRequestAgentActions";
 
 export function PullRequestCardGroup(props: { readonly children: ReactNode }) {
   return (
-    <View className="overflow-hidden rounded-[22px] border-continuous bg-grouped-card">
+    <Animated.View
+      layout={PR_ROW_LAYOUT}
+      className="overflow-hidden rounded-[22px] border-continuous bg-grouped-card"
+    >
       {props.children}
-    </View>
+    </Animated.View>
   );
 }
 

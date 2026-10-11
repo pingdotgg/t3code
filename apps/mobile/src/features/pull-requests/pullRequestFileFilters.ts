@@ -21,9 +21,12 @@ export function isPullRequestTestFile(path: string): boolean {
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,
   hideTestFiles: boolean,
+  includePath?: string,
 ): ReviewParsedDiff {
   if (!hideTestFiles || parsed.kind !== "files") return parsed;
-  const files = parsed.files.filter((file) => !isPullRequestTestFile(file.path));
+  const files = parsed.files.filter(
+    (file) => file.path === includePath || !isPullRequestTestFile(file.path),
+  );
   if (files.length === parsed.files.length) return parsed;
   return {
     ...parsed,

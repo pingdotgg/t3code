@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useMemo } from "react";
 import { Platform, View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -24,7 +24,8 @@ import {
 } from "./WorkspaceTabsContext";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
 import { WORKSPACE_DOCK, workspaceToolbarHeight } from "./workspace-tabs-state";
-import { useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { useSidebarWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 
 const TAB_TITLES = {
   threads: "Threads",
@@ -58,6 +59,7 @@ function WorkspaceRootContent() {
   const columnMetrics = useNativeColumnLayoutMetrics();
   const nativeMetrics = useNativeLayoutMetrics();
   const systemTabBar = useSystemWorkspaceTabBar();
+  const sidebarTabs = useSidebarWorkspaceTabs();
   const sidebarNavigation =
     primaryColumn !== null &&
     (layout.usesSplitView ||
@@ -86,7 +88,7 @@ function WorkspaceRootContent() {
   const bottomClearance =
     Platform.OS === "ios"
       ? Math.max(insets.bottom, keyboardHeight) +
-        (systemTabBar || tab.searchMode !== "resting"
+        (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
           ? 16
           : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16)
       : keyboardHeight > 0 && tab.searchMode !== "resting"
@@ -96,7 +98,10 @@ function WorkspaceRootContent() {
 
   return (
     <WorkspaceTabsContext value={context}>
-      <View className="flex-1 bg-screen">
+      <View
+        className="flex-1 bg-screen"
+        style={sidebarTabs ? { paddingTop: insets.top } : undefined}
+      >
         {Platform.OS === "ios" ? (
           <NativeStackScreenOptions
             optionsVersion={[state.selectedTab, state.selectionRevision, width, sidebarNavigation]}
@@ -132,7 +137,11 @@ function WorkspaceRootContent() {
             ]}
           />
         )}
-        {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
+        {sidebarTabs ? <WorkspaceSidebarTabs /> : null}
+        {/* The pinned picker already clears the navigation bar; lists must not inset it again. */}
+        <SafeAreaInsetsContext value={sidebarTabs ? { ...insets, top: 0 } : insets}>
+          {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
+        </SafeAreaInsetsContext>
         <WorkspaceToolbar
           sidebar={sidebarNavigation}
           onNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}

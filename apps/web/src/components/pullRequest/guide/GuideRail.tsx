@@ -4,7 +4,7 @@ import { CheckIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../../ui/badge";
-import { stopSubline } from "./guideTour.logic";
+import { stopSubline } from "@t3tools/client-runtime/review-guide-tour";
 
 /**
  * The tour's table of contents: where the reader is and which stops they have read past. A stop

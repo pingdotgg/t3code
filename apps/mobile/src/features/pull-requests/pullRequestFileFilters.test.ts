@@ -67,6 +67,17 @@ describe("mobile PR test file filter", () => {
     expect(parsed.files).toHaveLength(4);
   });
 
+  it("keeps a guide's target test file visible without exposing other hidden tests", () => {
+    const parsed = buildReviewParsedDiff(
+      ["src/first.test.ts", "src/app.ts", "src/second.test.ts"].map(patch).join("\n"),
+      "pr",
+    );
+    const visible = filterPullRequestTestFiles(parsed, true, "src/second.test.ts");
+    if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
+    expect(visible.files.map((file) => file.path)).toEqual(["src/app.ts", "src/second.test.ts"]);
+    expect(visible.files[1]).toBe(parsed.files[2]);
+  });
+
   it("uses the current path when a file is renamed out of a test directory", () => {
     const parsed = buildReviewParsedDiff(
       "diff --git a/tests/helper.ts b/src/helper.ts\nsimilarity index 100%\nrename from tests/helper.ts\nrename to src/helper.ts\n",

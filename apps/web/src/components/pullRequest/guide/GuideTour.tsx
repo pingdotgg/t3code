@@ -18,7 +18,7 @@ import {
   useGuideRunStore,
   type GuideProgress,
 } from "./guideRunStore";
-import { stepTourPosition, stopFilePaths } from "./guideTour.logic";
+import { stepTourPosition, stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
 
 /**

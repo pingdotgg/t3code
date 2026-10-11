@@ -1,6 +1,13 @@
 import { Platform } from "react-native";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
-/** UIKit owns workspace tab navigation on every iOS size class. */
+export function useSidebarWorkspaceTabs() {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  return Platform.OS === "ios" && Platform.isPad && layout.usesSplitView;
+}
+
+/** Compact iOS windows use UIKit tabs; wide iPad windows use the sidebar picker. */
 export function useSystemWorkspaceTabBar() {
-  return Platform.OS === "ios";
+  const sidebarTabs = useSidebarWorkspaceTabs();
+  return Platform.OS === "ios" && !sidebarTabs;
 }

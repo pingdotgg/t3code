@@ -1,4 +1,6 @@
-import { LegendList } from "@legendapp/list/react-native";
+import { AnimatedLegendList } from "@legendapp/list/reanimated";
+import Animated from "react-native-reanimated";
+import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
@@ -192,7 +194,7 @@ export function usePullRequestFilesContent(props: {
           </View>
         ) : parsed.kind === "files" ? (
           <>
-            <View className="flex-row items-center gap-2 py-3">
+            <View className="min-h-17 flex-row items-center gap-2 py-3">
               <View className="min-w-0 flex-1 gap-1">
                 <Text className="text-base font-t3-semibold">
                   {parsed.fileCount} {filter.hiddenCount ? "visible" : "changed"}{" "}
@@ -201,11 +203,11 @@ export function usePullRequestFilesContent(props: {
                     ? ` · ${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
                     : ""}
                 </Text>
-                {filter.hideTestFiles ? (
-                  <Text className="text-2xs text-foreground-muted">
-                    {filter.hiddenCount} test {filter.hiddenCount === 1 ? "file" : "files"} hidden
-                  </Text>
-                ) : null}
+                <Text className="text-2xs text-foreground-muted">
+                  {filter.hideTestFiles
+                    ? `${filter.hiddenCount} test ${filter.hiddenCount === 1 ? "file" : "files"} hidden`
+                    : "Test files included"}
+                </Text>
               </View>
               <PullRequestDiffStats
                 additions={parsed.additions}
@@ -285,11 +287,22 @@ export function usePullRequestFilesContent(props: {
 
 export function PullRequestFiles(props: Parameters<typeof usePullRequestFilesContent>[0]) {
   const content = usePullRequestFilesContent(props);
+  const [animationsReady, setAnimationsReady] = useState(false);
   return (
-    <LegendList
+    <AnimatedLegendList
       data={content.rows}
       keyExtractor={(row) => row.key}
-      renderItem={({ item }) => item.content}
+      itemLayoutAnimation={PR_ROW_LAYOUT}
+      onLoad={() => setAnimationsReady(true)}
+      renderItem={({ item }) => (
+        <Animated.View
+          key={item.key}
+          entering={animationsReady ? PR_ROW_ENTER : undefined}
+          exiting={animationsReady ? PR_ROW_EXIT : undefined}
+        >
+          {item.content}
+        </Animated.View>
+      )}
       recycleItems={false}
       estimatedItemSize={64}
       ListHeaderComponent={content.header}

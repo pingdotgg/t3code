@@ -1,7 +1,7 @@
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, Platform, View, type NativeSyntheticEvent } from "react-native";
-import { Tabs, type TabSelectedEvent } from "react-native-screens";
+import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
@@ -70,11 +70,16 @@ export function WorkspaceNativeTabs(props: {
           tabBarMinimizeBehavior: "never",
           tabBarLeadingWidth: phoneBar ? 220 : 0,
         }}
+        onTabSelectionRejected={({
+          nativeEvent,
+        }: NativeSyntheticEvent<TabSelectionRejectedEvent>) => {
+          setProvenance(nativeEvent.provenance);
+        }}
         onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
           const tab = nativeEvent.selectedScreenKey;
           if (tab !== "threads" && tab !== "pullRequests") return;
           setProvenance(nativeEvent.provenance);
-          if (tab === selectedTab) return;
+          if (nativeEvent.actionOrigin === "programmatic-js" || tab === selectedTab) return;
           Keyboard.dismiss();
           props.onSelect();
           workspace.dispatch({ type: "select", tab });

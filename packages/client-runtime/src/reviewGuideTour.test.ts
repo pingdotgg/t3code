@@ -9,7 +9,7 @@ import {
   letterStopNotes,
   rowsToPatch,
   stepTourPosition,
-} from "./guideTour.logic";
+} from "./reviewGuideTour.js";
 
 const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
 --- a/src/tray.ts

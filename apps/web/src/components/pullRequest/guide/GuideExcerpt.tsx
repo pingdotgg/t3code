@@ -36,7 +36,7 @@ import {
   excerptRows,
   fileDiffRows,
   rowsToPatch,
-} from "./guideTour.logic";
+} from "@t3tools/client-runtime/review-guide-tour";
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 

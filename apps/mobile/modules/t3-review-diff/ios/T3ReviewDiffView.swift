@@ -365,7 +365,6 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     scrollView.showsHorizontalScrollIndicator = false
     scrollView.backgroundColor = contentView.theme.background
     pullRefreshControl.addTarget(self, action: #selector(handlePullToRefresh), for: .valueChanged)
-    scrollView.refreshControl = pullRefreshControl
     addSubview(scrollView)
 
     contentView.backgroundColor = contentView.theme.background
@@ -701,14 +700,14 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     applyPendingScrollIfNeeded()
     emitVisibleFileIfNeeded()
 
-    let debugKey = "\(rows.count):\(Int(bounds.width)):\(Int(bounds.height)):\(Int(height))"
+    let debugKey = "\(rows.count):\(Int(bounds.width)):\(Int(bounds.height)):\(Int(contentView.contentHeight))"
     if debugKey != lastMetricsDebugKey {
       lastMetricsDebugKey = debugKey
       emitDebug("metrics", [
         "rows": rows.count,
         "boundsWidth": Double(bounds.width),
         "boundsHeight": Double(bounds.height),
-        "contentHeight": Double(height),
+        "contentHeight": Double(contentView.contentHeight),
         "contentWidth": Double(style.contentWidth),
         "fileHeaderHeight": Double(style.fileHeaderHeight),
         "rowHeight": Double(style.rowHeight),
@@ -838,6 +837,20 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     pendingScrollFileId = nil
     pendingScrollAnimated = false
     setVerticalContentOffset(0, animated: animated)
+  }
+
+  func setScrollEnabled(_ enabled: Bool) {
+    scrollView.isScrollEnabled = enabled
+  }
+
+  func setBounces(_ bounces: Bool) {
+    scrollView.bounces = bounces
+    scrollView.alwaysBounceVertical = bounces
+  }
+
+  func setRefreshEnabled(_ enabled: Bool) {
+    if !enabled { pullRefreshControl.endRefreshing() }
+    scrollView.refreshControl = enabled ? pullRefreshControl : nil
   }
 
   @objc private func handlePullToRefresh() {
@@ -2429,10 +2442,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
-    let selectionColor = theme.hunkText.withAlphaComponent(0.22)
-    selectionColor.setFill()
-    context.fill(rect)
-
+    // Keep the diff and syntax colors intact; selection lives in the gutter.
     theme.hunkText.withAlphaComponent(0.95).setFill()
     context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
   }

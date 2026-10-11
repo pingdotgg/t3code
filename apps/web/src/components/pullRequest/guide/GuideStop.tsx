@@ -28,7 +28,7 @@ import { GuideExcerpt, type ExcerptCommenting } from "./GuideExcerpt";
 import { GuideFileDiff } from "./GuideFileDiff";
 import { GuideNotes } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
-import { letterStopNotes } from "./guideTour.logic";
+import { letterStopNotes } from "@t3tools/client-runtime/review-guide-tour";
 
 const ATTENTION_LABELS = {
   tradeoff: "A tradeoff to weigh",

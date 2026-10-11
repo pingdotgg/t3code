@@ -193,7 +193,9 @@ declined pull request.
 ### Review guides
 
 Review guides are in beta. Turn on **Review guides** in Settings → Source Control to add the
-**Guide** tab to pull requests on that server.
+**Guide** tab to pull requests on that server. On mobile, move between stops with **Next**
+and the back button; a stale guide offers a rewrite and hides excerpts that no longer match
+the current change.
 
 The **Guide** tab gives you a tour of a pull request without reading it line by line: stops
 through the change in reading order. Each stop points at the lines worth reading, and a stop marked
@@ -205,11 +207,12 @@ covers that layer only, and may point out what a lower layer introduced or what 
 Choose **Write guide** to have the review guide model from Settings → Source Control read the
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
-the app and you are told when the guide is ready. Claude and Codex can write guides. The guide is
+the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
+its progress. Claude and Codex can write guides. The guide is
 kept for everyone using this server. To write it again, for example after a push or after changing
 the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
 
-While reading a stop, select lines in an excerpt to add a comment to your review or ask an agent
+On web, while reading a stop, select lines in an excerpt to add a comment to your review or ask an agent
 about them; comments wait with the ones from the **Code** tab until you send the review. Choose a
 suggested question, or **Ask about this stop**, to open a thread that already knows which stop you
 are on. **Finish review** on the last stop opens the review with everything you collected.
