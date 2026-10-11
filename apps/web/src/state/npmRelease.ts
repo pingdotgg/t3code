@@ -5,8 +5,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 /**
  * Whether `t3@<version>` is published on npm. A 404 is false; network and
- * registry errors stay unknown. Both re-check when the window regains focus,
- * so a release that lands later shows up without a reload.
+ * registry errors stay unknown. Both re-check every few minutes, so a release
+ * that lands later shows up without a reload.
  */
 const npmReleasePublishedAtom = Atom.family((version: string) =>
   Atom.make(
@@ -23,7 +23,7 @@ const npmReleasePublishedAtom = Atom.family((version: string) =>
         : false;
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ).pipe(
-    Atom.refreshOnWindowFocus,
+    Atom.withRefresh("5 minutes"),
     Atom.keepAlive,
     Atom.withLabel(`npm-release-published:${version}`),
   ),
