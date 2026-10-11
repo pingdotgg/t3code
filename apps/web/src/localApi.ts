@@ -6,6 +6,11 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+// Invalidates in-flight `show` calls when a newer show begins or `close`
+// runs first. The styled preference read is asynchronous, so without this a
+// menu could open after it was already dismissed.
+let contextMenuShowGeneration = 0;
+
 // Whether the user opted into T3 Code styling for right-click menus on
 // desktop. Reads the client-settings snapshot lazily so this module stays
 // free of a static import cycle with the settings hooks. Falls back to the
@@ -58,7 +63,10 @@ function createBrowserLocalApi(): LocalApi {
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          if (await shouldUseStyledContextMenu()) {
+          const generation = ++contextMenuShowGeneration;
+          const useStyled = await shouldUseStyledContextMenu();
+          if (generation !== contextMenuShowGeneration) return null;
+          if (useStyled) {
             return showContextMenuFallback(items, position);
           }
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
@@ -68,8 +76,10 @@ function createBrowserLocalApi(): LocalApi {
       // The DOM fallback needs an explicit dismiss when the state behind it
       // goes away. A native desktop menu closes itself; dismissing is a
       // no-op when no fallback menu is open, so this is safe to call always
-      // (including when the styled menu is used on desktop).
+      // (including when the styled menu is used on desktop). Bumping the
+      // generation abandons any show still awaiting the preference read.
       close: async () => {
+        contextMenuShowGeneration += 1;
         dismissContextMenu();
       },
     },
