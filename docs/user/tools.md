@@ -34,6 +34,11 @@ With a project selected, skills go into the project's `.agents/skills` folder an
 `skills-lock.json`, which you can commit for your team. Otherwise they go into `~/.agents/skills`
 for every project. Agents that only read their own folder, such as Claude, get a link to the skill.
 
+With **All environments** selected, the list shows the skills on every connected environment. Each
+row shows the machines that have the skill, or one mark when they all do, and a skill's page can
+**Copy to** the environments missing it. A copy reinstalls from the skill's source when it has one
+the other machine can reach, so it can be updated there too, and otherwise copies the files.
+
 Skills installed this way, here or with `npx skills` in a terminal, are grouped by where they came
 from, with one switch for the group. Their page has **Update**, which installs the latest version
 from the same source, and **Remove**. Other skills in your own skill folders, such as

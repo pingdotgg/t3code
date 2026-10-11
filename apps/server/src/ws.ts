@@ -2873,6 +2873,8 @@ export const layerWsRpc = (
         [WS_METHODS.skillsInstall]: (input) => skillLibrary.install(input),
         [WS_METHODS.skillsUpdate]: (input) => skillLibrary.update(input),
         [WS_METHODS.skillsRemove]: (input) => skillLibrary.remove(input).pipe(Effect.as({})),
+        [WS_METHODS.skillsExport]: (input) => skillLibrary.exportSkill(input),
+        [WS_METHODS.skillsImport]: (input) => skillLibrary.importSkill(input).pipe(Effect.as({})),
         [WS_METHODS.projectsReadFile]: (input) =>
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(

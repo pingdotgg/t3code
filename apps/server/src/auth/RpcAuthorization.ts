@@ -149,6 +149,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.skillsInspect]: AuthFilesystemReadScope,
   // A preview unpacks a source into a temp folder and deletes it.
   [WS_METHODS.skillsPreview]: AuthFilesystemReadScope,
+  // Packs a folder an agent reports for that skill, nothing a client names.
+  [WS_METHODS.skillsExport]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,

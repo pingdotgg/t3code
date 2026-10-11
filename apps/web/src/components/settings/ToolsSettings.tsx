@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettingsPatch,
+  type SkillFolderInfo,
   type SkillInstallTarget,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -22,7 +23,7 @@ import { AlertTriangleIcon, MoreHorizontalIcon, PlusIcon, SearchIcon } from "luc
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
-import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,16 +49,23 @@ import { AddSkillsDialog } from "./AddSkillsDialog";
 import { McpServerDialog } from "./McpServerDialog";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillDetail } from "./SkillDetail";
+import {
+  type SkillEnvironment,
+  useEnvironmentProviders,
+  useEnvironmentSkillFolders,
+} from "./SkillEnvironments";
 import { SkillListSection, type SkillListRow } from "./SkillList";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   collectSkillRows,
+  type FleetSkillRow,
   filterSkillRows,
   groupSkillRows,
   listMcpServerRows,
   type McpServerRow,
+  mergeEnvironmentSkillRows,
   SKILL_GROUP_HINTS,
   SKILL_GROUP_LABELS,
   skillAgents,
@@ -71,6 +79,7 @@ import {
 import { useScopedSettings, useScopedSettingsWriteAllowed } from "./useScopedSettings";
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const EMPTY_FOLDERS: ReadonlyMap<string, SkillFolderInfo> = new Map();
 /** A scan that finishes sooner than this shows no placeholder at all. */
 const SKELETON_DELAY_MS = 150;
 
@@ -219,12 +228,37 @@ function SkillsPanel({
   openName: string | null;
   onOpen: (name: string | null) => void;
 }) {
-  const { scope, target } = useSettingsScope();
+  const { scope, target, connectedEnvironments } = useSettingsScope();
   const environmentId = target?.environmentId ?? null;
   const targets = useToolsTargets();
   const cwd = targets.find((candidate) => candidate.environmentId === environmentId)?.cwd ?? null;
+  // Every environment the scope covers, the representative one first: rows
+  // show its copy of a skill when it has one.
+  const environments = useMemo((): ReadonlyArray<SkillEnvironment> => {
+    const ordered = [
+      ...targets.filter((candidate) => candidate.environmentId === environmentId),
+      ...targets.filter((candidate) => candidate.environmentId !== environmentId),
+    ];
+    return ordered.flatMap((candidate) => {
+      const connected = connectedEnvironments.find(
+        (environment) => environment.environmentId === candidate.environmentId,
+      );
+      return connected === undefined
+        ? []
+        : [
+            {
+              environmentId: candidate.environmentId,
+              label: connected.label,
+              serverConfig: connected.serverConfig,
+              cwd: candidate.cwd,
+            },
+          ];
+    });
+  }, [connectedEnvironments, environmentId, targets]);
+  const fleet = environments.length > 1;
+  const environmentProviders = useEnvironmentProviders(environments);
   const providers =
-    useAtomValue(serverEnvironment.providersValueAtom(environmentId ?? ("" as EnvironmentId))) ??
+    environmentProviders.find((entry) => entry.environmentId === environmentId)?.providers ??
     EMPTY_PROVIDERS;
   const disabledSkills = useScopedSettings((settings) => settings.disabledSkills);
   const canWrite = useScopedSettingsWriteAllowed();
@@ -235,10 +269,6 @@ function SkillsPanel({
   const [query, setQuery] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const enabledProviders = useMemo(
-    () => providers.filter((provider) => provider.enabled),
-    [providers],
-  );
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   // Installs go to the checkout shown, or to the environment's home folders.
   const installTarget: SkillInstallTarget | null =
@@ -250,28 +280,27 @@ function SkillsPanel({
           : { kind: "project", cwd }
         : { kind: "environment" };
   const canInstall = useAtomValue(serverEnvironment.installSkills.permissionAtom(environmentId));
+  const installers = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const exportSkill = useAtomCommand(serverEnvironment.exportSkill, { reportFailure: false });
+  const importSkill = useAtomCommand(serverEnvironment.importSkill, { reportFailure: false });
+  const [syncing, setSyncing] = useState<ReadonlySet<string>>(new Set());
   const updateSkill = useAtomCommand(serverEnvironment.updateSkill, { reportFailure: false });
   const removeSkill = useAtomCommand(serverEnvironment.removeSkill, { reportFailure: false });
   const [adding, setAdding] = useState(false);
   const [removingSkill, setRemovingSkill] = useState<{
     readonly name: string;
-    readonly target: SkillInstallTarget;
-    /** The `skills` CLI installed it, so its lock entry goes too. */
+    /** Each environment's copy to remove. */
+    readonly inputs: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly name: string;
+      readonly target: SkillInstallTarget;
+    }>;
+    /** The `skills` CLI installed the shown copy, so its lock entry goes too. */
     readonly installed: boolean;
   } | null>(null);
   const [skillActionError, setSkillActionError] = useState<string | null>(null);
-  const inspected = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : serverEnvironment.inspectSkills({
-          environmentId,
-          input: cwd === null ? {} : { cwd },
-        }),
-  );
-  const foldersByPath = useMemo(
-    () => new Map((inspected.data?.folders ?? []).map((folder) => [folder.path, folder])),
-    [inspected.data],
-  );
+  const inspected = useEnvironmentSkillFolders(environments);
+  const foldersOf = (id: EnvironmentId) => inspected.folders.get(id) ?? EMPTY_FOLDERS;
   const scopeLabel = isProjectScope
     ? scope.kind === "project" || scope.kind === "checkout"
       ? scope.group.displayName
@@ -280,20 +309,29 @@ function SkillsPanel({
       ? scope.label
       : "this environment";
 
+  // Rescans every environment in scope; a project's checkout is only scanned
+  // when asked, as the composer does before showing its skill menu.
   const refresh = async (fresh: boolean) => {
-    if (environmentId === null) return;
+    if (environments.length === 0) return;
     setRefreshing(true);
     try {
       await Promise.all(
-        enabledProviders.map((provider) =>
-          refreshProviders({
-            environmentId,
-            input: {
-              instanceId: provider.instanceId,
-              ...(cwd === null ? {} : { cwd }),
-              ...(fresh ? { fresh: true } : {}),
-            },
-          }),
+        environments.flatMap((environment) =>
+          (
+            environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
+              ?.providers ?? EMPTY_PROVIDERS
+          )
+            .filter((provider) => provider.enabled)
+            .map((provider) =>
+              refreshProviders({
+                environmentId: environment.environmentId,
+                input: {
+                  instanceId: provider.instanceId,
+                  ...(environment.cwd === null ? {} : { cwd: environment.cwd }),
+                  ...(fresh ? { fresh: true } : {}),
+                },
+              }),
+            ),
         ),
       );
     } finally {
@@ -306,48 +344,106 @@ function SkillsPanel({
     inspected.refresh();
   };
 
-  const runSkillAction = async (
-    action: "update" | "remove",
-    input: { readonly name: string; readonly target: SkillInstallTarget },
-  ) => {
-    if (environmentId === null) return;
-    setSkillActionError(null);
-    const failure = async () => {
-      if (action === "remove") {
-        const result = await removeSkill({ environmentId, input });
-        return result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
-      }
-      const result = await updateSkill({ environmentId, input });
-      if (result._tag === "Failure") return formatEnvironmentQueryError(result.cause);
-      // The CLI reports a skill it couldn't reinstall as a result, not an error.
-      const failed = result.value.outcomes.find((outcome) => outcome.status !== "installed");
-      return failed === undefined ? null : (failed.error ?? failed.status);
-    };
-    const message = await failure();
-    afterSkillChange();
-    if (message !== null) setSkillActionError(`Couldn't ${action} ${input.name}: ${message}`);
+  /** A skill's level on one environment: where it lives there, to update or remove it. */
+  type SkillAction = {
+    readonly environmentId: EnvironmentId;
+    readonly name: string;
+    readonly target: SkillInstallTarget;
   };
 
-  // A project's skills live in its checkout, which each provider only scans
-  // when asked; the composer does the same before showing its skill menu.
-  // Keyed on the checkout and provider set, not on every status push, which
-  // would rescan each time the scan's own result arrives.
-  const scanKey = `${environmentId}:${cwd}:${enabledProviders.map((provider) => provider.instanceId).join(",")}`;
+  const runSkillAction = async (
+    action: "update" | "remove",
+    inputs: ReadonlyArray<SkillAction>,
+  ) => {
+    setSkillActionError(null);
+    const failures = await Promise.all(
+      inputs.map(async ({ environmentId: id, ...input }) => {
+        const label = environmentLabel(id);
+        if (action === "remove") {
+          const result = await removeSkill({ environmentId: id, input });
+          return result._tag === "Failure"
+            ? `${label}: ${formatEnvironmentQueryError(result.cause)}`
+            : null;
+        }
+        const result = await updateSkill({ environmentId: id, input });
+        if (result._tag === "Failure")
+          return `${label}: ${formatEnvironmentQueryError(result.cause)}`;
+        // The CLI reports a skill it couldn't reinstall as a result, not an error.
+        const failed = result.value.outcomes.find((outcome) => outcome.status !== "installed");
+        return failed === undefined ? null : `${label}: ${failed.error ?? failed.status}`;
+      }),
+    );
+    afterSkillChange();
+    const messages = failures.filter((message) => message !== null);
+    if (messages.length > 0) {
+      setSkillActionError(
+        `Couldn't ${action} ${inputs[0]?.name ?? "the skill"}. ${messages.join(" ")}`,
+      );
+    }
+  };
+
+  const scanKey = `${environments.map((environment) => `${environment.environmentId}:${environment.cwd ?? ""}`).join(",")}:${environmentProviders
+    .flatMap((entry) => entry.providers.filter((provider) => provider.enabled))
+    .map((provider) => provider.instanceId)
+    .join(",")}`;
   const scannedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (cwd === null || scannedKeyRef.current === scanKey) return;
+    if (!environments.some((environment) => environment.cwd !== null)) return;
+    if (scannedKeyRef.current === scanKey) return;
     scannedKeyRef.current = scanKey;
     void refresh(false);
-  }, [cwd, refresh, scanKey]);
+  }, [environments, refresh, scanKey]);
 
-  const rows = useMemo(() => collectSkillRows(providers, cwd), [cwd, providers]);
+  const environmentLabel = (id: EnvironmentId) =>
+    environments.find((environment) => environment.environmentId === id)?.label ?? "Environment";
+
+  // Each environment's rows, merged by name: a row shows the first copy found.
+  const fleetRows = useMemo(
+    () =>
+      mergeEnvironmentSkillRows(
+        environments.map((environment) => ({
+          environmentId: environment.environmentId,
+          rows: collectSkillRows(
+            environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
+              ?.providers ?? EMPTY_PROVIDERS,
+            environment.cwd,
+          ),
+        })),
+      ),
+    [environmentProviders, environments],
+  );
+  const fleetByName = useMemo(
+    () => new Map(fleetRows.map((entry) => [entry.row.name, entry])),
+    [fleetRows],
+  );
+  const rows = useMemo(() => fleetRows.map((entry) => entry.row), [fleetRows]);
+  // Agents on the environment whose copy a row shows.
+  const agentsByEnvironment = useMemo(
+    () =>
+      new Map(
+        environmentProviders.map((entry) => [entry.environmentId, skillAgents(entry.providers)]),
+      ),
+    [environmentProviders],
+  );
   const agents = useMemo(() => skillAgents(providers), [providers]);
+  const fleetOf = (row: SkillRow): FleetSkillRow =>
+    fleetByName.get(row.name) ?? {
+      row,
+      environmentId: environmentId ?? ("" as EnvironmentId),
+      on: [],
+    };
   const detailsByName = useMemo(
-    () => new Map(rows.map((row) => [row.name, skillRowDetails(row, foldersByPath)])),
-    [foldersByPath, rows],
+    () =>
+      new Map(
+        fleetRows.map((entry) => [
+          entry.row.name,
+          skillRowDetails(entry.row, inspected.folders.get(entry.environmentId) ?? EMPTY_FOLDERS),
+        ]),
+      ),
+    [fleetRows, inspected.folders],
   );
   const detailsOf = (row: SkillRow) =>
-    detailsByName.get(row.name) ?? skillRowDetails(row, foldersByPath);
+    detailsByName.get(row.name) ?? skillRowDetails(row, foldersOf(fleetOf(row).environmentId));
   const attentionNames = useMemo(
     () =>
       new Set(
@@ -391,25 +487,108 @@ function SkillsPanel({
           name,
         ),
     );
+
+  /**
+   * The environments in scope that lack a skill and can take a copy of it:
+   * the user's own skills only, onto environments that let this client
+   * manage providers.
+   */
+  const syncTargetsOf = (row: SkillRow) => {
+    if (!fleet || (row.group !== "project" && row.group !== "personal")) return [];
+    const { on } = fleetOf(row);
+    return environments.filter(
+      (environment) =>
+        !on.includes(environment.environmentId) &&
+        installers.has(environment.environmentId) &&
+        (row.group === "personal" || environment.cwd !== null),
+    );
+  };
+  const syncOf = (row: SkillRow) => {
+    const missing = syncTargetsOf(row);
+    const { environmentId: from } = fleetOf(row);
+    const removable = detailsOf(row).removable;
+    if (missing.length === 0 || removable === null || syncing.has(row.name)) return null;
+    return () => void syncSkill(row.name, from, removable, missing);
+  };
+  const syncSkill = async (
+    name: string,
+    from: EnvironmentId,
+    level: SkillInstallTarget,
+    to: ReadonlyArray<SkillEnvironment>,
+  ) => {
+    setSkillActionError(null);
+    setSyncing((current) => new Set([...current, name]));
+    try {
+      const bundle = await exportSkill({ environmentId: from, input: { name, target: level } });
+      if (bundle._tag === "Failure") {
+        setSkillActionError(
+          `Couldn't copy ${name} from ${environmentLabel(from)}: ${formatEnvironmentQueryError(bundle.cause)}`,
+        );
+        return;
+      }
+      const failures = await Promise.all(
+        to.map(async (environment) => {
+          const result = await importSkill({
+            environmentId: environment.environmentId,
+            input: {
+              bundle: bundle.value,
+              // Project skills go into the project's checkout on each environment.
+              target:
+                level.kind === "project" && environment.cwd !== null
+                  ? { kind: "project", cwd: environment.cwd }
+                  : { kind: "environment" },
+            },
+          });
+          return result._tag === "Failure"
+            ? `${environment.label}: ${formatEnvironmentQueryError(result.cause)}`
+            : null;
+        }),
+      );
+      const messages = failures.filter((message) => message !== null);
+      if (messages.length > 0) setSkillActionError(`Couldn't copy ${name}. ${messages.join(" ")}`);
+    } finally {
+      setSyncing((current) => {
+        const next = new Set(current);
+        next.delete(name);
+        return next;
+      });
+      afterSkillChange();
+    }
+  };
+
+  /** Update and remove reach every environment in scope that has the skill. */
+  const actionTargetsOf = (row: SkillRow, kind: "update" | "remove"): ReadonlyArray<SkillAction> =>
+    fleetOf(row).on.flatMap((id) => {
+      if (!installers.has(id)) return [];
+      const environmentRow = collectSkillRows(
+        environmentProviders.find((entry) => entry.environmentId === id)?.providers ??
+          EMPTY_PROVIDERS,
+        environments.find((environment) => environment.environmentId === id)?.cwd ?? null,
+      ).find((candidate) => candidate.name.toLowerCase() === row.name.toLowerCase());
+      if (environmentRow === undefined) return [];
+      const details = skillRowDetails(environmentRow, foldersOf(id));
+      const level = kind === "update" ? details.installed?.target : details.removable;
+      return level === undefined || level === null
+        ? []
+        : [{ environmentId: id, name: environmentRow.name, target: level }];
+    });
+  const updateOf = (row: SkillRow) => {
+    const inputs = actionTargetsOf(row, "update");
+    return inputs.length === 0 ? null : () => void runSkillAction("update", inputs);
+  };
+  const removeOf = (row: SkillRow) => {
+    const inputs = actionTargetsOf(row, "remove");
+    if (inputs.length === 0) return null;
+    const installed = detailsOf(row).installed !== null;
+    return () => setRemovingSkill({ name: row.name, inputs, installed });
+  };
   const listItem = (row: SkillRow): SkillListRow => ({
     row,
     details: detailsOf(row),
     disabled: isSkillDisabled(disabledSkills, row.name),
     overridden: projectOverrides(row.name),
+    ...(fleet ? { on: fleetOf(row).on } : {}),
   });
-  const updateOf = (row: SkillRow) => {
-    const installed = detailsOf(row).installed;
-    return installed === null || !canInstall
-      ? null
-      : () => void runSkillAction("update", { name: row.name, target: installed.target });
-  };
-  const removeOf = (row: SkillRow) => {
-    const { installed, removable } = detailsOf(row);
-    return removable === null || !canInstall
-      ? null
-      : () =>
-          setRemovingSkill({ name: row.name, target: removable, installed: installed !== null });
-  };
 
   const opened = openName === null ? null : (rows.find((row) => row.name === openName) ?? null);
   const showSkeleton = useAfterDelay(rows.length === 0 && refreshing, SKELETON_DELAY_MS);
@@ -421,11 +600,22 @@ function SkillsPanel({
           key={opened.name}
           row={opened}
           details={detailsOf(opened)}
-          agents={agents}
-          environmentId={environmentId}
+          agents={agentsByEnvironment.get(fleetOf(opened).environmentId) ?? agents}
+          environmentId={fleetOf(opened).environmentId}
+          {...(fleet
+            ? {
+                fleet: {
+                  on: fleetOf(opened).on,
+                  environments,
+                  shownFrom: fleetOf(opened).environmentId,
+                },
+              }
+            : {})}
           onBack={() => onOpen(null)}
           onUpdate={updateOf(opened)}
           onRemove={removeOf(opened)}
+          onSync={syncOf(opened)}
+          syncing={syncing.has(opened.name)}
         />
       ) : openName !== null ? (
         // A link or Back to a skill that isn't here (yet, or any more).
@@ -541,6 +731,7 @@ function SkillsPanel({
                 )}
                 emptyText="No matching skills."
                 agents={agents}
+                environments={environments}
                 canWrite={canWrite}
                 onToggle={(skillRows, enabled) => setSkillsDisabled(skillRows, !enabled)}
                 onOpen={onOpen}
@@ -574,15 +765,19 @@ function SkillsPanel({
               {removingSkill?.installed ? (
                 <>
                   Deletes the skill's folder and every agent's link to it, as{" "}
-                  <code>npx skills remove</code> does.
+                  <code>npx skills remove</code> does
                 </>
               ) : (
-                `Deletes ${removingSkill?.name ?? "the skill"} from every agent's skill folder ${
-                  removingSkill?.target.kind === "project"
-                    ? "in this project"
-                    : "on this environment"
-                }. It wasn't installed from a source, so it can't be added back from here.`
+                `Deletes ${removingSkill?.name ?? "the skill"} from every agent's skill folder`
               )}
+              {removingSkill !== null && removingSkill.inputs.length > 1
+                ? ` on ${removingSkill.inputs.map((input) => environmentLabel(input.environmentId)).join(", ")}.`
+                : removingSkill?.inputs[0]?.target.kind === "project"
+                  ? " in this project."
+                  : " on this environment."}
+              {removingSkill?.installed
+                ? ""
+                : " It wasn't installed from a source, so it can't be added back from here."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -591,10 +786,7 @@ function SkillsPanel({
               variant="destructive"
               onClick={() => {
                 if (removingSkill) {
-                  void runSkillAction("remove", {
-                    name: removingSkill.name,
-                    target: removingSkill.target,
-                  });
+                  void runSkillAction("remove", removingSkill.inputs);
                   if (removingSkill.name === openName) onOpen(null);
                 }
                 setRemovingSkill(null);

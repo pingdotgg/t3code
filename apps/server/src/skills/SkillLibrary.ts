@@ -15,10 +15,15 @@
  */
 import {
   type InstalledSkillInput,
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_BUNDLE_FILES,
   type ProviderDriverKind,
   type ServerProvider,
   type SkillFileEntry,
+  type SkillBundle,
+  type SkillExportInput,
   type SkillFolderInfo,
+  type SkillImportInput,
   type SkillInspectInput,
   type SkillInspectResult,
   type SkillInstallInput,
@@ -31,6 +36,7 @@ import {
 import {
   STANDARD_SKILL_FOLDER,
   agentSkillFolderRoots,
+  skillLinkFolders,
   skillsCliInstallAgents,
 } from "@t3tools/provider-core/server/AgentSkillFolders";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -38,6 +44,7 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -72,6 +79,17 @@ export class SkillLibrary extends Context.Service<
      * CLI when it installed the skill, else each folder's copy of that name.
      */
     readonly remove: (input: InstalledSkillInput) => Effect.Effect<void, SkillLibraryError>;
+    /** Pack the folder an agent reports for a skill, to copy it to another environment. */
+    readonly exportSkill: (
+      input: SkillExportInput,
+    ) => Effect.Effect<SkillBundle, SkillLibraryError>;
+    /**
+     * Put a copied skill in place. One the CLI installed from a remote source
+     * is installed from there again, so it can be updated; otherwise, or when
+     * that fails, its files go into `.agents/skills` with links for the agents
+     * that read their own folder, as an install would make.
+     */
+    readonly importSkill: (input: SkillImportInput) => Effect.Effect<void, SkillLibraryError>;
   }
 >()("t3/skills/SkillLibrary") {}
 
@@ -662,7 +680,180 @@ const make = Effect.gen(function* () {
       yield* refreshAgents(target);
     });
 
-  return SkillLibrary.of({ inspect, preview, install, update, remove });
+  /**
+   * The folder an enabled agent reports for a skill in one of the level's
+   * agent skill folders, after links. Plugin and built-in skills aren't there.
+   */
+  const reportedFolder = (target: SkillInstallTarget, name: string) =>
+    Effect.gen(function* () {
+      const wanted = name.trim().toLowerCase();
+      const roots = yield* skillRoots(target);
+      for (const provider of yield* enabledProviders) {
+        const skills =
+          target.kind === "environment"
+            ? provider.skills
+            : (provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === target.cwd)
+                ?.skills ?? []);
+        for (const skill of skills) {
+          if (skill.name.trim().toLowerCase() !== wanted) continue;
+          if (!path.isAbsolute(skill.path) || path.basename(skill.path) !== "SKILL.md") continue;
+          const folder = path.dirname(skill.path);
+          const real = yield* realPath(folder);
+          if (roots.includes(path.dirname(folder)) || roots.includes(path.dirname(real)))
+            return real;
+        }
+      }
+      return yield* new SkillLibraryError({
+        reason: "notInstalled",
+        message: `No agent here reports a skill named ${name}.`,
+      });
+    });
+
+  const tooLarge = (message: string) => new SkillLibraryError({ reason: "tooLarge", message });
+
+  const exportSkill: SkillLibrary["Service"]["exportSkill"] = Effect.fn("SkillLibrary.exportSkill")(
+    function* (input) {
+      const target = yield* resolveTarget(input.target);
+      const folder = yield* reportedFolder(target, input.name);
+      const { files, truncated } = yield* listFiles(folder);
+      if (truncated || files.length > MAX_SKILL_BUNDLE_FILES) {
+        return yield* tooLarge(`${input.name} has too many files to copy.`);
+      }
+      let bytes = 0;
+      const bundled = yield* Effect.forEach(files, (file) =>
+        Effect.gen(function* () {
+          bytes += file.size;
+          if (bytes > MAX_SKILL_BUNDLE_BYTES) {
+            return yield* tooLarge(`${input.name} is too large to copy between environments.`);
+          }
+          const contents = yield* fileSystem
+            .readFile(path.join(folder, file.path))
+            .pipe(Effect.mapError(() => tooLarge(`Couldn't read ${file.path} in ${input.name}.`)));
+          return {
+            path: file.path,
+            contents: Base64.encode(contents),
+            executable: file.executable,
+          };
+        }),
+      );
+      // Links aren't followed by the walk, so a folder of only links has nothing to copy.
+      if (!bundled.some((file) => file.path === "SKILL.md")) {
+        return yield* tooLarge(`${input.name} has no SKILL.md to copy.`);
+      }
+      // A remote source the CLI recorded here lets the target install it properly.
+      const paths = targetPaths(target);
+      const locked =
+        path.dirname(folder) === (yield* realPath(paths.folder))
+          ? lockEntryFor(yield* readLock(paths.lock), path.basename(folder))
+          : undefined;
+      const remote =
+        locked !== undefined &&
+        locked.entry.sourceType !== "local" &&
+        locked.entry.sourceType !== "node_modules"
+          ? lockedInstallSource(locked.entry, target.kind === "environment" ? "home" : "project")
+          : null;
+      return {
+        folder: skillFolderName(path.basename(folder)),
+        files: bundled,
+        ...(remote === null || locked === undefined
+          ? {}
+          : { install: { source: remote.source, skill: locked.key, fullDepth: remote.fullDepth } }),
+      };
+    },
+  );
+
+  const importSkill: SkillLibrary["Service"]["importSkill"] = Effect.fn("SkillLibrary.importSkill")(
+    function* (input) {
+      const target = yield* resolveTarget(input.target);
+      yield* importLocked(target, input.bundle).pipe(changes.withPermits(1));
+    },
+  );
+
+  const importLocked = (target: SkillInstallTarget, bundle: SkillBundle) =>
+    Effect.gen(function* () {
+      const paths = targetPaths(target);
+      const folderName = skillFolderName(bundle.folder);
+      const destination = path.join(paths.folder, folderName);
+      const drivers = (yield* enabledProviders).map((provider) => provider.driver);
+      const links = skillLinkFolders(
+        drivers,
+        target.kind === "environment" ? "home" : "project",
+      ).map((folder) => path.join(paths.root, folder, folderName));
+      const taken = yield* Effect.filter([destination, ...links], (candidate) =>
+        fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)),
+      );
+      if (taken.length > 0) {
+        return yield* new SkillLibraryError({
+          reason: "exists",
+          message: `A skill named ${bundle.folder} is already at ${taken[0]}.`,
+        });
+      }
+      if (bundle.install !== undefined) {
+        const installed = yield* installInto(
+          target,
+          bundle.install.source,
+          [bundle.install.skill],
+          bundle.install.fullDepth,
+        ).pipe(
+          Effect.map(
+            (result) =>
+              result.outcomes.length > 0 &&
+              result.outcomes.every((outcome) => outcome.status === "installed"),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+        if (installed) return;
+        // The source may be private or offline from here: the files still work.
+        yield* fileSystem.remove(destination, { recursive: true }).pipe(Effect.ignore);
+      }
+      const failed = (message: string) => cliFailed(message);
+      const write = Effect.gen(function* () {
+        let bytes = 0;
+        for (const file of bundle.files) {
+          // Bundles come from another environment: keep every path inside the folder.
+          const relative = path.normalize(file.path);
+          const absolute = path.resolve(destination, relative);
+          if (path.isAbsolute(relative) || !absolute.startsWith(destination + path.sep)) {
+            return yield* failed(`${file.path} isn't a path inside the skill.`);
+          }
+          const contents = Base64.decode(file.contents);
+          if (contents._tag === "Failure") return yield* failed(`${file.path} isn't valid base64.`);
+          bytes += contents.success.byteLength;
+          if (bytes > MAX_SKILL_BUNDLE_BYTES)
+            return yield* tooLarge(`${bundle.folder} is too large.`);
+          yield* fileSystem.makeDirectory(path.dirname(absolute), { recursive: true });
+          yield* fileSystem.writeFile(absolute, contents.success);
+          if (file.executable) yield* fileSystem.chmod(absolute, 0o755);
+        }
+        for (const link of links) {
+          yield* fileSystem.makeDirectory(path.dirname(link), { recursive: true });
+          yield* fileSystem.symlink(destination, link);
+        }
+      }).pipe(
+        Effect.catchTags({
+          PlatformError: (error) =>
+            Effect.fail(failed(`Couldn't write ${bundle.folder}: ${error.message}`)),
+        }),
+        // A half-written skill is worse than none.
+        Effect.onError(() =>
+          Effect.forEach([...links, destination], (leftover) =>
+            fileSystem.remove(leftover, { recursive: true }).pipe(Effect.ignore),
+          ),
+        ),
+      );
+      yield* write;
+      yield* refreshAgents(target);
+    });
+
+  return SkillLibrary.of({
+    inspect,
+    preview,
+    install,
+    update,
+    remove,
+    exportSkill,
+    importSkill,
+  });
 });
 
 export const layer = Layer.effect(SkillLibrary, make).pipe(Layer.provide(SkillsCli.layer));

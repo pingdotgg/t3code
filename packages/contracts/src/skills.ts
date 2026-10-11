@@ -104,6 +104,54 @@ export type SkillInstallOutcome = typeof SkillInstallOutcome.Type;
 export const SkillInstallResult = Schema.Struct({ outcomes: Schema.Array(SkillInstallOutcome) });
 export type SkillInstallResult = typeof SkillInstallResult.Type;
 
+/**
+ * Copying a skill to another environment: the source environment packs the
+ * folder an agent found it in, the client hands the bundle to each target.
+ * Bounded, since the bundle crosses the WebSocket whole.
+ */
+export const MAX_SKILL_BUNDLE_BYTES = 4 * 1024 * 1024;
+export const MAX_SKILL_BUNDLE_FILES = 500;
+
+export const SkillBundleFile = Schema.Struct({
+  /** Relative to the skill's folder, with `/` separators. */
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  /** The file's bytes as base64. */
+  contents: Schema.String,
+  executable: Schema.Boolean,
+});
+export type SkillBundleFile = typeof SkillBundleFile.Type;
+
+export const SkillBundle = Schema.Struct({
+  /** The folder name the skill is invoked by. */
+  folder: InstalledSkillName,
+  files: Schema.Array(SkillBundleFile).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MAX_SKILL_BUNDLE_FILES),
+  ),
+  /**
+   * Set when the `skills` CLI installed the skill from a remote source: the
+   * target reinstalls from there, so the copy can be updated too, and falls
+   * back to the files when that fails.
+   */
+  install: Schema.optional(
+    Schema.Struct({ source: SkillSource, skill: InstalledSkillName, fullDepth: Schema.Boolean }),
+  ),
+});
+export type SkillBundle = typeof SkillBundle.Type;
+
+/** A skill an agent reports on this environment, by name, at the level it lives. */
+export const SkillExportInput = Schema.Struct({
+  name: InstalledSkillName,
+  target: SkillInstallTarget,
+});
+export type SkillExportInput = typeof SkillExportInput.Type;
+
+export const SkillImportInput = Schema.Struct({
+  bundle: SkillBundle,
+  target: SkillInstallTarget,
+});
+export type SkillImportInput = typeof SkillImportInput.Type;
+
 export const SkillInspectInput = Schema.Struct({
   /** A project checkout whose skills are inspected besides the environment's. */
   cwd: Schema.optional(TrimmedNonEmptyString),
@@ -160,6 +208,10 @@ export class SkillLibraryError extends Schema.TaggedError<SkillLibraryError>()(
        * entry), and remove a skill in the agents' skill folders at that level.
        */
       "notInstalled",
+      /** A skill to copy is bigger than a bundle may be, or its folder can't be read. */
+      "tooLarge",
+      /** A skill with that name is already at the target. */
+      "exists",
     ]),
     message: Schema.String,
   },

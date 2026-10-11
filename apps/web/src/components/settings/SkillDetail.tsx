@@ -1,16 +1,19 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Check, Copy } from "lucide";
 import { AlertTriangleIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useEffectEvent, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { MorphIcon } from "../MorphIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
+import { Spinner } from "../ui/spinner";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SkillAgentIcon } from "./SkillAgents";
+import type { SkillEnvironment } from "./SkillEnvironments";
 import {
   skillConflict,
   type SkillAgent,
@@ -58,17 +61,30 @@ export function SkillDetail({
   details,
   agents,
   environmentId,
+  fleet,
   onBack,
   onUpdate,
   onRemove,
+  onSync,
+  syncing,
 }: {
   row: SkillRow;
   details: SkillRowDetails;
+  /** The agents on the environment whose copy is shown. */
   agents: ReadonlyArray<SkillAgent>;
   environmentId: EnvironmentId;
+  /** With several environments in scope: which have the skill, and whose copy shows. */
+  fleet?: {
+    readonly on: ReadonlyArray<EnvironmentId>;
+    readonly environments: ReadonlyArray<SkillEnvironment>;
+    readonly shownFrom: EnvironmentId;
+  };
   onBack: () => void;
   onUpdate: (() => void) | null;
   onRemove: (() => void) | null;
+  /** Copy the skill to the environments in scope that lack it. */
+  onSync: (() => void) | null;
+  syncing: boolean;
 }) {
   useEscapeToList(onBack);
   const loads = new Set(row.providers.map((provider) => provider.instanceId));
@@ -127,6 +143,50 @@ export function SkillDetail({
             </Button>
           ) : null}
         </div>
+        {fleet !== undefined ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">On</span>
+            {fleet.environments.map((environment) => {
+              const has = fleet.on.includes(environment.environmentId);
+              return (
+                <Tooltip key={environment.environmentId}>
+                  <TooltipTrigger
+                    render={
+                      <Badge variant={has ? "secondary" : "outline"} size="control" tabIndex={0} />
+                    }
+                  >
+                    <span className={has ? undefined : "opacity-30"}>
+                      <EnvironmentMachineIcon
+                        aria-hidden
+                        kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+                        className="size-4"
+                      />
+                    </span>
+                    {environment.label}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {!has
+                      ? `${environment.label} doesn't have this skill.`
+                      : environment.environmentId === fleet.shownFrom
+                        ? `Showing ${environment.label}'s copy.`
+                        : `${environment.label} has this skill.`}
+                  </TooltipPopup>
+                </Tooltip>
+              );
+            })}
+            <span className="flex-1" />
+            {onSync !== null || syncing ? (
+              <Button size="xs" variant="outline" disabled={syncing} onClick={onSync ?? undefined}>
+                {syncing ? <Spinner /> : null}
+                Copy to{" "}
+                {fleet.environments
+                  .filter((environment) => !fleet.on.includes(environment.environmentId))
+                  .map((environment) => environment.label)
+                  .join(", ")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {conflict !== null || scripts.length > 0 || details.installed !== null ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {details.installed !== null ? (

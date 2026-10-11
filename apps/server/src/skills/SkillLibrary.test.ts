@@ -325,6 +325,90 @@ it.effect(
 );
 
 it.effect(
+  "copies a skill to another environment as files, with links for agents that need them",
+  () =>
+    withLibrary(({ library, home, project, providers }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // On the first environment: a project skill with a script.
+        const folder = path.join(project, ".agents", "skills", "lint");
+        yield* fileSystem.makeDirectory(path.join(folder, "bin"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(folder, "SKILL.md"), SKILL("lint", "Lint."));
+        yield* fileSystem.writeFileString(path.join(folder, "bin", "run"), "#!/bin/sh\n");
+        yield* fileSystem.chmod(path.join(folder, "bin", "run"), 0o755);
+        yield* Ref.set(providers, [
+          {
+            ...claude,
+            workspaceSnapshots: [
+              {
+                cwd: project,
+                checkedAt: "2026-10-10T00:00:00Z",
+                slashCommands: [],
+                skills: [
+                  {
+                    name: "lint",
+                    path: path.join(folder, "SKILL.md"),
+                    scope: "project",
+                    enabled: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ]);
+        const bundle = yield* library.exportSkill({
+          name: "lint",
+          target: { kind: "project", cwd: project },
+        });
+        assert.deepEqual(
+          bundle.files.map((file) => [file.path, file.executable]),
+          [
+            ["SKILL.md", false],
+            ["bin/run", true],
+          ],
+        );
+
+        // On the second environment (the same service here): a global copy.
+        yield* library.importSkill({ bundle, target: { kind: "environment" } });
+        const copied = path.join(home, ".agents", "skills", "lint");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(copied, "SKILL.md")),
+          SKILL("lint", "Lint."),
+        );
+        assert.equal(
+          ((yield* fileSystem.stat(path.join(copied, "bin", "run"))).mode & 0o111) !== 0,
+          true,
+        );
+        // Claude reads only `.claude/skills`, so it gets a link, as an install gives it.
+        assert.equal(
+          yield* fileSystem.readLink(path.join(home, ".claude", "skills", "lint")),
+          copied,
+        );
+
+        const again = yield* library
+          .importSkill({ bundle, target: { kind: "environment" } })
+          .pipe(Effect.flip);
+        assert.equal(again.reason, "exists");
+
+        const escape = yield* library
+          .importSkill({
+            bundle: {
+              folder: "evil",
+              files: [{ path: "../../outside", contents: "", executable: false }],
+            },
+            target: { kind: "environment" },
+          })
+          .pipe(Effect.flip);
+        assert.equal(escape.reason, "cliFailed");
+        assert.isFalse(yield* fileSystem.exists(path.join(home, ".agents", "outside")));
+        assert.isFalse(yield* fileSystem.exists(path.join(home, ".agents", "skills", "evil")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  60_000,
+);
+
+it.effect(
   "fails a removal the CLI couldn't finish, which it reports with a zero exit",
   () =>
     withLibrary(({ library, project, source }) =>

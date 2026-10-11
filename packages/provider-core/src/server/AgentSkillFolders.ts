@@ -89,6 +89,32 @@ export function agentSkillFolderRoots(level: "home" | "project"): ReadonlyArray<
 }
 
 /**
+ * Where each `skills` CLI agent links an install, by level, as its
+ * `src/agents.ts` does; `universal` writes `.agents/skills` itself.
+ */
+const CLI_AGENT_LINK_FOLDERS: Readonly<
+  Record<string, { readonly home?: string; readonly project?: string }>
+> = {
+  "claude-code": { home: ".claude/skills", project: ".claude/skills" },
+  grok: { project: ".grok/skills" },
+  "antigravity-cli": { home: ".gemini/antigravity-cli/skills" },
+};
+
+/**
+ * The folders a skill copied into `.agents/skills` by hand needs links in, so
+ * every listed driver sees it: the ones a `skills` CLI install would link.
+ */
+export function skillLinkFolders(
+  drivers: ReadonlyArray<ProviderDriverKind>,
+  level: "home" | "project",
+): ReadonlyArray<string> {
+  return skillsCliInstallAgents(drivers, level).flatMap((agent) => {
+    const folder = CLI_AGENT_LINK_FOLDERS[agent]?.[level];
+    return folder === undefined ? [] : [folder];
+  });
+}
+
+/**
  * The `skills` CLI agents an install names so every listed driver can use the
  * skill: `universal` writes `.agents/skills`, and each driver that doesn't read
  * it at that level adds the agent that links into its own folder.

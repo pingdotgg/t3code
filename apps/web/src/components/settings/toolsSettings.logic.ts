@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   isValidMcpServerName,
   type McpServerConfig,
   type McpServerProjectOverride,
@@ -167,6 +168,61 @@ export function collectSkillRows(
       (left, right) =>
         GROUP_ORDER.indexOf(left.group) - GROUP_ORDER.indexOf(right.group) ||
         left.name.localeCompare(right.name),
+    );
+}
+
+/** One environment's skill rows, from that environment's providers and checkout. */
+export interface EnvironmentSkillRows {
+  readonly environmentId: EnvironmentId;
+  readonly rows: ReadonlyArray<SkillRow>;
+}
+
+/** A skill row across environments: shown from one of them, present on some. */
+export interface FleetSkillRow {
+  readonly row: SkillRow;
+  /** The environment whose copy the row, its details and its page show. */
+  readonly environmentId: EnvironmentId;
+  /** Every listed environment that has a skill by this name, in list order. */
+  readonly on: ReadonlyArray<EnvironmentId>;
+}
+
+/**
+ * Merge each environment's rows by skill name. A row shows the copy on the
+ * first environment listed that has it, so the primary environment goes
+ * first; `on` says where else the name is. Plugin and built-in skills belong
+ * to their agents, so only the first environment's are kept.
+ */
+export function mergeEnvironmentSkillRows(
+  environments: ReadonlyArray<EnvironmentSkillRows>,
+): ReadonlyArray<FleetSkillRow> {
+  const byName = new Map<
+    string,
+    { row: SkillRow; environmentId: EnvironmentId; on: EnvironmentId[] }
+  >();
+  for (const [index, { environmentId, rows }] of environments.entries()) {
+    for (const row of rows) {
+      const own = row.group === "project" || row.group === "personal";
+      if (!own && index > 0) continue;
+      const key = row.name.toLowerCase();
+      const existing = byName.get(key);
+      if (existing === undefined) {
+        byName.set(key, { row, environmentId, on: [environmentId] });
+      } else if (!existing.on.includes(environmentId)) {
+        existing.on.push(environmentId);
+      }
+    }
+  }
+  const order = environments.map((environment) => environment.environmentId);
+  return [...byName.values()]
+    .map(({ row, environmentId, on }) => ({
+      row,
+      environmentId,
+      on: on.toSorted((left, right) => order.indexOf(left) - order.indexOf(right)),
+    }))
+    .toSorted(
+      (left, right) =>
+        GROUP_ORDER.indexOf(left.row.group) - GROUP_ORDER.indexOf(right.row.group) ||
+        left.row.name.localeCompare(right.row.name),
     );
 }
 

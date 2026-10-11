@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type McpServerConfig,
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectSkillRows,
   listMcpServerRows,
+  mergeEnvironmentSkillRows,
   mcpServerDraftFrom,
   mcpServerFromDraft,
   parseArgs,
@@ -143,6 +145,34 @@ describe("collectSkillRows", () => {
     expect(collectSkillRows([provider("a", [skill(false)])], null)[0]?.disabledByProvider).toBe(
       true,
     );
+  });
+});
+
+describe("mergeEnvironmentSkillRows", () => {
+  const skillRow = (name: string, group: SkillRow["group"] = "personal"): SkillRow => ({
+    name,
+    description: undefined,
+    group,
+    paths: [`/h/.agents/skills/${name}/SKILL.md`],
+    providers: [],
+    disabledByProvider: false,
+  });
+  const mac = EnvironmentId.make("mac");
+  const nucbox = EnvironmentId.make("nucbox");
+
+  it("lists each skill once, shown from the first environment that has it", () => {
+    const merged = mergeEnvironmentSkillRows([
+      { environmentId: mac, rows: [skillRow("review"), skillRow("Notes")] },
+      {
+        environmentId: nucbox,
+        rows: [skillRow("notes"), skillRow("deploy"), skillRow("docs", "plugin")],
+      },
+    ]);
+    expect(merged.map((entry) => [entry.row.name, entry.environmentId, entry.on])).toEqual([
+      ["deploy", nucbox, [nucbox]],
+      ["Notes", mac, [mac, nucbox]],
+      ["review", mac, [mac]],
+    ]);
   });
 });
 

@@ -1456,6 +1456,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.skillsRemove,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    exportSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:export",
+      tag: WS_METHODS.skillsExport,
+    }),
+    importSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:import",
+      tag: WS_METHODS.skillsImport,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

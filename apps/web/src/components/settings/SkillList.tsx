@@ -8,7 +8,9 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillAgents } from "./SkillAgents";
+import { type SkillEnvironment, SkillEnvironmentMarks } from "./SkillEnvironments";
 import { TruncatedText } from "./TruncatedText";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   SOURCE_GROUP_PREVIEW,
   skillAvailability,
@@ -35,10 +37,14 @@ export interface SkillListRow {
   readonly disabled: boolean;
   /** The project switch differs from the environment's. */
   readonly overridden: boolean;
+  /** With several environments in scope, the ones that have this skill. */
+  readonly on?: ReadonlyArray<EnvironmentId>;
 }
 
 interface RowHandlers {
   readonly agents: ReadonlyArray<SkillAgent>;
+  /** The environments in scope, when there are several. */
+  readonly environments: ReadonlyArray<SkillEnvironment>;
   readonly canWrite: boolean;
   readonly onToggle: (rows: ReadonlyArray<SkillRow>, enabled: boolean) => void;
   readonly onOpen: (name: string) => void;
@@ -47,6 +53,7 @@ interface RowHandlers {
 const SkillListItem = memo(function SkillListItem({
   item,
   agents,
+  environments,
   canWrite,
   onToggle,
   onOpen,
@@ -100,7 +107,11 @@ const SkillListItem = memo(function SkillListItem({
             </Tooltip>
           ) : null}
           <span className="hidden sm:contents">
-            <SkillAgents value={skillAvailability(row, agents)} agents={agents} />
+            {item.on !== undefined && environments.length > 1 ? (
+              <SkillEnvironmentMarks on={item.on} environments={environments} />
+            ) : (
+              <SkillAgents value={skillAvailability(row, agents)} agents={agents} />
+            )}
           </span>
           <span className="flex items-center" onClick={stopRowClick}>
             <Switch

@@ -61,6 +61,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.skillsInstall]: AuthProvidersManageScope,
   [WS_METHODS.skillsUpdate]: AuthProvidersManageScope,
   [WS_METHODS.skillsRemove]: AuthProvidersManageScope,
+  [WS_METHODS.skillsImport]: AuthProvidersManageScope,
 
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
