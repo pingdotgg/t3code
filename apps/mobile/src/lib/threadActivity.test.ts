@@ -841,7 +841,7 @@ describe("buildThreadFeed", () => {
     ).toBe(false);
   });
 
-  it("keeps opening and final assistant messages around the first hidden work", () => {
+  it("keeps every assistant message visible around folded work", () => {
     const opening = {
       ...assistantMessage("2026-06-20T00:00:01.500Z"),
       id: TurnItemId.make("item-opening"),
@@ -873,6 +873,7 @@ describe("buildThreadFeed", () => {
       "message-user",
       "message-opening",
       "run-fold:run-1",
+      "message-middle",
       "message-assistant",
     ]);
     expect(collapsed[1]).toMatchObject({ message: { text: opening.text } });

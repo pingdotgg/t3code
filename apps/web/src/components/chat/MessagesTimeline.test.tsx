@@ -1419,7 +1419,7 @@ describe("MessagesTimeline", () => {
     expect(markup.indexOf("Steer")).toBeLessThan(markup.indexOf("Adjust the current turn"));
   });
 
-  it("keeps compact spacing below a collapsed turn divider", () => {
+  it("keeps commentary and final output visible when a turn has no hidden work", () => {
     const runId = RunId.make("run-collapsed-spacing");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1458,8 +1458,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('class="pb-1.5" data-timeline-row-id="turn-fold:');
-    expect(markup).toContain('data-timeline-row-kind="turn-fold"');
+    expect(markup).toContain("Checking the layout.");
+    expect(markup).toContain("Spacing fixed.");
+    expect(markup).not.toContain('data-timeline-row-kind="turn-fold"');
   });
 
   it("shows a collapsed disclosure for superseded attempt output", async () => {
