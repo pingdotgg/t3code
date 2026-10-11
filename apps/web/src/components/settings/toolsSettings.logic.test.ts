@@ -15,8 +15,8 @@ import {
   parseMcpServerJson,
   formatArgs,
   skillAgents,
-  skillAttention,
   skillAvailability,
+  skillConflict,
   skillBody,
   skillRowDetails,
   splitRowsBySource,
@@ -256,13 +256,15 @@ describe("skill availability and attention", () => {
     ]);
   });
 
-  it("flags a skill some agents miss, but not a plugin or built-in one", () => {
-    expect(skillAttention(row("personal", ["codex"]), noDetails, agents)?.detail).toBe(
-      "Not available to Claude.",
-    );
-    expect(skillAttention(row("plugin", ["codex"]), noDetails, agents)).toBeNull();
-    expect(skillAttention(row("system", ["codex"]), noDetails, agents)).toBeNull();
-    expect(skillAttention(row("project", ["claudeAgent", "codex"]), noDetails, agents)).toBeNull();
+  it("flags only a name used by different skills, not one some agents don't load", () => {
+    expect(skillConflict(row("personal", ["codex"]), noDetails)).toBeNull();
+    expect(
+      skillConflict(row("personal", ["codex"]), {
+        ...noDetails,
+        copies: [noDetails.folder, noDetails.folder].filter((copy) => copy !== null),
+        conflict: true,
+      }),
+    ).toMatch(/^Different skills are named “review”/);
   });
 
   it("strips SKILL.md's header for the rendered view", () => {

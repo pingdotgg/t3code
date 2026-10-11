@@ -10,8 +10,8 @@ import { SettingsGroup } from "./SettingsGroup";
 import { SkillAgents } from "./SkillAgents";
 import {
   SOURCE_GROUP_PREVIEW,
-  skillAttention,
   skillAvailability,
+  skillConflict,
   type SkillAgent,
   type SkillRow,
   type SkillRowDetails,
@@ -52,7 +52,7 @@ const SkillListItem = memo(function SkillListItem({
 }: RowHandlers & { item: SkillListRow }) {
   const { row, details, disabled, overridden } = item;
   const lockedOff = row.disabledByProvider;
-  const warning = skillAttention(row, details, agents);
+  const conflict = skillConflict(row, details);
   return (
     <li className="min-w-0">
       <div
@@ -83,7 +83,7 @@ const SkillListItem = memo(function SkillListItem({
               This project
             </Badge>
           ) : null}
-          {warning?.kind === "conflict" ? (
+          {conflict !== null ? (
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" />}>
                 <Badge variant="warning" size="sm">
@@ -91,7 +91,7 @@ const SkillListItem = memo(function SkillListItem({
                 </Badge>
               </TooltipTrigger>
               <TooltipPopup side="top" className="max-w-sm">
-                {warning.detail}
+                {conflict}
               </TooltipPopup>
             </Tooltip>
           ) : null}

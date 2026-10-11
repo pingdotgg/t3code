@@ -61,7 +61,7 @@ import {
   SKILL_GROUP_HINTS,
   SKILL_GROUP_LABELS,
   skillAgents,
-  skillAttention,
+  skillConflict,
   type SkillGroupKind,
   type SkillRow,
   skillRowDetails,
@@ -352,11 +352,11 @@ function SkillsPanel({
         rows
           .filter((row) => {
             const details = detailsByName.get(row.name);
-            return details !== undefined && skillAttention(row, details, agents) !== null;
+            return details !== undefined && skillConflict(row, details) !== null;
           })
           .map((row) => row.name),
       ),
-    [agents, detailsByName, rows],
+    [detailsByName, rows],
   );
   const visibleRows = useMemo(
     () =>
@@ -465,7 +465,7 @@ function SkillsPanel({
                         size="sm"
                         variant={onlyAttention ? "secondary" : "outline"}
                         aria-pressed={onlyAttention}
-                        aria-label={`Show only skills that need a look (${attentionNames.size})`}
+                        aria-label={`Show only skills whose name is used more than once (${attentionNames.size})`}
                         onClick={() => setOnlyAttention((value) => !value)}
                       />
                     }
@@ -476,7 +476,7 @@ function SkillsPanel({
                   <TooltipPopup side="top" className="max-w-xs">
                     {onlyAttention
                       ? "Show all skills."
-                      : "Show only skills that need a look: one name used by different skills, or a skill some of your agents don't load."}
+                      : "Show only skills whose name is used by different skills. One switch turns all of them on or off."}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -520,7 +520,7 @@ function SkillsPanel({
               <SettingsRow
                 title={
                   onlyAttention && query.trim() === ""
-                    ? "Nothing needs attention."
+                    ? "No two skills share a name."
                     : `No skills match “${query.trim()}”`
                 }
               />

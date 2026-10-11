@@ -311,34 +311,14 @@ export function availabilityNote(value: SkillAvailability): string {
 }
 
 /**
- * Why a skill needs a look, in one plain sentence, or null. Only a conflict
- * marks the row itself; the rest show in the list's attention filter and on
- * the skill's page.
+ * What to do about a skill that needs a look, or null. Only a name used by
+ * different skills does: its one switch can't tell them apart, and removing
+ * or renaming a copy fixes it. Which agents load a skill is shown, not flagged.
  */
-export interface SkillAttention {
-  readonly kind: "conflict" | "missing";
-  readonly detail: string;
-}
-
-export function skillAttention(
-  row: SkillRow,
-  details: SkillRowDetails,
-  agents: ReadonlyArray<SkillAgent>,
-): SkillAttention | null {
-  if (details.conflict) {
-    return {
-      kind: "conflict",
-      detail: `Different skills are named “${row.name}”. Its switch turns all of them on or off.`,
-    };
-  }
-  // A plugin or built-in skill belongs to its agent; others never load it.
-  if (row.group !== "project" && row.group !== "personal") return null;
-  const availability = skillAvailability(row, agents);
-  if (availability.missing.length === 0) return null;
-  return {
-    kind: "missing",
-    detail: `Not available to ${joinNames(availability.missing.map((agent) => agent.displayName))}.`,
-  };
+export function skillConflict(row: SkillRow, details: SkillRowDetails): string | null {
+  return details.conflict
+    ? `Different skills are named “${row.name}”, and its switch turns them all on or off. Remove or rename the copy you don't want.`
+    : null;
 }
 
 /** Rows with no recorded source show first; a pack collapses past this many rows. */

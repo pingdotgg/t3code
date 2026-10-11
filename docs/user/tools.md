@@ -20,7 +20,8 @@ With a project selected, a switch overrides the environment for that project onl
 skill off for one project, or back on where the environment has it off.
 
 A **Conflict** mark means two different skills share a name. The switch turns both of them on or
-off. **View files** in a skill's menu shows what is in its folder; a skill marked **Includes
+off, so remove or rename the copy you don't want; the warning button beside the search lists every
+conflict. **View files** in a skill's menu shows what is in its folder; a skill marked **Includes
 scripts** has files an agent could run.
 
 ### Adding skills

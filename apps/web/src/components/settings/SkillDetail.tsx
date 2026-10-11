@@ -12,7 +12,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SkillAgentIcon } from "./SkillAgents";
 import {
-  skillAttention,
+  skillConflict,
   type SkillAgent,
   type SkillRow,
   type SkillRowDetails,
@@ -72,7 +72,7 @@ export function SkillDetail({
 }) {
   useEscapeToList(onBack);
   const loads = new Set(row.providers.map((provider) => provider.instanceId));
-  const warning = skillAttention(row, details, agents);
+  const conflict = skillConflict(row, details);
   // A name can be several folders (a conflict, or a project copy over a global one).
   const [folderPath, setFolderPath] = useState(details.folder?.folder ?? null);
   const folder =
@@ -150,16 +150,14 @@ export function SkillDetail({
             </Menu>
           ) : null}
         </div>
-        {warning !== null || scripts.length > 0 || details.installed !== null ? (
+        {conflict !== null || scripts.length > 0 || details.installed !== null ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {details.installed !== null ? (
               <span>
                 From <span className="font-mono text-foreground">{details.installed.source}</span>
               </span>
             ) : null}
-            {warning !== null ? (
-              <span className="text-warning-foreground">{warning.detail}</span>
-            ) : null}
+            {conflict !== null ? <span className="text-warning-foreground">{conflict}</span> : null}
             {scripts.length > 0 ? (
               <Tooltip>
                 <TooltipTrigger
