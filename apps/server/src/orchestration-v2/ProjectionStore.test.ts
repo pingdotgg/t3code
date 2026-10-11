@@ -5049,6 +5049,142 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("preserves the cursor when local turns fill a fork snapshot", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+      const parentId = ThreadId.make("thread:counted-fork:parent");
+      const childId = ThreadId.make("thread:counted-fork:child");
+      const parentRunId = RunId.make("run:counted-fork:parent");
+      for (const threadId of [parentId, childId]) {
+        const runId = threadId === parentId ? parentRunId : RunId.make("run:counted-fork:child");
+        const nodeId = NodeId.make(`node:${threadId}`);
+        yield* store.apply({
+          id: EventId.make(`event:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:counted-fork"),
+            title: "Counted fork",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: threadId === parentId ? null : parentId,
+              relationshipToParent: threadId === parentId ? null : "fork",
+              rootThreadId: parentId,
+            },
+            forkedFrom:
+              threadId === parentId
+                ? null
+                : { type: "run", threadId: parentId, runId: parentRunId },
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:${runId}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${runId}`),
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        const turns = threadId === parentId ? 4 : 12;
+        for (let ordinal = 0; ordinal < turns; ordinal++) {
+          yield* store.apply({
+            id: EventId.make(`event:${threadId}:${ordinal}`),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            driver,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`item:${threadId}:${ordinal}`),
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              messageId: MessageId.make(`message:${threadId}:${ordinal}`),
+              inputIntent: "turn_start",
+              createdBy: "user",
+              creationSource: "web",
+              text: `Turn ${ordinal}`,
+              attachments: [],
+            },
+          });
+        }
+      }
+      // A fork keeps its inherited prefix even after its source run rolls back.
+      yield* sql`UPDATE orchestration_v2_projection_runs
+        SET status = 'rolled_back', payload_json = json_set(payload_json, '$.status', 'rolled_back')
+        WHERE run_id = ${parentRunId}`;
+      const full = yield* store.getThreadSnapshot(childId);
+      const expected = buildBoundedThreadProjection({
+        projection: full.projection,
+        snapshotSequence: full.snapshotSequence,
+      });
+      const snapshot = yield* store.getThreadSnapshotWindow(childId, {
+        rowLimit: 77,
+        userTurnLimit: 10,
+      });
+      const actual = buildBoundedThreadProjection({
+        projection: snapshot.projection,
+        snapshotSequence: snapshot.snapshotSequence,
+      });
+      assert.deepEqual(actual, expected);
+      assert.isNotNull(actual.historyCursor);
+      assert.equal(decodeThreadHistoryCursor(actual.historyCursor!).p, 7);
+      const older = yield* store.getThreadHistoryPage(childId, actual.historyCursor!);
+      assert.deepEqual(
+        [...older.items, ...actual.projection.visibleTurnItems].map((row) => row.sourceItemId),
+        full.projection.visibleTurnItems.map((row) => row.sourceItemId),
+      );
+    }),
+  );
+
   it.effect("a pull request watch keeps a finished thread working until it ends", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
