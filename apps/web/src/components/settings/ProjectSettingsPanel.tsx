@@ -17,6 +17,13 @@ import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  deriveProjectGroupingOverrideKey,
+  selectProjectGroupingSettings,
+  type ProjectGroupingMode,
+} from "../../logicalProject";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
@@ -31,6 +38,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SettingResetButton,
@@ -52,6 +60,13 @@ const ProjectIconPickerDialog = lazy(() =>
     default: module.ProjectIconPickerDialog,
   })),
 );
+
+const GROUPING_LABELS: Record<ProjectGroupingMode | "inherit", string> = {
+  inherit: "Use global default",
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
 
 function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
@@ -168,6 +183,8 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
+  const groupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const updateClientSettings = useUpdateClientSettings();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = useMemo(
@@ -327,8 +344,6 @@ function ProjectDetail({
     [updateAllMembers],
   );
 
-  const hasMultipleCheckouts = group.memberProjects.length > 1;
-
   const removeMembers = useCallback(
     async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
       if (checkProjectAccess(members, "Failed to remove project")) return;
@@ -430,15 +445,73 @@ function ProjectDetail({
           title={member.environmentLabel ?? "Environment"}
           description={member.workspaceRoot}
           control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!editableIds.has(member.environmentId)}
-              onClick={() => void removeMembers([member])}
-              aria-label={`Remove checkout ${member.workspaceRoot}`}
-            >
-              Remove
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={
+                  groupingSettings.sidebarProjectGroupingOverrides[
+                    deriveProjectGroupingOverrideKey(member)
+                  ] ?? "inherit"
+                }
+                onValueChange={(value) => {
+                  if (
+                    value !== "inherit" &&
+                    value !== "repository" &&
+                    value !== "repository_path" &&
+                    value !== "separate"
+                  )
+                    return;
+                  const overrides = { ...groupingSettings.sidebarProjectGroupingOverrides };
+                  const key = deriveProjectGroupingOverrideKey(member);
+                  if (value === "inherit") delete overrides[key];
+                  else overrides[key] = value;
+                  void updateClientSettings({ sidebarProjectGroupingOverrides: overrides });
+                  void navigate({
+                    to: "/settings/projects",
+                    search: (previous) => ({
+                      ...previous,
+                      project: deriveLogicalProjectKeyFromSettings(member, {
+                        ...groupingSettings,
+                        sidebarProjectGroupingOverrides: overrides,
+                      }),
+                    }),
+                    replace: true,
+                    resetScroll: false,
+                  });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-52"
+                  aria-label={`Grouping for checkout ${member.workspaceRoot} on ${member.environmentLabel ?? "environment"}`}
+                >
+                  <SelectValue>
+                    {
+                      GROUPING_LABELS[
+                        groupingSettings.sidebarProjectGroupingOverrides[
+                          deriveProjectGroupingOverrideKey(member)
+                        ] ?? "inherit"
+                      ]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(GROUPING_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!editableIds.has(member.environmentId)}
+                onClick={() => void removeMembers([member])}
+                aria-label={`Remove checkout ${member.workspaceRoot}`}
+              >
+                Remove
+              </Button>
+            </div>
           }
         />
       ))}
@@ -538,7 +611,7 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
-        {hasMultipleCheckouts ? checkoutChoices : null}
+        {checkoutChoices}
         <SettingsSection title="Danger">
           <SettingsRow
             title={
