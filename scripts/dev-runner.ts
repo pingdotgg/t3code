@@ -699,9 +699,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
     );
 
-    // Before the share block: --dry-run only resolves and prints. Sharing would
-    // replace, then tear down, whatever mapping the port already had — a
-    // surprising side effect from a command documented as inert.
+    // --dry-run only resolves and prints; it must not configure a Serve mapping.
     if (input.dryRun) {
       return;
     }
@@ -726,27 +724,21 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         // with creating it. An interrupt landing in between would otherwise
         // leave a mapping pointing at a port nothing is listening on.
         //
-        // Deliberately no ownership tracking beyond that: if a second runner
-        // takes this port during a fast restart, the first's exit can briefly
-        // tear down the new mapping — visible (the URL stops working) and fixed
-        // by re-running --share. A lease protocol closing that window existed
-        // and was removed as more machinery than a dev convenience warrants.
-        //
         // A tailnet that isn't up shouldn't stop the dev server from starting —
         // warn, and carry on serving locally.
         const shared = yield* Effect.acquireRelease(
           shareDevServer({ webPort: sharedWebPort }),
           () =>
-            // Serve config outlives this process, so a cleanup that did not
-            // take leaves a tailnet URL pointing at a port nothing serves.
+            // Preserve a changed handler; inspect failures before requesting
+            // manual removal of persistent Serve configuration.
             unshareDevServer(sharedWebPort).pipe(
               Effect.flatMap((result) =>
                 result.cleared
                   ? Effect.void
                   : Effect.logWarning(
-                      `[dev-runner] could not remove the tailnet mapping for port ${String(sharedWebPort)}${
+                      `[dev-runner] ${result.cause ? "could not remove" : "preserved"} the tailnet mapping for port ${String(sharedWebPort)}${
                         result.explanation ? `: ${result.explanation}` : ""
-                      }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} off\`.`,
+                      }. Inspect it with \`tailscale serve status --json\` before changing its configuration.`,
                     ),
               ),
             ),

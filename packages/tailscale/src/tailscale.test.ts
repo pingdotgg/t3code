@@ -23,6 +23,8 @@ import {
   TailscaleCommandSpawnError,
   TailscaleCommandTimeoutError,
   TailscaleStatusParseError,
+  TailscaleServePortOccupiedError,
+  TailscaleServeStatusParseError,
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
@@ -125,7 +127,301 @@ function layerMockSpawner(
   );
 }
 
+const serveConfig = (proxy = "http://127.0.0.1:13773", port = 8443) => ({
+  TCP: { [String(port)]: { HTTPS: true } },
+  Web: { [`workstation.example:${port}`]: { Handlers: { "/": { Proxy: proxy } } } },
+});
+
+function serveLayer(config: unknown, calls: Array<ReadonlyArray<string>>) {
+  return layerMockSpawner((_command, args) => {
+    calls.push(args);
+    return args[1] === "status" ? { stdout: JSON.stringify(config) } : {};
+  });
+}
+
+describe("Serve handler ownership", () => {
+  it.effect.each([null, {}, serveConfig("http://127.0.0.1:9000", 9443)])(
+    "configures an unused port with status %j",
+    (config) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 });
+        assert.deepEqual(calls, [
+          ["serve", "status", "--json"],
+          ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"],
+        ]);
+      }).pipe(Effect.provide(serveLayer(config, calls)));
+    },
+  );
+
+  it.effect("reuses its exact root proxy without a mutation", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 });
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(Effect.provide(serveLayer(serveConfig("http://127.0.0.1:13773/"), calls)));
+  });
+
+  const matching = serveConfig();
+  it.effect.each([
+    {
+      name: "top-level configuration",
+      config: { ...matching, FutureOption: true },
+    },
+    {
+      name: "TCP handler",
+      config: { ...matching, TCP: { "8443": { HTTPS: true, FutureOption: true } } },
+    },
+    {
+      name: "web server",
+      config: {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            ...matching.Web["workstation.example:8443"],
+            FutureOption: true,
+          },
+        },
+      },
+    },
+    {
+      name: "root handler",
+      config: {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            Handlers: { "/": { Proxy: "http://127.0.0.1:13773", FutureOption: true } },
+          },
+        },
+      },
+    },
+    {
+      name: "foreground configuration",
+      config: { ...matching, Foreground: { session: { FutureOption: true } } },
+    },
+  ])("refuses mutations with an unknown field in $name", ({ config }) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      for (const replaceVerifiedHandler of [false, true]) {
+        const error = yield* ensureTailscaleServe({
+          localPort: 13773,
+          servePort: 8443,
+          replaceVerifiedHandler,
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, TailscaleServeStatusParseError);
+      }
+      const error = yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+      );
+      assert.instanceOf(error, TailscaleServeStatusParseError);
+      assert.deepEqual(
+        calls,
+        Array.from({ length: 3 }, () => ["serve", "status", "--json"]),
+      );
+    }).pipe(Effect.provide(serveLayer(config, calls)));
+  });
+
+  it.effect("ignores separately scoped Services and TCP forwarding on another port", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 });
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(
+      Effect.provide(
+        serveLayer(
+          {
+            ...matching,
+            TCP: {
+              ...matching.TCP,
+              "9443": { TCPForward: "127.0.0.1:9000", ProxyProtocol: 2 },
+            },
+            Services: { "svc:example": { Tun: true } },
+          },
+          calls,
+        ),
+      ),
+    );
+  });
+
+  const protectedHandlers = [
+    ["foreign root", serveConfig("http://127.0.0.1:9000")],
+    [
+      "additional route",
+      {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            Handlers: {
+              "/": { Proxy: "http://127.0.0.1:13773" },
+              "/api": { Proxy: "http://127.0.0.1:9000" },
+            },
+          },
+        },
+      },
+    ],
+    ["Funnel", { ...matching, AllowFunnel: { "workstation.example:8443": true } }],
+    ["foreground", { Foreground: { session: matching } }],
+    [
+      "foreground over a matching background handler",
+      { ...matching, Foreground: { session: matching } },
+    ],
+    ["TCP forwarding", { TCP: { "8443": { TCPForward: "127.0.0.1:9000" } } }],
+    ["PROXY protocol", { ...matching, TCP: { "8443": { HTTPS: true, ProxyProtocol: 2 } } }],
+    [
+      "application capability grants",
+      {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            Handlers: {
+              "/": { Proxy: "http://127.0.0.1:13773", AcceptAppCaps: ["example.com/cap/test"] },
+            },
+          },
+        },
+      },
+    ],
+    [
+      "redirect handler",
+      {
+        ...matching,
+        Web: {
+          "workstation.example:8443": { Handlers: { "/": { Redirect: "https://example.com" } } },
+        },
+      },
+    ],
+    [
+      "file serving",
+      {
+        ...matching,
+        Web: { "workstation.example:8443": { Handlers: { "/": { Path: "/srv/example" } } } },
+      },
+    ],
+    [
+      "multiple authorities",
+      {
+        ...matching,
+        Web: { ...matching.Web, "other.example:8443": matching.Web["workstation.example:8443"] },
+      },
+    ],
+  ] as const;
+  it.effect.each(protectedHandlers.map(([name, config]) => ({ name, config })))(
+    "preserves $name during setup and cleanup",
+    ({ config }) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+          Effect.flip,
+        );
+        assert.instanceOf(error, TailscaleServePortOccupiedError);
+        assert.isFalse(yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }));
+        assert.deepEqual(calls, [
+          ["serve", "status", "--json"],
+          ["serve", "status", "--json"],
+        ]);
+      }).pipe(Effect.provide(serveLayer(config, calls)));
+    },
+  );
+
+  it.effect.each(
+    protectedHandlers
+      .filter(([name]) => name !== "foreign root")
+      .map(([name, config]) => ({ name, config })),
+  )("does not replace $name even after environment verification", ({ config }) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({
+        localPort: 13773,
+        servePort: 8443,
+        replaceVerifiedHandler: true,
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, TailscaleServePortOccupiedError);
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(Effect.provide(serveLayer(config, calls)));
+  });
+
+  it.effect("repoints only a verified simple private root proxy", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({
+        localPort: 13773,
+        servePort: 8443,
+        replaceVerifiedHandler: true,
+      });
+      assert.deepEqual(calls.at(-1), ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
+    }).pipe(Effect.provide(serveLayer(serveConfig("http://127.0.0.1:9000"), calls)));
+  });
+
+  it.effect("ignores unrelated foreground sessions and Funnel ports", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 });
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(
+      Effect.provide(
+        serveLayer(
+          {
+            ...matching,
+            Foreground: { session: serveConfig("http://127.0.0.1:9000", 9443) },
+            AllowFunnel: { "workstation.example:9443": true },
+          },
+          calls,
+        ),
+      ),
+    );
+  });
+
+  it.effect("leaves an empty port alone during cleanup", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      assert.isTrue(yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }));
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(Effect.provide(serveLayer(null, calls)));
+  });
+
+  it.effect.each(["not json", '{"TCP":42}'])(
+    "refuses to mutate when Serve configuration cannot be decoded: %s",
+    (stdout) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+          Effect.flip,
+        );
+        assert.instanceOf(error, TailscaleServeStatusParseError);
+        assert.deepEqual(calls, [["serve", "status", "--json"]]);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((_command, args) => {
+            calls.push(args);
+            return { stdout };
+          }),
+        ),
+      );
+    },
+  );
+});
+
 describe("tailscale", () => {
+  it.effect("preserves a foreign Serve handler instead of overwriting it", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const layer = layerMockSpawner((_command, args) => {
+      calls.push(args);
+      return {
+        stdout: JSON.stringify({
+          TCP: { "8443": { HTTPS: true } },
+          Web: {
+            "workstation.example:8443": {
+              Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } },
+            },
+          },
+        }),
+      };
+    });
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.ignore);
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("detects Tailnet IPv4 addresses", () =>
     Effect.sync(() => {
       assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);
@@ -324,6 +620,7 @@ describe("tailscale", () => {
   it.effect("configures tailscale serve through the process spawner service", () => {
     const layer = layerMockSpawner((command, args) => {
       assert.equal(command, "tailscale");
+      if (args[1] === "status") return { stdout: "null" };
       assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
       return {};
     });
@@ -332,10 +629,14 @@ describe("tailscale", () => {
   });
 
   it.effect("retains tailscale serve exit diagnostics", () => {
-    const layer = layerMockSpawner(() => ({
-      code: 1,
-      stderr: "serve permission denied tskey-auth-secret-token-value",
-    }));
+    const layer = layerMockSpawner((_command, args) =>
+      args[1] === "status"
+        ? { stdout: "null" }
+        : {
+            code: 1,
+            stderr: "serve permission denied tskey-auth-secret-token-value",
+          },
+    );
 
     return Effect.gen(function* () {
       const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
@@ -367,13 +668,19 @@ describe("tailscale", () => {
     const layer = layerMockSpawner((command, args) => {
       commands.push({ command, args });
       assert.equal(command, "tailscale");
+      if (args[1] === "status") return { stdout: JSON.stringify(serveConfig()) };
       assert.deepEqual(args, ["serve", "--https=8443", "off"]);
       return {};
     });
 
     return Effect.gen(function* () {
-      yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));
+      assert.isTrue(
+        yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+          Effect.provide(layer),
+        ),
+      );
       assert.deepEqual(commands, [
+        { command: "tailscale", args: ["serve", "status", "--json"] },
         { command: "tailscale", args: ["serve", "--https=8443", "off"] },
       ]);
     });
