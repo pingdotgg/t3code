@@ -30,7 +30,13 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     manifestCurrent?: Effect.Effect<ModelManifest.ModelManifestData>;
     body?: Stream.Stream<Uint8Array>;
     baseDir?: string;
-    local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
+    local?: {
+      version: string;
+      appServerFails?: boolean;
+      versionFails?: boolean;
+      /** Gates `--version` on the appearance of `probeGate` before answering. */
+      gated?: boolean;
+    };
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -39,11 +45,14 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const localDirectory = `${baseDir}/local`;
   const localBinaryPath = `${localDirectory}/codex`;
   const probeLog = `${baseDir}/local-probes.txt`;
+  const probeGate = `${baseDir}/probe-gate`;
   if (input.local) {
     yield* fs.makeDirectory(localDirectory, { recursive: true });
     yield* fs.writeFileString(
       localBinaryPath,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\ncase "$1" in\n--version) ${input.local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${input.local.version}'`};;\napp-server) exit ${input.local.appServerFails ? "1" : "0"};;\nesac\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\ncase "$1" in\n--version) ${
+        input.local.gated ? `while [ ! -f '${probeGate}' ]; do sleep 0.05; done; ` : ""
+      }${input.local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${input.local.version}'`};;\napp-server) exit ${input.local.appServerFails ? "1" : "0"};;\nesac\n`,
       { mode: 0o755 },
     );
   }
@@ -81,7 +90,15 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
       ),
     ),
   );
-  return { installation, fs, baseDir, localBinaryPath, probeLog, downloads: () => downloads };
+  return {
+    installation,
+    fs,
+    baseDir,
+    localBinaryPath,
+    probeLog,
+    probeGate,
+    downloads: () => downloads,
+  };
 });
 const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
   installation.changes.pipe(
@@ -89,6 +106,13 @@ const terminalState = (installation: CodexInstallation.CodexInstallation["Servic
     Stream.runHead,
     Effect.map(Option.getOrThrow),
   );
+/** Installs the managed runtime into `baseDir` so a later harness sees both options. */
+const installManaged = Effect.fn("test.installManaged")(function* (baseDir: string) {
+  const h = yield* makeHarness({ baseDir });
+  yield* h.installation.start;
+  expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+  return h;
+});
 
 it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
   "reuses installed Codex %s without downloading or taking ownership of it",
@@ -119,6 +143,91 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
       expect((yield* h.installation.state).source).toBe("local");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("seeds local Codex state in the background instead of blocking construction", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version: "0.156.1", gated: true } });
+    // Construction returned while `codex --version` is still gated, so the
+    // install state cannot have been seeded from a local probe yet.
+    expect((yield* h.installation.state).phase).toBe("idle");
+    yield* h.fs.writeFileString(h.probeGate, "");
+    expect(yield* h.installation.start).toMatchObject({
+      source: "local",
+      phase: "succeeded",
+      installedVersion: "0.156.1",
+      executablePath: h.localBinaryPath,
+    });
+    expect((yield* h.installation.resolve()).source).toBe("local");
+    // start and resolve joined the in-flight seed probe instead of spawning a second one.
+    expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
+      "--version",
+      "app-server --help",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("keeps the managed record unpublished until the local probe rules local Codex out", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-seed-order-" });
+    yield* installManaged(baseDir);
+    const h = yield* makeHarness({ baseDir, local: { version: "0.156.2", gated: true } });
+    // A managed runtime exists, but the seed must not publish its record while
+    // the local verdict is still pending — construction used to block here, so
+    // nothing was observable before the local probe answered.
+    expect(yield* h.installation.state).toMatchObject({ phase: "idle", installedVersion: null });
+    yield* h.fs.writeFileString(h.probeGate, "");
+    expect(yield* h.installation.start).toMatchObject({
+      source: "local",
+      phase: "succeeded",
+      installedVersion: "0.156.2",
+    });
+    expect(h.downloads()).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("publishes the managed record when the background probe finds no local Codex", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-seed-managed-" });
+    yield* installManaged(baseDir);
+    const h = yield* makeHarness({ baseDir });
+    // resolve joins the seed, so by the time it answers the managed record has
+    // published exactly as the synchronous seed would have.
+    expect((yield* h.installation.resolve()).source).toBe("managed");
+    expect(yield* h.installation.state).toMatchObject({
+      source: "managed",
+      installedVersion: "0.156.1",
+    });
+    expect(h.downloads()).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("surfaces a corrupt managed runtime only when no local Codex is usable", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-seed-corrupt-" });
+    yield* installManaged(baseDir);
+    yield* fs.remove(`${baseDir}/tools/codex/0.156.1/codex-package.json`);
+    const local = yield* makeHarness({ baseDir, local: { version: "0.156.2", gated: true } });
+    // While the local verdict is pending the corrupt record stays silent: no
+    // "failed" flash when a working local Codex is about to take over.
+    expect((yield* local.installation.state).phase).toBe("idle");
+    yield* local.fs.writeFileString(local.probeGate, "");
+    expect(yield* local.installation.start).toMatchObject({
+      source: "local",
+      phase: "succeeded",
+      installedVersion: "0.156.2",
+    });
+    const withoutLocal = yield* makeHarness({ baseDir });
+    yield* withoutLocal.installation.resolve().pipe(Effect.ignore);
+    expect(yield* withoutLocal.installation.state).toMatchObject({ phase: "failed" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("interrupts a still-pending seed when the service scope closes", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version: "0.156.1", gated: true } });
+    // The gate is never released: closing the test scope must interrupt the
+    // gated probe instead of hanging on it.
+    expect((yield* h.installation.state).phase).toBe("idle");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 it.effect.each([
   { version: "0.128.9" },
@@ -341,7 +450,7 @@ it.effect("keeps an activated runtime when a later update fails verification", (
       baseDir: first.baseDir,
       options: { releaseAsset: { ...asset, version: "0.156.2", sha256: "0".repeat(64) } },
     });
-    expect((yield* update.installation.state).executablePath).toBe(
+    expect((yield* update.installation.resolve()).executablePath).toBe(
       (yield* first.installation.resolve()).executablePath,
     );
     yield* update.installation.start;

@@ -6,6 +6,7 @@ import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -190,6 +191,11 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     canRemove: false,
     message: null,
   });
+  // Resolves once the forked construction-time local probe settles. Seeding
+  // local state spawns the PATH-resolved `codex`, and behind a version-manager
+  // shim that spawn can take seconds, so construction must not await it. Every
+  // local lookup joins this Deferred so the probe stays single-flight.
+  const localSeeded = yield* Deferred.make<void>();
   const readRecord = Effect.fn("CodexInstallation.readRecord")(function* <A>(
     file: string,
     schema: Schema.Codec<A>,
@@ -375,6 +381,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     Effect.orElseSucceed(() => null),
   );
   const resolve = Effect.fn("CodexInstallation.resolve")(function* () {
+    yield* Deferred.await(localSeeded);
     const local = yield* resolveLocal();
     return local ?? (yield* resolveManaged());
   });
@@ -566,6 +573,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const start = gate
     .withPermit(
       Effect.gen(function* () {
+        yield* Deferred.await(localSeeded);
         const current = yield* SubscriptionRef.get(state);
         if (isRunning(current)) return current;
         if (yield* reuseLocal()) return yield* SubscriptionRef.get(state);
@@ -644,6 +652,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     function* (protectedBinaryPaths: ReadonlyArray<string> = []) {
       yield* gate.withPermit(
         Effect.gen(function* () {
+          yield* Deferred.await(localSeeded);
           if (isRunning(yield* SubscriptionRef.get(state)) || leases > 0) {
             return yield* installationError(
               "remove",
@@ -693,6 +702,26 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   yield* Effect.gen(function* () {
     const canRemove = yield* fs.exists(managedDirectory);
     yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove }));
+  }).pipe(
+    Effect.catch(() =>
+      SubscriptionRef.update(
+        state,
+        (current) =>
+          ({
+            ...current,
+            phase: "failed",
+            message: "The managed Codex runtime is incomplete. Remove it and reinstall.",
+          }) satisfies ProviderInstallState,
+      ),
+    ),
+  );
+
+  // Seed install state in the background: reuseLocal spawns the PATH-resolved
+  // `codex`, which must not delay command readiness (a version-manager shim can
+  // hold the spawn for its whole probe budget). When no usable local Codex
+  // exists, the managed record publishes instead — the same order the
+  // synchronous seed produced, minus the blocking probe.
+  yield* Effect.gen(function* () {
     if (yield* reuseLocal()) return;
     if (!(yield* fs.exists(activePath))) return;
     const active = yield* readRecord(activePath, ActiveRelease);
@@ -719,6 +748,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           }) satisfies ProviderInstallState,
       ),
     ),
+    Effect.onExit(() => Deferred.succeed(localSeeded, undefined)),
+    Effect.ignoreCause({ log: true }),
+    Effect.forkIn(serviceScope),
   );
 
   return CodexInstallation.of({
