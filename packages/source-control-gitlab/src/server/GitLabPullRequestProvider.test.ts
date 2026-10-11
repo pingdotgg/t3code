@@ -212,3 +212,69 @@ describe("rewriting what has already been said", () => {
     }),
   );
 });
+
+describe("expanding unchanged lines", () => {
+  const change = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "gitlab.com",
+    number: 7,
+    changeType: "change" as const,
+    oldPath: "src/page.ts",
+    newPath: "src/page.ts",
+  };
+
+  it.effect("reads both sides of a file through the merge request or one of its commits", () =>
+    Effect.gen(function* () {
+      const getMergeRequestDiffFileContents = vi.fn(() =>
+        Effect.succeed({ oldContents: "before\n", newContents: "after\n" }),
+      );
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDiffFileContents,
+          }),
+        ),
+      );
+      assert.isDefined(provider.getDiffFileContents);
+      const oneCommit = { ...change, commit: "a1b2c3d" };
+
+      expect(yield* provider.getDiffFileContents(change)).toEqual({
+        oldContents: "before\n",
+        newContents: "after\n",
+      });
+      yield* provider.getDiffFileContents(oneCommit);
+      expect(getMergeRequestDiffFileContents).toHaveBeenNthCalledWith(1, change);
+      expect(getMergeRequestDiffFileContents).toHaveBeenNthCalledWith(2, oneCommit);
+    }),
+  );
+
+  it.effect("reports a file GitLab cannot expand as a failed read", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDiffFileContents: () =>
+              Effect.fail(
+                new GitLabPullRequestCli.GitLabDiffFileContentsUnavailableError({
+                  command: "glab",
+                  cwd: "/w",
+                  path: "assets/logo.png",
+                  reason: "binary",
+                }),
+              ),
+          }),
+        ),
+      );
+      assert.isDefined(provider.getDiffFileContents);
+
+      expect(yield* Effect.flip(provider.getDiffFileContents(change))).toMatchObject({
+        _tag: "PullRequestProviderError",
+        provider: "gitlab",
+        operation: "getDiffFileContents",
+        reason: "failed",
+        detail: "The diff file 'assets/logo.png' is binary.",
+      });
+    }),
+  );
+});
