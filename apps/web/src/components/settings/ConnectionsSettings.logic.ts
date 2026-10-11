@@ -4,8 +4,13 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
+  type DesktopUpdateState,
   type DesktopWslState,
 } from "@t3tools/contracts";
+import {
+  getDesktopUpdateDownloadedVersion,
+  resolveDesktopUpdateButtonAction,
+} from "../desktopUpdate.logic";
 
 /**
  * Operating terminals without being able to list them leaves a client
@@ -54,6 +59,38 @@ export function isWslSettingsRowVisible(input: {
 }): boolean {
   const { state, error } = input;
   return state ? state.available || state.enabled || state.wslOnly : error !== null;
+}
+
+/**
+ * Passive status for this machine's Version row when the client and server
+ * versions match. The desktop bundles its server, so a pending app update is
+ * the only way it falls behind. Pending updates follow the sidebar update
+ * control's action, including retryable failures, so both agree; the sidebar
+ * is where to act on it. A recheck never drops a downloaded update, so it
+ * keeps its label while `checking`. `state` is null outside the desktop app.
+ */
+export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null): string {
+  if (!state) return "Up to date";
+  if (state.status === "downloading") {
+    return state.availableVersion
+      ? `Downloading update ${state.availableVersion}`
+      : "Downloading update";
+  }
+  const action = resolveDesktopUpdateButtonAction(state);
+  if (
+    action === "install" ||
+    state.status === "downloaded" ||
+    (state.status === "checking" && state.downloadedVersion !== null)
+  ) {
+    const version = getDesktopUpdateDownloadedVersion(state);
+    return version ? `Update ${version} downloaded` : "Update downloaded";
+  }
+  if (action === "download") {
+    return state.availableVersion
+      ? `Update ${state.availableVersion} available`
+      : "Update available";
+  }
+  return "Up to date";
 }
 
 export type QrEndpointOption = {
