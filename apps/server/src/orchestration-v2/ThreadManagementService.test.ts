@@ -298,7 +298,7 @@ it.effect("refuses a new turn when the project effectively disables the instance
     expect(error.message).toBe(
       `Provider instance "${instanceId}" is disabled for project ${projectId}.`,
     );
-  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
+  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
 });
 
 it.effect("allows a new turn when the project enables an instance the machine disabled", () => {
@@ -322,7 +322,7 @@ it.effect("allows a new turn when the project enables an instance the machine di
       projectId,
       instanceId,
     );
-  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
+  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
 });
 
 it.effect("inherits the machine value when the project has no override", () => {
@@ -349,7 +349,7 @@ it.effect("inherits the machine value when the project has no override", () => {
     expect(error).toBeInstanceOf(
       ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
     );
-  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
+  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
 });
 
 it.effect("classifies projection infrastructure failures separately from a missing thread", () => {

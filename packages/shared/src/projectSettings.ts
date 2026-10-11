@@ -196,8 +196,9 @@ function resolveProjectOverrides(
   // this project turned off.
   const textGeneration = effective.textGenerationModelSelection as ModelSelection;
   if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
-    const fallback = fallbackTextGenerationModelSelection((instanceId) =>
-      resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
+    const fallback = fallbackTextGenerationModelSelection(
+      settings.providerInstances,
+      (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
     );
     if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }

@@ -13,7 +13,7 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -89,24 +89,34 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 ].map((driver) => ProviderDriverKind.make(driver));
 
 /**
- * The text generation model on the first built-in default instance, in
- * preference order, that `isEnabled` accepts. `null` when none is.
+ * The text generation model on the first instance `isEnabled` accepts: the
+ * built-in default instances in preference order, then configured instances
+ * of those drivers. `null` when none is.
  */
 export function fallbackTextGenerationModelSelection(
+  providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
 ): ModelSelection | null {
-  const driver = TEXT_GENERATION_FALLBACK_DRIVERS.find((candidate) =>
-    isEnabled(defaultInstanceIdForDriver(candidate), candidate),
-  );
-  return driver === undefined
-    ? null
-    : {
-        instanceId: defaultInstanceIdForDriver(driver),
-        model:
-          DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-          DEFAULT_MODEL_BY_PROVIDER[driver] ??
-          DEFAULT_TEXT_GENERATION_MODEL,
-      };
+  const candidates = [
+    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
+      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
+    ),
+    ...Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+      TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
+        ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
+        : [],
+    ),
+  ];
+  const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
+  if (match === undefined) return null;
+  const [instanceId, driver] = match;
+  return {
+    instanceId,
+    model:
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_TEXT_GENERATION_MODEL,
+  };
 }
 
 export function resolveSourceControlWriterModelSelection(

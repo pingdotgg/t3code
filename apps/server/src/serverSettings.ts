@@ -572,10 +572,12 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   // A slot without an explicit instance uses its driver's default enabled state.
-  const fallback = fallbackTextGenerationModelSelection((instanceId, driver) =>
-    resolveProviderInstanceEnabled(
-      settings.providerInstances[instanceId] ?? { driver, config: {} },
-    ),
+  const fallback = fallbackTextGenerationModelSelection(
+    settings.providerInstances,
+    (instanceId, driver) =>
+      resolveProviderInstanceEnabled(
+        settings.providerInstances[instanceId] ?? { driver, config: {} },
+      ),
   );
   return fallback === null ? settings : { ...settings, textGenerationModelSelection: fallback };
 }
