@@ -31,7 +31,8 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: missing initial Codex tiers retain their native turn for history lookup.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -40,7 +41,8 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
  * A v5 server reads the legacy (v4) file once, when its own file is missing.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const PREVIOUS_SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
 export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
 
 /** Serialised as the index into this list. */
@@ -82,6 +84,7 @@ type SerializedRecord = readonly [
   speed: number,
   /** Optional trailing field keeps existing cache rows readable. */
   rateModelIndex?: number | null,
+  unresolvedCodexTurnId?: string,
 ];
 
 interface SerializedFile {
@@ -143,6 +146,9 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
+    ...(record.unresolvedCodexTurnId === undefined
+      ? ([] as const)
+      : ([record.unresolvedCodexTurnId] as const)),
   ];
   return {
     s: entry.size,
@@ -270,6 +276,7 @@ export function decodeScanCache(
         reportedCostUsd,
         speedIndex,
         rateModelIndex,
+        unresolvedCodexTurnId,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -285,6 +292,7 @@ export function decodeScanCache(
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning) ||
+        (unresolvedCodexTurnId !== undefined && typeof unresolvedCodexTurnId !== "string") ||
         speed === undefined
       ) {
         return null;
@@ -305,6 +313,9 @@ export function decodeScanCache(
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
+        ...(version >= 6 && provider === "codex" && unresolvedCodexTurnId !== undefined
+          ? { unresolvedCodexTurnId }
+          : {}),
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }

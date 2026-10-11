@@ -51,6 +51,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -58,6 +59,7 @@ import type {
   ProviderUsageInstance,
   TranscriptUsageFormat,
   UsageRecord,
+  UsageSpeed,
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
@@ -71,6 +73,7 @@ import {
   dedupeWithinFile,
   LEGACY_SCAN_CACHE_FILE_NAME,
   makeScanCacheWriter,
+  PREVIOUS_SCAN_CACHE_FILE_NAME,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
   type CachedFile,
@@ -230,6 +233,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   // The readers yield their own services; scans run them against this context.
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const codexHistory = yield* CodexUsageHistory.CodexUsageHistory;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -242,6 +246,7 @@ export const make = Effect.gen(function* () {
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
   const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const previousScanCachePath = path.join(config.stateDir, PREVIOUS_SCAN_CACHE_FILE_NAME);
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -440,7 +445,8 @@ export const make = Effect.gen(function* () {
         );
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+        document = yield* readDocument(previousScanCachePath);
+        if (document === null) document = yield* readDocument(legacyScanCachePath);
         // Write the migrated cache to its own file on the next scan.
         cacheDirty = document !== null;
       }
@@ -759,6 +765,55 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    const unresolved: UsageRecord[] = [];
+    for (const entry of fileCache.values()) {
+      if (entry.provider !== "codex") continue;
+      for (const batch of [entry.records, entry.tailRecords]) {
+        for (const record of batch) {
+          if (
+            record.unresolvedCodexTurnId !== undefined &&
+            record.timestampMs >= windowStartMs &&
+            record.timestampMs < windowEndMs
+          ) {
+            unresolved.push(record);
+          }
+        }
+      }
+    }
+    const resolvedTiers = yield* codexHistory.resolve(unresolved).pipe(
+      // No match or a failed read remains unresolved, so a later scan can use
+      // history that committed after the transcript (even without file growth).
+      Effect.catchTags({
+        CodexUsageHistoryReadError: () => Effect.succeed(new Map<UsageRecord, UsageSpeed>()),
+      }),
+    );
+    const correctedRecords = new Map<UsageRecord, UsageRecord>();
+    for (const [record, speed] of resolvedTiers) {
+      const { unresolvedCodexTurnId: _unresolvedCodexTurnId, ...resolvedRecord } = record;
+      correctedRecords.set(record, { ...resolvedRecord, speed });
+    }
+    if (correctedRecords.size > 0) {
+      for (const [filePath, entry] of fileCache) {
+        if (
+          entry.provider !== "codex" ||
+          !(
+            entry.records.some((record) => correctedRecords.has(record)) ||
+            entry.tailRecords.some((record) => correctedRecords.has(record))
+          )
+        )
+          continue;
+        fileCache.set(filePath, {
+          ...entry,
+          records: entry.records.map((record) => correctedRecords.get(record) ?? record),
+          tailRecords: entry.tailRecords.map((record) => correctedRecords.get(record) ?? record),
+        });
+      }
+      cacheDirty = true;
+    }
+
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -811,7 +866,8 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         const eventOccurrences = new Map<string, number>();
-        for (const record of file.records) {
+        for (const rawRecord of file.records) {
+          const record = correctedRecords.get(rawRecord) ?? rawRecord;
           let usageRecord = record;
           if (
             sharedSessionProviders.has(record.provider) &&
@@ -933,4 +989,4 @@ export const make = Effect.gen(function* () {
   return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
-export const layer = Layer.effect(UsageService, make);
+export const layer = Layer.effect(UsageService, make).pipe(Layer.provide(CodexUsageHistory.layer));

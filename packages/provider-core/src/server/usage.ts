@@ -45,6 +45,7 @@ export interface UsageRecord {
    * Key for cross-file de-duplication, or `null` when the record is inherently
    * unique and needs no dedup.
    */
+  readonly unresolvedCodexTurnId?: string;
   readonly dedupeKey: string | null;
 }
 

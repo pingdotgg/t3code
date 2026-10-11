@@ -73,6 +73,7 @@ import Migration0056 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts"
 import Migration0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
+import Migration0061 from "./Migrations/061_CodexUsageNativeTurnIndex.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 
 /**
@@ -148,6 +149,7 @@ export const migrationEntries = [
   [58, "WebhookRelayDeliveries", Migration0058],
   [59, "McpAppModelContext", Migration0059],
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
+  [61, "CodexUsageNativeTurnIndex", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

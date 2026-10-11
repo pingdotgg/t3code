@@ -10,6 +10,7 @@ import {
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import { initialCodexScanState } from "../provider/Drivers/codexUsage.ts";
 
 import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
 
@@ -59,6 +60,57 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("round trips unresolved Codex evidence and its incremental state", () => {
+    const cache: ScanCache = new Map([
+      [
+        "/codex.jsonl",
+        {
+          size: 80,
+          mtimeMs: 400,
+          provider: "codex",
+          records: [record({ provider: "codex", unresolvedCodexTurnId: "native-turn" })],
+          tailRecords: [record({ provider: "codex", unresolvedCodexTurnId: "native-tail" })],
+          position: position({
+            state: {
+              ...initialCodexScanState(),
+              modelProvider: "openai",
+              turnId: "native-turn",
+            },
+          }),
+        },
+      ],
+    ]);
+    expect(
+      decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(cache))), TEST_FORMAT_MAP),
+    ).toEqual(cache);
+  });
+
+  it.each([4, 5])("preserves v%s saved speeds while forcing only Codex to reparse", (version) => {
+    const cache = cacheWith([["/claude.jsonl", 100, [record({ speed: "fast" })]]]);
+    cache.set("/codex.jsonl", {
+      size: 80,
+      mtimeMs: 400,
+      provider: "codex",
+      records: [
+        record({ provider: "codex", speed: "fast" }),
+        record({ provider: "codex", speed: "ultrafast" }),
+      ],
+      tailRecords: [],
+      position: position({ state: initialCodexScanState() }),
+    });
+    const restored = decodeScanCache(
+      JSON.parse(JSON.stringify({ ...encodeScanCache(cache), version })),
+      TEST_FORMAT_MAP,
+    );
+    expect(restored.get("/claude.jsonl")).toEqual(cache.get("/claude.jsonl"));
+    expect(restored.get("/codex.jsonl")?.records.map((record) => record.speed)).toEqual([
+      "fast",
+      "ultrafast",
+    ]);
+    expect(restored.get("/codex.jsonl")?.size).toBe(-1);
+    expect(restored.get("/codex.jsonl")?.position.resumeOffset).toBe(0);
+  });
+
   it("restores records unchanged", () => {
     const original = cacheWith([
       [
@@ -88,6 +140,7 @@ describe("scan cache round trip", () => {
       tailRecords: [],
       position: position({
         state: {
+          ...initialCodexScanState(),
           model: "gpt-6-astra",
           speed: "ultrafast",
           sessionId: "session-c",
