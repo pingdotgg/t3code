@@ -1390,7 +1390,7 @@ describe("thread outbox", () => {
     ).toBe("remove");
   });
 
-  it("round-trips queued creations and gates incomplete ones from sending", () => {
+  it("round-trips queued PR checkout sources and gates incomplete creations from sending", () => {
     const base = queuedMessage({
       messageId: "message-1",
       createdAt: "2026-06-08T10:00:01.000Z",
@@ -1404,9 +1404,10 @@ describe("thread outbox", () => {
       creation: {
         projectId: ProjectId.make("project-1"),
         workspaceMode: "worktree",
-        branch: "main",
+        branch: "fork/feature",
         worktreePath: null,
-        startFromOrigin: true,
+        startFromOrigin: false,
+        pullRequestReference: "https://github.com/acme/repo/pull/123",
       },
     } satisfies QueuedThreadMessage;
 

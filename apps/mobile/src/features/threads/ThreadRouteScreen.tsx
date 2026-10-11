@@ -1,3 +1,4 @@
+import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
@@ -319,6 +320,7 @@ function ThreadRouteContent(
     };
   }, [loadEarlierHistory, selectedThread, selectedThreadDetailState.history]);
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const mergeBackTargetThreadId = resolveMergeBackTargetThreadId(selectedThreadDetail);
   const mergeBackRun =
@@ -974,7 +976,11 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
-      <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      <GitActionProgressOverlay
+        progress={gitActionProgress}
+        onDismiss={dismissGitActionResult}
+        onOpenPullRequest={openPullRequest}
+      />
 
       <ThreadPane>
         <ThreadDetailScreen

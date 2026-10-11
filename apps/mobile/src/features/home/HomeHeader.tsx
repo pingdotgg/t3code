@@ -57,6 +57,10 @@ export function HomeHeader(props: HomeHeaderProps) {
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const filterMenu = buildHomeListFilterMenu(props);
 
+  if (props.usesWorkspaceToolbar) {
+    return null;
+  }
+
   return (
     <>
       <NativeStackScreenOptions

@@ -1,16 +1,35 @@
-import { useIsFocused } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useState,
+  useSyncExternalStore,
+  useMemo,
+} from "react";
 import { Alert, Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useRefreshAssetUrl } from "../state/assets";
+import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
+import { FilePreviewGallery } from "./FilePreviewGallery";
 import { FilePreview } from "./FilePreview";
-import type { FilePreviewSource } from "./FilePreviewModal.types";
+import type {
+  FilePreviewItem,
+  FilePreviewSource,
+  ResolvedFilePreviewSource,
+} from "./FilePreviewModal.types";
 
-export type { FilePreviewSource, ResolvedFilePreviewSource } from "./FilePreviewModal.types";
+export type {
+  FilePreviewItem,
+  FilePreviewSource,
+  ResolvedFilePreviewSource,
+} from "./FilePreviewModal.types";
 
-function ResolvedFilePreview(props: {
-  readonly source: FilePreviewSource;
+function PreviewItemResolver(props: {
+  readonly source: FilePreviewItem;
+  readonly onResolved: (source: ResolvedFilePreviewSource) => void;
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
@@ -75,12 +94,53 @@ function ResolvedFilePreview(props: {
     };
   }, [source]);
 
-  return uri === null ? null : (
-    <FilePreview
-      source={{ ...source, uri }}
-      onRequestClose={props.onRequestClose}
-      {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
-    />
+  const onResolved = useEffectEvent(props.onResolved);
+  useEffect(() => {
+    if (uri !== null) onResolved({ ...source, name: filePreviewName(source), uri });
+  }, [uri, source]);
+  return null;
+}
+
+function ResolvedFilePreview(props: {
+  readonly source: FilePreviewSource;
+  readonly onRequestClose: () => void;
+  readonly onOpenError?: (error: unknown) => void;
+}) {
+  // Freeze the group at opening; streaming messages and URL refreshes must not reopen the viewer.
+  const [items] = useState(() => filePreviewGallery(props.source, []));
+  const [resolved, setResolved] = useState<Record<string, ResolvedFilePreviewSource>>({});
+  const onResolved = useCallback((item: ResolvedFilePreviewSource, key: string) => {
+    setResolved((current) => ({ ...current, [key]: item }));
+  }, []);
+  const selected = resolved[filePreviewKey(props.source)];
+  const gallery = useMemo(
+    () =>
+      items.flatMap((item) => {
+        const value = resolved[filePreviewKey(item)];
+        return value ? [value] : [];
+      }),
+    [items, resolved],
+  );
+  const ready = selected && gallery.length === items.length;
+  return (
+    <>
+      {items.map((item) => (
+        <PreviewItemResolver
+          key={filePreviewKey(item)}
+          source={item}
+          onResolved={(value) => onResolved(value, filePreviewKey(item))}
+          onRequestClose={props.onRequestClose}
+          onOpenError={props.onOpenError}
+        />
+      ))}
+      {ready ? (
+        <FilePreview
+          source={{ ...selected, gallery }}
+          onRequestClose={props.onRequestClose}
+          onOpenError={props.onOpenError}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -90,17 +150,47 @@ export function FilePreviewModal(props: {
   /** Replaces the default alert when the platform cannot open the document. */
   readonly onOpenError?: (error: unknown) => void;
 }) {
-  const isFocused = useIsFocused();
+  const group = useContext(FilePreviewGallery);
+  const source = useMemo(
+    () =>
+      props.source === null
+        ? null
+        : {
+            ...props.source,
+            gallery: filePreviewGallery(props.source, group),
+          },
+    [props.source, group],
+  );
+  const navigation = useNavigation();
+  const subscribeToFocus = useCallback(
+    (listener: () => void) => {
+      const offFocus = navigation.addListener("focus", listener);
+      const offBlur = navigation.addListener("blur", listener);
+      return () => {
+        offFocus();
+        offBlur();
+      };
+    },
+    [navigation],
+  );
+  // The v5 card host sits inside a legacy presentation envelope whose focus context
+  // can describe a different route. The preview belongs to this navigation route.
+  const isFocused = useSyncExternalStore(
+    subscribeToFocus,
+    navigation.isFocused,
+    navigation.isFocused,
+  );
   const hasSource = props.source !== null;
   const onRequestClose = useEffectEvent(props.onRequestClose);
   useEffect(() => {
     if (!isFocused && hasSource) onRequestClose();
   }, [isFocused, hasSource]);
 
-  if (!props.source || !isFocused) return null;
+  if (!source || !isFocused) return null;
   return (
     <ResolvedFilePreview
-      source={props.source}
+      key={filePreviewKey(source)}
+      source={source}
       onRequestClose={props.onRequestClose}
       {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
     />

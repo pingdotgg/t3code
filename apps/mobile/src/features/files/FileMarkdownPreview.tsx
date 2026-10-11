@@ -37,7 +37,9 @@ interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
-function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): MarkdownPreviewStyles {
+export function useMarkdownPreviewStyles(
+  renderImage?: MarkdownImageRenderer,
+): MarkdownPreviewStyles {
   const { appearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),

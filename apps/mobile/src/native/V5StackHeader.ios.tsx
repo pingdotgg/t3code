@@ -3,7 +3,7 @@ import type {
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { isValidElement, useRef } from "react";
+import { isValidElement, useEffect, useRef } from "react";
 import { Platform, StyleSheet } from "react-native";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useNativeLayoutMetrics } from "../native/native-layout-metrics";
@@ -21,7 +21,7 @@ import {
 
 type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
-  | NativeStackHeaderItem
+  | (NativeStackHeaderItem & { readonly height?: number })
   | HeaderBarButtonMailSearchToolbarItem
   | HeaderBarButtonSearchBarPlacementItem;
 type Options = NativeStackNavigationOptions & {
@@ -91,13 +91,18 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
   return { id, type: "menu", title: menu.title, children };
 }
 
-function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderItem[] {
+function convertItems(
+  items: (NativeStackHeaderItem & { readonly height?: number })[],
+  prefix: string,
+): HeaderItem[] {
   return items.map((item, index): HeaderItem => {
     const id =
       item.type === "spacing" ? `${prefix}:${index}` : (item.identifier ?? `${prefix}:${index}`);
     switch (item.type) {
       case "spacing":
-        return { type: "spacer", id, sizing: "fixed", width: item.spacing };
+        return "flexible" in item && item.flexible === true
+          ? { type: "spacer", id, sizing: "flexible" }
+          : { type: "spacer", id, sizing: "fixed", width: item.spacing };
       case "custom":
         return {
           type: "item",
@@ -114,6 +119,10 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           menu: item.disabled ? undefined : convertMenu(item.menu, `${id}:menu`),
+          variant: item.variant,
+          tintColor: item.tintColor,
+          width: item.width,
+          height: item.height,
           hidesSharedBackground: item.hidesSharedBackground,
         };
       case "button":
@@ -125,6 +134,10 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
+          variant: item.variant,
+          tintColor: item.tintColor,
+          width: item.width,
+          height: item.height,
           hidesSharedBackground: item.hidesSharedBackground,
         };
     }
@@ -190,17 +203,17 @@ export function V5StackHeader(props: {
         type: "item",
         id: mailSearch.composeButtonId ?? "compose",
         axisBehavior: bottomSearch ? "horizontalOnly" : undefined,
+        identifier: "workspace-trailing-action",
         icon: { type: "sfSymbol", name: mailSearch.composeSystemImageName ?? "square.and.pencil" },
         onPress: mailSearch.onComposePress,
       });
   }
-  // Expanded Duo panes put toolbar actions in the side bar. Folded phones
-  // keep their bottom search toolbar. UIKit keeps the
-  // primary column's navigation items beside its title and the detail's in
-  // the rail; a conventional UIToolbar can otherwise leave them inaccessible.
+  // Duo keeps compose at the bottom of a visible sidebar. On a single panel,
+  // the primary column owns the rail too; its separate UIToolbar is inaccessible.
   if (
-    nativeMetrics?.horizontalSizeClass === "regular" &&
-    nativeMetrics.verticalBarEdge !== "none"
+    nativeMetrics &&
+    nativeMetrics.verticalBarEdge !== "none" &&
+    (!props.primary || nativeMetrics.horizontalSizeClass === "compact")
   ) {
     trailing.push(...bottom);
     bottom.length = 0;
@@ -217,12 +230,31 @@ export function V5StackHeader(props: {
       ? options.headerTitle({ children: title ?? "", tintColor: options.headerTintColor })
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
+  const autofocusRef = searchOptions?.ref ?? searchRef;
+  const searchHasFocus = useRef(false);
+  useEffect(() => {
+    searchHasFocus.current = false;
+    if (!searchOptions?.autoFocus) return;
+    // UIKit attaches integrated search during the toolbar transition. Native
+    // onFocus acknowledges readiness; a single frame can reach it too early.
+    const deadline = Date.now() + 500;
+    let frame = 0;
+    const focusWhenAttached = () => {
+      if (searchHasFocus.current) return;
+      autofocusRef.current?.focus();
+      if (Date.now() < deadline) frame = requestAnimationFrame(focusWhenAttached);
+    };
+    frame = requestAnimationFrame(focusWhenAttached);
+    return () => cancelAnimationFrame(frame);
+  }, [searchOptions?.autoFocus, autofocusRef]);
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
-    backgroundColor:
-      headerStyle?.backgroundColor ??
-      (options.headerTransparent ? "transparent" : theme.colors.card),
+    // A clear color also removes UIKit's material. Let UIKit supply it for
+    // translucent bars so scrolling content can appear beneath native blur.
+    backgroundColor: options.headerTransparent
+      ? undefined
+      : (headerStyle?.backgroundColor ?? theme.colors.card),
     shadowColor: options.headerShadowVisible === false ? "transparent" : undefined,
     titleFontSize: titleStyle?.fontSize,
     titleFontFamily: titleStyle?.fontFamily,
@@ -251,6 +283,10 @@ export function V5StackHeader(props: {
               allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
               placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
               placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
+              onFocus={(event) => {
+                searchHasFocus.current = true;
+                searchOptions?.onFocus?.(event);
+              }}
               onChangeText={(event) => {
                 mailSearch?.onSearchTextChange?.(event.nativeEvent.text);
                 searchOptions?.onChangeText?.(event);

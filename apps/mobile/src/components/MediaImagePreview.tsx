@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState, useMemo } from "react";
 import { Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -44,11 +44,21 @@ function ImagePreviewHeader() {
 
 /** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
+  const gallery = props.source.gallery ?? [props.source];
+  const [index, setIndex] = useState(() =>
+    Math.max(
+      0,
+      gallery.findIndex((item) => item.uri === props.source.uri),
+    ),
+  );
+  const selected = gallery[index] ?? props.source;
+  const context = useMemo(() => ({ ...props, source: selected }), [props, selected]);
   return (
-    <ImagePreviewContext value={props}>
+    <ImagePreviewContext value={context}>
       <ImageViewing
-        images={[{ uri: props.source.uri }]}
-        imageIndex={0}
+        images={gallery.map((item) => ({ uri: item.uri }))}
+        imageIndex={index}
+        onImageIndexChange={setIndex}
         visible
         presentationStyle="fullScreen"
         onRequestClose={props.onRequestClose}

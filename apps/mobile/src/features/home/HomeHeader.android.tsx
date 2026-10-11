@@ -92,6 +92,8 @@ export function HomeHeader(props: HomeHeaderProps) {
     [props],
   );
 
+  if (props.usesWorkspaceToolbar) return null;
+
   return (
     <>
       <NativeStackScreenOptions options={{ headerShown: false }} />

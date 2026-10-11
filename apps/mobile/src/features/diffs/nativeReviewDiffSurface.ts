@@ -107,6 +107,8 @@ export interface NativeReviewDiffStyle {
 }
 
 export interface NativeReviewDiffViewProps extends ViewProps {
+  readonly contentInsetTop?: number;
+  readonly contentInsetBottom?: number;
   readonly rowsJson: string;
   readonly tokensJson?: string;
   readonly tokensPatchJson?: string;
@@ -121,8 +123,6 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly styleJson?: string;
   readonly rowHeight: number;
   readonly contentWidth: number;
-  readonly contentInsetTop?: number;
-  readonly contentInsetBottom?: number;
   readonly initialRowIndex?: number;
   readonly refreshing?: boolean;
   readonly nativeViewRef?: Ref<NativeReviewDiffViewHandle>;

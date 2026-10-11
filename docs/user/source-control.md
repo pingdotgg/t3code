@@ -153,6 +153,11 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+On mobile, **Pull requests** lists reviews across your connected environments. Open a review
+to read its description, activity, commits, and changed files. Line comments stay as drafts
+until you submit the review. **Work on PR** opens a chat with the review attached; sending
+the first message prepares a worktree from the review's branch.
+
 Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
 agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
 co-authors stay credited. The setting is off by default and projects can override it. It also
@@ -227,8 +232,8 @@ in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no reco
 server you are connected to keeps them instead: they follow you across the apps connected to that
 server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
 
-The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
-does not show its diff, so marks are made and read on web and desktop.
+On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
+and their marks follow the same rules as on web and desktop.
 
 ## Troubleshooting
 

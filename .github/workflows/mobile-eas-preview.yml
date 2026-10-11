@@ -100,6 +100,8 @@ jobs:
         uses: expo/expo-github-action/continuous-deploy-fingerprint@main
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # The Expo action otherwise suppresses the EAS command's failure output.
+          RUNNER_DEBUG: "1"
         with:
           profile: preview:dev
           branch: pr-${{ github.event.pull_request.number }}

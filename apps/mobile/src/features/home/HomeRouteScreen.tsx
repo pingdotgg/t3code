@@ -30,6 +30,7 @@ import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
+import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -51,12 +52,17 @@ export function HomeRouteScreen() {
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
+  const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
-  // Android's controlled fields share search text across compact/split remounts.
-  // Keep iOS search local because its native fields do not restore text from this state.
-  const searchQuery = Platform.OS === "android" ? primarySidebarSearchQuery : localSearchQuery;
-  const setSearchQuery =
-    Platform.OS === "android" ? setPrimarySidebarSearchQuery : setLocalSearchQuery;
+  const searchQuery =
+    Platform.OS === "android"
+      ? primarySidebarSearchQuery
+      : (workspace?.state.tabs.threads.query ?? localSearchQuery);
+  const setSearchQuery = (query: string) => {
+    if (Platform.OS === "android") setPrimarySidebarSearchQuery(query);
+    else if (workspace) workspace.dispatch({ type: "query", query, tab: "threads" });
+    else setLocalSearchQuery(query);
+  };
   const handleSelectThread = useHomeThreadSelection();
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -203,29 +209,33 @@ export function HomeRouteScreen() {
 
   return (
     <AndroidHomeFabLayout
+      disabled={workspace !== null}
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
         {/* Restore the header after leaving split view; screen options are
             shallow-merged. The brand slot also doubles as the connection
             status surface while an environment reconnects. */}
-        <NativeStackScreenOptions
-          optionsVersion={headerWidth}
-          options={{
-            ...getConnectionAwareBrandHeaderOptions({
-              headerWidth,
-              trailingItemCount:
-                nativePrimaryColumn && Platform.OS === "ios" && Platform.isPad ? 2 : 1,
-              onOpenEnvironments: () =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                }),
-            }),
-            headerShown: true,
-          }}
-        />
+        {workspace !== null && Platform.OS === "ios" ? null : (
+          <NativeStackScreenOptions
+            optionsVersion={headerWidth}
+            options={{
+              ...getConnectionAwareBrandHeaderOptions({
+                headerWidth,
+                trailingItemCount:
+                  nativePrimaryColumn && Platform.OS === "ios" && Platform.isPad ? 2 : 1,
+                onOpenEnvironments: () =>
+                  navigation.navigate("SettingsSheet", {
+                    screen: "SettingsContent",
+                    params: { screen: "SettingsEnvironments" },
+                  }),
+              }),
+              headerShown: true,
+            }}
+          />
+        )}
         <HomeHeader
+          usesWorkspaceToolbar={workspace !== null}
           environments={environments}
           projects={projectFilterOptions}
           searchQuery={searchQuery}

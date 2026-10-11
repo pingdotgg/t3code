@@ -1,0 +1,326 @@
+import { useAtomValue } from "@effect/atom-react";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
+  ScrollView,
+  View,
+  type ScrollViewProps,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ScrollViewMarker } from "react-native-screens";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { EmptyState } from "../../components/EmptyState";
+import { MaterialButton } from "../../components/MaterialButton";
+import { SymbolView } from "../../components/AppSymbol";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
+import { composerPullRequests } from "../../state/pull-requests";
+import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  createNativeMailSearchToolbarItem,
+  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
+} from "../layout/native-mail-search-toolbar";
+import { PullRequestAvatar } from "./PullRequestPresentation";
+import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+
+function ReviewerScrollView(props: ScrollViewProps) {
+  const insets = useSafeAreaInsets();
+  return (
+    <ScrollViewMarker style={{ flex: 1 }}>
+      <ScrollView
+        {...props}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        contentInset={{ top: insets.top }}
+        contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
+      />
+    </ScrollViewMarker>
+  );
+}
+
+export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequestParams>) {
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const listRef = useRef<FlatList<PullRequestReviewerCandidate>>(null);
+  const nativeMetrics = useNativeLayoutMetrics();
+  const integratedSearch =
+    NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
+    (!nativeMetrics || nativeMetrics.verticalBarEdge === "none");
+  const target = pullRequestTarget(route.params);
+  const detail = useEnvironmentQuery(composerPullRequests.detail(target));
+  const pr = detail.data;
+  const canWrite = useAtomValue(
+    composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
+  );
+  const allowed =
+    canWrite &&
+    pr?.state === "open" &&
+    pr.capabilities.reviewers.request &&
+    pr.viewerPermissions.requestReviewers;
+  const result = useEnvironmentQuery(
+    pr?.capabilities.reviewers.listCandidates
+      ? composerPullRequests.reviewerCandidates(target)
+      : null,
+  );
+  const request = useAtomCommand(composerPullRequests.requestReviewers, { reportFailure: false });
+  const [query, setQuery] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const candidates = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return [...(result.data?.candidates ?? [])]
+      .filter((candidate) =>
+        `${candidate.login} ${candidate.name ?? ""}`.toLowerCase().includes(needle),
+      )
+      .sort(
+        (a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login),
+      );
+  }, [result.data, query]);
+  useEffect(() => {
+    if (candidates.length === 0) return;
+    // Filtering must reveal the first match below the translucent native header.
+    listRef.current?.scrollToOffset({
+      offset: Platform.OS === "ios" ? -insets.top : 0,
+      animated: false,
+    });
+  }, [candidates, insets.top]);
+  const update = async (
+    candidate: Pick<PullRequestReviewerCandidate, "id" | "kind" | "isRequested">,
+  ) => {
+    if (!allowed || inFlight.current) return;
+    inFlight.current = true;
+    setPending(`${candidate.kind}:${candidate.id}`);
+    setError(null);
+    try {
+      const response = await request({
+        ...target,
+        input: {
+          ...target.input,
+          reviewers: [{ id: candidate.id, kind: candidate.kind }],
+          requested: !candidate.isRequested,
+        },
+      });
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (!pr?.capabilities.reviewers.listCandidates) {
+        setQuery("");
+        detail.refresh();
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
+      );
+    } finally {
+      inFlight.current = false;
+      setPending(null);
+    }
+  };
+  const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
+  const searchOptions = {
+    placeholder: "Search reviewers",
+    autoCapitalize: "none" as const,
+    onChangeText: (event: { nativeEvent: { text: string } }) => setQuery(event.nativeEvent.text),
+    onCancelButtonPress: () => setQuery(""),
+    hideNavigationBar: false,
+    hideWhenScrolling: false,
+    obscureBackground: false,
+    allowToolbarIntegration: integratedSearch,
+    placement: integratedSearch ? ("automatic" as const) : ("stacked" as const),
+  };
+  return (
+    <View className="flex-1 bg-sheet">
+      <NativeHeaderToolbar placement="left">
+        <NativeHeaderToolbar.Button
+          icon="xmark"
+          accessibilityLabel="Close request review"
+          onPress={() => navigation.goBack()}
+        />
+      </NativeHeaderToolbar>
+      <NativeStackScreenOptions
+        options={{
+          title: "Request review",
+          unstable_headerSubtitle: `#${route.params.number} · ${route.params.repository}`,
+          headerSearchBarOptions: listCandidates ? searchOptions : undefined,
+          unstable_headerToolbarItems: () =>
+            listCandidates && integratedSearch
+              ? [
+                  createNativeMailSearchToolbarItem({
+                    placeholder: "Search reviewers",
+                    onSearchTextChange: setQuery,
+                    showsSearchDismissButton: true,
+                    searchTextChangeId: "pr-reviewer-search",
+                  }),
+                ]
+              : [],
+        }}
+      />
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader title="Request review" onBack={() => navigation.goBack()} />
+      ) : null}
+      {listCandidates ? (
+        <FlatList
+          ref={listRef}
+          data={candidates}
+          keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
+          renderScrollComponent={
+            Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
+          }
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 24 }}
+          ListHeaderComponent={
+            <View className="gap-3 px-4 py-4">
+              <Text className="text-xs text-foreground-muted">
+                Tap someone to request a review. Tap a requested reviewer to remove the request.
+              </Text>
+              {Platform.OS === "android" ? (
+                <TextInput
+                  accessibilityLabel="Search reviewers"
+                  placeholder="Search reviewers"
+                  placeholderTextColorClassName="accent-foreground-muted"
+                  value={query}
+                  onChangeText={setQuery}
+                  autoCapitalize="none"
+                  className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
+                />
+              ) : null}
+              {!allowed ? (
+                <Text className="text-xs text-foreground-muted">
+                  Requesting reviews requires write access and an open pull request.
+                </Text>
+              ) : null}
+              {error ? (
+                <Text selectable className="text-sm text-danger-foreground">
+                  {error}
+                </Text>
+              ) : null}
+            </View>
+          }
+          renderItem={({ item }) => {
+            const id = `${item.kind}:${item.id}`;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
+                accessibilityState={{ disabled: !allowed || pending !== null }}
+                disabled={!allowed || pending !== null}
+                onPress={() => void update(item)}
+                className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
+              >
+                <PullRequestAvatar actor={item} size={32} />
+                <View className="min-w-0 flex-1 gap-0.5">
+                  <Text className="text-sm font-t3-medium" numberOfLines={1}>
+                    {item.name || item.login}
+                  </Text>
+                  <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                    {item.login}
+                    {item.kind === "team" ? " · Team" : ""}
+                  </Text>
+                </View>
+                {pending === id ? (
+                  <ActivityIndicator />
+                ) : item.isRequested ? (
+                  <View className="flex-row items-center gap-1.5">
+                    <Text className="text-xs text-foreground-muted">Requested</Text>
+                    <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
+                  </View>
+                ) : (
+                  <SymbolView name="plus" size={16} tintColorClassName="accent-icon-muted" />
+                )}
+              </Pressable>
+            );
+          }}
+          ListEmptyComponent={
+            result.isPending && !result.data ? (
+              <ActivityIndicator className="my-8" />
+            ) : (
+              <View className="px-4 py-6">
+                <EmptyState
+                  title={
+                    result.error
+                      ? "Couldn't load reviewers"
+                      : query.trim()
+                        ? "No matching reviewers"
+                        : "No reviewers available"
+                  }
+                  detail={result.error ?? "Search people and teams with access to this repository."}
+                  variant="plain"
+                />
+                {result.error ? <MaterialButton label="Retry" onPress={result.refresh} /> : null}
+              </View>
+            )
+          }
+          ListFooterComponent={
+            result.data?.truncated ? (
+              <Text className="px-4 py-4 text-xs text-foreground-muted">
+                The provider has more reviewers than it returned. Find additional reviewers on the
+                provider.
+              </Text>
+            ) : undefined
+          }
+        />
+      ) : (
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: 16, gap: 16 }}
+        >
+          {!pr ? (
+            detail.isPending ? (
+              <ActivityIndicator />
+            ) : (
+              <Text className="text-danger-foreground">
+                {detail.error ?? "Couldn't load this pull request."}
+              </Text>
+            )
+          ) : (
+            <>
+              <Text className="text-sm text-foreground-muted">
+                This provider accepts a reviewer ID but cannot list candidates.
+              </Text>
+              <TextInput
+                accessibilityLabel="Reviewer ID"
+                placeholder="Reviewer login or ID"
+                placeholderTextColorClassName="accent-foreground-muted"
+                value={query}
+                onChangeText={setQuery}
+                autoCapitalize="none"
+                autoCorrect={false}
+                className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
+              />
+              <MaterialButton
+                label="Request review"
+                fullWidth
+                disabled={!allowed || !query.trim() || pending !== null}
+                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
+              />
+              <MaterialButton
+                label="Remove review request"
+                fullWidth
+                tone="text"
+                disabled={!allowed || !query.trim() || pending !== null}
+                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: true })}
+              />
+              {error ? (
+                <Text selectable className="text-danger-foreground">
+                  {error}
+                </Text>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      )}
+    </View>
+  );
+}

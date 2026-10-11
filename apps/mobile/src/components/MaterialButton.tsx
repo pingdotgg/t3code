@@ -7,11 +7,12 @@ export interface MaterialButtonProps {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly loading?: boolean;
-  readonly tone?: "primary" | "secondary" | "danger" | "text";
+  readonly tone?: "primary" | "secondary" | "danger" | "text" | "contrast";
   readonly fullWidth?: boolean;
 }
 
 const TONE_CLASS_NAMES = {
+  contrast: ["bg-foreground", "text-screen"],
   primary: ["bg-primary", "text-primary-foreground"],
   secondary: ["bg-secondary", "text-secondary-foreground"],
   danger: ["bg-danger", "text-danger-foreground"],

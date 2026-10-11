@@ -36,7 +36,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   return (
     <View className="flex-1" onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}>
       <MaterialFabScrollContext value={onScroll}>{props.children}</MaterialFabScrollContext>
-      {state.hasConnections && layoutWidth !== null ? (
+      {!props.disabled && state.hasConnections && layoutWidth !== null ? (
         <MaterialNewThreadButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           extended

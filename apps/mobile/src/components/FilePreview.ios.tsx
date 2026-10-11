@@ -11,6 +11,12 @@ const NativeControls = requireNativeModule<{
     sourceIdentifier: string,
     identifier: string,
   ): Promise<void>;
+  presentFiles(
+    uris: readonly string[],
+    names: readonly string[],
+    selectedIndex: number,
+    identifier: string,
+  ): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
 }>("T3NativeControls");
 
@@ -19,7 +25,7 @@ function NativeFilePreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
-  const { uri, name, sourceIdentifier } = props.source;
+  const { uri, name, sourceIdentifier, gallery } = props.source;
   const identifier = useId();
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
@@ -29,7 +35,19 @@ function NativeFilePreview(props: {
 
   useEffect(() => {
     let canceled = false;
-    void NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier)
+    const presentation =
+      gallery && gallery.length > 1
+        ? NativeControls.presentFiles(
+            gallery.map((item) => item.uri),
+            gallery.map((item) => item.name ?? "Preview"),
+            Math.max(
+              0,
+              gallery.findIndex((item) => item.uri === uri),
+            ),
+            identifier,
+          )
+        : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);
+    void presentation
       .catch((error: unknown) => {
         if (!canceled) onOpenError(error);
       })
@@ -40,7 +58,7 @@ function NativeFilePreview(props: {
       canceled = true;
       void NativeControls.dismissFile(identifier).catch(() => undefined);
     };
-  }, [uri, name, sourceIdentifier, identifier]);
+  }, [uri, name, sourceIdentifier, identifier, gallery]);
 
   return null;
 }

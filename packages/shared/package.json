@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./githubMarkdownLinks": {
+      "types": "./src/githubMarkdownLinks.ts",
+      "import": "./src/githubMarkdownLinks.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"

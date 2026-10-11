@@ -39,6 +39,18 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
+    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, identifier: String, promise: Promise) in
+      guard !urls.isEmpty, urls.count == titles.count, urls.indices.contains(selectedIndex) else {
+        throw URLError(.badURL)
+      }
+      let file = try self.makeFilePresentation(sourceIdentifier: "", identifier: identifier, promise: promise)
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        file.dismiss()
+        return
+      }
+      file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+    }.runOnQueue(.main)
+
     OnDestroy {
       let presentation = self.videoPresentation
       let file = self.filePresentation
@@ -204,10 +216,10 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
-  private func presentFile(url: URL, title: String, sourceIdentifier: String,
-                           identifier: String, promise: Promise) throws {
+  private func makeFilePresentation(sourceIdentifier: String, identifier: String,
+                                    promise: Promise) throws -> T3NativeFilePresentation {
     guard filePresentation == nil, videoPresentation == nil,
-      let presenter = appContext?.utilities?.currentViewController()
+      appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
                                         sourceIdentifier: sourceIdentifier) { [weak self] error in
@@ -215,6 +227,13 @@ public final class T3NativeControlsModule: Module {
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
     filePresentation = file
+    return file
+  }
+
+  private func presentFile(url: URL, title: String, sourceIdentifier: String,
+                           identifier: String, promise: Promise) throws {
+    let file = try makeFilePresentation(sourceIdentifier: sourceIdentifier, identifier: identifier, promise: promise)
+    guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
     file.present(url: url, title: title, from: presenter)
   }
 

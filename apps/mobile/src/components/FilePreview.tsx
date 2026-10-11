@@ -74,8 +74,13 @@ export function FilePreview(props: {
   if (props.source.actionsSource) return <MediaImagePreview {...props} />;
   return (
     <ImageViewing
-      images={[{ uri: props.source.uri }]}
-      imageIndex={0}
+      images={
+        props.source.gallery?.map((item) => ({ uri: item.uri })) ?? [{ uri: props.source.uri }]
+      }
+      imageIndex={Math.max(
+        0,
+        props.source.gallery?.findIndex((item) => item.uri === props.source.uri) ?? 0,
+      )}
       visible
       onRequestClose={props.onRequestClose}
       swipeToCloseEnabled={false}

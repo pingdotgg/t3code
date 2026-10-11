@@ -88,6 +88,8 @@ vi.mock("./server", async () => {
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
 });
 
+vi.mock("./git", () => ({ gitEnvironment: {} }));
+
 vi.mock("./threads", () => ({
   threadEnvironment: {},
 }));

@@ -25,7 +25,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   private let completion: (Error?) -> Void
   private weak var sources: T3PresentationSources?
   private let sourceIdentifier: String
-  private let item = FilePreviewItem()
+  private var items: [FilePreviewItem] = []
   private var loading: Task<Void, Never>?
   private var dismissRequested = false
   private var finished = false
@@ -39,8 +39,14 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   }
 
   func present(url: URL, title: String, from presenter: UIViewController) {
+    present(urls: [url], titles: [title], selectedIndex: 0, from: presenter)
+  }
+
+  func present(urls: [URL], titles: [String], selectedIndex: Int, from presenter: UIViewController) {
     loading = Task { @MainActor [self] in
       do {
+        for (index, url) in urls.enumerated() {
+        let title = titles[index]
         let file = try await Self.prepareFile(url: url, title: title)
         guard !finished, !Task.isCancelled else {
           try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
@@ -56,11 +62,15 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
             userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
           )
         }
+        let item = FilePreviewItem()
         item.previewItemURL = file
         item.previewItemTitle = title
+        items.append(item)
+        }
         let preview = FilePreviewController()
         preview.delegate = self
         preview.dataSource = self
+        preview.currentPreviewItemIndex = selectedIndex
         preview.onAppear = { [weak self] in self?.resumePendingDismissal() }
         controller = preview
         presenter.present(preview, animated: !UIAccessibility.isReduceMotionEnabled) { [self] in
@@ -91,10 +101,10 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     }
   }
 
-  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { item.previewItemURL == nil ? 0 : 1 }
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { items.count }
 
   func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-    item
+    items[index]
   }
 
   func previewController(_ controller: QLPreviewController, transitionViewFor item: QLPreviewItem) -> UIView? {
@@ -118,10 +128,12 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     finished = true
     loading?.cancel()
     loading = nil
-    if let file = item.previewItemURL {
-      try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    for item in items {
+      if let file = item.previewItemURL {
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+      }
     }
-    item.previewItemURL = nil
+    items.removeAll()
     DispatchQueue.main.async { [completion] in completion(error) }
   }
 

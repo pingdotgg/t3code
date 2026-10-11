@@ -7,6 +7,7 @@ import type {
 export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
 
 export interface HomeHeaderProps {
+  readonly usesWorkspaceToolbar?: boolean;
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly searchQuery: string;

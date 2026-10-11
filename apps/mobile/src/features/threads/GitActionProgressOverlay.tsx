@@ -1,3 +1,4 @@
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import * as Haptics from "expo-haptics";
 import { GlassView } from "expo-glass-effect";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
@@ -10,7 +11,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { APP_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
@@ -22,8 +22,10 @@ const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 export function GitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;
   readonly onDismiss: () => void;
+  readonly onOpenPullRequest?: (url: string) => Promise<boolean>;
 }) {
   const { progress, onDismiss } = props;
+  const openPullRequest = props.onOpenPullRequest;
   const insets = useSafeAreaInsets();
   const prevPhaseRef = useRef(progress.phase);
 
@@ -40,13 +42,15 @@ export function GitActionProgressOverlay(props: {
 
   const handlePress = useCallback(() => {
     if (progress.prUrl) {
-      void tryOpenExternalUrl(progress.prUrl, "pull-request");
+      void (openPullRequest
+        ? openPullRequest(progress.prUrl)
+        : tryOpenExternalUrl(progress.prUrl, "pull-request"));
       return;
     }
     if (progress.phase === "success" || progress.phase === "error") {
       onDismiss();
     }
-  }, [onDismiss, progress.phase, progress.prUrl]);
+  }, [onDismiss, progress.phase, progress.prUrl, openPullRequest]);
 
   if (progress.phase === "idle") {
     return null;
