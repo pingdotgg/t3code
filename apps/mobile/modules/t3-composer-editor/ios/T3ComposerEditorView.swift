@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import UniformTypeIdentifiers
 
 private struct ComposerTokenPayload: Decodable {
   let type: String
@@ -205,9 +206,7 @@ private final class ComposerTextView: UITextView {
     if action == #selector(paste(_:)) {
       let pasteboard = UIPasteboard.general
       if pasteboard.hasImages ||
-        pasteboard.itemProviders.contains(where: {
-          $0.canLoadObject(ofClass: UIImage.self)
-        }) {
+        pasteboard.itemProviders.contains(where: Self.providesImage) {
         return true
       }
     }
@@ -224,9 +223,7 @@ private final class ComposerTextView: UITextView {
       onPasteContext?(context)
       return
     }
-    let imageProviders = pasteboard.itemProviders.filter {
-      $0.canLoadObject(ofClass: UIImage.self)
-    }
+    let imageProviders = pasteboard.itemProviders.filter(Self.providesImage)
     if !imageProviders.isEmpty {
       loadImages(from: imageProviders)
       return
@@ -290,21 +287,51 @@ private final class ComposerTextView: UITextView {
     replace(textRange, withText: "")
   }
 
+  /// Paste and drop share this check. `canLoadObject(ofClass: UIImage.self)`
+  /// only matches the few types `UIImage` registers as readable, so providers
+  /// that offer an image as another `public.image` subtype (a dragged screenshot
+  /// or Files item, HEIC) would otherwise be treated as non-image content.
+  static func providesImage(_ provider: NSItemProvider) -> Bool {
+    provider.canLoadObject(ofClass: UIImage.self) ||
+      provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+  }
+
   func loadImages(from providers: [NSItemProvider]) {
     let group = DispatchGroup()
     let lock = NSLock()
     var images = [UIImage?](repeating: nil, count: providers.count)
 
+    func store(_ image: UIImage?, at index: Int) {
+      lock.lock()
+      images[index] = image
+      lock.unlock()
+    }
+
     for (index, provider) in providers.enumerated() {
       group.enter()
-      provider.loadObject(ofClass: UIImage.self) { object, _ in
-        defer { group.leave() }
-        guard let image = object as? UIImage else {
+      // loadDataRepresentation needs an identifier the provider registered, not
+      // the `public.image` supertype, so ask for its own image subtype.
+      let loadFromData = {
+        guard let type = provider.registeredContentTypes.first(where: { $0.conforms(to: .image) }) else {
+          group.leave()
           return
         }
-        lock.lock()
-        images[index] = image
-        lock.unlock()
+        provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+          defer { group.leave() }
+          store(data.flatMap(UIImage.init(data:)), at: index)
+        }
+      }
+      guard provider.canLoadObject(ofClass: UIImage.self) else {
+        loadFromData()
+        continue
+      }
+      provider.loadObject(ofClass: UIImage.self) { object, _ in
+        if let image = object as? UIImage {
+          store(image, at: index)
+          group.leave()
+        } else {
+          loadFromData()
+        }
       }
     }
 
@@ -824,7 +851,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private func droppedImageProviders(in drop: UITextDropRequest) -> [NSItemProvider]? {
     let providers = drop.dropSession.items.map(\.itemProvider)
     guard !providers.isEmpty,
-          providers.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) else {
+          providers.allSatisfy(ComposerTextView.providesImage) else {
       return nil
     }
     return providers
