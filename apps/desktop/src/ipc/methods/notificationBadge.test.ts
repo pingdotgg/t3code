@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const native = vi.hoisted(() => ({
   setBadgeCount: vi.fn(),
@@ -122,7 +122,7 @@ it.effect("validates IPC and clears on native focus, quit, and disposal", () =>
         expect(native.setBadgeCount).toHaveBeenLastCalledWith(0);
       }),
     ).pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide([
         ElectronApp.layer,
         DesktopIpc.layer({

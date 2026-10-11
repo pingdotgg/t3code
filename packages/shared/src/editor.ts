@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import * as HostProcess from "./hostProcess.ts";
+import * as HostProcess from "./HostProcess.ts";
 import { isCommandAvailable } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
@@ -37,7 +37,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
   }
 
-  const platform = yield* HostProcess.HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const home = env.HOME;

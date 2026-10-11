@@ -19,7 +19,10 @@ import {
   OPENCODE2_HTTP_PROTOCOL,
   OpenCode2OrchestratorReplayHarness,
 } from "../Adapters/OpenCode2AdapterV2.testkit.ts";
-import { MuseOrchestratorReplayHarness } from "../Adapters/MuseAdapterV2.testkit.ts";
+import {
+  materializeMuseReplayWorkspace,
+  MuseOrchestratorReplayHarness,
+} from "../Adapters/MuseAdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -101,18 +104,11 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   );
   const fixtureInput = input.buildInput();
   const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);
-  // Muse canonicalizes its workspace path (macOS /var -> /private/var) before sending it.
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
       ? materializeReplayTranscriptWorkspace(replayTranscript, workspace)
       : input.driver.driver === "muse"
-        ? materializeReplayTranscriptWorkspace(
-            replayTranscript,
-            yield* FileSystem.FileSystem.pipe(
-              Effect.flatMap((fs) => fs.realPath(workspace)),
-              Effect.provide(NodeServices.layer),
-            ),
-          )
+        ? yield* materializeMuseReplayWorkspace(replayTranscript, workspace)
         : replayTranscript,
   );
   const materialized = yield* materializeFixtureInput({

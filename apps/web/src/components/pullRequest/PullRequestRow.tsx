@@ -1,3 +1,5 @@
+import type { PullRequestAction } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { SearchIcon } from "lucide-react";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import {
@@ -90,6 +92,7 @@ function PullRequestRowImpl({
   statsRef,
   onSelect,
   speedMode,
+  hostActions,
   onActed,
   closing = false,
   sweeping = false,
@@ -112,6 +115,8 @@ function PullRequestRowImpl({
   statsRef?: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
   speedMode: boolean;
+  /** What this row's host can do, which is what speed mode offers. */
+  hostActions: ReadonlySet<PullRequestAction>;
   onActed: (result: PullRequestSpeedActionResult) => void;
   closing?: boolean;
   sweeping?: boolean;
@@ -136,7 +141,7 @@ function PullRequestRowImpl({
         className={cn(
           PULL_REQUEST_ROW_CLASS,
           PAGE_ROW_CLASS,
-          "min-w-0 flex-1 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "min-w-0 flex-1 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
         )}
       >
         <PullRequestRowGlyph
@@ -158,7 +163,7 @@ function PullRequestRowImpl({
                 event.stopPropagation();
                 void showPullRequestLinkContextMenu({
                   url: entry.url,
-                  openLabel: openOnHostLabel(entry.provider),
+                  openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
                   position: { x: event.clientX, y: event.clientY },
                 });
               }}
@@ -255,9 +260,10 @@ function PullRequestRowImpl({
           updatedAt={entry.updatedAt}
         />
       </button>
-      {entry.state !== "merged" && entry.provider === "github" ? (
+      {hostActions.size > 0 ? (
         <PullRequestSpeedActions
           entry={entry}
+          hostActions={hostActions}
           visible={speedMode}
           onActed={onActed}
           closing={closing}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -232,7 +232,7 @@ describe("Linux Chromium secrets", () => {
             capture: (value) => (captured = value),
           }),
         ),
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           PATH: "/synthetic/bin",
           SESSION_MARKER: "kept",
           LC_ALL: "localized",
@@ -322,7 +322,7 @@ describe("Windows Chromium secrets", () => {
       Effect.provide(
         layerHelper({ stdout: key.toString("base64"), capture: (value) => (captured = value) }),
       ),
-      Effect.provideService(HostProcessEnvironment, { SystemRoot: "C:\\Windows" }),
+      Effect.provideService(HostProcess.Environment, { SystemRoot: "C:\\Windows" }),
     );
   });
 });

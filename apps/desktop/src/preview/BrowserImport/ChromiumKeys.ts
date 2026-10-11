@@ -19,7 +19,7 @@
  */
 import * as NodeCrypto from "node:crypto";
 
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
@@ -138,7 +138,7 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const environment = yield* HostProcessEnvironment;
+      const environment = yield* HostProcess.Environment;
       const helper = yield* LinuxBrowserSecretPath;
       if (helper === undefined) {
         return yield* new ChromiumKeyError({ reason: "keychainUnavailable" });
@@ -219,7 +219,7 @@ export const decodeWindowsWrappedKey = Effect.fn("ChromiumKeys.decodeWindowsWrap
 export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiKey")(function* (
   wrapped: Buffer,
 ) {
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

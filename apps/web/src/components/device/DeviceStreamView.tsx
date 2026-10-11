@@ -22,6 +22,7 @@ import {
   type DeviceStreamClient,
   type DeviceStreamStatus,
 } from "@t3tools/client-runtime/device/stream";
+import { observeResize } from "~/lib/observeResize";
 
 const AX_POLL_INTERVAL_MS = 2_000;
 const CONTROLS_RAIL_WIDTH = 56;
@@ -230,9 +231,7 @@ export function DeviceStreamView(props: {
       );
     };
     update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeResize(element, update);
   }, []);
   const frame = useMemo(() => {
     return fitDeviceFrame(aspect, host.width, host.height, controlsInset);

@@ -6,6 +6,7 @@ import { createCanvasFrameSink } from "@t3tools/client-runtime/device/frame";
 import type { DeviceScreenSize, DeviceStreamClient } from "@t3tools/client-runtime/device/stream";
 import { createDuoPinch } from "@t3tools/client-runtime/device/duo-control";
 import { bindPhoneTrackpad } from "./phoneTrackpad";
+import { observeResize } from "../../lib/observeResize";
 
 const loadDuoViewer = () => import("@t3tools/client-runtime/device/duo-viewer");
 
@@ -64,8 +65,7 @@ export function DeviceDuoViewport(props: {
       const { width, height } = host.getBoundingClientRect();
       viewerRef.current?.resize(width, height, window.devicePixelRatio);
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host);
+    const stopObserving = observeResize(host, resize);
     const blur = () => {
       interactionRef.current?.end();
       trackpad?.cancel();
@@ -159,7 +159,7 @@ export function DeviceDuoViewport(props: {
       onResetReady(null);
       onFrameListener(null);
       client.current?.setDuoPanels(null);
-      observer.disconnect();
+      stopObserving();
       window.removeEventListener("blur", blur);
       viewerRef.current?.dispose();
       viewerRef.current = null;

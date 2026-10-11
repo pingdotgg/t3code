@@ -37,20 +37,24 @@ describe("serverSettings helpers", () => {
       worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
   });
-  it("replaces GitHub host choices so a cleared account pin does not survive", () => {
+  it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
     const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      github: { hosts: { "github.com": { account: "work", enabled: true } } },
+      sourceControlHosts: {
+        github: { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {} },
+      },
     });
-    expect(pinned.github.hosts).toEqual({ "github.com": { account: "work", enabled: true } });
-    expect(
-      applyServerSettingsPatch(pinned, {
-        github: { hosts: { "github.com": { enabled: false } } },
-      }).github.hosts,
-    ).toEqual({ "github.com": { enabled: false } });
+    const unpinned = applyServerSettingsPatch(pinned, {
+      sourceControlHosts: { github: { hosts: { "github.com": { enabled: false } } } },
+    });
+    expect(unpinned.sourceControlHosts.github).toEqual({
+      hosts: { "github.com": { enabled: false } },
+      tokens: {},
+    });
   });
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };

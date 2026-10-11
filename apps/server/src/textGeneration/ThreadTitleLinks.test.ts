@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -87,7 +88,7 @@ it.effect("keeps lookup failure out of generation and skips unlinked messages", 
         resolveLink: () =>
           Effect.fail(
             new SourceControlProviderError({
-              provider: "unknown",
+              provider: SourceControlProviderKind.make("unknown"),
               operation: "resolveLink",
               cwd: "/tmp",
               detail: "Unavailable",

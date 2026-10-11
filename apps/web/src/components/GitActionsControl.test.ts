@@ -80,7 +80,9 @@ vi.mock("~/state/query", () => ({
       isDefaultRef: false,
       hasPrimaryRemote: true,
       hasWorkingTreeChanges: true,
-      workingTree: { files: [{ path: "file.ts", status: "modified" }] },
+      workingTree: {
+        files: [{ path: "file.ts", status: "modified", insertions: 1, deletions: 0 }],
+      },
     },
     error: null,
   }),

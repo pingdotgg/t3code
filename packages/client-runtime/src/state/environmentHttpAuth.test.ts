@@ -294,12 +294,9 @@ describe("authenticated environment HTTP requests", () => {
         );
       }
       expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
+      // The proof signs exactly the URL sent; signers drop the query for `htu`.
       expect(harness.proofs).toEqual([
-        {
-          method: loader.method,
-          url: `${CURRENT_ORIGIN}${loader.path}`,
-          accessToken: "current-token",
-        },
+        { method: loader.method, url: call.url, accessToken: "current-token" },
       ]);
       if (loader.name === "older thread history") {
         expect(url.searchParams.get("cursor")).toBe("older-page");
@@ -345,10 +342,9 @@ describe("authenticated environment HTTP requests", () => {
         const harness = makeHarness(() => Response.json(loader.response));
         yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
 
-        const sent = new URL(harness.calls[0]!.url);
-        expect(sent.pathname).toContain("/mcp%3A3534bc83-");
-        sent.search = "";
-        expect(harness.proofs.map((proof) => proof.url)).toEqual([sent.toString()]);
+        const sent = harness.calls[0]!.url;
+        expect(new URL(sent).pathname).toContain("/mcp%3A3534bc83-");
+        expect(harness.proofs.map((proof) => proof.url)).toEqual([sent]);
       }),
   );
 
@@ -408,7 +404,7 @@ describe("authenticated environment HTTP requests", () => {
         );
         expect(harness.proofs[1]).toEqual({
           method: "GET",
-          url: `${RENEWED_ORIGIN}${loader.path}`,
+          url: retried.url,
           accessToken: "renewed-token",
         });
         if (loader.name === "older thread history") {
