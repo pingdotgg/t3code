@@ -78,6 +78,61 @@ it.effect("stops draining a slow subscriber when its unacknowledged tail fills",
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
 
 describe("replayAndBufferLiveEvents", () => {
+  it.effect.each(["items", "bytes"] as const)(
+    "replays the undelivered tail after a %s overflow without losing or duplicating events",
+    (limit) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pubsub = yield* PubSub.unbounded<Event>();
+          const subscribed = yield* Deferred.make<PubSub.Subscription<Event>>();
+          const events = [
+            { sequence: 1, text: "one" },
+            { sequence: 2, text: "two" },
+            { sequence: 3, text: "three" },
+          ];
+          const limits = limit === "items" ? { maxItems: 1 } : { maxSerializedBytes: 40 };
+          const pull = yield* Stream.toPull(
+            replayAndBufferLiveEvents(
+              {
+                subscribe: PubSub.subscribe(pubsub).pipe(
+                  Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
+                ),
+                latestSequence: Effect.succeed(1),
+                replay: () => Stream.succeed(events[0]!),
+              },
+              limits,
+            ),
+          );
+          const received = [...(yield* pull)];
+          // Hold the ACK while more durable events arrive.
+          yield* PubSub.publishAll(pubsub, events.slice(1));
+          yield* (yield* Deferred.await(subscribed)).shutdownHook.await;
+          const overflow = yield* pull.pipe(Effect.result);
+          expect(overflow._tag).toBe("Failure");
+          if (overflow._tag === "Failure")
+            expect(overflow.failure._tag).toBe("LiveStreamBufferError");
+
+          const afterSequence = received.at(-1)!.sequence;
+          const resumed = yield* replayAndBufferLiveEvents(
+            {
+              subscribe: PubSub.subscribe(pubsub),
+              afterSequence,
+              latestSequence: Effect.succeed(3),
+              replay: (throughSequence) =>
+                Stream.fromIterable(
+                  events.filter(
+                    (event) => event.sequence > afterSequence && event.sequence <= throughSequence,
+                  ),
+                ),
+            },
+            limits,
+          ).pipe(Stream.take(2), Stream.runCollect);
+          expect([...received, ...resumed]).toEqual(events);
+          expect(yield* PubSub.size(pubsub)).toBe(0);
+        }),
+      ),
+  );
+
   it.effect.each(["high-water", "replay"] as const)(
     "unsubscribes and cancels a blocked %s read on live overflow",
     (phase) =>

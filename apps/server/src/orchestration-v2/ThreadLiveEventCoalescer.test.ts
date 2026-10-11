@@ -14,7 +14,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 import {
-  coalesceLiveToolUpdatedEvents,
   coalesceThreadLiveStream,
   makeThreadLiveEventCoalescer,
 } from "./ThreadLiveEventCoalescer.ts";
@@ -31,6 +30,7 @@ function makeToolActivity(
     readonly kind?: "tool.updated" | "tool.completed";
     readonly toolCallId?: string;
     readonly turnId?: RunId;
+    readonly output?: string;
   } = {},
 ): ThreadEvent {
   const itemRunId = options.turnId ?? runId;
@@ -61,7 +61,7 @@ function makeToolActivity(
         completedAt: status === "completed" ? now : null,
         updatedAt: now,
         input: "echo app.ts",
-        output: `output-${sequence}`,
+        output: options.output ?? `output-${sequence}`,
       },
     },
   };
@@ -96,36 +96,6 @@ function makeMessage(sequence: number, text = "Still working"): ThreadEvent {
 }
 
 describe("ThreadLiveEventCoalescer", () => {
-  it("coalesces only calls with a stable toolCallId", () => {
-    const events = [
-      makeToolActivity(1, { toolCallId: "call-a" }),
-      makeToolActivity(2, { toolCallId: "call-b" }),
-      makeToolActivity(3, { toolCallId: "call-a" }),
-    ];
-
-    expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([2, 3]);
-  });
-
-  it("does not coalesce stable tool calls across turns", () => {
-    const events = [
-      makeToolActivity(1, { turnId: RunId.make("turn-old") }),
-      makeToolActivity(2, { turnId: RunId.make("turn-new") }),
-    ];
-
-    expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([1, 2]);
-  });
-
-  it("flushes a stable update run before a completion boundary", () => {
-    const events = [
-      makeToolActivity(1),
-      makeToolActivity(2),
-      makeToolActivity(3, { kind: "tool.completed" }),
-      makeToolActivity(4),
-    ];
-
-    expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([2, 3, 4]);
-  });
-
   it.effect("flushes pending tool updates as soon as an unrelated event arrives", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -181,7 +151,9 @@ describe("ThreadLiveEventCoalescer", () => {
           retainedSerializedBytes: Buffer.byteLength(encodeEvent(first)),
         });
 
-        const overflow = yield* coalescer.offer(makeToolActivity(2)).pipe(Effect.result);
+        const overflow = yield* coalescer
+          .offer(makeToolActivity(2, { toolCallId: "another-call" }))
+          .pipe(Effect.result);
         expect(overflow._tag).toBe("Failure");
         yield* coalescer.closed;
         expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
@@ -189,6 +161,103 @@ describe("ThreadLiveEventCoalescer", () => {
         expect(marker._tag).toBe("Failure");
         const delivered = yield* coalescer.stream.pipe(Stream.runCollect, Effect.result);
         expect(delivered._tag).toBe("Failure");
+      }),
+    ),
+  );
+
+  it.effect.each(["items", "bytes"] as const)(
+    "replaces superseded tool output before charging the %s budget",
+    (limit) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const updates = Array.from({ length: 1_100 }, (_, index) => makeToolActivity(index + 1));
+          const latest = updates.at(-1)!;
+          const coalescer = yield* makeThreadLiveEventCoalescer({
+            coalesceWindow: "500 millis",
+            ...(limit === "items"
+              ? { maxItems: 1 }
+              : { maxSerializedBytes: Buffer.byteLength(encodeEvent(latest)) }),
+          });
+          yield* coalescer.offerAll(updates);
+          expect(yield* coalescer.usage).toEqual({
+            retainedItems: 1,
+            retainedSerializedBytes: Buffer.byteLength(encodeEvent(latest)),
+          });
+          yield* coalescer.end;
+          expect(yield* coalescer.stream.pipe(Stream.runCollect)).toEqual([latest]);
+          expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+        }),
+      ),
+  );
+
+  it.effect("retains parallel calls in last-update order across a completion boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const coalescer = yield* makeThreadLiveEventCoalescer();
+        const events = [
+          makeToolActivity(1, { toolCallId: "call-a" }),
+          makeToolActivity(2, { toolCallId: "call-b" }),
+          makeToolActivity(3, { toolCallId: "call-a" }),
+          makeToolActivity(4, { toolCallId: "call-a", kind: "tool.completed" }),
+          makeToolActivity(5, { toolCallId: "call-a" }),
+          makeToolActivity(6, { toolCallId: "call-a", turnId: RunId.make("another-run") }),
+          makeToolActivity(7, { toolCallId: "call-a" }),
+        ];
+        yield* coalescer.offerAll(events);
+        yield* coalescer.end;
+        expect(yield* coalescer.stream.pipe(Stream.runCollect)).toEqual([
+          events[1],
+          events[2],
+          events[3],
+          events[5],
+          events[6],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("handles a tool output burst larger than the default 8 MiB buffer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const coalescer = yield* makeThreadLiveEventCoalescer();
+        const updates = Array.from({ length: 150 }, (_, index) =>
+          makeToolActivity(index + 1, { output: "x".repeat(64 * 1024) }),
+        );
+        yield* coalescer.offerAll(updates);
+        yield* coalescer.end;
+        expect(yield* coalescer.stream.pipe(Stream.runCollect)).toEqual([updates.at(-1)]);
+      }),
+    ),
+  );
+
+  it.effect("still fails when a single replacement exceeds the byte budget", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = makeToolActivity(1);
+        const coalescer = yield* makeThreadLiveEventCoalescer({
+          maxSerializedBytes: Buffer.byteLength(encodeEvent(first)),
+        });
+        yield* coalescer.offer(first);
+        const overflow = yield* coalescer
+          .offer(makeToolActivity(2, { output: "x".repeat(2_000) }))
+          .pipe(Effect.result);
+        expect(overflow._tag).toBe("Failure");
+        yield* coalescer.closed;
+        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+      }),
+    ),
+  );
+
+  it.effect("does not postpone delivery when a running tool keeps replacing its output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const coalescer = yield* makeThreadLiveEventCoalescer({ coalesceWindow: "50 millis" });
+        yield* coalescer.offer(makeToolActivity(1));
+        yield* TestClock.adjust("25 millis");
+        const latest = makeToolActivity(2);
+        yield* coalescer.offer(latest);
+        yield* TestClock.adjust("25 millis");
+        expect(yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect)).toEqual([latest]);
       }),
     ),
   );
