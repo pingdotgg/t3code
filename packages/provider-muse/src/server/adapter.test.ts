@@ -1130,4 +1130,90 @@ describe("MuseAdapterV2", () => {
       assert.isTrue((yield* harness.adapter.getCapabilities()).planning.emitsTodoList);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it.effect("opens a prompt-and-result child thread for a native subagent", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: {
+          itemId: "sub-1",
+          kind: "subagent",
+          revision: 1,
+          status: "inProgress",
+          turnId: nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "running",
+          childSessionId: "child-session-1",
+          objective: "Check the thing",
+          role: "general-purpose",
+        },
+      });
+      const created = yield* harness.takeEvent("app_thread.created");
+      const childThreadId = created.appThread.id;
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: {
+          itemId: "sub-1",
+          kind: "subagent",
+          revision: 2,
+          status: "inProgress",
+          turnId: nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "resultReady",
+          childSessionId: "child-session-1",
+          objective: "Check the thing",
+          result: { summary: "All done" },
+        },
+      });
+      // The revision without a role keeps the title the child thread opened with.
+      const completed = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "completed",
+      );
+      assert.strictEqual(completed.subagent.title, created.appThread.title);
+      const result = yield* harness.takeEvent(
+        "message.updated",
+        (event) => event.message.threadId === childThreadId && event.message.role === "assistant",
+      );
+      assert.strictEqual(result.message.text, "All done");
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a workflow child's first label after later revisions drop it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const workflowItem = (revision: number, children: unknown) => ({
+        itemId: "wf-1",
+        kind: "workflow",
+        revision,
+        status: "inProgress",
+        turnId: nativeId,
+        entryId: "Probe workflow",
+        children,
+      });
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: workflowItem(1, [{ childId: "c1", attempt: 1, status: "scheduled", label: "ping" }]),
+      });
+      const scheduled = yield* harness.takeEvent("subagent.updated");
+      assert.strictEqual(scheduled.subagent.title, "ping");
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: workflowItem(2, [{ childId: "c1", attempt: 1, status: "started" }]),
+      });
+      const started = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "running",
+      );
+      assert.strictEqual(started.subagent.title, "ping");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 });

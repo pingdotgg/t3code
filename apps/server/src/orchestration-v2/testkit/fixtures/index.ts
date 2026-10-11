@@ -58,8 +58,13 @@ import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertPiMessageSteeringOutput } from "./message_steering/pi_output.ts";
 import { MUSE_PERMISSION_DECLINED_FILE, musePermissionInput } from "./muse_permission/input.ts";
 import { assertMusePermissionOutput } from "./muse_permission/output.ts";
+import { museSubagentApprovalInput } from "./muse_subagent_approval/input.ts";
+import { assertMuseSubagentApprovalOutput } from "./muse_subagent_approval/output.ts";
+import { museSubagentInterruptInput } from "./muse_subagent_interrupt/input.ts";
+import { assertMuseSubagentInterruptOutput } from "./muse_subagent_interrupt/output.ts";
 import { museWorkflowInput } from "./muse_workflow/input.ts";
 import { assertMuseWorkflowOutput } from "./muse_workflow/output.ts";
+import { assertMuseSubagentV2Output } from "./subagent_v2/muse_output.ts";
 import { assertMuseMultiTurnOutput } from "./multi_turn/muse_output.ts";
 import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
 import { piCompactionInput } from "./pi_compaction/input.ts";
@@ -860,6 +865,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentV2Output,
       },
+      {
+        driver: ProviderDriverKind.make("muse"),
+        transcriptFile: new URL("./subagent_v2/muse_transcript.ndjson", import.meta.url),
+        modelSelection: MUSE_MODEL_SELECTION,
+        assertOutput: assertMuseSubagentV2Output,
+      },
     ],
   },
   {
@@ -1224,6 +1235,33 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: MUSE_MODEL_SELECTION,
         expectedAbsentWorkspacePaths: [MUSE_PERMISSION_DECLINED_FILE],
         assertOutput: assertMusePermissionOutput,
+      },
+    ],
+  },
+  {
+    name: "muse_subagent_approval",
+    buildInput: museSubagentApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("muse"),
+        transcriptFile: new URL("./muse_subagent_approval/muse_transcript.ndjson", import.meta.url),
+        modelSelection: MUSE_MODEL_SELECTION,
+        assertOutput: assertMuseSubagentApprovalOutput,
+      },
+    ],
+  },
+  {
+    name: "muse_subagent_interrupt",
+    buildInput: museSubagentInterruptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("muse"),
+        transcriptFile: new URL(
+          "./muse_subagent_interrupt/muse_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: MUSE_MODEL_SELECTION,
+        assertOutput: assertMuseSubagentInterruptOutput,
       },
     ],
   },
