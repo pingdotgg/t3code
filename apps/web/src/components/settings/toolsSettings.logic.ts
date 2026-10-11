@@ -199,8 +199,14 @@ export interface SkillRowDetails {
   readonly scripts: boolean;
   /** Two copies of the name have different SKILL.md text. */
   readonly conflict: boolean;
-  /** Set when the `skills` CLI installed the row's skill, so it can be updated or removed. */
+  /** Set when the `skills` CLI installed the row's skill, so it can be updated. */
   readonly installed: NonNullable<SkillFolderInfo["installed"]> | null;
+  /**
+   * The level to remove the skill from: where the CLI installed it, else
+   * where a copy sits in the agents' own skill folders. Null for a plugin's
+   * or an agent's built-in skill.
+   */
+  readonly removable: NonNullable<SkillFolderInfo["location"]> | null;
 }
 
 const NO_DETAILS: SkillRowDetails = {
@@ -209,6 +215,7 @@ const NO_DETAILS: SkillRowDetails = {
   scripts: false,
   conflict: false,
   installed: null,
+  removable: null,
 };
 
 export function skillRowDetails(
@@ -225,12 +232,14 @@ export function skillRowDetails(
   const copies = [...byFolder.values()].toSorted(
     (left, right) => Number(right.installed !== undefined) - Number(left.installed !== undefined),
   );
+  const installed = copies.find((info) => info.installed !== undefined)?.installed ?? null;
   return {
     folder: copies[0] ?? null,
     copies,
     scripts: copies.some((info) => info.scripts),
     conflict: new Set(copies.map((info) => info.hash)).size > 1,
-    installed: copies.find((info) => info.installed !== undefined)?.installed ?? null,
+    installed,
+    removable: installed?.target ?? copies.find((info) => info.location)?.location ?? null,
   };
 }
 

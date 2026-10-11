@@ -256,6 +256,8 @@ function SkillsPanel({
   const [removingSkill, setRemovingSkill] = useState<{
     readonly name: string;
     readonly target: SkillInstallTarget;
+    /** The `skills` CLI installed it, so its lock entry goes too. */
+    readonly installed: boolean;
   } | null>(null);
   const [skillActionError, setSkillActionError] = useState<string | null>(null);
   const inspected = useEnvironmentQuery(
@@ -402,10 +404,11 @@ function SkillsPanel({
       : () => void runSkillAction("update", { name: row.name, target: installed.target });
   };
   const removeOf = (row: SkillRow) => {
-    const installed = detailsOf(row).installed;
-    return installed === null || !canInstall
+    const { installed, removable } = detailsOf(row);
+    return removable === null || !canInstall
       ? null
-      : () => setRemovingSkill({ name: row.name, target: installed.target });
+      : () =>
+          setRemovingSkill({ name: row.name, target: removable, installed: installed !== null });
   };
 
   const opened = openName === null ? null : (rows.find((row) => row.name === openName) ?? null);
@@ -568,8 +571,18 @@ function SkillsPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {removingSkill?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Deletes the skill's folder and every agent's link to it, as{" "}
-              <code>npx skills remove</code> does.
+              {removingSkill?.installed ? (
+                <>
+                  Deletes the skill's folder and every agent's link to it, as{" "}
+                  <code>npx skills remove</code> does.
+                </>
+              ) : (
+                `Deletes ${removingSkill?.name ?? "the skill"} from every agent's skill folder ${
+                  removingSkill?.target.kind === "project"
+                    ? "in this project"
+                    : "on this environment"
+                }. It wasn't installed from a source, so it can't be added back from here.`
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -578,7 +591,10 @@ function SkillsPanel({
               variant="destructive"
               onClick={() => {
                 if (removingSkill) {
-                  void runSkillAction("remove", removingSkill);
+                  void runSkillAction("remove", {
+                    name: removingSkill.name,
+                    target: removingSkill.target,
+                  });
                   if (removingSkill.name === openName) onOpen(null);
                 }
                 setRemovingSkill(null);

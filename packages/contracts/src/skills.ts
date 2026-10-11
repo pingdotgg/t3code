@@ -84,7 +84,10 @@ export const SkillInstallInput = Schema.Struct({
 });
 export type SkillInstallInput = typeof SkillInstallInput.Type;
 
-/** One skill an `installed` lock entry names, to update or remove. */
+/**
+ * One skill at a level, by the name agents know it by: to update one the CLI
+ * installed, or to remove one from the agents' skill folders there.
+ */
 export const InstalledSkillInput = Schema.Struct({
   name: InstalledSkillName,
   target: SkillInstallTarget,
@@ -122,6 +125,12 @@ export const SkillFolderInfo = Schema.Struct({
   files: Schema.Array(SkillFileEntry),
   filesTruncated: Schema.Boolean,
   scripts: Schema.Boolean,
+  /**
+   * The level this copy belongs to when the agent found it directly in one of
+   * the agents' skill folders, at home or in the project, so it can be
+   * removed. Absent for a plugin's or an agent's built-in skills.
+   */
+  location: Schema.optional(SkillInstallTarget),
   /** Set when the `skills` CLI installed this folder: its lock names the source. */
   installed: Schema.optional(
     Schema.Struct({
@@ -146,7 +155,10 @@ export class SkillLibraryError extends Schema.TaggedError<SkillLibraryError>()(
       "noSkills",
       /** The project isn't one of this environment's projects. */
       "projectNotRegistered",
-      /** Only skills the CLI installed (with a lock entry) can be updated or removed. */
+      /**
+       * Nothing to change: update needs a skill the CLI installed (with a lock
+       * entry), and remove a skill in the agents' skill folders at that level.
+       */
       "notInstalled",
     ]),
     message: Schema.String,

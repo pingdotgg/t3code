@@ -7,8 +7,9 @@
  * their own folder. The CLI's lock files (`~/.agents/.skill-lock.json`, or
  * `$XDG_STATE_HOME/skills/.skill-lock.json`, and a project's
  * `skills-lock.json`) record where each install came from; this module reads
- * them to group skills by source and to update or remove only what the CLI
- * installed. Turning skills on or off stays in settings.
+ * them to group skills by source and to update only what the CLI installed.
+ * Remove takes any skill in the agents' own skill folders, through the CLI
+ * when it installed the skill. Turning skills on or off stays in settings.
  *
  * @module SkillLibrary
  */
@@ -29,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import {
   STANDARD_SKILL_FOLDER,
+  agentSkillFolderRoots,
   skillsCliInstallAgents,
 } from "@t3tools/provider-core/server/AgentSkillFolders";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -65,7 +67,10 @@ export class SkillLibrary extends Context.Service<
     readonly update: (
       input: InstalledSkillInput,
     ) => Effect.Effect<SkillInstallResult, SkillLibraryError>;
-    /** Remove a skill the CLI installed, with every agent's link to it. */
+    /**
+     * Remove a skill from the agents' skill folders at one level: through the
+     * CLI when it installed the skill, else each folder's copy of that name.
+     */
     readonly remove: (input: InstalledSkillInput) => Effect.Effect<void, SkillLibraryError>;
   }
 >()("t3/skills/SkillLibrary") {}
@@ -314,6 +319,15 @@ const make = Effect.gen(function* () {
 
   const hasScripts = (files: ReadonlyArray<SkillFileEntry>) => files.some((file) => file.script);
 
+  /** The agents' skill folders at a level, as written and after links. */
+  const skillRoots = (target: SkillInstallTarget) =>
+    Effect.forEach(
+      agentSkillFolderRoots(target.kind === "environment" ? "home" : "project").map((folder) =>
+        path.join(targetPaths(target).root, folder),
+      ),
+      (folder) => realPath(folder).pipe(Effect.map((real) => [folder, real])),
+    ).pipe(Effect.map((pairs) => [...new Set(pairs.flat())]));
+
   const sha256 = (text: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(
       Effect.map(Hex.encode),
@@ -347,6 +361,7 @@ const make = Effect.gen(function* () {
             target,
             folder: yield* realPath(paths.folder),
             lock: yield* readLock(paths.lock),
+            roots: yield* skillRoots(target),
           };
         }),
       );
@@ -359,8 +374,16 @@ const make = Effect.gen(function* () {
               .readFileString(skillPath)
               .pipe(Effect.orElseSucceed(() => undefined));
             if (contents === undefined) return undefined;
-            const folder = yield* realPath(path.dirname(skillPath));
+            const reportedFolder = path.dirname(skillPath);
+            const folder = yield* realPath(reportedFolder);
             const name = path.basename(folder);
+            // Where the agent found it, before links: `~/.claude/skills/x` can
+            // link to `~/.agents/skills/x`, and either makes it the user's own.
+            const parent = path.dirname(reportedFolder);
+            const location = installs.find(
+              (candidate) =>
+                candidate.roots.includes(parent) || candidate.roots.includes(path.dirname(folder)),
+            )?.target;
             const install = installs.find(
               (candidate) =>
                 path.dirname(folder) === candidate.folder &&
@@ -376,6 +399,7 @@ const make = Effect.gen(function* () {
               files,
               filesTruncated: truncated,
               scripts: hasScripts(files),
+              ...(location === undefined ? {} : { location }),
               ...(install === undefined || entry === undefined
                 ? {}
                 : { installed: { target: install.target, source: entry.source } }),
@@ -513,7 +537,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(
               new SkillLibraryError({
                 reason: "notInstalled",
-                message: "Only skills installed from a source can be updated or removed here.",
+                message: "Only skills installed from a source can be updated here.",
               }),
             )
           : Effect.succeed(found);
@@ -551,7 +575,9 @@ const make = Effect.gen(function* () {
 
   const removeLocked = (target: SkillInstallTarget, name: string) =>
     Effect.gen(function* () {
-      const { key } = yield* lockedEntry(target, name);
+      const locked = lockEntryFor(yield* readLock(targetPaths(target).lock), name);
+      if (locked === undefined) return yield* removeUnlocked(target, name);
+      const { key } = locked;
       const paths = targetPaths(target);
       yield* cli
         .remove({
@@ -575,6 +601,65 @@ const make = Effect.gen(function* () {
           `Couldn't remove ${name}. Check the permissions of ${folderLeft ? paths.folder : paths.lock}.`,
         );
       }
+    });
+
+  /**
+   * A skill no lock records, put in place by hand or by another tool: delete
+   * each folder an enabled agent reports for that name directly inside one of
+   * the level's agent skill folders, links first. Only reported folders count,
+   * so a name can't reach anything else.
+   */
+  const removeUnlocked = (target: SkillInstallTarget, name: string) =>
+    Effect.gen(function* () {
+      const roots = yield* skillRoots(target);
+      const wanted = name.trim().toLowerCase();
+      const reported = new Set<string>();
+      for (const provider of yield* enabledProviders) {
+        const lists = [
+          ...(target.kind === "environment" ? [provider.skills] : []),
+          ...(provider.workspaceSnapshots ?? [])
+            .filter((snapshot) => target.kind === "environment" || snapshot.cwd === target.cwd)
+            .map((snapshot) => snapshot.skills),
+        ];
+        for (const skill of lists.flat()) {
+          if (skill.name.trim().toLowerCase() !== wanted || !path.isAbsolute(skill.path)) continue;
+          const folder = path.dirname(skill.path);
+          if (!roots.includes(path.dirname(folder))) continue;
+          reported.add(folder);
+          // A link's folder goes too when it is one of the user's own.
+          const real = yield* realPath(folder);
+          if (roots.includes(path.dirname(real))) reported.add(real);
+        }
+      }
+      if (reported.size === 0) {
+        return yield* new SkillLibraryError({
+          reason: "notInstalled",
+          message: `No skill named ${name} is in the agents' skill folders here.`,
+        });
+      }
+      // Links go first, so none is left pointing at a deleted folder.
+      const isLink = (folder: string) =>
+        fileSystem.readLink(folder).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      const links = yield* Effect.filter([...reported], isLink);
+      const folders = [...links, ...[...reported].filter((folder) => !links.includes(folder))];
+      yield* Effect.forEach(
+        folders,
+        (folder) =>
+          fileSystem
+            .remove(folder, { recursive: true })
+            .pipe(
+              Effect.mapError(() =>
+                cliFailed(
+                  `Couldn't remove ${name}. Check the permissions of ${path.dirname(folder)}.`,
+                ),
+              ),
+            ),
+        { discard: true },
+      );
+      yield* refreshAgents(target);
     });
 
   return SkillLibrary.of({ inspect, preview, install, update, remove });

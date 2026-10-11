@@ -200,6 +200,7 @@ describe("skill row details", () => {
       scripts: false,
       conflict: false,
       installed: null,
+      removable: null,
     });
   });
 

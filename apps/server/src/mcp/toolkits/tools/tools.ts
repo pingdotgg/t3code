@@ -89,7 +89,7 @@ const SkillsInstallTool = Tool.make("t3_skills_install", {
 const SkillsRemoveTool = Tool.make("t3_skills_remove", {
   ...shared,
   description:
-    "Remove a skill installed from a source (with t3_skills_install, the Tools page, or `npx skills`), with every agent's link to it. Requires a live full-access/default calling thread.",
+    "Remove a skill from the agents' own skill folders for this environment or one project, with every agent's link to it: one installed from a source (with t3_skills_install, the Tools page, or `npx skills`) or put there by hand. Plugin and built-in skills can only be switched off with t3_tools_update. Requires a live full-access/default calling thread.",
   parameters: Schema.Struct({ ...Scope, name: InstalledSkillName }),
   success: Schema.Struct({}),
 }).annotate(Tool.Destructive, true);

@@ -76,6 +76,19 @@ const agentSkillFolders = (driver: ProviderDriverKind): AgentSkillFolders | unde
   AGENT_SKILL_FOLDERS[driver];
 
 /**
+ * Every folder some agent reads skills from at a level. A skill directly in
+ * one is the user's own, as opposed to a plugin's or an agent's built-in one.
+ */
+export function agentSkillFolderRoots(level: "home" | "project"): ReadonlyArray<string> {
+  return [
+    ...new Set([
+      STANDARD_SKILL_FOLDER,
+      ...Object.values(AGENT_SKILL_FOLDERS).flatMap((folders) => folders[level]),
+    ]),
+  ];
+}
+
+/**
  * The `skills` CLI agents an install names so every listed driver can use the
  * skill: `universal` writes `.agents/skills`, and each driver that doesn't read
  * it at that level adds the agent that links into its own folder.

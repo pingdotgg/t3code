@@ -264,6 +264,67 @@ it.effect(
 );
 
 it.effect(
+  "removes a skill put in an agent folder by hand, and only from the agents' own folders",
+  () =>
+    withLibrary(({ library, home, providers }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // A hand-made skill in ~/.agents/skills, linked into ~/.claude/skills
+        // the way other installers do, plus one only in a plugin's folder.
+        const own = path.join(home, ".agents", "skills", "handmade");
+        const link = path.join(home, ".claude", "skills", "handmade");
+        const plugin = path.join(home, ".claude", "plugins", "acme", "skills", "handmade");
+        yield* fileSystem.makeDirectory(own, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(own, "SKILL.md"), SKILL("handmade", "Mine."));
+        yield* fileSystem.makeDirectory(path.dirname(link), { recursive: true });
+        yield* fileSystem.symlink(own, link);
+        yield* fileSystem.makeDirectory(plugin, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(plugin, "SKILL.md"),
+          SKILL("handmade", "A plugin's."),
+        );
+        const reported = (skillPath: string) => ({
+          name: "handmade",
+          path: skillPath,
+          scope: "user",
+          enabled: true,
+        });
+        yield* Ref.set(providers, [
+          {
+            ...claude,
+            skills: [
+              reported(path.join(link, "SKILL.md")),
+              reported(path.join(plugin, "SKILL.md")),
+            ],
+          },
+        ]);
+
+        const inspected = yield* library.inspect({});
+        assert.deepEqual(
+          inspected.folders.map((folder) => [folder.path, folder.location?.kind, folder.installed]),
+          [
+            [path.join(link, "SKILL.md"), "environment", undefined],
+            [path.join(plugin, "SKILL.md"), undefined, undefined],
+          ],
+        );
+
+        yield* library.remove({ name: "handmade", target: { kind: "environment" } });
+        assert.isFalse(yield* fileSystem.exists(own));
+        assert.isFalse(
+          yield* fileSystem.readLink(link).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        );
+        // The plugin's copy isn't the user's to remove.
+        assert.isTrue(yield* fileSystem.exists(path.join(plugin, "SKILL.md")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  60_000,
+);
+
+it.effect(
   "fails a removal the CLI couldn't finish, which it reports with a zero exit",
   () =>
     withLibrary(({ library, project, source }) =>

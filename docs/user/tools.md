@@ -36,7 +36,9 @@ for every project. Agents that only read their own folder, such as Claude, get a
 
 Skills installed this way, here or with `npx skills` in a terminal, are grouped by where they came
 from, with one switch for the group. Their menu has **Update**, which installs the latest version
-from the same source, and **Remove**. Installing runs the open-source
+from the same source, and **Remove**. Other skills in your own skill folders, such as
+`~/.claude/skills` or a project's `.agents/skills`, can be removed from a skill's menu too; skills
+from plugins and the ones agents ship with can only be switched off. Installing runs the open-source
 [`skills`](https://github.com/vercel-labs/skills) installer built into T3 Code, with its telemetry
 off. Installing, updating and removing skills needs permission to manage providers.
 
