@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
@@ -72,11 +73,20 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
  */
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    /** Return no events if another thread owns this native session at commit time. */
+    readonly unlessNativeThreadOwned?: Pick<
+      OrchestrationV2ProviderThread,
+      "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
+    >;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
+    readonly unlessNativeThreadOwned?: Pick<
+      OrchestrationV2ProviderThread,
+      "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
+    >;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -370,6 +380,20 @@ const layerBase: Layer.Layer<
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
+          // Recheck alongside publication, including retries of stopped reservations.
+          const imported = input.unlessNativeThreadOwned;
+          if (imported?.nativeThreadRef != null) {
+            const owners = yield* sql`
+              SELECT provider_thread_id
+              FROM orchestration_v2_projection_provider_threads
+              WHERE driver = ${imported.driver}
+                AND provider_instance_id = ${imported.providerInstanceId}
+                AND thread_id IS NOT ${imported.appThreadId}
+                AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${imported.nativeThreadRef.nativeId}
+              LIMIT 1
+            `;
+            if (owners.length > 0) return [];
+          }
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(input.events)
