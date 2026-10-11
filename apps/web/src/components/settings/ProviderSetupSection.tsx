@@ -8,6 +8,7 @@ import {
   type AntigravityAuthMethod,
   type EnvironmentId,
   type ProviderInstanceId,
+  resolveAntigravityBinaryPath,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -18,6 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -28,10 +30,13 @@ interface ProviderSetupSectionProps {
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly binaryPath?: string | undefined;
+  /** The environment's custom executable, used by every instance without its own. */
+  readonly sharedBinaryPath?: string | undefined;
   readonly authMethod?: AntigravityAuthMethod | undefined;
   readonly enabled: boolean;
   readonly readOnly: boolean;
   readonly onEnable: () => void;
+  readonly onSharedBinaryPathChange?: ((binaryPath: string) => void) | undefined;
 }
 
 /** Read the configured method from the instance config. Unknown values fall back to personal. */
@@ -84,8 +89,10 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
           instanceId={props.instanceId}
           provider={props.provider}
           binaryPath={props.binaryPath}
+          sharedBinaryPath={props.sharedBinaryPath}
           authMethod={props.authMethod ?? "oauth-personal"}
           enabled={props.enabled}
+          onSharedBinaryPathChange={props.onSharedBinaryPathChange}
         />
       )}
     </section>
@@ -99,9 +106,17 @@ function ProviderSetupActions({
   provider,
   enabled,
   binaryPath,
+  sharedBinaryPath,
+  onSharedBinaryPathChange,
 }: Pick<
   ProviderSetupSectionProps,
-  "environmentId" | "environmentLabel" | "instanceId" | "enabled" | "binaryPath"
+  | "environmentId"
+  | "environmentLabel"
+  | "instanceId"
+  | "enabled"
+  | "binaryPath"
+  | "sharedBinaryPath"
+  | "onSharedBinaryPathChange"
 > & {
   readonly provider: ServerProvider;
   readonly authMethod: AntigravityAuthMethod;
@@ -127,7 +142,8 @@ function ProviderSetupActions({
     installation?.phase === "downloading" ||
     installation?.phase === "extracting" ||
     installation?.phase === "verifying";
-  const usesCustomBinary = Boolean(binaryPath?.trim());
+  const usesCustomBinary = Boolean(resolveAntigravityBinaryPath(binaryPath, sharedBinaryPath));
+  const usesSharedBinary = usesCustomBinary && !binaryPath?.trim();
   const installed =
     provider.installed || (!usesCustomBinary && installation?.installedVersion != null);
   const queryError = authQuery.error ?? installQuery.error;
@@ -195,7 +211,9 @@ function ProviderSetupActions({
           <div className="space-y-2">
             {usesCustomBinary ? (
               <p className="text-muted-foreground">
-                Uses the custom binary path below. Installation keeps that path.
+                {usesSharedBinary
+                  ? "Uses the shared binary path. Installation keeps that path."
+                  : "Uses the custom binary path below. Installation keeps that path."}
               </p>
             ) : null}
             {!installed && !provider.setup?.canInstall ? (
@@ -291,6 +309,25 @@ function ProviderSetupActions({
           </div>
         }
       />
+
+      {onSharedBinaryPathChange ? (
+        <SettingsRow
+          title="Shared binary path"
+          description="Custom ACP executable for every Antigravity instance on this environment. An instance's own binary path overrides it."
+          control={
+            <div className="w-full sm:w-56">
+              <DraftInput
+                size="sm"
+                value={sharedBinaryPath ?? ""}
+                onCommit={(next) => onSharedBinaryPathChange(next.trim())}
+                placeholder="Automatic"
+                spellCheck={false}
+                aria-label="Shared Antigravity binary path"
+              />
+            </div>
+          }
+        />
+      ) : null}
 
       <ProviderAuthenticationSection
         environmentId={environmentId}

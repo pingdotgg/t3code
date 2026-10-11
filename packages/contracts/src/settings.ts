@@ -782,7 +782,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Binary path",
-        description: "Custom ACP executable. Leave empty to select automatically.",
+        description:
+          "Custom ACP executable for this instance. Leave empty to use the shared path, or select automatically.",
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
@@ -794,6 +795,15 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
+
+/**
+ * The custom Antigravity executable an instance runs: its own `binaryPath`,
+ * else the environment's shared one. Empty selects the managed runtime or `PATH`.
+ */
+export const resolveAntigravityBinaryPath = (
+  instanceBinaryPath: string | undefined,
+  sharedBinaryPath: string | undefined,
+): string => instanceBinaryPath?.trim() || sharedBinaryPath?.trim() || "";
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The
@@ -1267,6 +1277,11 @@ export const ServerSettings = Schema.Struct({
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Custom Antigravity ACP executable shared by every Antigravity instance on
+   * this environment. An instance's own `binaryPath` wins over it.
+   */
+  antigravityBinaryPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1519,6 +1534,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
+  antigravityBinaryPath: Schema.optionalKey(TrimmedString),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1538,7 +1554,12 @@ export function requiredScopesForServerSettingsPatch(
   let changesSettings = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
+    if (
+      key === "providers" ||
+      key === "providerInstances" ||
+      key === "usageLimitSources" ||
+      key === "antigravityBinaryPath"
+    ) {
       changesProviders = true;
     } else {
       changesSettings = true;

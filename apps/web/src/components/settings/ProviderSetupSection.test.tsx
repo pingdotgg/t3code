@@ -113,6 +113,7 @@ function renderSetup(
     provider?: ServerProvider;
     enabled?: boolean;
     binaryPath?: string;
+    sharedBinaryPath?: string;
   } = {},
 ) {
   hooks.beginRender();
@@ -122,6 +123,7 @@ function renderSetup(
     instanceId,
     provider: options.provider ?? provider,
     binaryPath: options.binaryPath,
+    sharedBinaryPath: options.sharedBinaryPath,
     enabled: options.enabled ?? true,
     readOnly: options.readOnly ?? false,
     onEnable: vi.fn(),
@@ -398,20 +400,23 @@ describe("Antigravity setup", () => {
     expect(button(view, "Sign in")).toBeNull();
   });
 
-  it("does not let a shared managed install hide an invalid custom binary path", () => {
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      installedVersion: "test-version",
-      canRemove: true,
-    };
-    const view = renderSetup({
-      provider: { ...provider, installed: false },
-      binaryPath: "/missing/antigravity",
-    });
-    expect(button(view, "Sign in")?.props.disabled).toBe(true);
-    expect(setup.startAuth).not.toHaveBeenCalled();
-  });
+  it.each([{ binaryPath: "/missing/antigravity" }, { sharedBinaryPath: "/missing/antigravity" }])(
+    "does not let a shared managed install hide an invalid custom binary path",
+    (paths) => {
+      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+      setup.installation = {
+        ...setup.installation!,
+        installedVersion: "test-version",
+        canRemove: true,
+      };
+      const view = renderSetup({
+        provider: { ...provider, installed: false },
+        ...paths,
+      });
+      expect(button(view, "Sign in")?.props.disabled).toBe(true);
+      expect(setup.startAuth).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["read-only", "older-server"] as const)(
     "does not open private setup subscriptions for a %s view",

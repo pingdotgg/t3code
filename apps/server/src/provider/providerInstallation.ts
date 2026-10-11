@@ -47,7 +47,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
           }),
       ),
     );
-    return deriveProviderInstanceConfigMap(current);
+    return {
+      entries: deriveProviderInstanceConfigMap(current),
+      sharedAntigravityBinaryPath: current.antigravityBinaryPath,
+    };
   });
 
   const requireInstance = Effect.fn("ProviderInstallation.requireInstance")(function* (
@@ -65,7 +68,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       });
     }
     const installation = isCodex ? codexInstallation : antigravityInstallation;
-    const entries = yield* readEntries(instanceId, operation);
+    const { entries, sharedAntigravityBinaryPath } = yield* readEntries(instanceId, operation);
     const invalidConfig = () =>
       new ProviderSetupError({
         instanceId,
@@ -92,6 +95,14 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         operation,
         detail:
           "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
+      });
+    }
+    if (managedOnly && !isCodex && sharedAntigravityBinaryPath.trim()) {
+      return yield* new ProviderSetupError({
+        instanceId,
+        operation,
+        detail:
+          "Antigravity uses a shared custom executable. Clear the shared binary path to manage installation in T3 Code.",
       });
     }
     return { installation, driver: instance.driverKind };
@@ -133,7 +144,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       "remove-install",
       true,
     );
-    const entries = yield* readEntries(input.instanceId, "remove-install");
+    const { entries } = yield* readEntries(input.instanceId, "remove-install");
     const protectedPaths = yield* Effect.forEach(
       Object.values(entries),
       Effect.fnUntraced(function* (entry) {

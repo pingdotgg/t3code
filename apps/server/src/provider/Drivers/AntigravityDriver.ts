@@ -1,6 +1,11 @@
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import {
+  AntigravitySettings,
+  ProviderDriverKind,
+  ProviderSetupError,
+  resolveAntigravityBinaryPath,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -118,6 +123,25 @@ export const AntigravityDriver: ProviderDriver<
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+      // Read per use: a shared path change does not rebuild the instance. An
+      // instance with its own path never depends on the shared settings read.
+      const instanceBinaryPath = resolveAntigravityBinaryPath(settings.binaryPath, undefined);
+      const binaryPath = instanceBinaryPath
+        ? Effect.succeed(instanceBinaryPath)
+        : host.settings.get.pipe(
+            Effect.map((serverSettings) =>
+              resolveAntigravityBinaryPath(undefined, serverSettings.antigravityBinaryPath),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "resolve",
+                  detail: "Could not read the shared Antigravity binary path.",
+                  cause,
+                }),
+            ),
+          );
       const userHome = resolveAntigravityUserHome(
         yield* HostProcess.Platform,
         processEnvironment,
@@ -181,19 +205,17 @@ export const AntigravityDriver: ProviderDriver<
             detail: authConfigIssue,
           });
         }
-        const executable = yield* installation
-          .acquire(settings.binaryPath, processEnvironment)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderSetupError({
-                  instanceId,
-                  operation: "resolve",
-                  detail: cause.detail,
-                  cause,
-                }),
-            ),
-          );
+        const executable = yield* installation.acquire(yield* binaryPath, processEnvironment).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "resolve",
+                detail: cause.detail,
+                cause,
+              }),
+          ),
+        );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           baseEnv: processEnvironment,
@@ -359,19 +381,17 @@ export const AntigravityDriver: ProviderDriver<
             detail: authConfigIssue,
           });
         }
-        const executable = yield* installation
-          .resolve(settings.binaryPath, processEnvironment)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderSetupError({
-                  instanceId,
-                  operation: "resolve",
-                  detail: cause.detail,
-                  cause,
-                }),
-            ),
-          );
+        const executable = yield* installation.resolve(yield* binaryPath, processEnvironment).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "resolve",
+                detail: cause.detail,
+                cause,
+              }),
+          ),
+        );
         return {
           protocolVersion: 1,
           agentCapabilities: {

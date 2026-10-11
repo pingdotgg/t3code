@@ -166,6 +166,19 @@ describe("provider installation routing", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps installs manual for an instance that inherits the shared binary path", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        settings: { antigravityBinaryPath: "/external/agy" },
+      });
+      const start = yield* Effect.flip(harness.router.start({ instanceId }));
+      const remove = yield* Effect.flip(harness.router.remove({ instanceId }));
+      assert.include(start.detail, "shared custom executable");
+      assert.include(remove.detail, "shared custom executable");
+      assert.deepEqual(harness.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("routes a managed Codex instance through its own installer and refreshes removal", () =>
     Effect.gen(function* () {
       const codexId = ProviderInstanceId.make("codex");

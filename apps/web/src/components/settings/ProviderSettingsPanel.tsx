@@ -573,6 +573,9 @@ export function EnvironmentProviderSettings({
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const saveSharedAntigravityBinaryPath = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "update shared Antigravity binary path",
+  });
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -753,6 +756,30 @@ export function EnvironmentProviderSettings({
   );
 
   const rows: InstanceRow[] = [];
+  // Instances that inherit the shared path are not rebuilt by its change, so
+  // recheck them here. One at a time, so their statuses publish in order.
+  const updateSharedAntigravityBinaryPath = async (antigravityBinaryPath: string) => {
+    const result = await saveSharedAntigravityBinaryPath({
+      environmentId,
+      input: { patch: { antigravityBinaryPath } },
+    });
+    if (result._tag !== "Success") return;
+    for (const row of rows) {
+      if (row.driver !== "antigravity") continue;
+      const refreshed = await refreshServerProviders({
+        environmentId,
+        input: { instanceId: row.instanceId },
+      });
+      if (refreshed._tag === "Failure" && !isAtomCommandInterrupted(refreshed)) {
+        console.warn("Failed to refresh provider", {
+          operation: "refresh-provider",
+          environmentId,
+          instanceId: row.instanceId,
+          ...safeErrorLogAttributes(squashAtomCommandFailure(refreshed)),
+        });
+      }
+    }
+  };
   const visibleDriverKinds = new Set<ProviderDriverKind>(
     visibleProviderSettings.map((providerSettings) => providerSettings.provider),
   );
@@ -988,10 +1015,14 @@ export function EnvironmentProviderSettings({
               instanceId={row.instanceId}
               provider={liveProvider}
               binaryPath={configuredBinaryPath(row.instance.config)}
+              sharedBinaryPath={settings.antigravityBinaryPath}
               authMethod={readAntigravityAuthMethod(row.instance.config)}
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+              onSharedBinaryPathChange={(antigravityBinaryPath) =>
+                void updateSharedAntigravityBinaryPath(antigravityBinaryPath)
+              }
             />
           ) : mode === "editor" &&
             row.driver === "codex" &&

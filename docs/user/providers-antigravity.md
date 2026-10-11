@@ -62,8 +62,12 @@ Extract the ACP executable and its `localharness_external` helper into the same
 directory, at the same version. Make both executable on macOS or Linux; Windows
 uses `.exe` files.
 
-Set **Binary path** to the ACP executable on the environment and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
+Set **Shared binary path** to the ACP executable on the environment and update it
+yourself. Every Antigravity instance on that environment uses it. To run one
+instance on a different executable, set that instance's **Binary path**, which
+overrides the shared one.
+
+Leave both fields blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
 
 ## Models and threads
@@ -120,8 +124,8 @@ a thread signs out its instance, including stopping that instance's other sessio
 Sign out, then sign in again to replace an account.
 
 Before removing a managed runtime, disable its instances and cancel any active
-installation. Clear any explicit binary path pointing into that runtime. Removal
-is refused while the runtime is in use.
+installation. Clear the shared binary path, and any instance binary path pointing
+into that runtime. Removal is refused while the runtime is in use.
 
 ## Check access and troubleshoot
 
