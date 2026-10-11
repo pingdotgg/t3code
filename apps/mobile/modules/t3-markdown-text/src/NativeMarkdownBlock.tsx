@@ -1,5 +1,6 @@
-import { createContext, memo, useContext, useMemo } from "react";
-import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
+import { SymbolView } from "expo-symbols";
+import { createContext, memo, useContext, useMemo, useState } from "react";
+import { Image, Platform, Pressable, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
@@ -156,6 +157,10 @@ function NativeCodeBlock(props: {
   const theme = colorScheme === "dark" ? "dark" : "light";
   const highlighted = useHighlightedCode(content, props.node.language, theme, props.highlightCode);
   const languageLabel = props.node.language?.toUpperCase() ?? "CODE";
+  const [wrapped, setWrapped] = useState(false);
+  const code = (
+    <HighlightedCodeText content={content} highlighted={highlighted} textStyle={props.textStyle} />
+  );
   return (
     <View
       style={{
@@ -193,6 +198,32 @@ function NativeCodeBlock(props: {
         >
           {languageLabel}
         </MarkdownTextPrimitive>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={wrapped ? "Disable line wrap" : "Wrap lines"}
+          accessibilityState={{ selected: wrapped }}
+          hitSlop={8}
+          onPress={() => setWrapped((value) => !value)}
+          style={({ pressed }) => ({
+            width: 34,
+            height: 34,
+            marginRight: 6,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 9,
+            borderWidth: 1,
+            borderColor: props.textStyle.dividerColor,
+            backgroundColor: props.textStyle.codeBackgroundColor,
+            opacity: pressed ? 0.52 : 1,
+          })}
+        >
+          <SymbolView
+            name={{ ios: "text.alignleft", android: "wrap_text" }}
+            size={14}
+            tintColor={wrapped ? props.textStyle.linkColor : props.textStyle.mutedColor}
+            type="monochrome"
+          />
+        </Pressable>
         <CopyTextButton
           accessibilityLabel={`Copy ${languageLabel.toLowerCase()} code`}
           text={content}
@@ -204,19 +235,19 @@ function NativeCodeBlock(props: {
           iconSize={14}
         />
       </View>
-      <ScrollView
-        horizontal
-        bounces={false}
-        nestedScrollEnabled={Platform.OS === "android"}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
-      >
-        <HighlightedCodeText
-          content={content}
-          highlighted={highlighted}
-          textStyle={props.textStyle}
-        />
-      </ScrollView>
+      {wrapped ? (
+        <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>{code}</View>
+      ) : (
+        <ScrollView
+          horizontal
+          bounces={false}
+          nestedScrollEnabled={Platform.OS === "android"}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
+        >
+          {code}
+        </ScrollView>
+      )}
     </View>
   );
 }
