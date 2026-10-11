@@ -158,6 +158,10 @@ to read its description, activity, commits, and changed files. Line comments sta
 until you submit the review. **Work on PR** opens a chat with the review attached; sending
 the first message prepares a worktree from the review's branch.
 
+Previously loaded lists, review details, guides, and diff pages remain readable on mobile
+without a connection, including after restarting the app. Saved content refreshes when the
+environment reconnects; submitting changes requires a connection.
+
 Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
 agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
 co-authors stay credited. The setting is off by default and projects can override it. It also

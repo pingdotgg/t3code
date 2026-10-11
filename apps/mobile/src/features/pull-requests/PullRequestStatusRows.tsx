@@ -1,3 +1,4 @@
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
@@ -237,7 +238,9 @@ export function PullRequestReviewersRow(props: RowProps) {
       pullRequestTarget(props.params).environmentId,
     ),
   );
+  const connected = usePullRequestConnected(props.params.environmentId);
   const canRequest =
+    connected &&
     canWrite &&
     props.pr.state === "open" &&
     props.pr.capabilities.reviewers.request &&

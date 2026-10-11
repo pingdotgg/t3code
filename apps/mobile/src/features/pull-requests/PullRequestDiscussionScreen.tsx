@@ -118,6 +118,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
     <PullRequestMarkdownRepository
+      params={params}
       value={detail.data?.provider === "github" ? detail.data.url : null}
     >
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">

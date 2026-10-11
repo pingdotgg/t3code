@@ -17,7 +17,7 @@ export type MediaVideoPreviewSource = {
       readonly environmentId: EnvironmentId;
       readonly resource: Extract<
         AssetResource,
-        { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" }
+        { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" | "github-media" }
       >;
     }
 );
@@ -47,14 +47,22 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
               source.resource.path,
               source.srcFragment ?? "",
             ]
-          : [
-              "media-video",
-              "draft-workspace-file",
-              source.environmentId,
-              source.resource.cwd,
-              source.resource.path,
-              source.srcFragment ?? "",
-            ],
+          : source.resource._tag === "github-media"
+            ? [
+                "media-video",
+                "github-media",
+                source.environmentId,
+                source.resource.cwd,
+                source.resource.url,
+              ]
+            : [
+                "media-video",
+                "draft-workspace-file",
+                source.environmentId,
+                source.resource.cwd,
+                source.resource.path,
+                source.srcFragment ?? "",
+              ],
   );
 }
 

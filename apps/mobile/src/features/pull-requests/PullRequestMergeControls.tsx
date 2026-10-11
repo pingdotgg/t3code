@@ -54,9 +54,12 @@ export function PullRequestMergeControls(props: {
     hasStack: stack.stack !== null,
     isFresh: stack.isFresh,
   });
-  const checkingStack = stack.supportsStackActions && !stack.isFresh && !stack.error;
+  const checkingStack =
+    permissions.connected && stack.supportsStackActions && !stack.isFresh && !stack.error;
   const reason =
-    mergeUnavailableReason(pr, permissions.canWrite) ??
+    (!permissions.connected
+      ? "Reconnect to merge."
+      : mergeUnavailableReason(pr, permissions.canWrite)) ??
     (stack.stack
       ? !stack.supportsStackActions
         ? "This environment can display stacks but cannot merge them."
@@ -185,7 +188,7 @@ export function PullRequestMergeControls(props: {
           <Text
             className={`shrink text-center text-sm font-t3-semibold ${canMerge ? "text-screen" : "text-foreground-muted"}`}
           >
-            {busy ? "Working…" : label}
+            {busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
           </Text>
         </Pressable>
         {methods.length > 0 || canAutoMerge ? (
@@ -230,7 +233,8 @@ export function PullRequestMergeControls(props: {
           </ControlPillMenu>
         ) : null}
       </View>
-      {reason &&
+      {permissions.connected &&
+      reason &&
       reason !== MERGE_CONFLICT_REASON &&
       reason !== "Checking stack membership…" &&
       !(checkingStack && reason === "Refresh the stack before merging.") ? (

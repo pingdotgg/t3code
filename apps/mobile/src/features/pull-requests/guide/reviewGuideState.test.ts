@@ -4,7 +4,7 @@ import {
   ProviderInstanceId,
   type PullRequestReviewGuideResult,
 } from "@t3tools/contracts";
-import { reviewGuideState } from "./reviewGuideState";
+import { guideNoticeState, reviewGuideState } from "./reviewGuideState";
 
 const guide: NonNullable<PullRequestReviewGuideResult["guide"]> = {
   headSha: "old-head",
@@ -45,4 +45,59 @@ describe("mobile review guide state", () => {
       failure: null,
     });
   });
+});
+
+const view = {
+  data: null,
+  isPending: false,
+  running: false,
+  startError: null,
+  error: null,
+};
+
+describe("guide notice transitions", () => {
+  it("does not flash an empty guide before the first response", () => {
+    expect(guideNoticeState({ ...view, isPending: true }).kind).toBe("loading");
+    expect(
+      guideNoticeState({ ...view, data: { guide: null, run: null, currentHeadSha: "head" } }).kind,
+    ).toBe("empty");
+  });
+
+  it("keeps cached guides visible while refreshing", () => {
+    expect(
+      guideNoticeState({
+        ...view,
+        isPending: true,
+        data: { guide, run: null, currentHeadSha: guide.headSha },
+      }).kind,
+    ).toBe("ready");
+  });
+
+  it("hides the previous failure as soon as a retry starts", () => {
+    const data = {
+      guide: null,
+      currentHeadSha: "head",
+      run: {
+        _tag: "Failed" as const,
+        headSha: "head",
+        failedAt: guide.generatedAt,
+        detail: "Writer disconnected",
+      },
+    };
+    expect(guideNoticeState({ ...view, data }).kind).toBe("failed");
+    expect(guideNoticeState({ ...view, data, running: true }).kind).toBe("writing");
+  });
+
+  it("keeps a stale guide readable through rewriting and completion", () => {
+    const data = { guide, currentHeadSha: "head", run: null };
+    expect(guideNoticeState({ ...view, data }).kind).toBe("stale");
+    expect(guideNoticeState({ ...view, data, running: true }).kind).toBe("writing");
+    expect(
+      guideNoticeState({ ...view, data: { ...data, guide: { ...guide, headSha: "head" } } }).kind,
+    ).toBe("ready");
+  });
+});
+
+it("distinguishes a failed read from a failed writer", () => {
+  expect(guideNoticeState({ ...view, error: "Connection lost" }).kind).toBe("unavailable");
 });

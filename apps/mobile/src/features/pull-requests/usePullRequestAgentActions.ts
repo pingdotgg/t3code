@@ -5,6 +5,7 @@ import {
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
 import type { PullRequestParams } from "./usePullRequestDiff";
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 
 /** Shared destinations for toolbar helpers and actions beside PR readiness rows. */
@@ -14,8 +15,9 @@ export function usePullRequestAgentActions(
   filePath?: string,
 ) {
   const links = usePullRequestThreads(params, pr, filePath);
+  const connected = usePullRequestConnected(params.environmentId);
   const actions = pr ? pullRequestAgentActions(pr, links.canWatch) : [];
-  const disabled = links.busy || !pr || (links.isPending && !links.threads.length);
+  const disabled = links.busy || !pr || (connected && links.isPending && !links.threads.length);
   const start = (task: PullRequestAgentTask, threadId?: string) => {
     if (disabled) return;
     const thread = pullRequestAgentThread(links.threads, threadId);

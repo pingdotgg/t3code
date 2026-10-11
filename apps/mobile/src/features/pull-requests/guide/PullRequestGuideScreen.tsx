@@ -13,7 +13,6 @@ import {
 import { SymbolView } from "../../../components/AppSymbol";
 import { GuideOutline } from "./GuideOutline";
 import { AppText as Text } from "../../../components/AppText";
-import { MaterialButton } from "../../../components/MaterialButton";
 import { ScreenScrollView } from "../../../components/ScreenScrollView";
 import { ControlPillMenu } from "../../../components/ControlPillMenu";
 import { MaterialIconButton } from "../../../components/MaterialIconButton";
@@ -24,6 +23,9 @@ import { PullRequestMarkdown, PullRequestMarkdownRepository } from "../PullReque
 import { usePullRequestDiff, type PullRequestParams } from "../usePullRequestDiff";
 import { ReviewGuideExcerpt } from "./ReviewGuideExcerpt";
 import { reviewGuideState } from "./reviewGuideState";
+import { GuideNotice } from "./GuideNotice";
+import Animated from "react-native-reanimated";
+import { PR_ROW_ENTER, PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { useEnvironmentQuery } from "../../../state/query";
 import { composerPullRequests } from "../../../state/pull-requests";
 import { usePullRequestPermissions } from "../usePullRequestPermissions";
@@ -44,111 +46,47 @@ const attentionLabels = {
   accessibility: "An accessibility call",
 };
 
-function GuideNotice({ state }: { readonly state: ReturnType<typeof useReviewGuide> }) {
-  const { guide, stale, failure } = reviewGuideState(state.data);
-  const error = state.startError ?? failure ?? state.error;
-  const label = state.running
-    ? guide
-      ? "Rewriting review guide"
-      : "Writing review guide"
-    : error
-      ? "Could not write guide"
-      : stale
-        ? "Guide is out of date"
-        : "No review guide yet";
-  if (guide && !stale && !error && !state.running) return null;
-  return (
-    <View
-      className={guide ? "gap-3 border-l-2 border-border pl-4 py-1" : "gap-4 py-4"}
-      accessibilityLiveRegion="polite"
-    >
-      <View className="flex-row items-center gap-2">
-        <SymbolView
-          name={
-            state.running
-              ? "clock"
-              : error
-                ? "exclamationmark.circle"
-                : stale
-                  ? "arrow.clockwise"
-                  : "list.number"
-          }
-          size={20}
-          tintColorClassName={
-            error
-              ? "accent-danger-foreground"
-              : stale
-                ? "accent-warning-foreground"
-                : "accent-icon-muted"
-          }
-        />
-        <Text className={guide ? "text-base font-t3-semibold" : "text-xl font-t3-semibold"}>
-          {label}
-        </Text>
-      </View>
-      <Text className="text-sm leading-6 text-foreground-muted">
-        {error ??
-          (state.running
-            ? "An agent is reading the change. You can leave this screen and return when it’s ready."
-            : stale
-              ? "There are new changes since this guide was written. Rewrite it to see the latest code."
-              : "Walk through the important code in order, with notes on what changed and where to look closely.")}
-      </Text>
-      {state.running ? (
-        <Text className="text-xs text-foreground-muted">
-          {state.data?.run?._tag === "Running"
-            ? `Started at ${new Date(state.data.run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-            : "Starting the guide…"}
-        </Text>
-      ) : state.canWrite ? (
-        <MaterialButton
-          label={error ? "Try again" : guide ? "Rewrite guide" : "Write guide"}
-          tone={guide ? "secondary" : "contrast"}
-          onPress={() => void state.write()}
-        />
-      ) : null}
-    </View>
-  );
-}
-
 export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
   const navigation = useNavigation();
   const state = useReviewGuide(params);
   const { guide, stale } = reviewGuideState(state.data);
   return (
-    <View className="w-full max-w-[760px] self-center gap-5">
+    <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
         <Text>Review guides are disabled for this server.</Text>
       ) : (
         <>
-          {state.isPending && !state.data ? (
-            <Text className="text-foreground-muted">Loading review guide…</Text>
-          ) : (
-            <GuideNotice state={state} />
-          )}
+          <GuideNotice state={state} />
           {guide ? (
-            <GuideOutline
-              guide={guide}
-              onOpen={(position) =>
-                navigation.dispatch(
-                  StackActions.push("PullRequestGuideStop", {
-                    ...params,
-                    position,
-                    guideHeadSha: guide.headSha,
-                    guideGeneratedAt: guide.generatedAt,
-                  }),
-                )
-              }
-              onRewrite={
-                state.canWrite && !state.running && !stale && !state.startError && !state.error
-                  ? () => void state.write()
-                  : undefined
-              }
-            />
+            <Animated.View
+              key={`outline:${guide.headSha}:${guide.generatedAt}`}
+              layout={PR_ROW_LAYOUT}
+              entering={PR_ROW_ENTER}
+              exiting={PR_ROW_EXIT}
+            >
+              <GuideOutline
+                guide={guide}
+                onOpen={(position) =>
+                  navigation.dispatch(
+                    StackActions.push("PullRequestGuideStop", {
+                      ...params,
+                      position,
+                      guideHeadSha: guide.headSha,
+                      guideGeneratedAt: guide.generatedAt,
+                    }),
+                  )
+                }
+                onRewrite={
+                  state.canWrite && !state.running && !stale && !state.startError && !state.error
+                    ? () => void state.write()
+                    : undefined
+                }
+              />
+            </Animated.View>
           ) : null}
         </>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -240,6 +178,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         </NativeHeaderToolbar.Menu>
       </NativeHeaderToolbar>
       <PullRequestMarkdownRepository
+        params={route.params}
         value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
       >
         <ScreenScrollView

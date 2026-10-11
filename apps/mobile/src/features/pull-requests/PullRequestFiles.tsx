@@ -1,3 +1,4 @@
+import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
@@ -167,15 +168,15 @@ export function usePullRequestFilesContent(props: {
             accessibilityState={{ busy: true }}
             className="min-h-17 flex-row items-center gap-2 py-3"
           >
-            <View className="min-w-0 flex-1 gap-2">
-              <Text className="text-base font-t3-semibold">
-                {fileCount === undefined
-                  ? "Changed files"
-                  : `${fileCount} changed ${fileCount === 1 ? "file" : "files"}`}
-              </Text>
-              {filter.hideTestFiles ? (
+            <View className="min-w-0 flex-1 gap-1">
+              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              {fileCount !== undefined ? (
+                <Text className="text-2xs text-foreground-muted">
+                  {fileCount} {fileCount === 1 ? "file" : "files"}
+                </Text>
+              ) : (
                 <View className="h-2.5 w-28 rounded bg-subtle-strong" />
-              ) : null}
+              )}
             </View>
             {summary?.additions !== undefined && summary.deletions !== undefined ? (
               <PullRequestDiffStats
@@ -196,14 +197,14 @@ export function usePullRequestFilesContent(props: {
           <>
             <View className="min-h-17 flex-row items-center gap-2 py-3">
               <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-base font-t3-semibold">
+                <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+                <Text className="text-2xs text-foreground-muted">
                   {parsed.fileCount} {filter.hiddenCount ? "visible" : "changed"}{" "}
                   {parsed.fileCount === 1 ? "file" : "files"}
                   {viewed.supported
                     ? ` · ${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
                     : ""}
-                </Text>
-                <Text className="text-2xs text-foreground-muted">
+                  {" · "}
                   {filter.hideTestFiles
                     ? `${filter.hiddenCount} test ${filter.hiddenCount === 1 ? "file" : "files"} hidden`
                     : "Test files included"}

@@ -62,6 +62,7 @@ import { SegmentedControl } from "../../components/SegmentedControl";
 import { SymbolView } from "../../components/AppSymbol";
 import { relativeTime } from "../../lib/time";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
@@ -272,6 +273,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const params = route.params;
+  const connected = usePullRequestConnected(params.environmentId);
   const [section, setSection] = useState<"overview" | "activity" | "guide">("overview");
   // Keep each tab's native list and measured rows alive when it is hidden.
   const requestedSection = useRef(section);
@@ -350,18 +352,23 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     }
   };
   return (
-    <PullRequestMarkdownRepository value={pr?.provider === "github" ? pr.url : null}>
+    <PullRequestMarkdownRepository
+      params={params}
+      value={pr?.provider === "github" ? pr.url : null}
+    >
       <View className="flex-1 bg-screen">
         <NativeStackScreenOptions
           options={{
             title: `#${params.number}`,
             headerTitle: `#${params.number}`,
-            unstable_headerSubtitle: params.repository,
+            unstable_headerSubtitle: connected
+              ? params.repository
+              : `${params.repository} · Offline`,
           }}
         />
         {Platform.OS === "android" ? (
           <AndroidScreenHeader
-            title={`#${params.number}`}
+            title={`#${params.number}${connected ? "" : " · Offline"}`}
             onBack={() => navigation.goBack()}
             actions={[
               ...(permissions.verdicts.length

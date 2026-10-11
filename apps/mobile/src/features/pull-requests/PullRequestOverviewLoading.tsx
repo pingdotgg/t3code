@@ -1,3 +1,4 @@
+import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import type { PullRequestListEntry } from "@t3tools/contracts";
 import { View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
@@ -97,7 +98,7 @@ export function PullRequestOverviewLoading({
         </View>
       ) : null}
       <View className="gap-3">
-        <Text className="text-base font-t3-semibold">Description</Text>
+        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
         <View className="gap-3 py-1">
           <View className="h-4 w-full rounded bg-subtle-strong" />
           <View className="h-4 w-full rounded bg-subtle-strong" />

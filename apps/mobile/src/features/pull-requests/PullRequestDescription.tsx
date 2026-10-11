@@ -1,13 +1,20 @@
-import { useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  PullRequestImageAttachment,
+  PullRequestMedia,
+  PullRequestMediaContext,
+} from "./PullRequestMedia";
+import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
+import { useContext, useMemo, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { Image } from "expo-image";
+import { pullRequestImageSource } from "./pullRequestMediaSource";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 import { nativeMarkdownWithHtml } from "@t3tools/mobile-markdown-text/markdown";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewItem } from "../../components/FilePreviewModal";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
@@ -21,31 +28,33 @@ export function PullRequestDescription(props: {
 }) {
   const { expanded, onExpandedChange } = props;
   const [bodyHeight, setBodyHeight] = useState(0);
-  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
-  const openingUri = preview && "uri" in preview ? preview.uri : null;
+  const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
   const content = useMemo(() => {
     const document = nativeMarkdownWithHtml(
       parseMarkdownWithOptions(props.markdown, { gfm: true, html: true, math: false }),
       (markdown) => parseMarkdownWithOptions(markdown, { gfm: true, html: false, math: false }),
     );
-    return pullRequestDescriptionContent(document);
+    return pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
   }, [props.markdown]);
-  const gallery = useMemo(
+  const gallery = useMemo<FilePreviewItem[]>(
     () =>
-      content.attachments.map((attachment) => ({
-        kind: "image" as const,
-        uri: attachment.uri,
-        name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
-      })),
-    [content],
+      content.attachments
+        .filter((attachment) => attachment.kind === "image")
+        .map((attachment) => {
+          return {
+            ...pullRequestImageSource(attachment.uri, mediaContext),
+            name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
+          };
+        }),
+    [content, mediaContext],
   );
   const canCollapse = bodyHeight > COLLAPSED_HEIGHT;
   const collapsed = canCollapse && !expanded;
   return (
     <View className="gap-5">
       <View className="gap-3">
-        <Text className="text-base font-t3-semibold">Description</Text>
+        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
         {props.markdown.trim() ? (
           <View className="overflow-hidden">
             <View
@@ -130,7 +139,7 @@ export function PullRequestDescription(props: {
       </View>
       {content.attachments.length ? (
         <View className="gap-3">
-          <Text className="text-base font-t3-semibold">Attachments</Text>
+          <PullRequestSectionHeading>Attachments</PullRequestSectionHeading>
           <ScrollView
             horizontal
             keyboardShouldPersistTaps="always"
@@ -138,50 +147,34 @@ export function PullRequestDescription(props: {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 12 }}
           >
-            {content.attachments.map((attachment) => (
-              <Pressable
-                key={attachment.uri}
-                accessibilityRole="imagebutton"
-                accessibilityLabel={`View attachment: ${attachment.caption}`}
-                accessibilityState={{ busy: openingUri === attachment.uri }}
-                disabled={preview !== null}
-                onPress={() =>
-                  setPreview({
-                    kind: "image",
-                    uri: attachment.uri,
-                    name: gallery.find((item) => item.uri === attachment.uri)?.name ?? "Image",
-                    gallery,
-                  })
-                }
-                className="gap-2 active:opacity-70"
-                style={{ width: 176 }}
-              >
-                <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
-                  <Image
-                    source={{ uri: attachment.uri }}
-                    style={{ width: 174, height: 112 }}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                  />
-                  {openingUri === attachment.uri ? (
-                    <View
-                      pointerEvents="none"
-                      style={StyleSheet.absoluteFill}
-                      className="items-center justify-center bg-black/30"
-                    >
-                      <ActivityIndicator color="white" />
-                    </View>
-                  ) : null}
-                </View>
-                <Text numberOfLines={1} className="text-xs text-foreground-muted">
-                  {attachment.caption}
-                </Text>
-              </Pressable>
-            ))}
+            {content.attachments.map((attachment) =>
+              attachment.kind !== "image" ? (
+                <PullRequestMedia
+                  key={attachment.uri}
+                  url={attachment.uri}
+                  kind={attachment.kind}
+                  caption={attachment.caption}
+                  compact
+                />
+              ) : (
+                <PullRequestImageAttachment
+                  key={attachment.uri}
+                  url={attachment.uri}
+                  caption={attachment.caption}
+                  source={
+                    gallery[
+                      content.attachments
+                        .filter((item) => item.kind === "image")
+                        .indexOf(attachment)
+                    ]!
+                  }
+                  gallery={gallery}
+                />
+              ),
+            )}
           </ScrollView>
         </View>
       ) : null}
-      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </View>
   );
 }

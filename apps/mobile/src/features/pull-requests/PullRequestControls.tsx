@@ -123,7 +123,8 @@ export function PullRequestActionToolbar(props: {
   const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
   const canReview = permissions.verdicts.length > 0;
   const pendingReview = canReview && draft.comments.length > 0;
-  const canOpenThread = agent.threads.length > 0 || agent.canAsk;
+  const showAgentControls = agent.canAsk || !permissions.connected;
+  const canOpenThread = agent.threads.length > 0 || showAgentControls;
   const threadLabel = agent.threads.length ? "Continue thread" : "Work on PR";
   const primaryLabel = pendingReview ? `Submit review · ${draft.comments.length}` : threadLabel;
   const chooseThread = agent.threads.length > 1;
@@ -142,7 +143,7 @@ export function PullRequestActionToolbar(props: {
   // Reserve the native outer margins, custom-button padding, and item gaps.
   // UIKit needs this space to keep every action out of its overflow menu.
   // Duo's side rail uses an intrinsic icon item instead.
-  const sideControls = Number(agent.canAsk) + 1;
+  const sideControls = Number(showAgentControls) + 1;
   const primaryWidth = verticalControls
     ? undefined
     : Math.max(
@@ -166,7 +167,7 @@ export function PullRequestActionToolbar(props: {
         className="flex-row items-center justify-between gap-3 border-t border-border-subtle bg-screen px-4 pt-2"
         style={{ paddingBottom: Math.max(insets.bottom, 8) }}
       >
-        {agent.canAsk ? (
+        {showAgentControls ? (
           <ControlPillMenu
             title="AI helpers"
             actions={agentActions.map((action) => agent.menuAction(action.task))}
@@ -259,7 +260,7 @@ export function PullRequestActionToolbar(props: {
       />
     )
   ) : null;
-  const agentControl = agent.canAsk ? (
+  const agentControl = showAgentControls ? (
     <NativeHeaderToolbar.Menu
       identifier="pull-request-agent"
       width={controlSize}

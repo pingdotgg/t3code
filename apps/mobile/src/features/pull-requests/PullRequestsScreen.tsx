@@ -99,7 +99,6 @@ export function PullRequestsScreen() {
       environments
         .filter(
           (environment) =>
-            environment.connectionState === "connected" &&
             configs.get(environment.environmentId)?.environment.capabilities.pullRequests ===
               true &&
             (environmentId === null || environment.environmentId === environmentId) &&
@@ -121,8 +120,15 @@ export function PullRequestsScreen() {
     [environments, environmentId, configs, controls, query],
   );
   const result = usePullRequestList(targets);
+  const connectedTargets = targets.filter((target) =>
+    environments.some(
+      (environment) =>
+        environment.environmentId === target.environmentId &&
+        environment.connectionState === "connected",
+    ),
+  );
   const { actions, select, busyKey } = usePullRequestListActions(
-    targets.map((target) => target.environmentId),
+    connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
   );
   const selectedKey = primaryColumn?.selectedPullRequestKey;
@@ -309,7 +315,7 @@ export function PullRequestsScreen() {
           ) : undefined
         }
         ListEmptyComponent={
-          result.isPending ? (
+          result.isPending && connectedTargets.length > 0 ? (
             <View className="items-center py-12">
               <ActivityIndicator colorClassName="accent-icon" />
             </View>
@@ -319,17 +325,21 @@ export function PullRequestsScreen() {
                 title={
                   result.error
                     ? "Couldn't load pull requests"
-                    : targets.length
-                      ? query
-                        ? "No results"
-                        : "No matching pull requests"
-                      : "Connect an environment"
+                    : targets.length && connectedTargets.length === 0
+                      ? "Environment offline"
+                      : targets.length
+                        ? query
+                          ? "No results"
+                          : "No matching pull requests"
+                        : "Connect an environment"
                 }
                 detail={
                   result.error ??
-                  (targets.length
-                    ? "Pull requests from the selected environments' projects appear here."
-                    : "Add an environment in Settings to browse its pull requests.")
+                  (targets.length && connectedTargets.length === 0
+                    ? "Reconnect to load pull requests that aren't saved on this device."
+                    : targets.length
+                      ? "Pull requests from the selected environments' projects appear here."
+                      : "Add an environment in Settings to browse its pull requests.")
                 }
                 variant="plain"
               />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { splitPullRequestBody } from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
   it("keeps a plain body as a single markdown run", () => {
@@ -139,6 +139,26 @@ describe("pull request body segmentation", () => {
 
   it("refuses a non-http source rather than making a link out of it", () => {
     const body = '<video src="javascript:alert(1)"></video>';
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body },
+    ]);
+  });
+});
+
+describe("media on custom hosts", () => {
+  it.each([
+    ["https://drop.example.com/capture.PNG?token=abc#preview", "image"],
+    ["[Recording](https://drop.example.com/recording.mov)", "video"],
+    ["<https://drop.example.com/shot.webp>", "image"],
+  ])("recognizes %s without a request", (body, media) => {
+    expect(splitPullRequestBody(body)).toEqual([
+      expect.objectContaining({ kind: "attachment", media }),
+    ]);
+  });
+
+  it("keeps inline links and media examples in code as prose", () => {
+    const body =
+      "See [recording](https://drop.example.com/a.mp4) for context.\n\n```md\nhttps://drop.example.com/a.png\n```";
     expect(splitPullRequestBody(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body },
     ]);

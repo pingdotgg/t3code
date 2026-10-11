@@ -1,3 +1,4 @@
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -60,7 +61,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );
+  const connected = usePullRequestConnected(route.params.environmentId);
   const allowed =
+    connected &&
     canWrite &&
     pr?.state === "open" &&
     pr.capabilities.reviewers.request &&

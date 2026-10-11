@@ -27,6 +27,7 @@ import {
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import {
   appendPullRequestAgentPrompt,
@@ -63,7 +64,10 @@ export function usePullRequestThreads(
     setLastRelations({ key, data: relations.data });
   const threads =
     (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [];
-  const canAsk = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
+  const connected = usePullRequestConnected(params.environmentId);
+  const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
+  // Composing offline only writes a local draft. The outbox checks grants on delivery.
+  const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();
   const pending = useRef(false);
@@ -76,7 +80,7 @@ export function usePullRequestThreads(
     pending.current = true;
     setBusy(true);
     try {
-      if (!thread && !canCheckout)
+      if (connected && !thread && !canCheckout)
         throw new Error("Starting work from this PR requires source control write access.");
       await waitForComposerDraftsLoaded();
       const draftKey = thread

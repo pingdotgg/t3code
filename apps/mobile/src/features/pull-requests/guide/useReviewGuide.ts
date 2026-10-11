@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useRef, useState } from "react";
+import { usePullRequestConnected } from "../usePullRequestConnected";
 import { composerPullRequests } from "../../../state/pull-requests";
 import { useEnvironmentQuery } from "../../../state/query";
 import { serverEnvironment } from "../../../state/server";
@@ -19,9 +20,11 @@ export function useReviewGuide(params: PullRequestParams) {
   const target = pullRequestTarget(params);
   const enabled = useReviewGuidesEnabled(params);
   const query = useEnvironmentQuery(enabled ? composerPullRequests.reviewGuide(target) : null);
-  const canWrite = useAtomValue(
+  const connected = usePullRequestConnected(target.environmentId);
+  const permitted = useAtomValue(
     composerPullRequests.generateReviewGuide.permissionAtom(target.environmentId),
   );
+  const canWrite = connected && permitted;
   const generate = useAtomCommand(composerPullRequests.generateReviewGuide, {
     reportFailure: false,
   });
@@ -49,8 +52,6 @@ export function useReviewGuide(params: PullRequestParams) {
       if (result._tag === "Failure") {
         const cause = squashAtomCommandFailure(result);
         setError(cause instanceof Error ? cause.message : "Could not start the review guide.");
-      } else {
-        refresh();
       }
     } finally {
       pending.current = false;

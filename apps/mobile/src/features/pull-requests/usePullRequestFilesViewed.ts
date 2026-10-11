@@ -1,3 +1,4 @@
+import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
@@ -12,9 +13,11 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   const target = pullRequestTarget(params);
   const scopeKey = pullRequestReviewKey(params);
   const supported = Boolean(pr?.capabilities.viewedFiles);
-  const allowed = useAtomValue(
+  const permission = useAtomValue(
     composerPullRequests.setFilesViewed.permissionAtom(target.environmentId),
   );
+  const connected = usePullRequestConnected(params.environmentId);
+  const allowed = connected && permission;
   const query = useEnvironmentQuery(supported ? composerPullRequests.filesViewed(target) : null);
   const refresh = useAtomRefresh(composerPullRequests.filesViewed(target));
   const write = useAtomCommand(composerPullRequests.setFilesViewed, { reportFailure: false });

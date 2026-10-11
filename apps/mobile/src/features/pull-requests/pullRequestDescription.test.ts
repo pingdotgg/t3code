@@ -15,8 +15,8 @@ describe("PR description overview", () => {
       ],
     });
     expect(result.attachments).toEqual([
-      { uri: "https://example.com/before.png", caption: "Before" },
-      { uri: "https://example.com/after.png", caption: "After" },
+      { uri: "https://example.com/before.png", caption: "Before", kind: "image" },
+      { uri: "https://example.com/after.png", caption: "After", kind: "image" },
     ]);
     expect(result.preview).toContain("Fixes reconnects.");
     expect(result.preview).not.toContain("Duplicate");
