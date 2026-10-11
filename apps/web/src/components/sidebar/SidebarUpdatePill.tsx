@@ -154,10 +154,15 @@ async function downloadLocalUpdate(
 }
 
 /** Installs this app's downloaded update, which relaunches the app.
-    Failures toast. */
+    Failures toast. A refused install (the download is not marked ready yet)
+    leaves the restart to the user. */
 async function installLocalUpdate(bridge: DesktopBridge): Promise<void> {
   try {
     const result = await bridge.installUpdate();
+    if (!result.accepted) {
+      showDesktopUpdateDownloadedToast(bridge, result.state);
+      return;
+    }
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
