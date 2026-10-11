@@ -86,7 +86,7 @@ hold updates back while they run. Then it installs:
   (`t3 service install`). It downloads first and restarts only inside that window.
   While one release waits for the window, newer releases wait for it to install.
 
-T3 Code server restarts also wait for integrated terminal commands to finish.
+Automatic server restarts also wait for integrated terminal commands to finish.
 
 The desktop app downloads its updates in the background and installs them when
 you quit, whatever **Update automatically** is set to. Linux `.deb` updates ask for your
@@ -96,10 +96,11 @@ On macOS, quit and reopen the app to install a downloaded update before switchin
 update channels.
 
 Servers started from a terminal or with `npx` are never replaced automatically.
-A failed provider update is retried after 6 hours or when a newer version is
-published. A T3 Code release that fails to download is retried at the next hourly
-check. One that rolls back is skipped until a newer version is published. An
-update that needs newer clients waits for you to install it.
+A failed provider update is retried after 6 hours, when a newer version is
+published, or after the server restarts. A T3 Code release that fails to download
+is retried at the next hourly check. One that rolls back is skipped until a newer
+version is published. An update that needs newer clients waits for you to install
+it. While `settings.json` cannot be read, automatic updates stay off.
 
 ## Update providers
 

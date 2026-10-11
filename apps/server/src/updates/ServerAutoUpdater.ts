@@ -86,7 +86,9 @@ export const layer = Layer.effectDiscard(
           );
           if (staged.orchestrationProtocol !== ORCHESTRATION_PROTOCOL_VERSION) {
             // Without a matching protocol, connected clients could be refused after restart.
+            // Later releases keep the newer protocol, so stop downloading them.
             skippedTargets.add(targetVersion);
+            nextReleaseCheckAt = Number.POSITIVE_INFINITY;
             yield* Effect.logInfo(
               "Skipping a background update without a matching client protocol",
               {

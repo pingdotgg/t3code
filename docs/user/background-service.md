@@ -29,11 +29,11 @@ to pick up the new version. Wait for any remote update already in progress
 before updating; to match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
-Pass an exact version (`t3 update 0.0.42`) to pin one, `--channel nightly` to
-switch trains, or `--allow-downgrade` to move backwards. `preview` is a
-maintainers' test train: its builds can be broken and are never offered as
-updates, so the installer and `t3 update` ask for confirmation before
-installing one.
+Pass an exact version (`t3 update 0.0.42`) to install one (turn off **Update
+automatically** to keep it), `--channel nightly` to switch trains, or
+`--allow-downgrade` to move backwards. `preview` is a maintainers' test train:
+its builds can be broken and are never offered as updates, so the installer and
+`t3 update` ask for confirmation before installing one.
 
 `t3 uninstall` removes the background service, the `t3` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,

@@ -366,7 +366,7 @@ One-time Vercel dashboard setup:
 
 ## Server self-update release invariant
 
-Connected servers update to the client's exact version, not to an npm dist-tag. Every released
+A client that updates a connected server asks for its own exact version, not an npm dist-tag. Every released
 desktop or hosted client version must therefore have a matching `t3@<version>` package available on
 npm before users can receive that client.
 

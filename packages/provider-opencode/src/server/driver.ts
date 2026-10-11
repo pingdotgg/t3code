@@ -248,8 +248,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       );
       // A fresh read (an update about to run, or a manual refresh) re-probes, so
       // a binary replaced by the other major version gets its own package.
+      // A configured server is someone else's install; updating the local binary would not touch it.
       const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
-        !effectiveConfig.enabled
+        !effectiveConfig.enabled || effectiveConfig.serverUrl.trim().length > 0
           ? Effect.succeed(noUpdate)
           : options?.fresh === true
             ? runtimeProbe.refresh.pipe(

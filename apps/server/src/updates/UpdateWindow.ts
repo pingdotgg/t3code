@@ -8,6 +8,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
+import * as CodexInstallation from "../provider/CodexInstallation.ts";
 import * as ProviderMaintenanceCoordinator from "../provider/providerMaintenanceCommandCoordinator.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -50,12 +53,17 @@ export class UpdateWindow extends Context.Service<
 
 const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const sql = yield* SqlClient.SqlClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
   const terminals = yield* TerminalManager.TerminalManager;
+  const managedInstalls = [
+    yield* CodexInstallation.CodexInstallation,
+    yield* AntigravityInstallation.AntigravityInstallation,
+  ];
 
   /** Returns what keeps the window closed; empty means open. */
   const blockers = Effect.fn("updates.UpdateWindow.blockers")(function* (restartsServer: boolean) {
@@ -72,6 +80,8 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     );
     if (Option.isNone(activeThreadIds)) return ["active-threads"];
     if (activeThreadIds.value.length > 0) found.push("active-threads");
+    // Work a provider keeps running after its turn ends, such as background commands.
+    if (yield* sessions.hasPendingBackgroundWork) found.push("background-work");
 
     // Includes installs someone started by hand.
     const providerUpdating = (yield* providers.getProviders).some(
@@ -80,9 +90,17 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     );
     if (providerUpdating) found.push("provider-update");
     if (restartsServer && (yield* terminals.hasBusyTerminals)) found.push("terminal-work");
+    // A first install downloads inside this server, so a restart would discard it.
+    if (restartsServer) {
+      for (const installation of managedInstalls) {
+        const { phase } = yield* installation.state;
+        if (phase === "downloading" || phase === "extracting" || phase === "verifying") {
+          found.push("provider-install");
+        }
+      }
+    }
 
-    const lastInteraction = yield* backgroundPolicy.lastClientInteractionAt;
-    if (DateTime.isGreaterThan(DateTime.addDuration(lastInteraction, QUIET_PERIOD), now)) {
+    if (Duration.isLessThan(yield* backgroundPolicy.sinceLastClientInteraction, QUIET_PERIOD)) {
       found.push("recent-interaction");
     }
 
@@ -127,8 +145,14 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     if (Option.isNone(limited)) return [...found, "usage-limit-resume"];
     for (const thread of limited.value) {
       if (thread.usageLimitResetAt === null || thread.usageLimitResetAt === undefined) continue;
-      const resumesAt = DateTime.make(thread.usageLimitResetAt);
-      // A reset already past (say, a resume that keeps failing) must not block forever.
+      const resetAt = DateTime.make(thread.usageLimitResetAt);
+      // A snoozed thread resumes once both its reset and its snooze have passed.
+      const resumesAt = Option.map(resetAt, (reset) =>
+        thread.snoozedUntil != null && DateTime.isGreaterThan(thread.snoozedUntil, reset)
+          ? thread.snoozedUntil
+          : reset,
+      );
+      // A resume time already past (say, a resume that keeps failing) must not block forever.
       if (
         Option.isSome(resumesAt) &&
         DateTime.isGreaterThan(resumesAt.value, now) &&
