@@ -162,6 +162,8 @@ export function reduceDesktopUpdateStateOnDownloadFailure(
   return {
     ...state,
     status: nextStatusAfterDownloadFailure(state),
+    // A failed download leaves no installer, including a failed macOS staging.
+    downloadedVersion: null,
     message,
     downloadPercent: null,
     errorContext: "download",

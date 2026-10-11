@@ -74,7 +74,7 @@ export const layer = Layer.effectDiscard(
             targetVersion,
           });
           yield* runner
-            .updateProvider({ provider: current.driver, instanceId })
+            .updateProvider({ provider: current.driver, instanceId, quiet: true })
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Background provider update failed", { instanceId, cause }),

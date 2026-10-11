@@ -266,6 +266,7 @@ it.effect(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
           shutdown: Effect.void,
+          hasPendingBackgroundWork: Effect.succeed(false),
           open: () => Effect.die("unused open"),
           get: (providerSessionId) =>
             Effect.succeed(
