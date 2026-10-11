@@ -286,7 +286,11 @@ function layerRegistry(
  */
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly borrowers?: { current: number } },
+  options?: {
+    readonly external?: boolean;
+    readonly borrowers?: { current: number };
+    readonly replayGate?: ProviderReplayGate;
+  },
 ) =>
   Effect.gen(function* () {
     const adapter = yield* makeReplayAdapter(
