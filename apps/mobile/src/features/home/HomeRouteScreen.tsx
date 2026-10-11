@@ -37,7 +37,8 @@ export function HomeRouteScreen() {
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
   const columnMetrics = useNativeColumnLayoutMetrics();
   const headerWidth = nativePrimaryColumn ? (columnMetrics?.width ?? windowWidth) : windowWidth;
-  const { layout, panes } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery } =
+    useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   // Streaming turns rewrite thread shells many times a second. While a Thread
   // covers Home, rebuilding this list is invisible work.
@@ -49,7 +50,12 @@ export function HomeRouteScreen() {
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [localSearchQuery, setLocalSearchQuery] = useState("");
+  // Android's controlled fields share search text across compact/split remounts.
+  // Keep iOS search local because its native fields do not restore text from this state.
+  const searchQuery = Platform.OS === "android" ? primarySidebarSearchQuery : localSearchQuery;
+  const setSearchQuery =
+    Platform.OS === "android" ? setPrimarySidebarSearchQuery : setLocalSearchQuery;
   const handleSelectThread = useHomeThreadSelection();
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -107,10 +113,13 @@ export function HomeRouteScreen() {
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const { options: listOptions, setSelectedEnvironmentId } =
-    useHomeListOptions(availableEnvironmentIds);
+  const {
+    options: listOptions,
+    setSelectedEnvironmentId,
+    setSelectedProjectKey,
+  } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const selectedProjectKey = listOptions.selectedProjectKey;
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -130,7 +139,7 @@ export function HomeRouteScreen() {
     ) {
       setSelectedProjectKey(null);
     }
-  }, [projectFilterOptions, selectedProjectKey]);
+  }, [projectFilterOptions, selectedProjectKey, setSelectedProjectKey]);
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
