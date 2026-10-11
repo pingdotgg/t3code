@@ -120,8 +120,8 @@ const DONE_STATUS_LABEL: StatusLabel = {
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
 
-// A waiting row stays grey like the receded row around it; the icon names
-// the kind of work it waits on, as in the thread's work log.
+// A waiting row stays grey like the plain "Waiting" label; the icon names the
+// kind of work it waits on, as in the thread's work log.
 const WAITING_ICON_BY_KIND: Record<WaitingRowStatus["kind"], AppSymbolName> = {
   subagent: { ios: "sparkles", android: "auto_awesome" },
   command: "terminal",
@@ -134,7 +134,7 @@ function waitingStatusLabel(status: WaitingRowStatus): StatusLabel {
     label: status.label,
     icon: WAITING_ICON_BY_KIND[status.kind],
     className: "text-foreground-muted",
-    iconTintClassName: "accent-icon-muted",
+    iconTintClassName: "accent-foreground-muted",
   };
 }
 
@@ -658,11 +658,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const waitingStatus =
     status === "waiting" ? presentWaitingRowStatus(thread.pendingBackgroundTasks) : null;
   const statusLabel =
+    // The detailed label wins; the plain "Waiting" covers rosters without named work.
+    (waitingStatus ? waitingStatusLabel(waitingStatus) : undefined) ??
     // A native /goal keeps the agent going across turns until it is met.
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ??
-    (waitingStatus ? waitingStatusLabel(waitingStatus) : undefined) ??
     (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   // The timestamp is precomputed on the list item (same stamps the settled
