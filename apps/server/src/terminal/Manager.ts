@@ -220,6 +220,9 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
 
+    /** True while a terminal starts, runs a command, or its last subprocess poll failed. */
+    readonly hasBusyTerminals: Effect.Effect<boolean>;
+
     /**
      * Subscribe to terminal runtime events with a direct callback.
      *
@@ -2436,6 +2439,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
+  // A failed inspection leaves cached activity stale, so busy checks distrust it.
+  let lastSubprocessPollSucceeded = true;
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
     const state = yield* readManagerState;
     const runningSessions = [...state.sessions.values()].filter(
@@ -2464,6 +2469,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (Option.isNone(inspectorOption)) {
+      lastSubprocessPollSucceeded = false;
       return false;
     }
 
@@ -2486,6 +2492,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
 
       if (Option.isNone(inspectResult)) {
+        lastSubprocessPollSucceeded = false;
         return;
       }
 
@@ -2532,6 +2539,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
+    // `snapshotSucceeded` only drives backoff: the ps fallback still reads a fresh table.
+    lastSubprocessPollSucceeded = true;
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
       concurrency: "unbounded",
       discard: true,
@@ -3198,6 +3207,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const hasBusyTerminals: TerminalManager["Service"]["hasBusyTerminals"] = readManagerState.pipe(
+    Effect.map((state) =>
+      [...state.sessions.values()].some(
+        (session) =>
+          session.status === "starting" ||
+          (session.status === "running" &&
+            (session.hasRunningSubprocess || !lastSubprocessPollSucceeded)),
+      ),
+    ),
+  );
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -3208,6 +3228,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     restart,
     close,
     closeIdle,
+    hasBusyTerminals,
     subscribe,
     subscribeMetadata,
   });

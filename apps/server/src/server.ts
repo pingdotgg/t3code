@@ -162,6 +162,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAutoUpdater from "./updates/ProviderAutoUpdater.ts";
+import * as ServerAutoUpdater from "./updates/ServerAutoUpdater.ts";
 import * as UpdateWindow from "./updates/UpdateWindow.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -726,6 +727,10 @@ const layerMakeRoutes = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+  ),
+  // Shares the routes' ServerSelfUpdate, so a manual and a background update never overlap.
+  ServerAutoUpdater.layer.pipe(
+    Layer.provide(UpdateWindow.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients

@@ -72,17 +72,30 @@ update can roll back to the previous version. If the update still fails:
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
-## Update providers
+## Automatic updates
 
-**Settings → General → Update automatically** is on by default. With
-**Provider update checks** also on, each environment installs provider CLI
-updates in the background once no thread is running or waiting for you, no
-agent is still running background work, no client has been used for 15 minutes,
-and no scheduled task or usage-limit resume is due within 5 minutes. Tasks
-repeating more often than every 15 minutes only hold updates back while they
-run. A failed update is retried after 6 hours, when a newer version is
-published, or after the server restarts. While `settings.json` cannot be read,
-automatic updates stay off.
+**Settings → General → Update automatically** is on by default. Each environment
+waits until no thread is running or waiting for you, no background work is pending,
+no client has been used for 15 minutes, and no scheduled task or usage-limit resume
+is due within 5 minutes. Tasks that repeat more often than every 15 minutes only
+hold updates back while they run. Then it installs:
+
+- provider CLI updates that have a one-click update, when **Provider update
+  checks** is also on;
+- the newest T3 Code release on its channel, when it runs as a background service
+  (`t3 service install`). It downloads first and restarts only inside that window.
+  While one release waits for the window, newer releases wait for it to install.
+
+Automatic server restarts also wait for integrated terminal commands to finish.
+
+Servers started from a terminal or with `npx` are never replaced automatically.
+A failed provider update is retried after 6 hours, when a newer version is
+published, or after the server restarts. A T3 Code release that fails to download
+is retried at the next hourly check. One that rolls back is skipped until a newer
+version is published. An update that needs newer clients waits for you to install
+it. While `settings.json` cannot be read, automatic updates stay off.
+
+## Update providers
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment

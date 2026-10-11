@@ -55,7 +55,7 @@ const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 const RELEASE_INDEX_MAX_PAGES = 10;
 
 /** Asks GitHub for the newest published version on a channel, page by page. */
-const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
+export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
