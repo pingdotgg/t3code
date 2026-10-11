@@ -223,6 +223,9 @@ export const make = Effect.gen(function* () {
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
+    getDiffFileContents: (input) =>
+      cli.getMergeRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+
     // What each marked file is at the head, which is what tells a mark that still stands from one
     // the branch has moved past. GitLab's own local-storage marks are keyed on the blob id too,
     // so this stales at the same moment its web UI would.
