@@ -8,6 +8,7 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillAgents } from "./SkillAgents";
+import { TruncatedText } from "./TruncatedText";
 import {
   SOURCE_GROUP_PREVIEW,
   skillAvailability,
@@ -71,11 +72,14 @@ const SkillListItem = memo(function SkillListItem({
           >
             {row.name}
           </span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {lockedOff
-              ? "Turned off in the agent's own settings."
-              : row.description || "No description yet."}
-          </span>
+          <TruncatedText
+            className="text-xs text-muted-foreground"
+            text={
+              lockedOff
+                ? "Turned off in the agent's own settings."
+                : row.description || "No description yet."
+            }
+          />
         </button>
         <span className="flex shrink-0 items-center gap-2">
           {overridden ? (

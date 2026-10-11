@@ -26,6 +26,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TruncatedText } from "./TruncatedText";
 
 /** A source this big gets a filter above its list. */
 const FILTER_FROM = 8;
@@ -245,9 +246,10 @@ export function AddSkillsDialog({
                             <span className="block truncate text-sm font-medium">
                               {skill.folder}
                             </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {skill.description || "No description."}
-                            </span>
+                            <TruncatedText
+                              className="text-xs text-muted-foreground"
+                              text={skill.description || "No description."}
+                            />
                           </span>
                           {skill.scripts ? (
                             <Tooltip>
