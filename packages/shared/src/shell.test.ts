@@ -47,7 +47,11 @@ describe("readPathFromLoginShell", () => {
       (
         file: string,
         args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
+        options: {
+          encoding: "utf8";
+          timeout: number;
+          killSignal?: NodeJS.Signals | number;
+        },
       ) => string
     >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
 
@@ -55,7 +59,15 @@ describe("readPathFromLoginShell", () => {
     expect(execFile).toHaveBeenCalledTimes(1);
 
     const firstCall = execFile.mock.calls[0] as
-      | [string, ReadonlyArray<string>, { encoding: "utf8"; timeout: number }]
+      | [
+          string,
+          ReadonlyArray<string>,
+          {
+            encoding: "utf8";
+            timeout: number;
+            killSignal?: NodeJS.Signals | number;
+          },
+        ]
       | undefined;
     expect(firstCall).toBeDefined();
     if (!firstCall) {
@@ -69,7 +81,7 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+    expect(options).toEqual({ encoding: "utf8", timeout: 5000, killSignal: "SIGKILL" });
   });
 });
 
