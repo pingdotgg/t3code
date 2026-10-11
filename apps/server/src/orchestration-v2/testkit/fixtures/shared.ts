@@ -250,6 +250,11 @@ export type OrchestratorFixtureInputStep =
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly targetRunIndex: number;
+      /**
+       * The target's reply already finished, as a client that still lists it
+       * running would send: steer without waiting for it to be steerable.
+       */
+      readonly targetReplyFinished?: true;
     }
   | {
       readonly type: "restart";
@@ -767,11 +772,13 @@ export function materializeFixtureInput(input: {
           break;
         case "steer":
           messageIndex += 1;
-          steps.push({
-            type: "await_run_steerable",
-            threadId: ids.threadId,
-            runId: runIdFor(step.targetRunIndex),
-          });
+          if (step.targetReplyFinished !== true) {
+            steps.push({
+              type: "await_run_steerable",
+              threadId: ids.threadId,
+              runId: runIdFor(step.targetRunIndex),
+            });
+          }
           pushDispatch(
             dispatchMessageCommand({
               commandId: yield* idAllocator.allocate.command({

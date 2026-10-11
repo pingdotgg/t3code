@@ -6,6 +6,7 @@ import {
   assertBaseProjection,
   assertExecutionNodeKinds,
   assertNoExtraAppRunsForProviderChildren,
+  assertTurnItemTypeSequence,
   assertTurnItemTypes,
   projectionFor,
 } from "../shared.ts";
@@ -79,7 +80,18 @@ export function assertGrokSubagentLineageOutput(
       ),
       "the native child session must fork from the parent provider turn",
     );
-    assertTurnItemTypes(child, ["user_message", "assistant_message"]);
+    // The server child runs a tool before its Task result names its session:
+    // that call still lands in the child thread, in order, with its result.
+    if (expected.sessionId === EXPECTED_CHILDREN[0].sessionId) {
+      assertTurnItemTypeSequence(child, ["user_message", "assistant_message", "dynamic_tool"]);
+      const tool = child.turnItems.find((item) => item.type === "dynamic_tool");
+      assert.deepEqual(tool?.type === "dynamic_tool" ? tool.input : null, {
+        command: "ls apps/server/src",
+      });
+      assert.equal(tool?.status, "completed");
+    } else {
+      assertTurnItemTypeSequence(child, ["user_message", "assistant_message"]);
+    }
     const assistant = child.messages.find((message) => message.role === "assistant");
     assert.isDefined(assistant);
     assert.include(assistant.text, expected.first);
