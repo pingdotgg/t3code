@@ -176,6 +176,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       shaping and validation when this is absent. */
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  /** Server atomically unlinks a stack through thread.pull-request.unlink's wholeStack option. */
+  threadPullRequestStackUnlink: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pull-request.watch and wakes agents on pull request changes. */
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),

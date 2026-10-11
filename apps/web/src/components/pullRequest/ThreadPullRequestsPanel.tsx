@@ -84,13 +84,15 @@ function LinkRow({
   projectId,
   speedMode,
   onUnlink,
+  canUnlinkStack,
   onSetWatching,
 }: {
   line: PullRequestListLine;
   threadRef: ScopedThreadRef;
   projectId: ProjectId | null;
   speedMode: boolean;
-  onUnlink: (link: ThreadPullRequestLink) => void;
+  onUnlink: (link: ThreadPullRequestLink, wholeStack?: boolean) => void;
+  canUnlinkStack: boolean;
   /** Null when the environment cannot watch pull requests. */
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
 }) {
@@ -319,6 +321,12 @@ function LinkRow({
               <PullRequestGlyph.unlink className="size-3.5" />
               {link.source === "stack" ? "Dismiss from thread" : "Unlink from thread"}
             </MenuItem>
+            {stack && canUnlinkStack ? (
+              <MenuItem onClick={() => onUnlink(link, true)}>
+                <PullRequestGlyph.unlink className="size-3.5" />
+                Unlink stack from thread
+              </MenuItem>
+            ) : null}
           </MenuPopup>
         </Menu>
       </span>
@@ -359,10 +367,11 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
+  const supportsStackUnlink = capabilities?.threadPullRequestStackUnlink === true;
   const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
   const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
   const handleUnlink = useCallback(
-    (link: ThreadPullRequestLink) => {
+    (link: ThreadPullRequestLink, wholeStack = false) => {
       void unlink({
         environmentId: threadRef.environmentId,
         input: {
@@ -370,6 +379,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           host: link.host,
           repository: link.repository,
           number: link.number,
+          ...(wholeStack ? { wholeStack: true } : {}),
         },
       });
     },
@@ -438,6 +448,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               }
               speedMode={speedMode}
               onUnlink={handleUnlink}
+              canUnlinkStack={supportsStackUnlink}
               onSetWatching={supportsWatch ? handleSetWatching : null}
             />
           ))}
