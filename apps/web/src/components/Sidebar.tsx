@@ -174,6 +174,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
@@ -4865,6 +4866,21 @@ export default function Sidebar() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
+  const navigateToAdjacentThread = useCallback(
+    (direction: "previous" | "next") => {
+      const targetThreadKey = resolveAdjacentThreadId({
+        threadIds: orderedThreadKeys,
+        currentThreadId: routeThreadKey,
+        direction,
+      });
+      if (!targetThreadKey) return false;
+      const targetThread = threadByKey.get(targetThreadKey);
+      if (!targetThread) return false;
+      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      return true;
+    },
+    [navigateToThread, orderedThreadKeys, routeThreadKey, threadByKey],
+  );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
@@ -4891,13 +4907,10 @@ export default function Sidebar() {
       };
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
-        navigateToThreadKey(
-          resolveAdjacentThreadId({
-            threadIds: orderedThreadKeys,
-            currentThreadId: routeThreadKey,
-            direction: traversalDirection,
-          }),
-        );
+        if (navigateToAdjacentThread(traversalDirection)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         return;
       }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
@@ -4908,10 +4921,10 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     keybindings,
+    navigateToAdjacentThread,
     navigateToThread,
     orderedThreadKeys,
     routeTerminalOpen,
-    routeThreadKey,
     threadByKey,
   ]);
 
@@ -4977,6 +4990,7 @@ export default function Sidebar() {
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
+      {isElectron && <DesktopThreadSwipeNavigation navigate={navigateToAdjacentThread} />}
       <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
