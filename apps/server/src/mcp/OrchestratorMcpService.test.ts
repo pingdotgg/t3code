@@ -1366,6 +1366,108 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("re-probes a driver-only target's instances once before refusing it", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: claudeDriver,
+        providerInstanceId: claudeInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the diff.",
+        title: null,
+        model: "claude-opus-5-5",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const healthy = providerSnapshot({
+        instanceId: claudeInstanceId,
+        driver: claudeDriver,
+        model: "claude-opus-5-5",
+      });
+      const timedOut: ServerProvider = {
+        ...healthy,
+        status: "error",
+        message:
+          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+      };
+      const codex = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      // The cache still holds a startup probe timeout; a re-probe reports `probeSucceeds`.
+      let probeSucceeds = false;
+      const probed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+      const dispatched = yield* Ref.make(0);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId ? parentProjection([task]) : childProjection,
+            ),
+          dispatch: () =>
+            Ref.update(dispatched, (count) => count + 1).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([codex, timedOut]),
+          refreshInstance: (instanceId) =>
+            Ref.update(probed, (ids) => [...ids, instanceId]).pipe(
+              Effect.as([codex, probeSucceeds ? healthy : timedOut]),
+            ),
+        }),
+        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const delegate = (clientRequestId: string) =>
+          service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: { driverKind: claudeDriver },
+            mode: "async",
+            clientRequestId,
+          });
+
+        const error = yield* delegate("delegate-driver-recheck-1").pipe(Effect.flip);
+        assert.equal(error.code, "provider_unavailable");
+        assert.deepStrictEqual(yield* Ref.get(probed), [claudeInstanceId]);
+        assert.equal(yield* Ref.get(dispatched), 0);
+
+        probeSucceeds = true;
+        const result = yield* delegate("delegate-driver-recheck-2");
+        assert.equal(result.providerInstanceId, claudeInstanceId);
+        assert.deepStrictEqual(yield* Ref.get(probed), [claudeInstanceId, claudeInstanceId]);
+        assert.equal(yield* Ref.get(dispatched), 1);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
     () =>

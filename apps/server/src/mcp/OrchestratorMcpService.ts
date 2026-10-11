@@ -1102,23 +1102,35 @@ const make = Effect.gen(function* () {
   /**
    * Provider snapshots only re-probe while a client is in the foreground, so an
    * unattended agent can see a provider as unavailable after it was fixed.
-   * Re-probe the requested instance once before refusing it.
+   * Re-probe the requested instance (or, for a driver-only target, each enabled
+   * and installed instance of that driver) once before refusing it.
    */
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
-    const instanceId =
+    const requestedDriver = input.target?.driverKind;
+    const requestedInstanceId =
       input.target?.providerInstanceId ??
-      (input.target?.driverKind === undefined
-        ? input.parent.thread.modelSelection.instanceId
-        : undefined);
+      (requestedDriver === undefined ? input.parent.thread.modelSelection.instanceId : undefined);
+    const instanceIds =
+      requestedInstanceId === undefined
+        ? input.providers
+            .filter(
+              (provider) =>
+                provider.driver === requestedDriver && provider.enabled && provider.installed,
+            )
+            .map((provider) => provider.instanceId)
+        : [requestedInstanceId];
     const resolved = resolveTarget(input);
-    if (instanceId === undefined) return resolved;
+    if (instanceIds.length === 0) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable",
         () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+          // Each refresh returns the whole registry, so the last one carries every re-probe.
+          Effect.forEach(instanceIds, providerRegistry.refreshInstance).pipe(
+            Effect.flatMap((snapshots) =>
+              resolveTarget({ ...input, providers: snapshots.at(-1) ?? input.providers }),
+            ),
+          ),
       ),
     );
   };
