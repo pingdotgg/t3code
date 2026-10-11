@@ -126,6 +126,7 @@ import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
   formatModelSlugName,
+  resolveModelPick,
   resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -10799,14 +10800,18 @@ export default function ChatView(props: ChatViewProps) {
       }
       // Restore this model's own remembered options; without any, start it
       // from its default rather than carrying the previous model's over.
-      const rememberedOptions =
+      const nextModelSelection = resolveModelPick(
+        composerRef.current?.getSendContext().selectedModelSelection,
+        instanceId,
+        resolvedModel,
         useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
           resolvedModel
-        ];
-      const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-          : { instanceId, model: resolvedModel };
+        ],
+      );
+      if (!nextModelSelection) {
+        if (options?.focusComposer !== false) scheduleComposerFocus();
+        return;
+      }
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,
@@ -10837,6 +10842,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeThread,
       activeRuntime,
+      composerRef,
       lockedProvider,
       supportsProviderSwitchingViaHandoff,
       scheduleComposerFocus,

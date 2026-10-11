@@ -4,7 +4,7 @@ import {
   type ProviderInstanceId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, resolveModelPick } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -173,8 +173,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     search: { environmentId: representative.environmentId, instanceId },
                   });
               }}
+              // Re-picking the current model still writes it, which pins an
+              // automatic default and unifies a mixed scope without losing traits.
               onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
+                setModel(resolveModelPick(selection, instanceId, model) ?? selection)
               }
             />
             {!mixedModel ? (
