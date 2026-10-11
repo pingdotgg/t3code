@@ -101,6 +101,15 @@ export class DesktopUpdateChannelPersistenceError extends Schema.TaggedError<Des
   }
 }
 
+export class DesktopUpdateChannelStagedError extends Schema.TaggedError<DesktopUpdateChannelStagedError>()(
+  "DesktopUpdateChannelStagedError",
+  { requestedChannel: DesktopUpdateChannelSchema },
+) {
+  override get message(): string {
+    return "Install the downloaded update by quitting and reopening the app before changing channels on macOS.";
+  }
+}
+
 export class DesktopUpdatePollerError extends Schema.TaggedError<DesktopUpdatePollerError>()(
   "DesktopUpdatePollerError",
   {
@@ -154,6 +163,7 @@ export type DesktopUpdateConfigureError = never;
 export const DesktopUpdateSetChannelError = Schema.Union([
   DesktopUpdateActionInProgressError,
   DesktopUpdateChannelPersistenceError,
+  DesktopUpdateChannelStagedError,
 ]);
 export type DesktopUpdateSetChannelError = typeof DesktopUpdateSetChannelError.Type;
 
@@ -289,6 +299,9 @@ export const make = Effect.gen(function* () {
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  const failedBackgroundDownloadRef = yield* Ref.make<string | null>(null);
+  // Native macOS staging cannot be cancelled once Squirrel has the download.
+  const nativeUpdateStagedRef = yield* Ref.make(false);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -468,6 +481,18 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    // A failed download leaves nothing to install on quit: electron-updater drops
+    // the previous installer, and on macOS update-downloaded fires before Squirrel
+    // stages the download, so a later failure means nothing was staged.
+    const stagedBefore = yield* Ref.get(nativeUpdateStagedRef);
+    const releaseFailedDownload = Effect.all(
+      [
+        Ref.set(nativeUpdateStagedRef, stagedBefore),
+        electronUpdater.setAutoInstallOnAppQuit(false),
+      ],
+      { discard: true },
+    );
+
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
@@ -480,6 +505,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
           function* (error) {
+            yield* releaseFailedDownload;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
             );
@@ -502,6 +528,7 @@ export const make = Effect.gen(function* () {
         }
         const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
         return Effect.gen(function* () {
+          yield* releaseFailedDownload;
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
@@ -515,6 +542,23 @@ export const make = Effect.gen(function* () {
       Effect.ensuring(finishUpdateAction("download")),
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+
+  // Updates the background pollers find download on their own; a check someone
+  // started keeps its Download button. A failed download waits for a newer release.
+  // A downloaded update installs on quit, so the pollers leave it alone: a new
+  // download would discard its installer, and the next launch finds newer releases.
+  const checkAndDownloadInBackground = Effect.fn("desktop.updates.checkAndDownloadInBackground")(
+    function* (reason: "startup" | "poll") {
+      if ((yield* Ref.get(updateStateRef)).downloadedVersion !== null) return;
+      if (!(yield* checkForUpdates(reason)) || (yield* Ref.get(desktopState.quitting))) return;
+      const version = (yield* Ref.get(updateStateRef)).availableVersion;
+      if (version === null || version === (yield* Ref.get(failedBackgroundDownloadRef))) return;
+      const result = yield* downloadAvailableUpdate;
+      if (result.accepted && !result.completed) {
+        yield* Ref.set(failedBackgroundDownloadRef, version);
+      }
+    },
+  );
 
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
@@ -704,7 +748,7 @@ export const make = Effect.gen(function* () {
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
-      Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(checkAndDownloadInBackground("startup")),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -718,7 +762,7 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(checkAndDownloadInBackground("poll")),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -870,10 +914,31 @@ export const make = Effect.gen(function* () {
   const handleUpdateDownloaded = Effect.fn("desktop.updates.handleUpdateDownloaded")(function* (
     raw: unknown,
   ) {
+    // Keep this prelude synchronous: MacUpdater checks the flag immediately
+    // after emitting this event, before it hands the download to Squirrel.
+    yield* electronUpdater.setAutoInstallOnAppQuit(false);
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
           const state = yield* Ref.get(updateStateRef);
+          const action = yield* activeUpdateAction;
+          if (
+            resolveDefaultDesktopUpdateChannel(info.version) !== state.channel ||
+            (Option.isSome(action) && action.value === "channel")
+          ) {
+            yield* logUpdaterInfo("ignoring download outside the selected update channel", {
+              version: info.version,
+              channel: state.channel,
+            });
+            return;
+          }
+          if (environment.platform === "darwin") {
+            yield* Ref.set(nativeUpdateStagedRef, true);
+          }
+          // Installing a .deb asks for a password, which must not appear on quit.
+          if (!isDebPackage) {
+            yield* electronUpdater.setAutoInstallOnAppQuit(true);
+          }
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),
@@ -986,6 +1051,10 @@ export const make = Effect.gen(function* () {
           return state;
         }
 
+        if (yield* Ref.get(nativeUpdateStagedRef)) {
+          return yield* new DesktopUpdateChannelStagedError({ requestedChannel: nextChannel });
+        }
+
         yield* desktopSettings
           .setUpdateChannel(nextChannel)
           .pipe(
@@ -994,6 +1063,7 @@ export const make = Effect.gen(function* () {
             ),
           );
 
+        yield* electronUpdater.setAutoInstallOnAppQuit(false);
         const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
 

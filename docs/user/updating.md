@@ -88,6 +88,13 @@ hold updates back while they run. Then it installs:
 
 Automatic server restarts also wait for integrated terminal commands to finish.
 
+The desktop app downloads its updates in the background and installs them when
+you quit, whatever **Update automatically** is set to. Linux `.deb` updates ask for your
+password, so they wait for you to choose **Install**.
+The app stays open while you work, including when it hosts multiple backends.
+On macOS, quit and reopen the app to install a downloaded update before switching
+update channels.
+
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours, when a newer version is
 published, or after the server restarts. A T3 Code release that fails to download
