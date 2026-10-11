@@ -229,6 +229,10 @@ export function FontFamilyPicker({
               <LegendList<string>
                 ref={listRef}
                 data={items}
+                // Rows are memoized by item, but Base UI highlights and selects
+                // virtualized rows by index. Re-render them when filtering moves
+                // a surviving item to a new index.
+                extraData={items}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}
