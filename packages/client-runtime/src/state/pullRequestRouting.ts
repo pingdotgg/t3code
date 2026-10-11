@@ -2,6 +2,7 @@ import {
   WS_METHODS,
   PullRequestRef,
   PullRequestInvalidateInput,
+  PullRequestState,
   type EnvironmentId,
   type PullRequestRoutingResult,
   type PullRequestRoutingIdentityResult,
@@ -57,6 +58,7 @@ const writes = new Set<string>([
   WS_METHODS.pullRequestsSetLabels,
 ]);
 const isRef = Schema.is(PullRequestRef);
+const hasState = Schema.is(Schema.Struct({ state: PullRequestState }));
 const isInvalidation = Schema.is(PullRequestInvalidateInput);
 const readTimeout = (environmentId: EnvironmentId) =>
   Effect.timeoutOrElse({
@@ -208,6 +210,21 @@ const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(functi
   );
 });
 
+/**
+ * The origin owns the threads linked to this pull request, but a routed read never reaches it.
+ * Tell it which state the read saw so it checks again. Best effort, and never holds up the read.
+ */
+const reportState = (
+  { allowStale: _allowStale, expectedAccountId: _expectedAccountId, ...reference }: PullRequestRef,
+  state: PullRequestState,
+) =>
+  request(WS_METHODS.pullRequestsReportState, { reference, state }).pipe(
+    Effect.timeoutOption("5 seconds"),
+    Effect.ignore,
+    Effect.forkDetach,
+    Effect.asVoid,
+  );
+
 /** Credentials stay on their environments. Only a verified host and account cross the wire. */
 export function createPullRequestRouter() {
   const routedRequest = Effect.fn("PullRequestRouting.request")(function* <
@@ -356,6 +373,11 @@ export function createPullRequestRouter() {
         ? guardedSource
         : registry.run(id, request(tag, routedInput))
       ).pipe(
+        Effect.tap((result) =>
+          id !== origin.target.environmentId && hasState(result)
+            ? reportState(ref, result.state)
+            : Effect.void,
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const entry = used.get(refKey) ?? {

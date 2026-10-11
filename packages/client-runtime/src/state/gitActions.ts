@@ -65,9 +65,8 @@ export function buildMenuItems(
   const canCreatePr =
     !isBusy &&
     hasBranch &&
-    !hasChanges &&
     !hasOpenPr &&
-    gitStatus.aheadCount > 0 &&
+    (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
@@ -292,13 +291,10 @@ export function getGitActionDisabledReason(input: {
   if (!hasBranch) {
     return "Detached HEAD: checkout a branch before creating a PR.";
   }
-  if (hasChanges) {
-    return "Commit local changes before creating a PR.";
-  }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
     return 'Add an "origin" remote before creating a PR.';
   }
-  if (!isAhead) {
+  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
     return "No local commits to include in a PR.";
   }
   if (isBehind) {

@@ -1895,8 +1895,8 @@ code {
   color: var(--info-foreground);
 }
 
-.chat-markdown a:not(.chat-markdown-file-link):hover,
-.chat-markdown a:not(.chat-markdown-file-link):focus-visible {
+.chat-markdown a:not(.chat-markdown-file-link, [data-markdown-image-link]):hover,
+.chat-markdown a:not(.chat-markdown-file-link, [data-markdown-image-link]):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
   background-position: left bottom;
   background-repeat: repeat-x;
@@ -1958,6 +1958,8 @@ code {
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--contrast-border);
   border-radius: 0.375rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);

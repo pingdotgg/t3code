@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
     "./server/AzureDevOpsCli": {
       "types": "./src/server/AzureDevOpsCli.ts",
       "import": "./src/server/AzureDevOpsCli.ts"

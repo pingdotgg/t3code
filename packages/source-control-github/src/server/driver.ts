@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * The GitHub driver: repository operations and discovery through `gh` and git, and pull requests
  * through the GitHub REST and GraphQL APIs.
@@ -11,7 +12,7 @@ import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
 export const driver = defineSourceControlDriver({
-  kind: "github",
+  kind: SourceControlProviderKind.make("github"),
   make: Effect.all({
     sourceControl: GitHubSourceControlProvider.make,
     discovery: GitHubSourceControlProvider.makeDiscovery,

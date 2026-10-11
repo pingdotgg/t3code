@@ -41,6 +41,7 @@ const workspaceFiles = [
   "packages/source-control-bitbucket/package.json",
   "packages/source-control-core/package.json",
   "packages/source-control-forgejo/package.json",
+  "packages/source-control-gitcafe/package.json",
   "packages/source-control-github/package.json",
   "packages/source-control-gitlab/package.json",
   "packages/source-control-testing/package.json",

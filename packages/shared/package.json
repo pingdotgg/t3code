@@ -311,6 +311,10 @@
       "types": "./src/nodeRuntime.ts",
       "import": "./src/nodeRuntime.ts"
     },
+    "./AgentScope": {
+      "types": "./src/AgentScope.ts",
+      "import": "./src/AgentScope.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"

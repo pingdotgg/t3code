@@ -1,8 +1,10 @@
+import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import {
@@ -53,6 +55,9 @@ export interface SettingsSearchItem {
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
+  // Its row renders only where the release channel can change: the desktop
+  // app, or a hosted web build deployed with a channel.
+  readonly releaseChannelOnly?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
@@ -127,6 +132,29 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
+
+/** Anchor id of a source control host's settings form on the Source Control page. */
+export function sourceControlHostSettingsSearchId(kind: string) {
+  return `source-control-host-${kind}` as const;
+}
+
+/** One result per host whose definition declares settings, searchable by its field titles. */
+const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMap((definition) =>
+  definition.settings && definition.kind !== "github"
+    ? [
+        {
+          id: sourceControlHostSettingsSearchId(definition.kind),
+          title: `${definition.label} credentials`,
+          to: "/settings/source-control" as const,
+          searchTerms: [
+            `${definition.label} ${Object.keys(definition.settings.fields).join(" ")} token credentials sign in`,
+          ],
+          environmentOnly: true,
+          scope: "environment-defaults" as const,
+        },
+      ]
+    : [],
+);
 
 /**
  * Searchable settings and stable destinations, in result order. Rows with a
@@ -521,6 +549,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "app-version",
+    title: "Version",
+    to: "/settings/general",
+    searchTerms: ["about check for updates download install upgrade release"],
+  },
+  {
+    id: "update-track",
+    title: "Update track",
+    to: "/settings/general",
+    searchTerms: ["release channel stable latest nightly prerelease"],
+    releaseChannelOnly: true,
+  },
+  {
     id: "cli-command",
     title: "t3 command",
     to: "/settings/general",
@@ -791,14 +832,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
     scope: "environment-defaults",
   },
-  {
-    id: "bitbucket-credentials",
-    title: "Bitbucket credentials",
-    to: "/settings/source-control",
-    searchTerms: ["bitbucket atlassian access token api token email credentials sign in"],
-    environmentOnly: true,
-    scope: "environment-defaults",
-  },
+  ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
   {
     id: "source-control-writing-style",
     title: "Source control writing style",
@@ -1094,6 +1128,7 @@ export function searchSettings(
   return items
     .flatMap((item, index) => {
       if (!isElectron && item.desktopOnly === true) return [];
+      if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return [];
       if (item.macOnly && !isMacPlatform(platform)) return [];
       if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
 

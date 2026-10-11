@@ -209,6 +209,12 @@ export const PullRequestComment = Schema.Struct({
   reviewState: Schema.NullOr(Schema.String),
   /** Absent from a host with no reactions at all, which is a different thing from none on this. */
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
+  canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestComment = typeof PullRequestComment.Type;
 
@@ -232,6 +238,12 @@ export const PullRequestThreadComment = Schema.Struct({
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
+  canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
@@ -257,6 +269,12 @@ export const PullRequestReviewThread = Schema.Struct({
   commentCount: Schema.optional(NonNegativeInt),
   /** Opaque cursor for the next comment page. Absent once this thread is whole. */
   nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The host's own answer to whether this reader may resolve this thread. It can only narrow the
+   * reader's repository-wide `resolve` permission, never widen it. Absent where the host
+   * doesn't say per thread.
+   */
+  canResolve: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
@@ -481,6 +499,11 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * changed on this host at all.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * This viewer may rewrite the change request's title and description. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship and merge access.
+   */
+  editChangeRequest: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -611,6 +634,11 @@ export const PullRequestProviderSummary = Schema.Struct({
   kind: SourceControlProviderKind,
   /** False where a search has to be applied to the rows after they arrive. */
   searchesOnHost: Schema.Boolean,
+  /**
+   * The actions this host can carry out, so a row can offer them before its detail is read.
+   * Absent from servers older than this field; clients then offer what they always did.
+   */
+  actions: Schema.optional(Schema.Array(PullRequestAction)),
   projectCount: PositiveInt,
   /** False when the provider's CLI or credentials are missing, with `detail` saying which. */
   configured: Schema.Boolean,
@@ -825,6 +853,17 @@ export const PullRequestInvalidateInput = Schema.Struct({
   filesViewedOnly: Schema.optional(Schema.Boolean),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
+
+/**
+ * The state a read routed to another environment saw, reported to the environment the read was
+ * for so its thread links can catch up. A hint only: that environment confirms with the host
+ * before writing anything.
+ */
+export const PullRequestReportStateInput = Schema.Struct({
+  reference: PullRequestRef,
+  state: PullRequestState,
+});
+export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
@@ -1267,38 +1306,54 @@ export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.T
  * symptom. The reason names keep their `cli-` prefix for wire compatibility; for GitHub and
  * Bitbucket they mean "no credential" and "a refused credential", not a missing tool.
  */
-const PROVIDER_REQUIREMENT: Partial<
-  Record<SourceControlProviderKind, { readonly missing: string; readonly unauthenticated: string }>
-> = {
-  github: {
-    missing:
-      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
-    unauthenticated:
-      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
-  },
-  forgejo: {
-    missing:
-      "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
-    unauthenticated:
-      "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
-  },
-  gitlab: {
-    missing:
-      "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
-    unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
-  },
-  "azure-devops": {
-    missing:
-      "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
-    unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
-  },
-  bitbucket: {
-    missing:
-      "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
-    unauthenticated:
-      "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
-  },
-};
+const PROVIDER_REQUIREMENT = new Map<
+  string,
+  { readonly missing: string; readonly unauthenticated: string }
+>([
+  [
+    "github",
+    {
+      missing:
+        "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+      unauthenticated:
+        "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    },
+  ],
+  [
+    "forgejo",
+    {
+      missing:
+        "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+      unauthenticated:
+        "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+    },
+  ],
+  [
+    "gitlab",
+    {
+      missing:
+        "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
+      unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
+    },
+  ],
+  [
+    "azure-devops",
+    {
+      missing:
+        "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
+      unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
+    },
+  ],
+  [
+    "bitbucket",
+    {
+      missing:
+        "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+      unauthenticated:
+        "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    },
+  ],
+]);
 
 /**
  * The host a project's repository is addressed below. `canonicalKey` is the normalized remote,
@@ -1360,7 +1415,7 @@ export function pullRequestProviderRequirement(
   provider: SourceControlProviderKind,
   reason: PullRequestUnavailableReason,
 ): string | null {
-  const requirement = PROVIDER_REQUIREMENT[provider];
+  const requirement = PROVIDER_REQUIREMENT.get(provider);
   if (requirement === undefined) return null;
   switch (reason) {
     case "cli-missing":
@@ -1393,7 +1448,7 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
 
   override get message(): string {
     const requirement =
-      this.provider === undefined ? undefined : PROVIDER_REQUIREMENT[this.provider];
+      this.provider === undefined ? undefined : PROVIDER_REQUIREMENT.get(this.provider);
     switch (this.reason) {
       case "cli-missing":
         return (

@@ -45,6 +45,7 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  pastedPathQueryLength,
 } from "~/composer-logic";
 import {
   collectComposerPromptInlineTokens,
@@ -90,6 +91,7 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
+import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -160,6 +162,8 @@ export interface ComposerPromptEditorProps {
   suggestionListId?: string | undefined;
   /** References the highlighted option only while its list is rendered. */
   activeSuggestionId?: string | undefined;
+  /** Reads suggestion state at paste time, including Escape dismissal. */
+  isPathQueryActive?: () => boolean;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -270,6 +274,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     >
       <FileTagChipContent
         path={path}
+        environmentId={actions.environmentId}
+        cwd={actions.cwd}
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
@@ -279,7 +285,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup side="top">{path}</TooltipPopup>
+        <TooltipPopup side="top">
+          <WorkspaceEntryTooltip
+            path={path}
+            environmentId={actions.environmentId}
+            cwd={actions.cwd}
+          />
+        </TooltipPopup>
       </Tooltip>
     </NodeViewWrapper>
   );
@@ -820,6 +832,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
+    isPathQueryActive,
     containerClassName,
     className,
     placeholderClassName,
@@ -855,6 +868,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
   const onCommandKeyDownRef = useRef(onCommandKeyDown);
+  const isPathQueryActiveRef = useRef(isPathQueryActive);
   const buildFragmentRef = useRef(buildContextClipboardFragment);
   const importFragmentRef = useRef(importContextFragment);
   const skillsRef = useRef(skills);
@@ -872,6 +886,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useEffect(() => {
     onCommandKeyDownRef.current = onCommandKeyDown;
   }, [onCommandKeyDown]);
+  useEffect(() => {
+    isPathQueryActiveRef.current = isPathQueryActive;
+  }, [isPathQueryActive]);
   useEffect(() => {
     buildFragmentRef.current = buildContextClipboardFragment;
   }, [buildContextClipboardFragment]);
@@ -1412,6 +1429,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
             if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
           }
+          const { $from } = view.state.selection;
+          const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
+          const literalLength = literalText
+            ? 0
+            : pastedPathQueryLength(lineBefore, text, isPathQueryActiveRef.current?.());
           const editorInstance = editorHolder.current;
           if (editorInstance) {
             // Inside a list item or quote, pasted block markup has nowhere to
@@ -1424,7 +1446,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             insertMarkdownParagraphs(
               text,
               skillLabelFor,
-              { styling: richText, blocks: !nested, literalText },
+              { styling: richText, blocks: !nested, literalText, literalLength },
               (content) => {
                 // Tagged on the same transaction insertContent builds, so the
                 // paste is one undo step of its own.
@@ -1815,7 +1837,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options: { styling: boolean; blocks?: boolean; literalText?: boolean },
+  options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);

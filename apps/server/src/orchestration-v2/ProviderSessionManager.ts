@@ -1,3 +1,4 @@
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -358,6 +359,7 @@ export const layerWithOptions = (
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const agentScope = yield* AgentScope;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -1139,7 +1141,13 @@ export const layerWithOptions = (
           ),
         );
 
-      const scheduleIdleReleaseInternal = (providerSessionId: ProviderSessionId) =>
+      // Provider activity restarts the pin budget, so background work that keeps
+      // reporting progress (a long Claude workflow) is never cut off; only work
+      // that went silent for maxIdlePinMs is released.
+      const scheduleIdleReleaseInternal = (
+        providerSessionId: ProviderSessionId,
+        options?: { readonly providerActivity?: boolean },
+      ) =>
         Effect.gen(function* () {
           const key = sessionKey(providerSessionId);
           const current = yield* Ref.get(sessions);
@@ -1166,6 +1174,7 @@ export const layerWithOptions = (
               idleGeneration: generation,
               idleFiber,
               lastActivityAtMs,
+              ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
             });
             return updated;
           });
@@ -1174,7 +1183,10 @@ export const layerWithOptions = (
       const scheduleIdleRelease = (providerSessionId: ProviderSessionId) =>
         withActivityError(providerSessionId, scheduleIdleReleaseInternal(providerSessionId));
 
-      const touchActivity = (providerSessionId: ProviderSessionId) =>
+      const touchActivity = (
+        providerSessionId: ProviderSessionId,
+        options?: { readonly providerActivity?: boolean },
+      ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
@@ -1191,7 +1203,7 @@ export const layerWithOptions = (
               });
               return updated;
             });
-            yield* scheduleIdleReleaseInternal(providerSessionId);
+            yield* scheduleIdleReleaseInternal(providerSessionId, options);
           }),
         );
 
@@ -1895,7 +1907,7 @@ export const layerWithOptions = (
                     event.providerThreadId,
                     event.runOrdinal,
                   )
-                : touchActivity(entry.runtime.providerSessionId),
+                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
@@ -2037,16 +2049,16 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
-                if (
-                  !existing.attachedThreadIds.has(input.threadId) &&
-                  !existing.supportsMultipleProviderThreads
-                ) {
+                const attached = existing.attachedThreadIds.has(input.threadId);
+                if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
                     providerSessionId: input.providerSessionId,
                     cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
                   });
                 }
+                // Joining a shared session is a new session for this thread.
+                if (!attached) yield* agentScope.clear(input.threadId);
                 yield* ensureThreadAttached({
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
@@ -2083,6 +2095,9 @@ export const layerWithOptions = (
                 }
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
+              // The previous session's agent scope must not explain this
+              // session's failures, even when this provider runs without one.
+              yield* agentScope.clear(input.threadId);
               const runtime = yield* adapter
                 .openSession({
                   threadId: input.threadId,

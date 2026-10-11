@@ -260,10 +260,11 @@ function stubDomGlobals() {
 }
 
 beforeEach(stubDomGlobals);
+// Cold transformation of the full chat dependency graph needs extra time on slower CI workers.
 beforeAll(async () => {
   Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
   ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
-}, 30_000);
+}, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -663,6 +664,77 @@ describe("MessagesTimeline", () => {
         timelineIsAtEnd = isAtEnd;
         await flushFrame();
         expect(isResting).toBe(!isAtEnd);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "keeps the end in view when tool output toggles only at the end: %s",
+    async (isAtEnd) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const viewport = { scrollTop: 400, scrollHeight: 1000 };
+      const props = buildProps();
+      props.listRef.current = {
+        getState: () => ({ isAtEnd }),
+        getScrollableNode: () => viewport,
+      } as unknown as LegendListRef;
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...props}
+              timelineEntries={[
+                {
+                  id: "tool",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "tool",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Run command",
+                    tone: "tool",
+                    toolLifecycleStatus: "completed",
+                    detail: "Command output",
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        const list = renderer!.root.find(
+          (node) => node.props.ListFooterComponent !== undefined && node.props.onItemSizeChanged,
+        );
+        for (const scrollHeight of [1300, 900]) {
+          await act(() => toggle.props.onClick());
+          // The rows grow or shrink once the list measures them.
+          viewport.scrollHeight = scrollHeight;
+          await flushFrame();
+          expect(viewport.scrollTop).toBe(isAtEnd ? scrollHeight : 400);
+          // Tool output that renders late is pinned before the next frame.
+          viewport.scrollHeight = scrollHeight + 200;
+          await act(() => list.props.onItemSizeChanged());
+          expect(viewport.scrollTop).toBe(isAtEnd ? scrollHeight + 200 : 400);
+          await flushFrame();
+          await flushFrame();
+          viewport.scrollTop = 400;
+        }
       } finally {
         await act(() => renderer?.unmount());
       }
@@ -1470,6 +1542,7 @@ describe("MessagesTimeline", () => {
       attemptOrdinal: 1,
       rootNodeId: "node-attempt-1" as never,
       status: "superseded" as const,
+      completedAt: null,
     };
     const activeAttempt = {
       id: "attempt-2" as never,
@@ -1477,6 +1550,7 @@ describe("MessagesTimeline", () => {
       attemptOrdinal: 2,
       rootNodeId: "node-attempt-2" as never,
       status: "running" as const,
+      completedAt: null,
     };
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1525,7 +1599,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-superseded-attempt-id="attempt-1"');
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain("Superseded attempt");
-    expect(markup).toContain("Partial output retained");
+    expect(markup).toContain("Cut off by a steer");
     expect(markup).toContain("Current response remains visible");
     expect(markup).not.toContain("Partial response from the old attempt");
   });

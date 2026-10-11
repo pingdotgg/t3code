@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
     "./server/diffFileRevisions": {
       "types": "./src/server/diffFileRevisions.ts",
       "import": "./src/server/diffFileRevisions.ts"

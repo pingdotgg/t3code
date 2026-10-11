@@ -200,7 +200,16 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
         thread: { id: childThreadId },
-        runs: [{ id: RunId.make("run:mcp-restart-child"), ordinal: 1, status: "cancelled" }],
+        runs: [
+          {
+            id: RunId.make("run:mcp-restart-child"),
+            ordinal: 1,
+            status: "cancelled",
+            delegatedTaskId: taskId,
+          },
+          // An unrelated later run cannot supply this follow-up's result.
+          { id: RunId.make("run:mcp-restart-later"), ordinal: 2, status: "running" },
+        ],
         contextTransfers: [],
         messages: [],
         subagents: [],

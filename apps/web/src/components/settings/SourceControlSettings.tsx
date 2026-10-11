@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
-  SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
@@ -46,17 +45,8 @@ import {
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-import {
-  AzureDevOpsIcon,
-  BitbucketIcon,
-  GitHubIcon,
-  GitIcon,
-  GitLabIcon,
-  ForgejoIcon,
-  JujutsuIcon,
-  type Icon,
-} from "../Icons";
-import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
+import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
+import { SourceControlHostSettings } from "./SourceControlHostSettings";
 import { GitHubAccountSettings } from "./GitHubAccountSettings";
 import { GitHubTokenSettings } from "./GitHubTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -69,20 +59,14 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlIcon } from "~/sourceControlPresentation";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
   sourceControlProviders: [],
-};
-
-const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, Icon>> = {
-  github: GitHubIcon,
-  gitlab: GitLabIcon,
-  forgejo: ForgejoIcon,
-  "azure-devops": AzureDevOpsIcon,
-  bitbucket: BitbucketIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
@@ -183,8 +167,9 @@ function SourceControlItemMark({
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
 }) {
   const dotClassName = itemStatusDot(item);
+  const host = isProviderDiscoveryItem(item) ? sourceControlClients.find(item.kind) : undefined;
   const Icon = isProviderDiscoveryItem(item)
-    ? SOURCE_CONTROL_PROVIDER_ICONS[item.kind]
+    ? host && sourceControlIcon(host)
     : VCS_ICONS[item.kind];
 
   if (!Icon) {
@@ -293,8 +278,7 @@ function DiscoveryItemRow({
   useEffect(() => {
     if (
       (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
-      (item.kind === "bitbucket" &&
-        searchTargetId === searchableSetting("bitbucket-credentials").id) ||
+      searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
       (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id)
     ) {
       setIsExpanded(true);
@@ -542,6 +526,22 @@ export function SourceControlSettingsPanel() {
   const handleScan = () => {
     discovery.refresh();
   };
+  /** The host's own settings form, for a host whose definition declares settings. */
+  const hostSettingsPanel = (kind: string) => {
+    const definition = sourceControlClients.find(kind);
+    if (!definition?.settings || environmentId === null) return undefined;
+    return (
+      <SettingsSearchTarget id={sourceControlHostSettingsSearchId(kind)}>
+        <SourceControlHostSettings
+          // Drafts belong to one environment; switching must not carry them over.
+          key={environmentId}
+          environmentId={environmentId}
+          definition={{ ...definition, settings: definition.settings }}
+          onSaved={handleScan}
+        />
+      </SettingsSearchTarget>
+    );
+  };
   const scanButton = (
     <Tooltip>
       <TooltipTrigger
@@ -606,16 +606,7 @@ export function SourceControlSettingsPanel() {
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {item.kind === "bitbucket" ? (
-                    <SettingsSearchTarget id={searchableSetting("bitbucket-credentials").id}>
-                      <BitbucketCredentialsSettings
-                        // Drafts belong to one environment; switching must not carry them over.
-                        key={environmentId}
-                        environmentId={environmentId}
-                        onSaved={handleScan}
-                      />
-                    </SettingsSearchTarget>
-                  ) : item.kind === "github" ? (
+                  {item.kind === "github" ? (
                     <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
                       <div className="grid gap-6">
                         {/* Shown even without gh: a saved token is how GitHub works without the CLI. */}
@@ -634,7 +625,9 @@ export function SourceControlSettingsPanel() {
                         ) : null}
                       </div>
                     </SettingsSearchTarget>
-                  ) : undefined}
+                  ) : (
+                    hostSettingsPanel(item.kind)
+                  )}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>

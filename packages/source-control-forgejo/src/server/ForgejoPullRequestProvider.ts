@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -32,12 +33,13 @@ import {
   forgejoChecks,
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   viewedFiles: "environment",
   comment: true,
-  actions: ["merge", "close", "reopen", "update-branch"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
   search: false,
@@ -67,7 +69,7 @@ export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
-      provider: "forgejo",
+      provider: SourceControlProviderKind.make("forgejo"),
       operation,
       reason: "failed",
       detail,
@@ -78,7 +80,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (error) =>
           new PullRequestProviderError({
-            provider: "forgejo",
+            provider: SourceControlProviderKind.make("forgejo"),
             operation: input.path,
             detail: error.detail,
             cause: error,
@@ -203,7 +205,7 @@ export const make = Effect.gen(function* () {
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
   const provider: PullRequestProviderApi = {
-    kind: "forgejo",
+    kind: SourceControlProviderKind.make("forgejo"),
     capabilities: CAPABILITIES,
     getViewer,
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
