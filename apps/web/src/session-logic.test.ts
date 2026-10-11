@@ -301,6 +301,55 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
+  it("offers no rewind when the previous run left no checkpoint", () => {
+    const message = (ordinal: number): ChatMessage => ({
+      id: MessageId.make(`message-${ordinal}`),
+      role: "user",
+      text: `Prompt ${ordinal}`,
+      runId: RunId.make(`run-${ordinal}`),
+      inputIntent: "turn_start",
+      streaming: false,
+      createdAt: `2026-06-20T00:00:0${ordinal}.000Z`,
+      updatedAt: `2026-06-20T00:00:0${ordinal}.000Z`,
+    });
+    const checkpoint = (ordinal: number) => ({
+      runId: RunId.make(`run-${ordinal}`),
+      checkpointTurnCount: ordinal,
+      checkpointRef: `checkpoint-run-${ordinal}` as never,
+      status: "ready" as const,
+      files: [],
+      assistantMessageId: null,
+      completedAt: `2026-06-20T00:00:0${ordinal}.500Z`,
+    });
+    // Run 2 was cancelled before doing any work, so it has no checkpoint.
+    const timelineEntries: TimelineEntry[] = [1, 3, 4].map((ordinal): TimelineEntry => {
+      const entry = message(ordinal);
+      return { id: entry.id, kind: "message", createdAt: entry.createdAt, message: entry };
+    });
+
+    const targets = deriveRevertTurnCountByUserMessageId({
+      timelineEntries,
+      checkpoints: [checkpoint(1), checkpoint(3), checkpoint(4)],
+    });
+
+    expect([...targets]).toEqual([
+      [MessageId.make("message-1"), 0],
+      [MessageId.make("message-4"), 3],
+    ]);
+
+    // A history window that starts at run 3 cannot tell whether run 2 has a
+    // checkpoint, even when an older run's checkpoint is loaded.
+    const windowedTargets = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: timelineEntries.slice(1),
+      checkpoints: [checkpoint(1), checkpoint(3), checkpoint(4)],
+    });
+
+    expect([...windowedTargets]).toEqual([
+      [MessageId.make("message-3"), 2],
+      [MessageId.make("message-4"), 3],
+    ]);
+  });
+
   it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");
