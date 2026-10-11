@@ -186,8 +186,8 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
     async (entries: readonly EnvironmentPullRequestEntry[]) => {
       const batch = entries.filter((entry) => {
         const key = pullRequestEntryKey(entry);
-        if (entry.state !== "open" || entry.provider !== "github" || pending.current.has(key))
-          return false;
+        // The sweep only gathers rows whose host can close them, so state is all that is left.
+        if (entry.state !== "open" || pending.current.has(key)) return false;
         pending.current.add(key);
         return true;
       });

@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -1400,6 +1401,50 @@ it.layer(
     }),
   );
 
+  it.effect("coalesces live history writes while retaining the latest output on close", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<string>();
+      const output = yield* Queue.unbounded<string>();
+      const trackedFileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (filePath, contents, options) =>
+          fs
+            .writeFileString(filePath, contents, options)
+            .pipe(
+              Effect.tap(() => (contents.length > 0 ? Queue.offer(writes, contents) : Effect.void)),
+            ),
+      });
+      const { manager, ptyAdapter } = yield* createManager(5, { processKillGraceMs: 0 }).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+      );
+      yield* manager.open(openInput());
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" ? Queue.offer(output, event.data).pipe(Effect.asVoid) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const process = ptyAdapter.processes[0]!;
+
+      process.emitData("first");
+      yield* Queue.take(output);
+      yield* TestClock.adjust("200 millis");
+      expect(yield* Queue.size(writes)).toBe(0);
+
+      process.emitData(" second");
+      yield* Queue.take(output);
+      yield* TestClock.adjust("50 millis");
+      expect(yield* Queue.take(writes)).toBe("first second");
+
+      process.emitData(" third");
+      yield* Queue.take(output);
+      const close = yield* manager.close({ threadId: "thread-1" }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("250 millis");
+      yield* Fiber.join(close);
+      expect((yield* manager.open(openInput())).history).toBe("first second third");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("caps persisted history to configured line limit", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(3);
@@ -1514,6 +1559,23 @@ it.layer(
         yield* manager.close({ threadId: "thread-1" });
         expect((yield* manager.open(openInput())).history).toBe("\uFEFFnewest\ré");
       }),
+  );
+
+  it.effect("retains plain Unicode and control characters around a split query", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const before = "café\t界🙂\u0007\u009c\u0085";
+      const after = "e\u0301\r\n";
+
+      process.emitData(before);
+      process.emitData("\u001b[5");
+      process.emitData(`n${after}`);
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect((yield* manager.open(openInput())).history).toBe(before + after);
+    }),
   );
 
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>

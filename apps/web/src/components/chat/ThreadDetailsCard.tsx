@@ -7,6 +7,7 @@ import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { useChatCanvas } from "./ChatCanvasContext";
 import {
+  THREAD_DETAILS_CARD_GAP,
   resolveThreadDetailsCardDensity,
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
@@ -45,6 +46,7 @@ export function ThreadDetailsCard({
       })
     : null;
   const mode = placement ? "inline" : "popover";
+  const topInset = canvas?.detailsCardTopInset ?? 0;
   const inlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
   );
@@ -137,17 +139,38 @@ export function ThreadDetailsCard({
     <Popover
       handle={handle}
       open={mode === "popover" && popoverOpen}
-      onOpenChange={(open) =>
-        useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open)
-      }
+      onOpenChange={(open, details) => {
+        // The find bar sits beside the card, so clicking or focusing it does not
+        // dismiss the card. Escape still does.
+        const target =
+          details.reason === "focus-out"
+            ? (details.event as FocusEvent).relatedTarget
+            : details.reason === "outside-press"
+              ? details.event.target
+              : null;
+        if (!open && target instanceof Element && target.closest("[data-thread-find-bar]")) {
+          details.cancel();
+          return;
+        }
+        useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
+      }}
     >
       {placement ? (
         inlineOpen ? (
           <aside
             aria-label="Thread details"
-            className="absolute z-20"
+            // Slides down to make room for the find bar, but returns in the same frame
+            // the bar closes: a floating preview below moves up at once and would
+            // otherwise overlap the card mid-slide.
+            className={cn(
+              "absolute z-20",
+              topInset > 0 &&
+                "transition-[top] duration-150 ease-out motion-reduce:transition-none",
+            )}
             style={{
-              left: placement.x,
+              // Anchored to the right edge like the find bar, so both follow a resizing
+              // canvas in the same frame instead of waiting for its next measurement.
+              right: placement.right,
               top: placement.y,
               width: placement.width,
               maxHeight: height,
@@ -162,10 +185,11 @@ export function ThreadDetailsCard({
         <PopoverPopup
           anchor={anchor}
           align="end"
-          alignOffset={0}
+          // Lines the card up with the find bar: the panel pads its card by 8px.
+          alignOffset={THREAD_DETAILS_CARD_GAP - 8}
           collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
           side="bottom"
-          sideOffset={0}
+          sideOffset={topInset}
           variant="panel"
           padding="none"
         >

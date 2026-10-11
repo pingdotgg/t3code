@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +25,8 @@ import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHub
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
+import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
+import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
@@ -126,6 +129,10 @@ function makeRegistry(input: {
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(GitCafeApi.GitCafeApi)({}),
+        Layer.mock(GitCafeCredentials.GitCafeCredentials)({
+          cliEnv: () => Effect.succeed({}),
+        }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -152,7 +159,7 @@ it.effect("routes directly by provider kind for remote-first workflows", () =>
       remotes: [],
     });
 
-    const provider = yield* registry.get("github");
+    const provider = yield* registry.get(SourceControlProviderKind.make("github"));
 
     assert.strictEqual(provider.kind, "github");
   }),
@@ -161,7 +168,7 @@ it.effect("routes directly by provider kind for remote-first workflows", () =>
 it.effect("includes the request cwd when an unregistered provider is used", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({ remotes: [] });
-    const provider = yield* registry.get("unknown");
+    const provider = yield* registry.get(SourceControlProviderKind.make("unknown"));
 
     const error = yield* provider
       .getChangeRequest({ cwd: "/repo", reference: "#42" })
@@ -255,7 +262,7 @@ it.effect("refines the caller-selected remote instead of choosing another config
       cwd: "/repo",
       context: {
         provider: {
-          kind: "unknown",
+          kind: SourceControlProviderKind.make("unknown"),
           name: "self-hosted.example.test",
           baseUrl: "https://self-hosted.example.test",
         },
@@ -410,7 +417,7 @@ it.effect.each([
       },
     });
     const handle = yield* registry.resolveHandle({ cwd: "/repo" });
-    assert.strictEqual(handle.provider.kind, scenario.expected);
+    assert.strictEqual(handle.provider.kind, SourceControlProviderKind.make(scenario.expected));
     assert.strictEqual(handle.context?.provider.baseUrl, "https://code.example.test");
     assert.deepStrictEqual(hosts, ["code.example.test"]);
     // Recognition goes through the credential layer; gh is only one of its sources.
@@ -435,7 +442,7 @@ it.effect("skips GitHub discovery for the identity resolver's empty base URL", (
       },
     });
     const context = {
-      provider: { kind: "unknown" as const, name: "Unknown", baseUrl: "" },
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
       remoteName: "origin",
       remoteUrl,
     };

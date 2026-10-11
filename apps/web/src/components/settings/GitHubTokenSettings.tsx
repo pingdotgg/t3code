@@ -3,6 +3,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { readGitHubSettings } from "@t3tools/client-runtime/source-control-clients";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
@@ -28,7 +29,7 @@ export function GitHubTokenSettings({
   readonly environmentId: EnvironmentId;
   readonly onSaved: () => void;
 }) {
-  const tokens = useEnvironmentSettings(environmentId, (settings) => settings.github.tokens);
+  const { tokens } = useEnvironmentSettings(environmentId, readGitHubSettings);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save GitHub token",
   });
@@ -46,7 +47,10 @@ export function GitHubTokenSettings({
     try {
       const result = await updateSettings({
         environmentId,
-        input: { patch: { github: { tokens: { [target]: token } } } },
+        // The map travels whole: every other saved token as its redaction marker, which keeps it.
+        input: {
+          patch: { sourceControlHosts: { github: { tokens: { ...tokens, [target]: token } } } },
+        },
       });
       if (result._tag === "Success") {
         setDraft("");

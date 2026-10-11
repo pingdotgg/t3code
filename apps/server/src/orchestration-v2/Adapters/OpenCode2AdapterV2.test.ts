@@ -79,8 +79,11 @@ const mcpRules = [
   { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+/** The thread's title, which the recorded session already carries. */
+const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
+  title: TITLE,
   permissions: t3Rules,
   projectID: "global",
   model: { id: "big-pickle", providerID: "opencode", variant: "default" },
@@ -226,7 +229,7 @@ const turnInput = (
   modelSelection: ModelSelection = bigPickle,
   runtimeMode: "full-access" | "approval-required" = "full-access",
 ) => ({
-  appThread: {} as OrchestrationV2AppThread,
+  appThread: { title: TITLE } as OrchestrationV2AppThread,
   threadId,
   runId: RunId.make("run:opencode2-adapter"),
   runOrdinal: 1,
@@ -433,6 +436,66 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("creates the session with the thread's title, so OpenCode generates none", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+        ...opening,
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions: t3Rules,
+          title: "Check whether 391 is prime",
+        }),
+        replyData("session.create", sessionInfo({ title: "Check whether 391 is prime" })),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const thread = yield* runtime.ensureThread({
+        threadId,
+        title: "  Check whether 391 is prime ",
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        appThread: { title: "Check whether 391 is prime" } as OrchestrationV2AppThread,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("renames the session before the first turn after the thread was renamed", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.update", { sessionID: SESSION, title: "Prime factors of 391" }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Renamed once: the next turn under the same title sends no update.
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const renamed = {
+        ...turnInput(thread),
+        appThread: { title: "Prime factors of 391" } as OrchestrationV2AppThread,
+      };
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(renamed);
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...renamed,
+        runId: RunId.make("run:opencode2-adapter:2"),
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+      });
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends a turn on the provider thread it started on", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -631,6 +694,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ...turnInput(thread),
     appThread: {
       id: threadId,
+      title: TITLE,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2AppThread,
   });
@@ -886,6 +950,199 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The follow-up execution OpenCode will start for the report is still to come.
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  /** A `subagent` call's result while its subagent runs on (`session.tool.success` is at version 2). */
+  const returnedRunning = (id: string): ProviderReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      type: "sdk.event",
+      event: {
+        id: `evt_toolsuccess_${id}`,
+        created: 1,
+        type: "session.tool.success",
+        data: {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id,
+          content: [{ type: "text", text: "The subagent is working in the background." }],
+          metadata: { sessionID: CHILD, status: "running" },
+          executed: true,
+        },
+        durable: { aggregateID: SESSION, seq: 1, version: 2 },
+      },
+    },
+  });
+  /** The model calls the subagent again by its session; the tool returns while it runs on. */
+  const callAgain = (input: Record<string, unknown>): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+    return [
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Again", prompt: "also this", sessionID: CHILD, ...input },
+        executed: false,
+      }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: CHILD, status: "running" },
+      }),
+      // A session called again gets the thread's rules.
+      out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+      reply("session.update", null),
+      returnedRunning(tool.id),
+    ];
+  };
+  const childReport = (inboxID: string, text: string) =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      sessionID: SESSION,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+          description: "Sleep",
+          metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
+        },
+        delivery: "steer",
+      },
+    });
+  /** The subagent rows by title, the thread's background roster and the child's turns, as emitted. */
+  const watchCalls = (
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    thread: OrchestrationV2ProviderThread,
+  ) =>
+    Effect.gen(function* () {
+      const calls = new Map<string, { status: string; result: string | null }>();
+      const childTurns = new Map<string, string>();
+      const callsAtChildTurnStart = new Map<
+        string,
+        Record<string, { status: string; result: string | null }>
+      >();
+      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      let wake = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "subagent.updated" && event.subagent.title !== null) {
+              calls.set(event.subagent.title, {
+                status: event.subagent.status,
+                result: event.subagent.result,
+              });
+            }
+            if (event.type === "provider_thread.updated" && event.providerThread.id === thread.id) {
+              state.roster = event.providerThread.pendingBackgroundTasks;
+            }
+            const id =
+              event.type === "provider_turn.updated"
+                ? event.providerTurn.nativeTurnRef?.nativeId
+                : undefined;
+            if (
+              event.type === "provider_turn.updated" &&
+              id?.startsWith(`${CHILD}:turn:`) === true
+            ) {
+              if (!childTurns.has(id)) {
+                callsAtChildTurnStart.set(id, Object.fromEntries(calls));
+              }
+              childTurns.set(id, event.providerTurn.status);
+            }
+            yield* Deferred.succeed(wake, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const until = (check: () => boolean): Effect.Effect<void> =>
+        Effect.suspend(() => {
+          if (check()) return Effect.void;
+          return Effect.gen(function* () {
+            wake = yield* Deferred.make<void>();
+            if (check()) return;
+            yield* Deferred.await(wake);
+            yield* until(check);
+          });
+        });
+      return { calls, callsAtChildTurnStart, childTurns, state, until };
+    });
+  const launchedAndRunning = [
+    ...backgroundLaunch(CHILD),
+    returnedRunning("call-background"),
+    event("session.execution.started", { sessionID: CHILD }),
+  ];
+
+  it.effect("settles every call that joined a running subagent with its one report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // OpenCode steers the running subagent and joins its run: one report answers both calls.
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Again")?.status === "completed" &&
+          watch.calls.get("Sleep")?.status === "completed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(Object.fromEntries(watch.calls), {
+        Sleep: { status: "completed", result: "CHILD_OK" },
+        Again: { status: "completed", result: "CHILD_OK" },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a foreground call that joined a background run for that run's report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // Without `background`, the call joins the run in the background all the same.
+        ...callAgain({}),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Again")?.status === "completed" &&
+          watch.calls.get("Sleep")?.status === "completed" &&
+          watch.state.roster?.length === 0,
+      );
+      // Not settled empty when the turn that made it ended.
+      assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "CHILD_OK" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a call to a finished subagent for its own run's report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        // Called again after it ended but before its report: the call starts a new run.
+        ...callAgain({ background: true }),
+        childReport("msg_report_1", "FIRST_OK"),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "SECOND_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      // The new run's turn starts after the first report was handled.
+      yield* watch.until(() => watch.childTurns.has(`${CHILD}:turn:2`));
+      assert.deepEqual(watch.callsAtChildTurnStart.get(`${CHILD}:turn:2`), {
+        Sleep: { status: "completed", result: "FIRST_OK" },
+        Again: { status: "running", result: null },
+      });
+      yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
+      assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
     }).pipe(Effect.scoped),
   );
 

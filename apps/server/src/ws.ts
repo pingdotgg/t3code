@@ -2518,6 +2518,7 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setThreadResolution(input)),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
           withPullRequestViewer(input, pullRequests.setReaction(input)),
+        [WS_METHODS.pullRequestsReportState]: (input) => pullRequests.reportState(input),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
           pullRequests.invalidate(input, { notifyReaders: true }).pipe(
             // A reader asking for fresh host state also wants the thread badges it feeds to
@@ -2680,6 +2681,7 @@ const layerWsRpc = (
             ),
           ),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(
