@@ -9,6 +9,7 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
@@ -31,6 +32,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 function ChatRouteGlobalShortcuts() {
+  const { unsettleLastThread } = useThreadActions();
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
@@ -83,6 +85,13 @@ function ChatRouteGlobalShortcuts() {
       });
 
       if (isCommandPaletteOpen()) {
+        return;
+      }
+
+      if (command === "thread.unsettleLast") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) void unsettleLastThread();
         return;
       }
 
@@ -209,6 +218,7 @@ function ChatRouteGlobalShortcuts() {
     startScratchThread,
     legacySidebarEnabled,
     terminalOpen,
+    unsettleLastThread,
   ]);
 
   return null;

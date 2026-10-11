@@ -1588,7 +1588,7 @@ export default function ChatView(props: ChatViewProps) {
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, unsettleLastThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -8079,6 +8079,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.unsettleLast") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) void unsettleLastThread();
+        return;
+      }
+
       if (command === "thread.pin") {
         if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
         event.preventDefault();
@@ -8364,6 +8371,7 @@ export default function ChatView(props: ChatViewProps) {
     confirmAndUnpinThread,
     copyActiveThreadReference,
     getShortcutContext,
+    unsettleLastThread,
     openThreadFind,
     closeThreadFind,
     isThreadFindActive,
