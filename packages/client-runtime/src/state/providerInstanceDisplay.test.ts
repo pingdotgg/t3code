@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   normalizeProviderAccentColor,
   providerInstanceInitials,
+  resolveProviderInstanceAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
@@ -132,5 +133,35 @@ describe("shouldShowInstanceBadge", () => {
     const entry = { driverKind: codex, accentColor: undefined };
     const other = { driverKind: claude, accentColor: undefined };
     expect(shouldShowInstanceBadge(entry, [entry, other])).toBe(false);
+  });
+});
+
+describe("resolveProviderInstanceAccentColor", () => {
+  const snapshot = (instanceId: string, accentColor?: string) => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver: codex,
+    accentColor,
+  });
+
+  it("prefers a valid explicit color", () => {
+    expect(resolveProviderInstanceAccentColor(snapshot("codex_personal", "#112233"))).toBe(
+      "#112233",
+    );
+  });
+
+  it("leaves the default instance unset", () => {
+    expect(resolveProviderInstanceAccentColor(snapshot("codex"))).toBeUndefined();
+  });
+
+  it("auto-assigns a stable color to non-default instances", () => {
+    const first = resolveProviderInstanceAccentColor(snapshot("codex_personal"));
+    expect(first).toMatch(/^#[0-9a-f]{6}$/u);
+    expect(resolveProviderInstanceAccentColor(snapshot("codex_personal"))).toBe(first);
+  });
+
+  it("falls back to the auto color when the explicit one is invalid", () => {
+    expect(resolveProviderInstanceAccentColor(snapshot("codex_personal", "blue"))).toBe(
+      resolveProviderInstanceAccentColor(snapshot("codex_personal")),
+    );
   });
 });

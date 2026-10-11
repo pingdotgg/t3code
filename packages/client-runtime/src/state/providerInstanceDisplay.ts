@@ -71,6 +71,46 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
 }
 
 /**
+ * Palette for auto-assigned accent colors. All readable under the badge's
+ * white text (each at least 4.5:1 contrast).
+ */
+const AUTO_ACCENT_PALETTE = [
+  "#6e40c9",
+  "#1a73e8",
+  "#0b7a5f",
+  "#b45309",
+  "#c2410c",
+  "#be185d",
+  "#0e7490",
+  "#4d7c0f",
+] as const;
+
+/** FNV-1a, so the same instance id always lands on the same palette slot. */
+function hashSlug(slug: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < slug.length; index++) {
+    hash ^= slug.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Resolve an instance's accent color: the user's explicit `#rrggbb` choice
+ * when valid, else a stable palette color derived from the instance id for
+ * non-default instances (so "Codex" and "Codex Personal" look different
+ * without any setup), else unset for the default instance.
+ */
+export function resolveProviderInstanceAccentColor(
+  snapshot: Pick<ServerProvider, "instanceId" | "driver" | "accentColor">,
+): string | undefined {
+  const explicit = normalizeProviderAccentColor(snapshot.accentColor);
+  if (explicit) return explicit;
+  if (snapshot.instanceId === defaultInstanceIdForDriver(snapshot.driver)) return undefined;
+  return AUTO_ACCENT_PALETTE[hashSlug(snapshot.instanceId) % AUTO_ACCENT_PALETTE.length];
+}
+
+/**
  * Whether an instance's icon carries the account badge: accent color set, or
  * several instances sharing a provider so the brand glyph alone is ambiguous.
  * ACP agents have distinct glyphs even though they share the registry driver.
