@@ -27,6 +27,7 @@ const buttonVariants = cva(
         "icon-sm": "size-8 sm:size-7",
         "icon-xl":
           "size-11 sm:size-10 [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
+        "icon-circle-xs": "size-6 rounded-full before:rounded-full p-0",
         "icon-xs":
           "size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 px-[calc(--spacing(3.5)-1px)] sm:h-9",
@@ -47,6 +48,14 @@ const buttonVariants = cva(
           "border-input bg-popover not-dark:bg-clip-padding text-destructive-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-destructive/32 [:hover,[data-pressed]]:bg-destructive/4",
         ghost:
           "[--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent",
+        "ghost-error":
+          "[--control-icon-color:currentColor] border-transparent text-error-foreground [:hover,[data-pressed]]:bg-destructive/10",
+        "ghost-warning":
+          "[--control-icon-color:currentColor] border-transparent text-warning-foreground [:hover,[data-pressed]]:bg-warning/10",
+        "ghost-error-icon":
+          "[--control-icon-color:currentColor] border-transparent text-destructive [:hover,[data-pressed]]:bg-destructive/10",
+        "ghost-warning-icon":
+          "[--control-icon-color:currentColor] border-transparent text-warning [:hover,[data-pressed]]:bg-warning/10",
         "ghost-muted":
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
         "ghost-destructive":

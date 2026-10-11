@@ -54,6 +54,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import { useChatWarningDismissals } from "../../chatWarningDismissals";
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import {
@@ -2191,6 +2192,8 @@ export function GeneralSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  const [warningDismissals, setWarningDismissals] = useChatWarningDismissals();
+  const dismissedWarningIds = warningDismissals.permanent;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
@@ -2911,6 +2914,26 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("dismissed-warnings")}
+          description={
+            dismissedWarningIds.length === 0
+              ? `Warnings hidden with "Don't show again" will appear here.`
+              : `${dismissedWarningIds.length} ${
+                  dismissedWarningIds.length === 1 ? "warning" : "warnings"
+                } hidden with "Don't show again".`
+          }
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={dismissedWarningIds.length === 0}
+              onClick={() => setWarningDismissals((current) => ({ ...current, permanent: [] }))}
+            >
+              Restore all
+            </Button>
+          }
+        />
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped

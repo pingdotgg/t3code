@@ -407,6 +407,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
   environmentServerConfigsAtom,
+  environmentServerRunIdAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   serverEnvironment,
@@ -471,17 +472,11 @@ import {
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import {
-  getProviderStatusBannerKey,
-  ProviderStatusBanner,
-  shouldShowProviderStatusBanner,
-} from "./chat/ProviderStatusBanner";
-import {
-  dismissThreadErrorBannerForSession,
-  getThreadErrorBannerKey,
-  isThreadErrorBannerDismissedForSession,
-  shouldShowThreadErrorBanner,
-  ThreadErrorBanner,
-} from "./chat/ThreadErrorBanner";
+  resolveProviderChatWarning,
+  resolveThreadErrorChatWarning,
+  type ChatWarning,
+} from "./chat/ChatWarningIndicator";
+import { useChatWarningDismissals } from "../chatWarningDismissals";
 import {
   QueuedRunsControl,
   type QueuedRunsControlHandle,
@@ -1775,6 +1770,9 @@ export default function ChatView(props: ChatViewProps) {
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
+  const warningEnvironmentId =
+    serverThread?.environmentId ?? draftThread?.environmentId ?? environmentId;
+  const serverRunId = useAtomValue(environmentServerRunIdAtom(warningEnvironmentId));
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -2179,24 +2177,40 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  // Dismissals can only mask the shown error, never clear it: a server thread
-  // keeps its error in session.lastError, so clearing the local shadow would
-  // just fall through to the persisted one. Mask the current error until a
-  // different error arrives, mirroring the provider status banner.
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
-  const visibleThreadError = shouldShowThreadErrorBanner(
-    routeThreadKey,
-    threadError,
-    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
-  )
-    ? threadError
-    : null;
-  // Dismissing only mutates the session-scoped mask set, which does not
-  // trigger a render on its own; setThreadError(null) can also bail when the
-  // local shadow is already empty and the banner is driven purely by
-  // session.lastError. Bump a tick so the banner hides immediately. Mirrors
-  // the branch mismatch banner.
-  const [, setThreadErrorBannerDismissTick] = useState(0);
+  const [warningDismissals, setWarningDismissals] = useChatWarningDismissals();
+  const permanentWarningIdSet = useMemo(
+    () => new Set(warningDismissals.permanent),
+    [warningDismissals.permanent],
+  );
+  const dismissWarningsForNow = useCallback(
+    (ids: ReadonlyArray<string>) => {
+      if (!serverRunId) return;
+      // Dismissals from this environment's earlier server runs no longer apply.
+      const environmentPrefix = `${warningEnvironmentId}\u0000`;
+      const runPrefix = `${serverRunId}\u0000`;
+      setWarningDismissals((current) => ({
+        ...current,
+        temporary: [
+          ...new Set([
+            ...current.temporary.filter(
+              (id) => !id.startsWith(environmentPrefix) || id.startsWith(runPrefix),
+            ),
+            ...ids.map((id) => `${runPrefix}${id}`),
+          ]),
+        ],
+      }));
+    },
+    [serverRunId, setWarningDismissals, warningEnvironmentId],
+  );
+  const dismissWarningsForever = useCallback(
+    (ids: ReadonlyArray<string>) => {
+      setWarningDismissals((current) => ({
+        ...current,
+        permanent: [...new Set([...current.permanent, ...ids])],
+      }));
+    },
+    [setWarningDismissals],
+  );
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   // Implicit drafts follow their current project/environment, including retargets.
@@ -2263,9 +2277,16 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
     activeThreadShell?.latestRun &&
-    visibleThreadError === serverRuntime.lastError
+    threadError === serverRuntime.lastError
       ? null
-      : visibleThreadError;
+      : threadError;
+  const threadErrorWarning = resolveThreadErrorChatWarning(
+    routeThreadKey,
+    timelineThreadError,
+    localServerError === null && threadError === serverRuntime?.lastError
+      ? (serverRuntime?.lastErrorClass ?? null)
+      : null,
+  );
 
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -4210,22 +4231,30 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     setResumeCompactionPermanentlyDismissed,
   ]);
-  const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
-  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
-    string | null
-  >(null);
-  useEffect(() => {
-    if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-      setDismissedProviderStatusBannerKey(null);
-    }
-  }, [dismissedProviderStatusBannerKey, providerStatusBannerKey]);
-  const visibleProviderStatus = shouldShowProviderStatusBanner(
+  const providerStatusWarning = resolveProviderChatWarning(
+    warningEnvironmentId,
     activeProviderStatus,
-    dismissedProviderStatusBannerKey,
-  )
-    ? activeProviderStatus
-    : null;
-  const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
+  );
+  const chatWarnings = useMemo(
+    () =>
+      [threadErrorWarning, providerStatusWarning].filter(
+        (warning): warning is ChatWarning =>
+          warning !== null &&
+          !warningDismissals.temporary.some((id) =>
+            serverRunId === null
+              ? id.endsWith(`\u0000${warning.id}`)
+              : id === `${serverRunId}\u0000${warning.id}`,
+          ) &&
+          !permanentWarningIdSet.has(warning.id),
+      ),
+    [
+      permanentWarningIdSet,
+      providerStatusWarning,
+      serverRunId,
+      threadErrorWarning,
+      warningDismissals.temporary,
+    ],
+  );
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -11368,6 +11397,11 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
+            onOpenProviderSetup={openProviderSetup}
+            warnings={chatWarnings}
+            canDismissWarningsForNow={serverRunId !== null}
+            onDismissWarningsForNow={dismissWarningsForNow}
+            onDismissWarningsForever={dismissWarningsForever}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
@@ -11412,27 +11446,6 @@ export default function ChatView(props: ChatViewProps) {
                 </div>
               </div>
             ) : null}
-            {/* Banners overlay the timeline without changing its content height. */}
-            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
-              <ProviderStatusBanner
-                status={visibleProviderStatus}
-                onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
-                onOpenProviderSetup={openProviderSetup}
-              />
-              <ThreadErrorBanner
-                error={timelineThreadError}
-                errorClass={
-                  localServerError === null && visibleThreadError === serverRuntime?.lastError
-                    ? (serverRuntime?.lastErrorClass ?? null)
-                    : null
-                }
-                onDismiss={() => {
-                  setThreadError(activeThread.id, null);
-                  dismissThreadErrorBannerForSession(threadErrorBannerKey);
-                  setThreadErrorBannerDismissTick((tick) => tick + 1);
-                }}
-              />
-            </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -11532,7 +11545,7 @@ export default function ChatView(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                topFadeEnabled={!hasTimelineTopBanner}
+                topFadeEnabled
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}

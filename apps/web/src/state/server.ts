@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
+  type EnvironmentId,
   type EnvironmentTheme,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -38,6 +39,15 @@ export const updateOutdatedServer = createOutdatedServerUpdateCommand(connection
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
+});
+export const environmentServerRunIdAtom = Atom.family((environmentId: EnvironmentId) => {
+  const target = { environmentId, input: {} };
+  return Atom.make((get) => {
+    const startedAt = Option.getOrNull(
+      AsyncResult.value(get(serverEnvironment.runStartedAt(target))),
+    );
+    return startedAt === null ? null : `${environmentId}\u0000${startedAt}`;
+  }).pipe(Atom.withLabel(`web-server-run-id:${environmentId}`));
 });
 
 interface PrimaryServerState {
