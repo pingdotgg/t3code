@@ -35,6 +35,8 @@ import { assertClaudeNestedSubagentModelOutput } from "./claude_nested_subagent_
 import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/input.ts";
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
+import { assertCodexLunaReserveOutput } from "./codex_luna_reserve/codex_output.ts";
+import { codexLunaReserveInput, LUNA_RESERVE_MODEL_SELECTION } from "./codex_luna_reserve/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
@@ -209,6 +211,18 @@ import {
 } from "./shared.ts";
 
 export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixture> = [
+  {
+    name: "codex_luna_reserve",
+    buildInput: codexLunaReserveInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL("./codex_luna_reserve/codex_transcript.ndjson", import.meta.url),
+        modelSelection: LUNA_RESERVE_MODEL_SELECTION,
+        assertOutput: assertCodexLunaReserveOutput,
+      },
+    ],
+  },
   {
     name: "claude_background_subagent_after_root",
     buildInput: claudeBackgroundSubagentAfterRootInput,
