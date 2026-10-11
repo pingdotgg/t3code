@@ -10,6 +10,7 @@ import {
   type ServerSettingsPatch,
   type SkillFolderInfo,
   type SkillInstallTarget,
+  T3_MCP_SERVER_NAME,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -19,11 +20,18 @@ import {
   skillsDisabledPatch,
 } from "@t3tools/shared/agentTools";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import { AlertTriangleIcon, MoreHorizontalIcon, PlusIcon, SearchIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ChevronRightIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  SearchIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
-import { formatEnvironmentQueryError } from "../../state/query";
+import { cn } from "../../lib/utils";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -46,6 +54,7 @@ import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddSkillsDialog } from "./AddSkillsDialog";
+import { McpServerDetail } from "./McpServerDetail";
 import { McpServerDialog } from "./McpServerDialog";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillDetail } from "./SkillDetail";
@@ -54,7 +63,7 @@ import {
   useEnvironmentProviders,
   useEnvironmentSkillFolders,
 } from "./SkillEnvironments";
-import { SkillListSection, type SkillListRow } from "./SkillList";
+import { SkillListSection, type SkillListRow, stopRowClick } from "./SkillList";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -182,14 +191,19 @@ function usePersistToolsPatch() {
 export function ToolsSettings({
   tab = "skills",
   skill,
+  server,
   onTabChange,
   onOpenSkill,
+  onOpenServer,
 }: {
   readonly tab?: ToolsTab;
   /** The skill whose page is open in place of the list; the header names it. */
   readonly skill?: string;
+  /** The MCP server whose page is open in place of the list; the header names it. */
+  readonly server?: string;
   readonly onTabChange: (tab: ToolsTab) => void;
   readonly onOpenSkill: (name: string | null) => void;
+  readonly onOpenServer: (name: string | null) => void;
 }) {
   // Each tab puts these at the start of its own toolbar row.
   const tabs = (
@@ -209,7 +223,7 @@ export function ToolsSettings({
   return (
     <SettingsPageContainer>
       {tab === "mcp" ? (
-        <McpServersPanel tabs={tabs} />
+        <McpServersPanel tabs={tabs} openName={server ?? null} onOpen={onOpenServer} />
       ) : (
         <SkillsPanel tabs={tabs} openName={skill ?? null} onOpen={onOpenSkill} />
       )}
@@ -831,7 +845,15 @@ type ServerEditor =
   | { readonly mode: "add" }
   | { readonly mode: "edit"; readonly row: McpServerRow };
 
-function McpServersPanel({ tabs }: { tabs: ReactNode }) {
+function McpServersPanel({
+  tabs,
+  openName,
+  onOpen,
+}: {
+  tabs: ReactNode;
+  openName: string | null;
+  onOpen: (name: string | null) => void;
+}) {
   const { scope, target, connectedEnvironments } = useSettingsScope();
   const targets = useToolsTargets();
   const persist = usePersistToolsPatch();
@@ -928,73 +950,123 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
   const ownRows = isProjectScope ? rows.filter((row) => row.origin === "project") : rows;
   const inheritedRows = isProjectScope ? rows.filter((row) => row.origin !== "project") : [];
   const canEditServers = canWriteSettings && canManageServers && targets.length > 0;
+  // The environment's own switch is part of the server definition.
+  const canSwitchServers = isProjectScope ? canWriteSettings : canEditServers;
+  // Inherited servers are edited where they're defined, on the environment.
+  const editable = (row: McpServerRow) =>
+    canEditServers && (!isProjectScope || row.origin === "project");
+
+  const environmentId = target?.environmentId ?? null;
+  const cwd = targets.find((candidate) => candidate.environmentId === environmentId)?.cwd ?? null;
+  const isBuiltIn = openName === T3_MCP_SERVER_NAME;
+  const opened =
+    openName === null || isBuiltIn ? null : (rows.find((row) => row.name === openName) ?? null);
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4">
-        {tabs}
-        {canEditServers ? (
-          <Button size="sm" variant="outline" onClick={() => setEditor({ mode: "add" })}>
-            <PlusIcon className="size-3.5" aria-hidden />
-            Add server
-          </Button>
-        ) : null}
-      </div>
-      <SettingsSection
-        {...searchableSetting("tools-mcp-servers")}
-        // The tab already says MCP servers; a project splits its own from inherited ones.
-        title={isProjectScope ? "This project" : "MCP servers"}
-        hideTitle={!isProjectScope}
-      >
-        {isProjectScope ? null : <T3McpServerRow />}
-        {ownRows.length === 0 ? (
+      {openName !== null && environmentId !== null && (isBuiltIn || opened !== null) ? (
+        <McpServerDetail
+          key={openName}
+          name={openName}
+          row={opened}
+          environmentId={environmentId}
+          cwd={cwd}
+          canSwitch={opened !== null && canSwitchServers}
+          onEnabledChange={(enabled) => {
+            if (opened !== null) setEnabled(opened, enabled);
+          }}
+          onEdit={
+            opened !== null && editable(opened)
+              ? () => setEditor({ mode: "edit", row: opened })
+              : null
+          }
+          onRemove={opened !== null && editable(opened) ? () => setRemoving(opened) : null}
+          onReset={
+            opened !== null && opened.origin === "project-switch" ? () => resetSwitch(opened) : null
+          }
+          onBack={() => onOpen(null)}
+        />
+      ) : openName !== null ? (
+        // A link or Back to a server that isn't here (yet, or any more).
+        <SettingsSection title="MCP servers">
           <SettingsRow
-            title={isProjectScope ? "No servers just for this project" : "No servers yet"}
-            description={
-              isProjectScope
-                ? "Add one here to give only this project's agents a server, or to point a shared server at a different account."
-                : "Servers added here reach every agent, next to the servers each agent already loads from its own config."
+            title={
+              environmentSettings === undefined
+                ? "Loading servers…"
+                : `No MCP server named “${openName}” here.`
             }
           />
-        ) : (
-          ownRows.map((row) => (
-            <McpServerSettingsRow
-              key={row.name}
-              row={row}
-              // The environment's own switch is part of the server definition.
-              canSwitch={isProjectScope ? canWriteSettings : canEditServers}
-              canEdit={canEditServers}
-              onEnabledChange={(enabled) => setEnabled(row, enabled)}
-              onEdit={() => setEditor({ mode: "edit", row })}
-              onRemove={() => setRemoving(row)}
-            />
-          ))
-        )}
-      </SettingsSection>
-      {isProjectScope && inheritedRows.length > 0 ? (
-        <SettingsSection title="Inherited">
-          {inheritedRows.map((row) => (
-            <McpServerSettingsRow
-              key={row.name}
-              row={row}
-              canSwitch={canWriteSettings}
-              canEdit={false}
-              onEnabledChange={(enabled) => setEnabled(row, enabled)}
-              {...(row.origin === "project-switch" ? { onReset: () => resetSwitch(row) } : {})}
-            />
-          ))}
         </SettingsSection>
-      ) : null}
-      {!canManageServers && connectedEnvironments.length > 0 ? (
-        <p className="px-3 text-xs text-muted-foreground sm:px-4">
-          Adding or editing servers needs permission to manage providers on this environment.
-        </p>
       ) : (
-        <p className="px-3 text-xs text-muted-foreground sm:px-4">
-          Servers you add here are given to Claude, Codex, Cursor, OpenCode, Grok and other ACP
-          agents. Pi isn't supported yet. Changes apply to new sessions; use Restart agent session
-          to pick them up in an open thread.
-        </p>
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4">
+            {tabs}
+            {canEditServers ? (
+              <Button size="sm" variant="outline" onClick={() => setEditor({ mode: "add" })}>
+                <PlusIcon className="size-3.5" aria-hidden />
+                Add server
+              </Button>
+            ) : null}
+          </div>
+          <SettingsSection
+            {...searchableSetting("tools-mcp-servers")}
+            // The tab already says MCP servers; a project splits its own from inherited ones.
+            title={isProjectScope ? "This project" : "MCP servers"}
+            hideTitle={!isProjectScope}
+          >
+            {isProjectScope ? null : <T3McpServerRow onOpen={() => onOpen(T3_MCP_SERVER_NAME)} />}
+            {ownRows.length === 0 ? (
+              <SettingsRow
+                title={isProjectScope ? "No servers just for this project" : "No servers yet"}
+                description={
+                  isProjectScope
+                    ? "Add one here to give only this project's agents a server, or to point a shared server at a different account."
+                    : "Servers added here reach every agent, next to the servers each agent already loads from its own config."
+                }
+              />
+            ) : (
+              ownRows.map((row) => (
+                <McpServerSettingsRow
+                  key={row.name}
+                  row={row}
+                  canSwitch={canSwitchServers}
+                  canEdit={editable(row)}
+                  onOpen={() => onOpen(row.name)}
+                  onEnabledChange={(enabled) => setEnabled(row, enabled)}
+                  onEdit={() => setEditor({ mode: "edit", row })}
+                  onRemove={() => setRemoving(row)}
+                />
+              ))
+            )}
+          </SettingsSection>
+          {isProjectScope && inheritedRows.length > 0 ? (
+            <SettingsSection title="Inherited">
+              {inheritedRows.map((row) => (
+                <McpServerSettingsRow
+                  key={row.name}
+                  row={row}
+                  canSwitch={canSwitchServers}
+                  canEdit={false}
+                  onOpen={() => onOpen(row.name)}
+                  onEnabledChange={(enabled) => setEnabled(row, enabled)}
+                  {...(row.origin === "project-switch" ? { onReset: () => resetSwitch(row) } : {})}
+                />
+              ))}
+            </SettingsSection>
+          ) : null}
+          {!canManageServers && connectedEnvironments.length > 0 ? (
+            <p className="px-3 text-xs text-muted-foreground sm:px-4">
+              Adding, editing or inspecting servers needs permission to manage providers on this
+              environment.
+            </p>
+          ) : (
+            <p className="px-3 text-xs text-muted-foreground sm:px-4">
+              Servers you add here are given to Claude, Codex, Cursor, OpenCode, Grok and other ACP
+              agents. Pi isn't supported yet. Changes apply to new sessions; use Restart agent
+              session to pick them up in an open thread. Open a server to see its tools.
+            </p>
+          )}
+        </>
       )}
       {editor ? (
         <McpServerDialog
@@ -1036,6 +1108,10 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
               editor.mode === "edit" ? editor.row.config.enabled : true,
               editor.mode === "edit" ? editor.row.name : undefined,
             );
+            // A renamed server's page follows it to the new name.
+            if (editor.mode === "edit" && editor.row.name === openName && name !== openName) {
+              onOpen(name);
+            }
             setEditor(null);
           }}
         />
@@ -1053,7 +1129,10 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
             <Button
               variant="destructive"
               onClick={() => {
-                if (removing) remove(removing);
+                if (removing) {
+                  remove(removing);
+                  if (removing.name === openName) onOpen(null);
+                }
                 setRemoving(null);
               }}
             >
@@ -1066,30 +1145,51 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
   );
 }
 
+/** The row's name as a button, so the row opens from the keyboard too; a click bubbles to the row. */
+function OpenServerButton({ name, children }: { name: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Open ${name}`}
+      className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A server row opens the server's page; its controls keep their clicks to themselves. */
+const OPEN_ROW_CLASS = "cursor-pointer hover:bg-muted/40";
+
 /**
  * T3 Code's own server, which every session gets so agents can reach threads,
  * the browser and other T3 tools. It isn't a setting, so it can't be switched
  * off; its name is reserved (see `isValidMcpServerName`).
  */
-function T3McpServerRow() {
+function T3McpServerRow({ onOpen }: { onOpen: () => void }) {
   return (
     <SettingsRow
+      onClick={onOpen}
+      className={OPEN_ROW_CLASS}
       title={
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate">t3-code</span>
+        <OpenServerButton name={T3_MCP_SERVER_NAME}>
+          <span className="truncate">{T3_MCP_SERVER_NAME}</span>
           <Badge variant="outline" size="sm">
             Built in
           </Badge>
-        </span>
+        </OpenServerButton>
       }
       description="T3 Code's own tools: threads, tasks, the browser and devices."
       control={
-        <Tooltip>
-          <TooltipTrigger render={<span className="inline-flex" />}>
-            <Switch aria-label="t3-code server" checked disabled />
-          </TooltipTrigger>
-          <TooltipPopup side="top">Every agent session gets this server.</TooltipPopup>
-        </Tooltip>
+        <span className="flex items-center" onClick={stopRowClick}>
+          <Tooltip>
+            <TooltipTrigger render={<span className="inline-flex" />}>
+              <Switch aria-label="t3-code server" checked disabled />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Every agent session gets this server.</TooltipPopup>
+          </Tooltip>
+          <ChevronRightIcon aria-hidden className="ml-2 size-4 shrink-0 text-muted-foreground" />
+        </span>
       }
     />
   );
@@ -1099,6 +1199,7 @@ function McpServerSettingsRow({
   row,
   canSwitch,
   canEdit,
+  onOpen,
   onEnabledChange,
   onEdit,
   onRemove,
@@ -1107,6 +1208,7 @@ function McpServerSettingsRow({
   readonly row: McpServerRow;
   readonly canSwitch: boolean;
   readonly canEdit: boolean;
+  readonly onOpen: () => void;
   readonly onEnabledChange: (enabled: boolean) => void;
   readonly onEdit?: () => void;
   readonly onRemove?: () => void;
@@ -1115,8 +1217,9 @@ function McpServerSettingsRow({
   const transport = row.config.transport;
   return (
     <SettingsRow
+      onClick={onOpen}
       title={
-        <span className="flex min-w-0 items-center gap-1.5">
+        <OpenServerButton name={row.name}>
           <span className="truncate">{row.name}</span>
           <Badge variant="outline" size="sm">
             {transport.type === "stdio" ? "Command" : "URL"}
@@ -1131,14 +1234,15 @@ function McpServerSettingsRow({
               {row.config.enabled ? "On" : "Off"} for this project
             </Badge>
           ) : null}
-        </span>
+        </OpenServerButton>
       }
       description={
         <span className="break-all font-mono">{mcpServerTransportSummary(transport)}</span>
       }
-      className={row.config.enabled ? undefined : "[&_h3]:text-muted-foreground"}
+      className={cn(OPEN_ROW_CLASS, !row.config.enabled && "[&_h3]:text-muted-foreground")}
       control={
-        <>
+        // Menu items render in a portal, but React still bubbles their clicks through here.
+        <span className="flex items-center gap-2" onClick={stopRowClick}>
           {onReset ? (
             <Button size="xs" variant="ghost" onClick={onReset} disabled={!canSwitch}>
               Reset
@@ -1167,7 +1271,8 @@ function McpServerSettingsRow({
             disabled={!canSwitch}
             onCheckedChange={onEnabledChange}
           />
-        </>
+          <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        </span>
       }
     />
   );

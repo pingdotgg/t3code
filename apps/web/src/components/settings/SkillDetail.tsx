@@ -1,7 +1,7 @@
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Check, Copy } from "lucide";
 import { AlertTriangleIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useEffectEvent, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -14,6 +14,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SkillAgentIcon } from "./SkillAgents";
 import type { SkillEnvironment } from "./SkillEnvironments";
+import { useEscapeToList } from "./useEscapeToList";
 import {
   skillConflict,
   type SkillAgent,
@@ -23,33 +24,6 @@ import {
 
 // The tree and the viewer pull in the file-tree and highlighter code.
 const SkillFiles = lazy(() => import("./SkillFiles"));
-
-/**
- * Escape goes from a skill back to the list. Settings leaves the page on
- * Escape from its own window listener, so this one runs first, in the capture
- * phase. Escape inside a field, dialog or menu belongs to that control.
- */
-function useEscapeToList(onBack: () => void) {
-  const goBack = useEffectEvent((event: KeyboardEvent) => {
-    if (event.key !== "Escape" || event.defaultPrevented || event.repeat || event.isComposing)
-      return;
-    if (
-      event.target instanceof Element &&
-      event.target.closest(
-        'input,textarea,select,[contenteditable],[role="dialog"],[role="alertdialog"],[role="menu"]',
-      )
-    )
-      return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    onBack();
-  });
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => goBack(event);
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, []);
-}
 
 /**
  * One skill: what it says, which agents load it, and its files. The settings

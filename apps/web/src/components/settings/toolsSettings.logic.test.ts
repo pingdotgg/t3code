@@ -23,7 +23,22 @@ import {
   skillRowDetails,
   splitRowsBySource,
   type SkillRow,
+  validateToolsSearch,
 } from "./toolsSettings.logic";
+
+describe("validateToolsSearch", () => {
+  it("opens a skill only on the Skills tab and a server only on the MCP tab", () => {
+    expect(validateToolsSearch({ skill: "review" })).toEqual({ skill: "review" });
+    expect(validateToolsSearch({ tab: "mcp", server: "github" })).toEqual({
+      tab: "mcp",
+      server: "github",
+    });
+    // A page from the other tab, or an empty name, opens nothing.
+    expect(validateToolsSearch({ server: "github" })).toEqual({});
+    expect(validateToolsSearch({ tab: "mcp", skill: "review" })).toEqual({ tab: "mcp" });
+    expect(validateToolsSearch({ tab: "mcp", server: "" })).toEqual({ tab: "mcp" });
+  });
+});
 
 const provider = (
   instanceId: string,

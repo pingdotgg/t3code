@@ -63,5 +63,10 @@ With a project selected, servers you add belong to that project. Giving one the 
 environment server replaces it for the project, which is how to point a project at a different
 account. Inherited servers can be switched off for the project without removing them elsewhere.
 
+Open a server, including `t3-code`, to see its tools and the parameters each takes. T3 Code starts
+the server the way an agent would to ask for them, so this works for a server that's switched off
+too, and needs permission to manage providers. A URL server that wants you to sign in can't be
+listed this way; add an access token as a header instead.
+
 Claude, Codex, Cursor, OpenCode, Grok and other ACP agents get these servers. ACP agents that don't
 support URL servers only get command servers. Pi isn't supported yet.
