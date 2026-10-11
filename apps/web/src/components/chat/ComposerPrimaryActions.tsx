@@ -1,4 +1,4 @@
-import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { memo, type MouseEventHandler, type PointerEventHandler, type ReactNode } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -56,6 +56,8 @@ interface ComposerPrimaryActionsProps {
   /** The Compact chip is turned off, so the next send keeps full history. */
   keepFullHistory?: boolean;
   onToggleKeepFullHistory?: () => void;
+  /** Controls shown before the primary action. The Compact chip renders ahead of them. */
+  leadingActions?: ReactNode;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -112,6 +114,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compactBeforeSendTokens = null,
   keepFullHistory = false,
   onToggleKeepFullHistory,
+  leadingActions,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -129,6 +132,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
+  );
+  const withLeadingActions = (action: ReactNode) => (
+    <>
+      {leadingActions}
+      {action}
+    </>
   );
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
@@ -159,7 +168,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
 
   if (pendingAction) {
-    return (
+    return withLeadingActions(
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
         {canInterrupt ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
@@ -204,13 +213,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             questionIndex: pendingAction.questionIndex,
           })}
         </button>
-      </div>
+      </div>,
     );
   }
 
   if (showPlanFollowUpPrompt && (promptHasText || !canResume)) {
     if (promptHasText) {
-      return (
+      return withLeadingActions(
         <button
           type="submit"
           className={cn(messageActionPillClassName, "h-9 sm:h-8", compact ? "px-3" : "px-4")}
@@ -218,11 +227,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
-        </button>
+        </button>,
       );
     }
 
-    return (
+    return withLeadingActions(
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
         <button
           type="submit"
@@ -260,12 +269,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             </MenuItem>
           </MenuPopup>
         </Menu>
-      </div>
+      </div>,
     );
   }
 
   if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
-    return renderStopGenerationButton(false);
+    return withLeadingActions(renderStopGenerationButton(false));
   }
 
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
@@ -360,10 +369,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <TooltipPopup>{submitTooltip}</TooltipPopup>
     </Tooltip>
   );
-  if (compactTokens === null) return submit;
+  if (compactTokens === null) return withLeadingActions(submit);
 
+  // The chip's label changes width when toggled, so it leads the composer's right-aligned
+  // actions: only its own left edge moves, and the actions beside the send button stay put.
   return (
-    <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
+    <>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -393,7 +404,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
         </TooltipPopup>
       </Tooltip>
+      {leadingActions}
       {submit}
-    </div>
+    </>
   );
 });
