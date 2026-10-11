@@ -71,6 +71,24 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
 }
 
 /**
+ * Text color for initials drawn on an accent-color badge: black or white,
+ * whichever has the higher WCAG contrast against the accent, so light accents
+ * stay readable. An invalid accent keeps the white default.
+ */
+export function providerAccentForegroundColor(accentColor: string): "#000000" | "#ffffff" {
+  const hex = normalizeProviderAccentColor(accentColor);
+  if (!hex) return "#ffffff";
+  const linearChannel = (offset: number) => {
+    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
+  // Black wins when (L + 0.05) / 0.05 exceeds 1.05 / (L + 0.05).
+  return (luminance + 0.05) ** 2 > 0.0525 ? "#000000" : "#ffffff";
+}
+
+/**
  * Whether an instance's icon carries the account badge: accent color set, or
  * several instances sharing a provider so the brand glyph alone is ambiguous.
  * ACP agents have distinct glyphs even though they share the registry driver.
