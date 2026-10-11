@@ -718,13 +718,21 @@ describe("MessagesTimeline", () => {
           );
         });
         const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        const list = renderer!.root.find(
+          (node) => node.props.ListFooterComponent !== undefined && node.props.onItemSizeChanged,
+        );
         for (const scrollHeight of [1300, 900]) {
           await act(() => toggle.props.onClick());
           // The rows grow or shrink once the list measures them.
           viewport.scrollHeight = scrollHeight;
           await flushFrame();
-          await flushFrame();
           expect(viewport.scrollTop).toBe(isAtEnd ? scrollHeight : 400);
+          // Tool output that renders late is pinned before the next frame.
+          viewport.scrollHeight = scrollHeight + 200;
+          await act(() => list.props.onItemSizeChanged());
+          expect(viewport.scrollTop).toBe(isAtEnd ? scrollHeight + 200 : 400);
+          await flushFrame();
+          await flushFrame();
           viewport.scrollTop = 400;
         }
       } finally {
