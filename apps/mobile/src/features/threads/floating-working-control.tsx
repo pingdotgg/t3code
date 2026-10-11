@@ -46,7 +46,8 @@ const CONTROL_TIMING = {
   easing: Easing.out(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
-const CONTROL_SEPARATION = (16 + CONTROL_HEIGHT) / 2;
+const CONTROL_ROW_GAP = 14;
+const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
 // Both rows share the same centered anchor, so the outgoing one clears fast and
 // the incoming one waits for it to be mostly gone before it starts to show.
 const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
@@ -274,7 +275,7 @@ export function FloatingWorkingControl(props: {
 
           <AnimatedGlassView
             colorScheme={props.colorScheme}
-            glassEffectStyle="regular"
+            glassEffectStyle={{ style: props.showScrollToEnd ? "regular" : "none", animate: true }}
             isInteractive
             pointerEvents={props.showScrollToEnd ? "auto" : "none"}
             accessibilityElementsHidden={!props.showScrollToEnd}
