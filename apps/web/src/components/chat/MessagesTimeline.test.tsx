@@ -670,6 +670,75 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  it("remembers the median row size of the thread it leaves", async () => {
+    const { ChatCanvasContext } = await import("./ChatCanvasContext");
+    const { readTimelinePosition, rememberTimelinePosition } =
+      await import("./timelineScrollAnchoring");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const props = { ...buildProps(), routeThreadKey: "environment-local:measured-departure" };
+    const entries = ["short", "code-block", "medium"].map((id) => {
+      const entry = buildUserTimelineEntry(id);
+      return { ...entry, id, message: { ...entry.message, id: MessageId.make(id) } };
+    });
+    const sizes = new Map([
+      ["short", 60],
+      ["code-block", 3000],
+      ["medium", 80],
+      ["row-from-another-thread", 20],
+    ]);
+    props.listRef.current = {
+      getScrollableNode: () => null,
+      getState: () => ({ sizes }),
+    } as unknown as LegendListRef;
+    rememberTimelinePosition(props.routeThreadKey, {
+      rowId: "medium",
+      offsetWithinRow: 0,
+      scrollOffset: 0,
+      atEnd: true,
+    });
+    const canvas = {
+      container: { width: 801, height: 900 },
+      registerTimeline: () => {},
+    } as unknown as NonNullable<React.ContextType<typeof ChatCanvasContext>>;
+    const element = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      getBoundingClientRect: () => ({ top: 0, width: 800.5, height: 900 }),
+      querySelector: () => null,
+      ownerDocument: { addEventListener: () => {}, removeEventListener: () => {} },
+    };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <ChatCanvasContext value={canvas}>
+            <MessagesTimeline {...props} timelineEntries={entries} />
+          </ChatCanvasContext>,
+          {
+            createNodeMock: (node) =>
+              (node.props as { onScrollCapture?: unknown }).onScrollCapture ? element : null,
+          },
+        );
+      });
+      await act(() => renderer?.unmount());
+      renderer = undefined;
+
+      expect(readTimelinePosition(props.routeThreadKey)?.itemSize).toEqual({
+        viewportWidth: 801,
+        median: 80,
+      });
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

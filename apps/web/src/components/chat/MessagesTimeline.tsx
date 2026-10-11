@@ -181,7 +181,9 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  medianMeasuredRowSize,
   readTimelinePosition,
+  rememberTimelineItemSize,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
@@ -631,11 +633,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const canvas = useChatCanvas();
+  const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
+    null,
+  );
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
     [listIdentityKey],
   );
+  const rememberedItemSize = rememberedPosition?.itemSize;
+  const timelineReady =
+    !rememberedItemSize ||
+    timelineViewportElement !== null ||
+    !canvas ||
+    canvas.container.width > 0;
+  const estimatedItemSize =
+    rememberedItemSize && rememberedItemSize.viewportWidth === canvas?.container.width
+      ? rememberedItemSize.median
+      : 90;
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => rememberedPosition?.disclosures?.runs ?? new Set(),
   );
@@ -933,7 +949,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [restoreRowIndex, restoringThreadPosition],
   );
   useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0) return;
+    if (!timelineReady || !restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
     if (!list) return;
     if (citationRequest !== null) {
@@ -1045,11 +1061,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rememberedPosition,
     restoringThreadPosition,
     rows,
+    timelineReady,
   ]);
 
-  const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
-    null,
-  );
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1173,8 +1187,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // it is dropped first.
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
-    onContentOverflowChange?.(measureContentOverflow());
-  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
+    if (timelineReady) onContentOverflowChange?.(measureContentOverflow());
+  }, [
+    cancelContentOverflowFrame,
+    measureContentOverflow,
+    onContentOverflowChange,
+    rows.length,
+    timelineReady,
+  ]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -1262,6 +1282,24 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
   }, [handleScroll, rows.length]);
+
+  const canvasWidth = canvas?.container.width;
+  const departingTimelineRef = useRef({ rows, canvasWidth });
+  useLayoutEffect(() => {
+    departingTimelineRef.current = { rows, canvasWidth };
+  });
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!timelineViewportElement || !list) return;
+    return () => {
+      const { rows: departingRows, canvasWidth: viewportWidth } = departingTimelineRef.current;
+      const sizes = list.getState?.()?.sizes;
+      const median = sizes && medianMeasuredRowSize(departingRows, sizes);
+      if (viewportWidth && median !== undefined) {
+        rememberTimelineItemSize(listIdentityKey, { viewportWidth, median });
+      }
+    };
+  }, [listIdentityKey, listRef, timelineViewportElement]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1436,7 +1474,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
   }, [historyControls, onOpenThread, parentThreadLink, topFadeEnabled]);
 
-  const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
   const setTimelineList = useCallback(
     (list: LegendListRef | null) => {
@@ -1561,6 +1598,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
   }
 
+  if (!timelineReady) return null;
+
   return (
     <MarkdownFindContext value={findActive}>
       <TimelineRowCtx value={sharedState}>
@@ -1584,7 +1623,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               keyExtractor={keyExtractor}
               getItemType={getItemType}
               renderItem={renderItem}
-              estimatedItemSize={90}
+              estimatedItemSize={estimatedItemSize}
               initialScrollAtEnd={
                 !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
               }

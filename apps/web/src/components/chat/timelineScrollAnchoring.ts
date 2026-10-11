@@ -147,6 +147,10 @@ export interface RememberedTimelinePosition {
   readonly offsetWithinRow: number;
   readonly scrollOffset: number;
   readonly atEnd: boolean;
+  readonly itemSize?: {
+    readonly viewportWidth: number;
+    readonly median: number;
+  };
   readonly disclosures?: {
     readonly runs: ReadonlySet<RunId>;
     readonly workGroups: ReadonlySet<string>;
@@ -156,6 +160,16 @@ export interface RememberedTimelinePosition {
       expandedEntries: Set<string>;
     };
   };
+}
+
+export function medianMeasuredRowSize(
+  rows: ReadonlyArray<{ readonly id: string }>,
+  measuredSizes: ReadonlyMap<string, number>,
+) {
+  const sizes = rows
+    .flatMap((row) => measuredSizes.get(row.id) ?? [])
+    .toSorted((left, right) => left - right);
+  return sizes[Math.floor(sizes.length / 2)];
 }
 
 // Scoped thread keys keep separate environments independent. Bound the session cache.
@@ -172,4 +186,12 @@ export function rememberTimelinePosition(threadKey: string, position: Remembered
     const oldest = rememberedTimelinePositions.keys().next().value;
     if (oldest !== undefined) rememberedTimelinePositions.delete(oldest);
   }
+}
+
+export function rememberTimelineItemSize(
+  threadKey: string,
+  itemSize: NonNullable<RememberedTimelinePosition["itemSize"]>,
+) {
+  const position = rememberedTimelinePositions.get(threadKey);
+  if (position) rememberedTimelinePositions.set(threadKey, { ...position, itemSize });
 }
