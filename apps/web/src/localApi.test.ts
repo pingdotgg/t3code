@@ -27,6 +27,19 @@ vi.mock("./confirmDialog", () => ({
   requestConfirmDialog: requestConfirmDialogMock,
 }));
 
+const styledContextMenuState = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("~/hooks/useSettings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/hooks/useSettings")>();
+  return {
+    ...actual,
+    getClientSettings: () => ({
+      ...actual.getClientSettings(),
+      styledContextMenuEnabled: styledContextMenuState.enabled,
+    }),
+  };
+});
+
 function createLocalStorageStub(): Storage {
   const values = new Map<string, string>();
   return {
@@ -52,6 +65,7 @@ function testWindow(): Window & typeof globalThis {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  styledContextMenuState.enabled = false;
   if (globalThis.window === undefined) {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -88,6 +102,29 @@ describe("LocalApi", () => {
   });
 
   it("dismisses an open browser context menu without a desktop bridge", async () => {
+    const { createLocalApi } = await import("./localApi");
+
+    await createLocalApi().contextMenu.close();
+
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
+  it("uses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
+    styledContextMenuState.enabled = true;
+    showContextMenuFallbackMock.mockResolvedValue("rename");
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "rename", label: "Rename" }] as const;
+
+    await expect(createLocalApi().contextMenu.show(items, { x: 1, y: 2 })).resolves.toBe("rename");
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 1, y: 2 });
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
+    styledContextMenuState.enabled = true;
+    testWindow().desktopBridge = { showContextMenu: vi.fn() } as unknown as DesktopBridge;
     const { createLocalApi } = await import("./localApi");
 
     await createLocalApi().contextMenu.close();
