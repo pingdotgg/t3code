@@ -43,6 +43,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./scheduled-task-interval": {
+      "types": "./src/scheduledTaskInterval.ts",
+      "default": "./src/scheduledTaskInterval.ts"
+    },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"

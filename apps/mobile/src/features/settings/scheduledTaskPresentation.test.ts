@@ -1,34 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  formatNextScheduledTaskRun,
-  formatScheduledTaskInterval,
-} from "./scheduledTaskPresentation";
+import { formatNextScheduledTaskRun } from "./scheduledTaskPresentation";
 
 const MINUTE = 60_000;
 const now = new Date(2026, 8, 17, 9).getTime();
 const timeLabel = (date: Date) =>
   date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
-describe("formatScheduledTaskInterval", () => {
-  it.each([
-    [1, "Every minute"],
-    [15, "Every 15 minutes"],
-    [60, "Every hour"],
-    [90, "Every 1 hour 30 minutes"],
-    [120, "Every 2 hours"],
-    [1440, "Every day"],
-    [1500, "Every 1 day 1 hour"],
-    [2880, "Every 2 days"],
-    [10080, "Every week"],
-  ])("formats a %i-minute interval as %s", (minutes, expected) => {
-    expect(formatScheduledTaskInterval(minutes * MINUTE)).toBe(expected);
-  });
-
-  it("retains precision for legacy sub-minute schedules", () => {
-    expect(formatScheduledTaskInterval(30_000)).toBe("Every 30 seconds");
-    expect(formatScheduledTaskInterval(90_000)).toBe("Every 1 minute 30 seconds");
-  });
-});
 
 describe("formatNextScheduledTaskRun", () => {
   it.each([
