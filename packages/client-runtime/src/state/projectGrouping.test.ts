@@ -5,7 +5,9 @@ import type { EnvironmentProject } from "./models.ts";
 import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
+  deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
+  resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -117,6 +119,131 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "keeps scratch project ownership separate by default in %s mode",
+    (mode) => {
+      const projects = [
+        makeProject("scratch-local", "/local/scratch", {
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+        makeProject("scratch-remote", "/remote/scratch", {
+          environmentId: EnvironmentId.make("remote"),
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+      ];
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups.map((group) => group.key)).toEqual(projects.map(derivePhysicalProjectKey));
+      expect(groups.map((group) => group.memberProjectRefs)).toEqual(
+        projects.map((project) => [
+          { environmentId: project.environmentId, projectId: project.id },
+        ]),
+      );
+      expect(
+        buildProjectGroups({ projects, settings: settings(mode), groupScratchProjects: true }),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "migrates a pre-config %s scratch selection and retains it after the original host is removed",
+    (mode) => {
+      const local = makeProject("scratch-local", "/local/repo/scratch", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/local/repo" },
+      });
+      const remote = makeProject("scratch-remote", "/remote/scratch", {
+        environmentId: EnvironmentId.make("remote"),
+        repositoryIdentity: null,
+        isScratch: true,
+      });
+      const groupingSettings = settings(mode);
+      const selectedBeforeConfig = deriveLogicalProjectKeyFromSettings(local, groupingSettings);
+      const loaded = [{ ...local, isScratch: true as const }, remote];
+      const migrated = resolveScratchProjectScopeKey(
+        selectedBeforeConfig,
+        loaded,
+        groupingSettings,
+      );
+      const scratchKey = buildProjectGroups({
+        projects: loaded,
+        settings: groupingSettings,
+        groupScratchProjects: true,
+      })[0]!.key;
+      expect(migrated).toBe(scratchKey);
+      expect(resolveScratchProjectScopeKey(migrated, [remote], groupingSettings)).toBe(scratchKey);
+      expect(
+        buildProjectGroups({
+          projects: [remote],
+          settings: groupingSettings,
+          groupScratchProjects: true,
+        })[0]?.memberProjectRefs,
+      ).toEqual([{ environmentId: remote.environmentId, projectId: remote.id }]);
+    },
+  );
+
+  it("retains a repository filter that still belongs to an ordinary project", () => {
+    const scratch = makeProject("scratch", "/scratch", { isScratch: true });
+    const ordinary = makeProject("ordinary", "/ordinary");
+    const key = deriveLogicalProjectKeyFromSettings(ordinary, settings("repository"));
+    expect(resolveScratchProjectScopeKey(key, [scratch, ordinary])).toBe(key);
+  });
+
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "coalesces scratch homes in %s mode without merging ordinary same-title projects",
+    (mode) => {
+      const remoteEnvironmentId = EnvironmentId.make("remote");
+      const projects = [
+        makeProject("scratch-local", "/local/scratch", {
+          title: "No project",
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+        makeProject("scratch-remote", "/remote/scratch", {
+          title: "No project",
+          environmentId: remoteEnvironmentId,
+          isScratch: true,
+        }),
+        makeProject("scratch-duplicate", "/remote/scratch/", {
+          title: "No project",
+          environmentId: remoteEnvironmentId,
+          isScratch: true,
+          repositoryIdentity: null,
+          updatedAt: "2026-07-02T00:00:00.000Z",
+        }),
+        makeProject("ordinary", "/ordinary", { title: "No project" }),
+        makeProject("reserved-collision", "/other", {
+          title: "No project",
+          repositoryIdentity: { ...repositoryIdentity, canonicalKey: "\0no-project" },
+        }),
+      ];
+      const groups = buildProjectGroups({
+        projects,
+        groupScratchProjects: true,
+        settings: settings(mode, { [derivePhysicalProjectKey(projects[0]!)]: "separate" }),
+        preferredEnvironmentId: remoteEnvironmentId,
+      });
+      expect(groups).toHaveLength(3);
+      const scratch = groups.find((group) => group.representative.isScratch)!;
+      expect(scratch.label).toBe("No project");
+      expect(scratch.representative.id).toBe(projects[2]?.id);
+      expect(scratch.members).toHaveLength(2);
+      expect(scratch.memberProjectRefs).toEqual(
+        projects.slice(0, 3).map((project) => ({
+          environmentId: project.environmentId,
+          projectId: project.id,
+        })),
+      );
+      expect(resolveScratchProjectScopeKey(derivePhysicalProjectKey(projects[1]!), projects)).toBe(
+        scratch.key,
+      );
+      expect(resolveScratchProjectScopeKey(derivePhysicalProjectKey(projects[3]!), projects)).toBe(
+        derivePhysicalProjectKey(projects[3]!),
+      );
+      expect(groups.filter((group) => !group.representative.isScratch)).toHaveLength(2);
+    },
+  );
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),
