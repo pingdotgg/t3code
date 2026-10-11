@@ -163,6 +163,86 @@ describe("Serve handler ownership", () => {
   });
 
   const matching = serveConfig();
+  it.effect.each([
+    {
+      name: "top-level configuration",
+      config: { ...matching, FutureOption: true },
+    },
+    {
+      name: "TCP handler",
+      config: { ...matching, TCP: { "8443": { HTTPS: true, FutureOption: true } } },
+    },
+    {
+      name: "web server",
+      config: {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            ...matching.Web["workstation.example:8443"],
+            FutureOption: true,
+          },
+        },
+      },
+    },
+    {
+      name: "root handler",
+      config: {
+        ...matching,
+        Web: {
+          "workstation.example:8443": {
+            Handlers: { "/": { Proxy: "http://127.0.0.1:13773", FutureOption: true } },
+          },
+        },
+      },
+    },
+    {
+      name: "foreground configuration",
+      config: { ...matching, Foreground: { session: { FutureOption: true } } },
+    },
+  ])("refuses mutations with an unknown field in $name", ({ config }) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      for (const replaceVerifiedHandler of [false, true]) {
+        const error = yield* ensureTailscaleServe({
+          localPort: 13773,
+          servePort: 8443,
+          replaceVerifiedHandler,
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, TailscaleServeStatusParseError);
+      }
+      const error = yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+      );
+      assert.instanceOf(error, TailscaleServeStatusParseError);
+      assert.deepEqual(
+        calls,
+        Array.from({ length: 3 }, () => ["serve", "status", "--json"]),
+      );
+    }).pipe(Effect.provide(serveLayer(config, calls)));
+  });
+
+  it.effect("ignores separately scoped Services and TCP forwarding on another port", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 });
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(
+      Effect.provide(
+        serveLayer(
+          {
+            ...matching,
+            TCP: {
+              ...matching.TCP,
+              "9443": { TCPForward: "127.0.0.1:9000", ProxyProtocol: 2 },
+            },
+            Services: { "svc:example": { Tun: true } },
+          },
+          calls,
+        ),
+      ),
+    );
+  });
+
   const protectedHandlers = [
     ["foreign root", serveConfig("http://127.0.0.1:9000")],
     [
@@ -186,6 +266,7 @@ describe("Serve handler ownership", () => {
       { ...matching, Foreground: { session: matching } },
     ],
     ["TCP forwarding", { TCP: { "8443": { TCPForward: "127.0.0.1:9000" } } }],
+    ["PROXY protocol", { ...matching, TCP: { "8443": { HTTPS: true, ProxyProtocol: 2 } } }],
     [
       "application capability grants",
       {

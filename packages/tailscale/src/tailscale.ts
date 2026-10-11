@@ -162,6 +162,7 @@ const ServeConfigFields = {
         HTTP: Schema.optional(Schema.Boolean),
         TCPForward: Schema.optional(Schema.String),
         TerminateTLS: Schema.optional(Schema.String),
+        ProxyProtocol: Schema.optional(Schema.Number),
       }),
     ),
   ),
@@ -183,6 +184,8 @@ const ServeConfigFields = {
     ),
   ),
   AllowFunnel: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  // Services use separate addresses; node-port Serve commands do not change them.
+  Services: Schema.optional(Schema.Unknown),
 };
 const ServeConfig = Schema.Struct(ServeConfigFields);
 const ServeStatus = Schema.NullOr(
@@ -217,6 +220,7 @@ function servePortState(status: typeof ServeStatus.Type, servePort: number, targ
     tcp.HTTP === true ||
     tcp.TCPForward ||
     tcp.TerminateTLS ||
+    (tcp.ProxyProtocol ?? 0) !== 0 ||
     web.length !== 1
   )
     return "occupied";
@@ -447,7 +451,10 @@ const readServeStatus = runTailscaleCommand(
   ["serve", "status", "--json"],
   TAILSCALE_STATUS_TIMEOUT,
 ).pipe(
-  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ServeStatus))),
+  // Dropping unknown fields could make a customized handler look safe to remove.
+  Effect.flatMap(
+    Schema.decodeEffect(Schema.fromJsonString(ServeStatus), { onExcessProperty: "error" }),
+  ),
   Effect.catchTags({
     SchemaError: (cause) => Effect.fail(new TailscaleServeStatusParseError({ cause })),
   }),
