@@ -262,6 +262,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const text =
+      noteText === undefined ? prompt : note.settled ? noteText : `${noteText}\n\n${prompt}`;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
@@ -270,7 +272,21 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       ...(sourceMessage?.scheduledTaskId === undefined
         ? {}
         : { scheduledTaskId: sourceMessage.scheduledTaskId }),
-      text: noteText === undefined ? prompt : note.settled ? noteText : `${noteText}\n\n${prompt}`,
+      text,
+      // Shown as a work log row; the prompt the agent got is its detail. A
+      // replacement prompt keeps its own message, attachments and context.
+      ...(replacementMessage === undefined
+        ? {
+            notification: {
+              source: { kind: "system" as const },
+              outcome: "updated" as const,
+              summary: note.settled
+                ? "T3 Code restarted and stopped background work"
+                : "T3 Code restarted and resumed this turn",
+              detail: text,
+            },
+          }
+        : {}),
       attachments: replacementMessage?.attachments ?? [],
       ...(replacementMessage?.context === undefined ? {} : { context: replacementMessage.context }),
       modelSelection: source.modelSelection,

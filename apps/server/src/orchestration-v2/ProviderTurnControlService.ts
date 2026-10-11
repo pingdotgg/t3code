@@ -1,6 +1,7 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
+  type NodeId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -43,6 +44,7 @@ const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
 
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
+    readonly subagent?: { readonly id: NodeId; readonly nativeTaskId: string };
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
@@ -177,6 +179,21 @@ export const layer: Layer.Layer<
             ? loaded.session
             : yield* sessions.get(input.providerSessionId);
           if (Option.isNone(session)) return;
+          if (input.subagent !== undefined) {
+            if (session.value.stopSubagent === undefined) {
+              return yield* new ProviderTurnControlError({
+                threadId: input.threadId,
+                operation: "interrupt",
+                providerTurnId: input.providerTurnId,
+                cause: "The provider does not support stopping a native subagent.",
+              });
+            }
+            yield* session.value.stopSubagent({
+              providerThread: loaded.providerThread,
+              nativeTaskId: input.subagent.nativeTaskId,
+            });
+            return;
+          }
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop. Background work

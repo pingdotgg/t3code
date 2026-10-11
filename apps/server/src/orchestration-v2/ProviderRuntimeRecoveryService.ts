@@ -23,6 +23,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import {
+  endOrphanedNativeSubagent,
+  endRunlessRootTurns,
+} from "@t3tools/provider-core/server/subagentProjection";
+import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
   isWorktreeContinuationRun,
@@ -86,10 +90,6 @@ function isBackgroundCapableTurnItemType(type: string): boolean {
 }
 
 function isNonterminalTurnItemStatus(status: string): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
-function isNonterminalSubagentStatus(status: string): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
@@ -375,26 +375,6 @@ export const make = Effect.gen(function* () {
             payload: { ...node, status: "cancelled", completedAt: now },
           });
         }
-        for (const subagent of projection.subagents.filter(
-          (candidate) =>
-            candidate.runId === run.id &&
-            !isAppOwnedDelegation(candidate) &&
-            (candidate.status === "pending" ||
-              candidate.status === "running" ||
-              candidate.status === "waiting"),
-        )) {
-          events.push({
-            id: yield* allocateEventId(),
-            type: "subagent.updated",
-            threadId: projection.thread.id,
-            runId: run.id,
-            nodeId: subagent.id,
-            driver: subagent.driver,
-            providerInstanceId: subagent.providerInstanceId,
-            occurredAt: now,
-            payload: { ...subagent, status: "cancelled", completedAt: now, updatedAt: now },
-          });
-        }
         for (const providerTurn of projection.providerTurns.filter(
           (candidate) =>
             candidate.runAttemptId !== null &&
@@ -499,101 +479,42 @@ export const make = Effect.gen(function* () {
             });
           }
         }
-        if (item.type !== "subagent") {
-          continue;
-        }
-        // Cancelling only the turn item would leave the linked subagent entity
-        // non-terminal forever, since the dead provider process can no longer
-        // emit its terminal event. Match the exact linked id so a subagent
-        // that already finished is never overwritten.
-        const staleSubagent = projection.subagents.find(
-          (candidate) =>
-            candidate.id === item.subagentId && isNonterminalSubagentStatus(candidate.status),
-        );
-        if (staleSubagent !== undefined) {
-          events.push({
-            id: yield* allocateEventId(),
-            type: "subagent.updated",
-            threadId: projection.thread.id,
-            ...(item.runId === null ? {} : { runId: item.runId }),
-            nodeId: staleSubagent.id,
-            driver: staleSubagent.driver,
-            providerInstanceId: staleSubagent.providerInstanceId,
-            occurredAt: now,
-            payload: { ...staleSubagent, status: "cancelled", completedAt: now, updatedAt: now },
-          });
-        }
-        const staleSubagentNode = projection.nodes.find(
-          (candidate) =>
-            candidate.id === item.subagentId && isNonterminalNodeStatus(candidate.status),
-        );
-        if (staleSubagentNode !== undefined && !cancelledStaleNodeIds.has(staleSubagentNode.id)) {
-          cancelledStaleNodeIds.add(staleSubagentNode.id);
-          events.push({
-            id: yield* allocateEventId(),
-            type: "node.updated",
-            threadId: projection.thread.id,
-            ...(item.runId === null ? {} : { runId: item.runId }),
-            nodeId: staleSubagentNode.id,
-            providerInstanceId,
-            occurredAt: now,
-            payload: { ...staleSubagentNode, status: "cancelled", completedAt: now },
-          });
-        }
       }
-      // A crash can persist the task before its turn item. It still died with
-      // the provider, while an app-owned child settles through its own thread.
-      const cancelledSubagentIds = new Set(
-        events.flatMap((event) => (event.type === "subagent.updated" ? [event.payload.id] : [])),
-      );
+      // No provider process outlives the server, so a native subagent still open
+      // here never reports its end, whatever state its run and item are in.
       for (const subagent of projection.subagents ?? []) {
-        if (
-          isAppOwnedDelegation(subagent) ||
-          !isNonterminalSubagentStatus(subagent.status) ||
-          cancelledSubagentIds.has(subagent.id) ||
-          projection.runs.some((run) => run.id === subagent.runId && run.status === "rolled_back")
-        )
-          continue;
-        recordCancelledBackgroundWork(
-          projection.runs.find((run) => run.id === subagent.runId)?.providerThreadId ??
-            subagent.providerThreadId,
-          { kind: "subagent", label: subagent.title?.slice(0, 160) ?? "subagent", id: subagent.id },
+        events.push(
+          ...(yield* endOrphanedNativeSubagent({
+            projection,
+            subagentId: subagent.id,
+            status: "cancelled",
+            now,
+            emitted: events,
+            allocateEventId,
+          })),
         );
-        events.push({
-          id: yield* allocateEventId(),
-          type: "subagent.updated",
-          threadId: projection.thread.id,
-          ...(subagent.runId === null ? {} : { runId: subagent.runId }),
-          nodeId: subagent.id,
-          driver: subagent.driver,
-          providerInstanceId: subagent.providerInstanceId,
-          occurredAt: now,
-          payload: { ...subagent, status: "cancelled", completedAt: now, updatedAt: now },
-        });
-        const node = projection.nodes.find((candidate) => candidate.id === subagent.id);
-        if (
-          node !== undefined &&
-          isNonterminalNodeStatus(node.status) &&
-          !cancelledStaleNodeIds.has(node.id)
-        ) {
-          cancelledStaleNodeIds.add(node.id);
-          events.push({
-            id: yield* allocateEventId(),
-            type: "node.updated",
-            threadId: projection.thread.id,
-            ...(node.runId === null ? {} : { runId: node.runId }),
-            nodeId: node.id,
-            providerInstanceId: subagent.providerInstanceId,
-            occurredAt: now,
-            payload: { ...node, status: "cancelled", completedAt: now },
-          });
-        }
       }
-      // A native child has no app runs. Its nodes and streaming items must
-      // settle too, or the dead provider leaves it looking busy forever.
+      // A provider-native subagent thread has no runs; left running, the child
+      // would show as working forever.
+      events.push(
+        ...(yield* endRunlessRootTurns({
+          threadId: projection.thread.id,
+          providerInstanceId: projection.thread.providerInstanceId,
+          projection,
+          status: "cancelled",
+          now,
+          emitted: events,
+          allocateEventId,
+        })),
+      );
+      // The child's other runless nodes, their streaming items, and its runless
+      // provider turn died with it too.
       const cancelledStaleItemIds = new Set(
         events.flatMap((event) => (event.type === "turn-item.updated" ? [event.payload.id] : [])),
       );
+      for (const event of events) {
+        if (event.type === "node.updated") cancelledStaleNodeIds.add(event.payload.id);
+      }
       for (const node of projection.nodes) {
         if (
           node.runId !== null ||
