@@ -224,7 +224,9 @@ const make = Effect.gen(function* () {
         (provider) => providerRegistry.refreshInstance(provider.instanceId),
         { concurrency: "unbounded", discard: true },
       );
-      // A fresh scan drops the other agents' snapshots of its folder, and a
+      // A fresh scan drops every other agent's snapshot of its folder. So one
+      // agent scans fresh, which drops the rest's stale lists (and clears its
+      // own caches), then the others rescan without dropping it in turn. A
       // scan whose starting snapshot changed is discarded, so one folder's
       // agents scan one after another. Different folders scan in parallel.
       yield* Effect.forEach(
@@ -232,8 +234,8 @@ const make = Effect.gen(function* () {
         ([cwd, instanceIds]) =>
           Effect.forEach(
             instanceIds,
-            (instanceId) =>
-              providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh: true }),
+            (instanceId, index) =>
+              providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh: index === 0 }),
             { discard: true },
           ),
         { concurrency: "unbounded", discard: true },
@@ -270,18 +272,19 @@ const make = Effect.gen(function* () {
         }
         if (!link && info?.type !== "File") continue;
         if (files.length >= MAX_FILES) return { files, truncated: true };
+        const executable = info !== undefined && (info.mode & 0o111) !== 0;
         files.push({
           path: childPath,
           size: info === undefined ? 0 : Number(info.size),
-          executable: info !== undefined && (info.mode & 0o111) !== 0,
+          executable,
+          script: executable || childPath.startsWith("bin/") || SCRIPT_EXTENSION.test(childPath),
         });
       }
     }
     return { files, truncated };
   });
 
-  const hasScripts = (files: ReadonlyArray<SkillFileEntry>) =>
-    files.some((file) => file.executable || SCRIPT_EXTENSION.test(file.path));
+  const hasScripts = (files: ReadonlyArray<SkillFileEntry>) => files.some((file) => file.script);
 
   const sha256 = (text: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(

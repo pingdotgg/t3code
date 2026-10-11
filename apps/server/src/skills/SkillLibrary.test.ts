@@ -105,7 +105,10 @@ const withLibrary = <A, E>(
     > = {
       getProviders: Ref.get(providers),
       refreshInstance: (instanceId) => record(`instance:${instanceId}`),
-      refreshWorkspaceSnapshot: ({ instanceId, cwd }) => scan(instanceId, cwd),
+      refreshWorkspaceSnapshot: ({ instanceId, cwd, fresh }) =>
+        record(`fresh:${instanceId}:${cwd}:${fresh === true}`).pipe(
+          Effect.andThen(scan(instanceId, cwd)),
+        ),
     };
     // SkillLibrary reads provider snapshots and asks for rescans, nothing else.
     const registry = stub as ProviderRegistry.ProviderRegistry["Service"];
@@ -158,10 +161,10 @@ it.effect(
           ],
         );
         assert.deepEqual(
-          preview.skills[1]?.files.map((file) => [file.path, file.executable]),
+          preview.skills[1]?.files.map((file) => [file.path, file.executable, file.script]),
           [
-            ["SKILL.md", false],
-            ["bin/run", true],
+            ["SKILL.md", false, false],
+            ["bin/run", true, true],
           ],
         );
         assert.isFalse(yield* fileSystem.exists(`${home}/.agents`));
@@ -187,7 +190,10 @@ it.effect(
         const claudeLink = path.join(project, ".claude", "skills", "review", "SKILL.md");
         assert.isTrue(yield* fileSystem.exists(claudeLink));
         assert.isFalse(yield* fileSystem.exists(path.join(project, ".agents/skills/notes")));
-        assert.deepEqual(yield* Ref.get(refreshed), [`workspace:claude:${project}`]);
+        assert.deepEqual(
+          (yield* Ref.get(refreshed)).filter((entry) => entry.startsWith("workspace:")),
+          [`workspace:claude:${project}`],
+        );
 
         yield* Ref.set(providers, [
           {
@@ -307,8 +313,16 @@ it.effect(
         const refreshes = yield* Ref.get(refreshed);
         expect(refreshes).toContain(`workspace:claude:${project}`);
         expect(refreshes).toContain(`workspace:codex:${project}`);
-        // A fresh scan drops other agents' snapshots of the folder, so they take turns.
+        // A fresh scan drops other agents' snapshots of the folder, so they take turns,
+        // and only the first is fresh: a later one would drop the first one's result.
         expect(refreshes.filter((entry) => entry.startsWith("overlap:"))).toEqual([]);
+        // Each of the two installs rescans the project once, Claude fresh and Codex after it.
+        expect(refreshes.filter((entry) => entry.startsWith("fresh:"))).toEqual([
+          `fresh:claude:${project}:true`,
+          `fresh:codex:${project}:false`,
+          `fresh:claude:${project}:true`,
+          `fresh:codex:${project}:false`,
+        ]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   120_000,

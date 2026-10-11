@@ -14,6 +14,10 @@ import {
   parseArgs,
   parseMcpServerJson,
   formatArgs,
+  skillAgents,
+  skillAttention,
+  skillAvailability,
+  skillBody,
   skillRowDetails,
   splitRowsBySource,
   type SkillRow,
@@ -152,6 +156,7 @@ describe("skill row details", () => {
   it("knows nothing about a row whose folders weren't inspected", () => {
     expect(skillRowDetails(row(["/x/SKILL.md"]), new Map())).toEqual({
       folder: null,
+      copies: [],
       scripts: false,
       conflict: false,
       installed: null,
@@ -175,6 +180,54 @@ describe("skill row details", () => {
       ["acme/tools", ["deploy"]],
       ["mattpocock/skills", ["tdd", "grill-me"]],
     ]);
+  });
+});
+
+describe("skill availability and attention", () => {
+  const agents = skillAgents([
+    provider("claudeAgent", [], { displayName: "Claude" }),
+    provider("codex", [], { displayName: "Codex" }),
+    provider("cursor", [], { displayName: "Cursor", enabled: false }),
+  ]);
+  const ref = (instanceId: string) => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver: ProviderDriverKind.make(instanceId),
+    displayName: instanceId,
+  });
+  const row = (group: SkillRow["group"], providers: ReadonlyArray<string>): SkillRow => ({
+    name: "review",
+    description: undefined,
+    group,
+    paths: [],
+    providers: providers.map(ref),
+    disabledByProvider: false,
+  });
+  const noDetails = skillRowDetails(row("personal", []), new Map());
+
+  it("counts only enabled agents, and says when every one loads a skill", () => {
+    expect(agents.map((agent) => agent.displayName)).toEqual(["Claude", "Codex"]);
+    expect(skillAvailability(row("personal", ["claudeAgent", "codex"]), agents).everyone).toBe(
+      true,
+    );
+    const partial = skillAvailability(row("personal", ["codex"]), agents);
+    expect([partial.everyone, partial.missing.map((agent) => agent.displayName)]).toEqual([
+      false,
+      ["Claude"],
+    ]);
+  });
+
+  it("flags a skill some agents miss, but not a plugin or built-in one", () => {
+    expect(skillAttention(row("personal", ["codex"]), noDetails, agents)?.detail).toBe(
+      "Not available to Claude.",
+    );
+    expect(skillAttention(row("plugin", ["codex"]), noDetails, agents)).toBeNull();
+    expect(skillAttention(row("system", ["codex"]), noDetails, agents)).toBeNull();
+    expect(skillAttention(row("project", ["claudeAgent", "codex"]), noDetails, agents)).toBeNull();
+  });
+
+  it("strips SKILL.md's header for the rendered view", () => {
+    expect(skillBody("---\nname: review\n---\n\n# Review\nBody")).toBe("# Review\nBody");
+    expect(skillBody("# No header")).toBe("# No header");
   });
 });
 
