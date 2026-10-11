@@ -5,12 +5,14 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
 
+import { DEVICE_TOOL_VERSIONS } from "@t3tools/shared/deviceToolVersions";
 import type { Plugin } from "vite-plus";
 
 export const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
 const SPDX_LICENSE_LIST_VERSION = "v3.28.0";
 const SPDX_LICENSE_LIST_REVISION = "c4a7237ec8f4654e867546f9f409749300f1bf4c";
 const GENERATED_NOTICE_CACHE_DIRECTORY = ".generated/third-party-licenses/spdx";
+const DEVICE_TOOL_NOTICE_VERSIONS = new Map(Object.entries(DEVICE_TOOL_VERSIONS));
 
 export interface ThirdPartyLicenseEntry {
   readonly bundles: ReadonlyArray<string>;
@@ -868,7 +870,7 @@ async function customEntries(
           name: notice.name,
           noticeText,
           sourceUrl: notice.sourceUrl ?? null,
-          version: notice.version ?? null,
+          version: DEVICE_TOOL_NOTICE_VERSIONS.get(notice.name) ?? notice.version ?? null,
         };
       }),
   );

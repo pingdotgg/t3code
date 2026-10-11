@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { DEVICE_TOOL_VERSIONS } from "@t3tools/shared/deviceToolVersions";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -77,6 +78,56 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  it.each(["web", "mobile"])(
+    "uses installer pins for device tool notices in the %s manifest",
+    async (bundle) => {
+      const fixture = await createFixture();
+      await writeJson(fixture.configFile, {
+        customNotices: [
+          {
+            name: "agent-device",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            bundles: ["device-tools"],
+            includeInBundles: ["web", "mobile"],
+          },
+          {
+            name: "expo-device-hub",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            version: "0.0.0",
+            bundles: ["device-tools"],
+            includeInBundles: ["web", "mobile"],
+          },
+          {
+            name: "vendored-asset",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            version: "1.2.3",
+            bundles: ["web", "mobile"],
+          },
+        ],
+      });
+
+      const manifest = await generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle, path: fixture.appManifest }],
+      });
+
+      expect(manifest.entries.find((entry) => entry.name === "agent-device")).toMatchObject({
+        version: DEVICE_TOOL_VERSIONS["agent-device"],
+        bundles: ["device-tools"],
+      });
+      expect(manifest.entries.find((entry) => entry.name === "expo-device-hub")).toMatchObject({
+        version: DEVICE_TOOL_VERSIONS["expo-device-hub"],
+        bundles: ["device-tools"],
+      });
+      expect(manifest.entries.find((entry) => entry.name === "vendored-asset")?.version).toBe(
+        "1.2.3",
+      );
+    },
+  );
+
   it("keeps the GhosttyKit notice pinned to the vendored framework revision", async () => {
     const [config, revision] = await Promise.all([
       NodeFSP.readFile(NodePath.join(REPOSITORY_ROOT, "third-party-licenses.config.json"), "utf8"),

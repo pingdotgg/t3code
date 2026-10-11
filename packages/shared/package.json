@@ -359,6 +359,10 @@
       "types": "./src/thirdPartyLicenses.ts",
       "import": "./src/thirdPartyLicenses.ts"
     },
+    "./deviceToolVersions": {
+      "types": "./src/deviceToolVersions.ts",
+      "import": "./src/deviceToolVersions.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
