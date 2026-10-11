@@ -5,6 +5,20 @@ When a server is behind your web or desktop app, an update notice appears in the
 conversation and **Settings → Connections**. Update the machine named in that
 notice.
 
+## Update everything at once
+
+The update button at the bottom of the sidebar updates every connected machine
+in one step. It updates outdated providers, then servers that are behind, then
+the desktop app you are using, which restarts last. Servers move to the
+version your desktop app is installing, or to your web app's version. A
+background service stays on its current release channel. A remote desktop app
+installs the latest release from its own channel. Hover the button to see what
+it will update.
+
+Server updates appear only after that version is published. Servers that need
+a manual update are not included. Use the notice or **Settings → Connections**
+for those.
+
 ## Before you update
 
 Server updates restart the connection and can interrupt active agents and
