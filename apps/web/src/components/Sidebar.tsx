@@ -54,6 +54,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  selectsCloudRun,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
@@ -69,6 +70,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  CloudIcon,
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
@@ -426,6 +428,16 @@ function SidebarProviderStack(props: {
   );
 }
 
+/** Names the provider cloud a thread runs in, or null when it runs on its machine. */
+function threadCloudRunLabel(
+  thread: Pick<SidebarThreadSummary, "modelSelection">,
+  providerEntry: ProviderInstanceEntry | null,
+): string | null {
+  return selectsCloudRun(thread.modelSelection.options)
+    ? (providerEntry?.snapshot.cloudRun?.label ?? "Cloud")
+    : null;
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -463,6 +475,7 @@ function SidebarThreadTooltip({
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const cloudRunLabel = threadCloudRunLabel(thread, providerEntry);
   return (
     <ThreadHoverCardPopup side="right" align="start" sideOffset={4}>
       <ThreadHoverCard
@@ -481,7 +494,12 @@ function SidebarThreadTooltip({
             <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
           </div>
         ) : null}
-        {environmentLabel ? (
+        {cloudRunLabel ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <CloudIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">{cloudRunLabel}</div>
+          </div>
+        ) : environmentLabel ? (
           <div className="flex min-w-0 items-center gap-2">
             <EnvironmentMachineIcon
               kind={environmentMachine}
@@ -1373,7 +1391,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // that is every thread, which is the point: the glyph is what tells rows on
   // different machines apart.
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
-  const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
+  const cloudRunLabel = threadCloudRunLabel(thread, providerEntry);
+  const showsScratchMachine =
+    !thread.branch && cloudRunLabel === null && props.scratchMachineLabel !== null;
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -2194,7 +2214,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-hidden
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
-                {isRemote && !showsScratchMachine ? (
+                {cloudRunLabel !== null ? (
+                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                    <CloudIcon aria-hidden className="size-3.5" />
+                  </span>
+                ) : isRemote && !showsScratchMachine ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
                       aria-hidden
