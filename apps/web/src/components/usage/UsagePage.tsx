@@ -94,7 +94,12 @@ import {
   type UsageMetric,
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providersWithUsage,
+  rankProvidersByMetric,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -105,12 +110,14 @@ function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
 
+/** Narrows a stored day count to one of the window options the page offers. */
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
 
+/** Usage page: provider summary ranked by the selected metric, plus charts and breakdowns. */
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   useEscapeToGoBack();
@@ -248,6 +255,10 @@ export function UsagePage() {
       ),
     [activeProviders, loading.everyProvider, loading.providers],
   );
+  const rankedProviders = useMemo(
+    () => rankProvidersByMetric(activeProviders, merged.providers, metric),
+    [activeProviders, merged.providers, metric],
+  );
   const selectedModel =
     selectedModelKey === null
       ? undefined
@@ -259,9 +270,9 @@ export function UsagePage() {
   const summaryRows: Array<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
     | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
-  > = activeProviders.map((provider) => ({ kind: "usage", provider }));
+  > = rankedProviders.map((provider) => ({ kind: "usage", provider }));
   const cursorInsertAt =
-    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+    Math.max(rankedProviders.indexOf("codex"), rankedProviders.indexOf("claude")) + 1;
   summaryRows.splice(
     cursorInsertAt,
     0,

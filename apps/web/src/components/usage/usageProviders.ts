@@ -2,6 +2,8 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import type { UsageMetric } from "./usageShortcuts";
+
 type UsageProviderPresentation = {
   readonly label: string;
   readonly color: string;
@@ -65,4 +67,28 @@ export function providersWithUsage(
       .map((entry) => entry.provider),
   );
   return PROVIDER_ORDER.filter((provider) => active.has(provider));
+}
+
+/**
+ * Summary-row order: ranked by the metric on display so the rows always
+ * descend, matching the mobile Usage screen. Anything but cost ranks by
+ * tokens, like the row values. Ties keep {@link PROVIDER_ORDER}.
+ * Charts and tables keep the stable order so series don't move around.
+ */
+export function rankProvidersByMetric(
+  providers: readonly UsageProviderKind[],
+  totals: readonly {
+    readonly provider: UsageProviderKind;
+    readonly costUsd: number;
+    readonly totalTokens: number;
+  }[],
+  metric: UsageMetric,
+): readonly UsageProviderKind[] {
+  /** The figure a provider ranks by; providers without totals rank as zero. */
+  const value = (provider: UsageProviderKind) => {
+    const entry = totals.find((candidate) => candidate.provider === provider);
+    if (!entry) return 0;
+    return metric === "cost" ? entry.costUsd : entry.totalTokens;
+  };
+  return providers.toSorted((left, right) => value(right) - value(left));
 }
