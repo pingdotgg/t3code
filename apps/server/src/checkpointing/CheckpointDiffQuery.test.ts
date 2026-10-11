@@ -37,6 +37,7 @@ function makeProjection(): ProjectionCheckpointContext {
       {
         scopeId: secondScopeId,
         runId: secondRunId,
+        ordinalWithinScope: 1,
         appRunOrdinal: 2,
         status: "ready",
         ref: secondRef,
@@ -199,6 +200,64 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
     );
   }).pipe(Effect.provide(layer));
 });
+
+// Run 2 was stopped. Run 3 shares the root scope, and its parent checkpoint at
+// scope ordinal 2 is either run 2's own capture or the baseline run 3 recorded.
+function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
+  const thirdRunId = RunId.make("run:checkpoint-diff-v2:3");
+  const checkpoint = (
+    ordinalWithinScope: number,
+    runId: RunId | null,
+  ): ProjectionCheckpointContext["checkpoints"][number] => ({
+    scopeId: firstScopeId,
+    runId,
+    ordinalWithinScope,
+    appRunOrdinal: runId === null ? null : ordinalWithinScope,
+    status: "ready",
+    ref: CheckpointRef.make(`refs/t3/test/ordinal/${ordinalWithinScope}`),
+  });
+  return {
+    runs: [
+      { id: firstRunId, ordinal: 1, status: "completed" },
+      { id: secondRunId, ordinal: 2, status: "interrupted" },
+      { id: thirdRunId, ordinal: 3, status: "completed" },
+    ],
+    checkpointScopes: [{ id: firstScopeId, runId: thirdRunId, kind: "root_run", cwd: "/repo" }],
+    checkpoints: [
+      checkpoint(0, null),
+      checkpoint(1, firstRunId),
+      checkpoint(2, stoppedRunCheckpoint ? secondRunId : null),
+      checkpoint(3, thirdRunId),
+    ],
+  } satisfies ProjectionCheckpointContext;
+}
+
+it.effect.each([false, true])(
+  "diffs the turn after a stopped run from its parent checkpoint (stopped run captured: %s)",
+  (stoppedRunCheckpoint) => {
+    const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("diff --git a/file b/file"),
+    );
+    const layer = layerFor({
+      projection: Effect.succeed(makeProjectionAfterStoppedRun(stoppedRunCheckpoint)),
+      diffCheckpoints,
+    });
+
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
+
+      assert.strictEqual(result.diff, "diff --git a/file b/file");
+      assert.deepEqual(
+        {
+          from: diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+          to: diffCheckpoints.mock.calls[0]?.[0].toCheckpointRef,
+        },
+        { from: "refs/t3/test/ordinal/2", to: "refs/t3/test/ordinal/3" },
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("preserves the typed missing-baseline-ref error contract", () => {
   const projection = makeProjection();
