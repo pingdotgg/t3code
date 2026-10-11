@@ -261,6 +261,8 @@ export type OrchestratorFixtureInputStep =
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
+      /** The composer's Stop: holds the queue and ends only the running turn. */
+      readonly scope?: "turn";
     }
   | {
       /** The Waiting strip's Stop: interrupts a settled run's leftover background work. */
@@ -868,6 +870,7 @@ export function materializeFixtureInput(input: {
               }),
               threadId: ids.threadId,
               runId: runIdFor(step.targetRunIndex),
+              ...(step.scope === undefined ? {} : { holdQueue: true, scope: step.scope }),
             },
             { advanceClockAfter: false },
           );
@@ -875,7 +878,17 @@ export function materializeFixtureInput(input: {
             steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
           }
           steps.push({ type: "advance_clock", duration: "1 millis" });
-          steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          // Background work a turn-scoped Stop keeps can wake the thread right away.
+          steps.push(
+            step.scope === "turn"
+              ? {
+                  type: "await_run_status",
+                  threadId: ids.threadId,
+                  runId: runIdFor(step.targetRunIndex),
+                  status: "interrupted",
+                }
+              : { type: "await_thread_idle", threadId: ids.threadId },
+          );
           break;
         case "stop_background_work":
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });

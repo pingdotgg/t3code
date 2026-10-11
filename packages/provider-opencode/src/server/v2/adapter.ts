@@ -130,6 +130,7 @@ const OpenCode2ProviderCapabilities = {
     // before it ends, so OpenCode's own `queue` delivery is never used.
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
+    interruptKeepsBackgroundWork: true,
   },
   streaming: {
     streamsAssistantText: true,
@@ -245,6 +246,8 @@ interface ActiveTurn {
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   interrupted: boolean;
+  /** Set by a turn-scoped Stop: the turn's background subagents run on past its end. */
+  keepsBackgroundWork?: boolean;
   /**
    * Set until the turn's prompt, command or compaction is sent. A Stop before
    * then has nothing on the server to stop, so it ends the turn here and the
@@ -1819,7 +1822,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               failure: terminal.failure,
               failureItemOrdinal: ordinalOf(turn, `terminal-failure:${turn.providerTurn.id}`),
             }
-          : { ...base, status: terminal.status, failure: null },
+          : {
+              ...base,
+              status: terminal.status,
+              failure: null,
+              ...(terminal.status === "interrupted" && turn.keepsBackgroundWork === true
+                ? { backgroundWorkContinues: true }
+                : {}),
+            },
       );
       // A spawned server lists its models lazily, so a window still unknown is
       // read again for the next turn, off this stream so it never delays one.
@@ -3983,7 +3993,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // OpenCode stops a foreground subagent with its parent, but not a
           // background one: a user Stop (`requestRuntimeRestart`) stops those
           // too, and the execution OpenCode starts to report them. A turn
-          // interrupted to restart it with new input leaves them running.
+          // interrupted to restart it with new input, or by a turn-scoped Stop
+          // (`keepBackgroundWork`), leaves them running.
           if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
           if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
             return;
@@ -3992,6 +4003,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // the turn. A server that does not answer in time is stuck, so the turn
           // ends here instead of waiting on it.
           turn.interrupted = true;
+          turn.keepsBackgroundWork = interruptInput.keepBackgroundWork === true;
           const reply = yield* client.session
             .interrupt({ sessionID: Session.ID.make(sessionId) })
             .pipe(

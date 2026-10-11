@@ -2310,6 +2310,9 @@ async function recordInterruptedClaudeQuery(input: {
   readonly interruptAfter?: "prompt_offer" | "tool_use";
   // With interruptAfter "tool_use": interrupt after this many root tool uses.
   readonly interruptAfterToolUses?: number;
+  // Interrupt without closing, as a turn-scoped Stop does, and keep recording
+  // the interrupted turn's result and this many background wake turns.
+  readonly keepProcessForWakes?: number;
   readonly enableTools?: boolean;
   readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
@@ -2377,6 +2380,26 @@ async function recordInterruptedClaudeQuery(input: {
     } catch (error) {
       cancelledError = error;
     }
+    if (input.keepProcessForWakes !== undefined) {
+      if (!(await recordMessagesUntilTurnResult({ ...input, iterator }))) {
+        throw new Error(`Claude query ended before ${input.scenario}'s interrupted turn settled.`);
+      }
+      for (let wake = 1; wake <= input.keepProcessForWakes; wake += 1) {
+        if (!(await recordMessagesUntilTurnResult({ ...input, iterator }))) {
+          throw new Error(`Claude query ended before ${input.scenario}'s background wake ${wake}.`);
+        }
+        const resultEntry = input.entries.at(-1);
+        const resultFrame = resultEntry?.type === "emit_inbound" ? resultEntry.frame : undefined;
+        if (!isTaskNotificationOriginResultFrame(resultFrame)) {
+          throw new Error(`Claude ran a turn other than a background wake in ${input.scenario}.`);
+        }
+        input.entries[input.entries.length - 1] = {
+          type: "emit_inbound",
+          label: claudeBackgroundWakeResultLabel(wake),
+          frame: resultFrame,
+        };
+      }
+    }
     promptQueue.close();
     runtime.close();
     try {
@@ -2422,6 +2445,7 @@ async function recordClaudeInterruptQuery(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
   readonly interruptAfterToolUses?: number;
+  readonly keepProcessForWakes?: number;
 }): Promise<void> {
   if (input.prompts.length !== 1) {
     throw new Error(
@@ -2444,6 +2468,9 @@ async function recordClaudeInterruptQuery(input: {
     ...(input.interruptAfterToolUses === undefined
       ? {}
       : { interruptAfterToolUses: input.interruptAfterToolUses }),
+    ...(input.keepProcessForWakes === undefined
+      ? {}
+      : { keepProcessForWakes: input.keepProcessForWakes }),
     ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
     ...(input.tools === undefined ? {} : { tools: input.tools }),
     ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
@@ -2590,6 +2617,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   readonly offerNextPromptImmediately?: boolean;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
   readonly interruptAfterToolUses?: number;
+  readonly keepProcessForWakes?: number;
 }): Promise<ClaudeAgentSdkReplayTranscript> {
   if (input.prompts.length === 0) {
     throw new Error(
@@ -2755,6 +2783,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.interruptAfterToolUses === undefined
         ? {}
         : { interruptAfterToolUses: input.interruptAfterToolUses }),
+      ...(input.keepProcessForWakes === undefined
+        ? {}
+        : { keepProcessForWakes: input.keepProcessForWakes }),
     });
   } else {
     await recordClaudeInterruptRestartQuery({
@@ -2804,6 +2835,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.interruptAfterToolUses === undefined
         ? {}
         : { interruptAfterToolUses: input.interruptAfterToolUses }),
+      ...(input.keepProcessForWakes === undefined
+        ? {}
+        : { keepProcessForWakes: input.keepProcessForWakes }),
       generatedBy: "recordClaudeAgentSdkReplayTranscript",
       ...recordingMetadata,
     },

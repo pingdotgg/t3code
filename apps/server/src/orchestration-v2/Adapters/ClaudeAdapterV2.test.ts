@@ -4669,6 +4669,332 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const providerTurnIdOf = (attemptId: RunAttemptId) =>
+    Effect.map(IdAllocator.IdAllocatorV2, (idAllocator) =>
+      idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${attemptId}`,
+      }),
+    );
+
+  // A turn-scoped Stop: Claude ends the turn with an interrupted result and
+  // keeps the CLI process, so its background task stays on the roster.
+  it.effect("a turn-scoped Stop ends the running turn and keeps the CLI process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+          close: (sdkMessages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-turn-scoped-stop");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Run the build in the background, then the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: yield* providerTurnIdOf(attemptId),
+            keepBackgroundWork: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000910",
+            result: "",
+            subtype: "error_during_execution",
+            isError: true,
+            terminalReason: "aborted_tools",
+          }),
+        );
+        yield* Fiber.join(stop);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+
+        assert.equal(closes, 0, "the CLI process and its background task outlive the turn");
+        assert.isTrue(terminal.status === "interrupted" && terminal.backgroundWorkContinues);
+        assert.equal(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+            .pendingBackgroundTasks?.[0]?.taskId,
+          WAKE_TASK_ID,
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a native subagent a turn-scoped Stop left running can still be stopped alone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const stopped: Array<string> = [];
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+          stopTask: (taskId) =>
+            Effect.sync(() => {
+              stopped.push(taskId);
+            }),
+          close: (sdkMessages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-turn-scoped-stop-then-child-stop");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Start an agent, then keep working.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-after-stop",
+            toolUseId: "toolu-after-stop",
+            uuid: "00000000-0000-4000-8000-000000000920",
+          }),
+        );
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: yield* providerTurnIdOf(attemptId),
+            keepBackgroundWork: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000921",
+            result: "",
+            subtype: "error_during_execution",
+            isError: true,
+            terminalReason: "aborted_tools",
+          }),
+        );
+        yield* Fiber.join(stop);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(terminal.status === "interrupted" && terminal.backgroundWorkContinues);
+        const latestStatus = () =>
+          harness.events
+            .filter((event) => event.type === "subagent.updated")
+            .findLast((event) => event.subagent.nativeTaskRef?.nativeId === "agent-after-stop")
+            ?.subagent.status;
+        assert.equal(latestStatus(), "running");
+
+        yield* harness.runtime.stopSubagent!({
+          providerThread: harness.providerThread,
+          nativeTaskId: "agent-after-stop",
+        });
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeSubagentNotificationFrame({
+              taskId: "agent-after-stop",
+              toolUseId: "toolu-after-stop",
+              summary: "Stopped by user",
+              uuid: "00000000-0000-4000-8000-000000000922",
+            }),
+            status: "stopped",
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-turn-scoped-stop-then-child-stop-wake"),
+            text: "Background task stopped.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* Queue.take(harness.subagentReceipts).pipe(
+          Effect.repeat({ until: (event) => event.subagent.status !== "running" }),
+        );
+
+        assert.deepEqual(stopped, ["agent-after-stop"]);
+        assert.equal(closes, 0, "the child stop reaches the process the turn-scoped Stop kept");
+        assert.equal(latestStatus(), "cancelled");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a turn-scoped Stop closes the CLI process when Claude does not end the turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+          close: (sdkMessages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-turn-scoped-stop-stuck");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Run the build in the background, then the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: yield* providerTurnIdOf(attemptId),
+            keepBackgroundWork: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(stop);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+
+        assert.equal(closes, 1);
+        assert.equal(terminal.status, "interrupted");
+        assert.isFalse(
+          terminal.status === "interrupted" && terminal.backgroundWorkContinues === true,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a turn-scoped Stop keeps no background work when the CLI process exits first", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-turn-scoped-stop-exit");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Run the build in the background, then the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: yield* providerTurnIdOf(attemptId),
+            keepBackgroundWork: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* Fiber.join(stop);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+
+        assert.equal(terminal.status, "interrupted");
+        assert.isFalse(
+          terminal.status === "interrupted" && terminal.backgroundWorkContinues === true,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a full Stop during a turn-scoped Stop ends the background work too", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+          close: (sdkMessages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-turn-scoped-then-full-stop");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Run the build in the background, then the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        const providerTurnId = yield* providerTurnIdOf(attemptId);
+        const turnScopedStop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId,
+            keepBackgroundWork: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        // An older client or mobile stops everything while Claude has not answered yet.
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        yield* Fiber.join(turnScopedStop);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+
+        assert.equal(closes, 1);
+        assert.isFalse(
+          terminal.status === "interrupted" && terminal.backgroundWorkContinues === true,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("a settled Stop leaves a turn that replaced the closing process alone", () =>
     Effect.scoped(
       Effect.gen(function* () {

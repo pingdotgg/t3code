@@ -557,6 +557,77 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("Stop after a turn-scoped Stop ends the watch it kept", () =>
+    Effect.gen(function* () {
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        thread: {
+          ...v2Projection.thread,
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 7,
+              url: "https://github.com/pingdotgg/t3code/pull/7",
+              source: "agent",
+              linkedAt: "2026-10-05T00:00:00.000Z",
+              snapshot: null,
+              stack: null,
+              watch: {
+                startedAt: "2026-10-05T00:00:00.000Z",
+                headSha: null,
+                failedChecks: [],
+                passed: false,
+                passedChecks: [],
+                remarksThrough: "2026-10-05T00:00:00.000Z",
+                remarkIds: [],
+                conflicting: false,
+                wakes: 0,
+              },
+            },
+          ],
+        },
+        runs: [
+          {
+            id: RunId.make("run-stopped"),
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-stopped"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "interrupted",
+            requestedAt: v2Now,
+            startedAt: v2Now,
+            completedAt: v2Now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(commands).toEqual([
+        {
+          type: "thread.pull-request.watch",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 7,
+          watching: false,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect.each([
     "waiting",
     "completed",

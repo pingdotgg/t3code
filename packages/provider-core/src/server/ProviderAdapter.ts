@@ -144,6 +144,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     status: Schema.Literals(["completed", "interrupted", "cancelled"]),
     failure: Schema.Null,
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** An interrupted turn whose background work the provider keeps running and reports on. */
+    backgroundWorkContinues: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
@@ -438,6 +440,13 @@ export interface ProviderAdapterV2InterruptInput {
   readonly providerTurnId: ProviderTurnId;
   /** When true, the next `startTurn` may respawn the provider runtime (Grok Stop recovery). */
   readonly requestRuntimeRestart?: boolean;
+  /**
+   * A Stop for the turn only, sent to adapters whose capabilities set
+   * `interruptKeepsBackgroundWork`: the turn ends and the background work it
+   * started keeps running. The turn's terminal says so with
+   * `backgroundWorkContinues`. A turn that already ended has nothing to stop.
+   */
+  readonly keepBackgroundWork?: boolean;
 }
 
 export interface ProviderAdapterV2RuntimeRequestResponseInput {

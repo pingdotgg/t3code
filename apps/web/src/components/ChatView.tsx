@@ -4587,9 +4587,10 @@ export default function ChatView(props: ChatViewProps) {
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
       return;
+    // Background work outlives the turn; the Waiting strip's Stop ends it.
     const result = await interruptThreadTurn({
       environmentId,
-      input: { threadId: activeThread.id },
+      input: { threadId: activeThread.id, scope: "turn" },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

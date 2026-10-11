@@ -162,7 +162,8 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.interrupt":
+          case "provider-turn.interrupt": {
+            const scope = effect.request.scope;
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
@@ -172,6 +173,7 @@ export const layerExecutor: Layer.Layer<
                 ...(effect.request.subagent === undefined
                   ? {}
                   : { subagent: effect.request.subagent }),
+                ...(scope === undefined ? {} : { scope }),
               })
               .pipe(
                 Effect.catch((cause) =>
@@ -184,9 +186,10 @@ export const layerExecutor: Layer.Layer<
                 ),
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
-                // work no process will report on, so the Stop ends it too.
-                // One Stop can interrupt several provider threads, so the
-                // settle is keyed by effect, not by the Stop command.
+                // work no process will report on, so the Stop ends it too,
+                // unless the Stop ended only the turn and something still runs
+                // that work. One Stop can interrupt several provider threads,
+                // so the settle is keyed by effect, not by the Stop command.
                 Effect.andThen(
                   effect.request.subagent !== undefined
                     ? Effect.void
@@ -196,6 +199,7 @@ export const layerExecutor: Layer.Layer<
                         threadId: effect.threadId,
                         providerThreadId: effect.request.providerThreadId,
                         providerTurnId: effect.request.providerTurnId,
+                        ...(scope === undefined ? {} : { scope }),
                       }),
                 ),
                 Effect.mapError(
@@ -207,6 +211,7 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "provider-turn.steer":
             return providerTurnControl
               .steer({

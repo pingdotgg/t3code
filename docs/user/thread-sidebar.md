@@ -215,7 +215,10 @@ snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
-Stop on a thread also stops the subagents it delegated to.
+Stop on a running turn ends only that turn: the subagents it delegated to keep
+working, and so does background work with OpenCode 2 and Claude (Claude still
+stops its background agents). The bar above the composer lists that work, and
+its **Stop** ends all of it. On mobile, Stop ends everything at once.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent

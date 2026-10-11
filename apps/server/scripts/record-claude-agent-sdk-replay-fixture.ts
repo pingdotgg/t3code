@@ -69,6 +69,7 @@ import { CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT } from "../src/orchestrat
 import { CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/input.ts";
 import { CLAUDE_MCP_TOOL_PRESENTATION_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_mcp_tool_presentation/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
+import { CLAUDE_BACKGROUND_TASK_STOP_TURN_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_stop_turn/input.ts";
 import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
 import {
   CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT,
@@ -236,6 +237,15 @@ const CLAUDE_RECORDINGS = {
     enableTools: true,
     interruptAfter: "tool_use",
     interruptAfterToolUses: 2,
+  },
+  claude_background_task_stop_turn: {
+    prompts: [CLAUDE_BACKGROUND_TASK_STOP_TURN_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_background_task_stop_turn/claude_transcript.ndjson",
+    queryMode: "interrupt",
+    enableTools: true,
+    interruptAfter: "tool_use",
+    interruptAfterToolUses: 2,
+    keepProcessForWakes: 1,
   },
   claude_nested_background_subagent_wake: {
     prompts: [CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT],
@@ -563,6 +573,9 @@ try {
     ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
     ...("interruptAfterToolUses" in recording
       ? { interruptAfterToolUses: recording.interruptAfterToolUses }
+      : {}),
+    ...("keepProcessForWakes" in recording
+      ? { keepProcessForWakes: recording.keepProcessForWakes }
       : {}),
     ...("backgroundWakeCounts" in recording
       ? { backgroundWakeCounts: recording.backgroundWakeCounts }

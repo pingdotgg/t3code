@@ -251,8 +251,16 @@ If the provider does not support interruption:
 - best case: stop provider session and mark run interrupted or cancelled by policy.
 - worst case: mark interrupt unsupported and leave run active until provider exits.
 
-The Stop button sends `run.interrupt` with `holdQueue`. A Stop also holds the queue,
-ends the thread's pull request watches, and drops wakes its delegated tasks still
+The Stop buttons send `run.interrupt` with `holdQueue`. The composer's Stop adds
+`scope: "turn"`: on a run that is still preparing, starting or running it holds the
+queue and ends only the turn. Pull request watches, delegated tasks and the wakes
+they owe stay, and the provider keeps the turn's background work when its
+capabilities set `interruptKeepsBackgroundWork`. Its adapter then marks the
+interrupted terminal `backgroundWorkContinues`, so run execution keeps ingesting that
+work as after a completed turn instead of cascading it to interrupted.
+
+Without a scope, or on a run that already settled (the Waiting strip's Stop), a Stop
+also ends the thread's pull request watches and drops wakes its delegated tasks still
 owe, so nothing automatic restarts the thread. It then stops every delegated task
 under the thread: a `delegated-tasks.stop` effect sends the internal `thread.stop`
 command to each child thread, depth first. This runs after commit, not inside the

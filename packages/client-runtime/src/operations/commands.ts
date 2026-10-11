@@ -189,6 +189,8 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly subagentId?: NodeId;
   /** Temporary caller compatibility while UI naming moves from turns to runs. */
   readonly turnId?: string;
+  /** `turn` ends only a running turn and leaves its background work running. */
+  readonly scope?: "turn";
 }
 
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
@@ -780,7 +782,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 /**
  * Stop for the thread's latest work: interrupts the active run, or the settled run whose
  * background work still runs. With no run to stop, it ends the thread's pull request
- * watches, the only background work that has no run.
+ * watches, the only background work that has no run. `scope: "turn"` ends only an active
+ * run's turn; a run that settled meanwhile is stopped with its background work.
  */
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
   input: InterruptThreadTurnInput,
@@ -845,6 +848,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     threadId: input.threadId,
     runId,
     holdQueue: true,
+    ...(input.scope === undefined ? {} : { scope: input.scope }),
   });
 });
 
