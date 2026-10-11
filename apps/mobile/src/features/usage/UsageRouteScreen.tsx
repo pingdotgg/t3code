@@ -47,6 +47,7 @@ import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { SettingsRow } from "../settings/components/SettingsRow";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -290,19 +291,30 @@ export function UsageRouteScreen() {
           className="gap-6"
         >
           {showingLimits ? (
-            <UsageLimitsSection
-              now={limits.now}
-              failedLabels={limits.failedLabels}
-              selectedEnvironmentIds={selectedEnvironmentIds}
-              cursorPrompt={
-                cursorAccessEnvironments.length > 0 ? (
-                  <CursorEnableLimits
-                    environments={cursorAccessEnvironments}
-                    onEnabled={refreshAfterCursorEnable}
+            <>
+              {Platform.OS === "android" ? (
+                <SettingsSection>
+                  <SettingsRow
+                    icon="square.grid.2x2"
+                    label="Configure usage widget"
+                    target="SettingsUsageWidget"
                   />
-                ) : null
-              }
-            />
+                </SettingsSection>
+              ) : null}
+              <UsageLimitsSection
+                now={limits.now}
+                failedLabels={limits.failedLabels}
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={refreshAfterCursorEnable}
+                    />
+                  ) : null
+                }
+              />
+            </>
           ) : (
             <>
               {/* Period and metric together: neither applies to Limits, and

@@ -1,3 +1,41 @@
+diff --git a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+index 4c27e67e3039555b66a180fac5e59113ab627887..1f33aa0269234686995c57ad61ef9ef9a32c3225 100644
+--- a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
++++ b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+@@ -25,5 +25,7 @@ internal class ExpoWidgetsPeekWidget(
+     val layout = WidgetsLayoutRegistry.layout(appContext, widgetName)
+       ?: return createErrorRoot("No layout found for $widgetName")
+     val props = WidgetsLayoutRegistry.props(appContext, widgetName)
+-    val environment = getWidgetEnvironment(appContext)
++    val environment = getWidgetEnvironment(appContext) + mapOf(
++      "widgetId" to id.appWidgetId
++    )
+     val node = evaluateLayout(appContext, layout, props, environment)
+diff --git a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+index b747d9125c455d457e318093570cd86449d69778..5879967d6ef55dc2b45d6c0c0cdd8a5fa5135e5d 100644
+--- a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
++++ b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+@@ -3,4 +3,6 @@ package expo.modules.widgets
+ import android.content.Context
+ import android.content.Intent
++import android.net.Uri
+ import androidx.glance.action.Action
+ import androidx.glance.appwidget.action.actionSendBroadcast
++import androidx.glance.appwidget.action.actionStartActivity
+@@ -17,4 +19,13 @@ internal data class WidgetInteraction(
+ internal fun WidgetInteraction.toGlanceAction(context: Context): Action {
++  // App-owned deep links must use an activity PendingIntent rather than a
++  // broadcast trampoline, so taps can launch a stopped app on Android 12+.
++  if (target.startsWith("url:")) {
++    return actionStartActivity(
++      Intent(Intent.ACTION_VIEW, Uri.parse(target.removePrefix("url:")))
++        .setPackage(context.packageName)
++        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++    )
++  }
+   val intent = Intent(WIDGET_INTERACTION_ACTION)
+     .setComponent(widgetProviderComponentName(context, source))
+     .putExtra(WIDGET_INTERACTION_SOURCE_EXTRA, source)
 diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
 index c9f4dfe1f10a3a65ab72bd7e639f6f6d148e5f95..dc0792e1cd7b6762394de5e3fefa0863a253f70c 100644
 --- a/build/Widgets.types.d.ts

@@ -7,6 +7,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   Text as NativeText,
   TextInput,
@@ -248,6 +249,21 @@ export function CommandPalette(props: {
             params: { screen: "SettingsUsage" },
           }),
       },
+      ...(Platform.OS === "android"
+        ? [
+            {
+              key: "usageWidget",
+              kind: "action" as const,
+              title: "Configure usage widget",
+              searchTerms: ["widget", "accounts", "quota", "home screen"],
+              run: () =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsUsageWidget" },
+                }),
+            },
+          ]
+        : []),
       {
         key: "archive",
         kind: "action",

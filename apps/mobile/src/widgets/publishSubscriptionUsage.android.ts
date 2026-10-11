@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 import * as Linking from "expo-linking";
 import type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
+import { androidWidgetRefreshDeadlines } from "./androidSubscriptionUsageSnapshot";
 
 let tapUrl: string | undefined;
 let listening = false;
@@ -13,21 +14,14 @@ export async function publishSubscriptionUsage(snapshot: SubscriptionUsageSnapsh
   ]);
   tapUrl = snapshot.url;
   if (!listening) {
-    // expo-widgets has no Android counterpart to widgetURL: the card is a
-    // button whose tap is delivered to this process, so opening the app needs
-    // a live JS runtime.
+    // Cached layouts from older versions still deliver taps through JS.
     listening = true;
     addUserInteractionListener((event) => {
       if (event.source === "SubscriptionUsage" && tapUrl) void Linking.openURL(tapUrl);
     });
   }
   widget.updateSnapshot(snapshot);
-  // Android has no timeline; an alarm re-renders the stored snapshot at each
-  // deadline so stale readings flip to "Open T3 to refresh" unattended.
   requireOptionalNativeModule<{ schedule: (name: string, deadlines: number[]) => void }>(
     "T3WidgetExpiry",
-  )?.schedule(
-    "SubscriptionUsage",
-    snapshot.providers.map((provider) => provider.expiresAt).filter((at) => at > 0),
-  );
+  )?.schedule("SubscriptionUsage", androidWidgetRefreshDeadlines(snapshot, Date.now()));
 }

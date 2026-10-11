@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("@expo/ui/jetpack-compose", () => ({
   Button: "Button",
   Column: "Column",
+  LazyColumn: "LazyColumn",
   LinearProgressIndicator: "LinearProgressIndicator",
   Text: "Text",
   getMaterialColors: ({ scheme }: { scheme: string }) => ({
@@ -16,6 +17,7 @@ vi.mock("@expo/ui/jetpack-compose", () => ({
 }));
 
 vi.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  background: (color: string) => ({ background: color }),
   fillMaxSize: () => "fillMaxSize",
   fillMaxWidth: () => "fillMaxWidth",
   height: (value: number) => ({ height: value }),
@@ -29,6 +31,7 @@ vi.mock("expo-widgets", () => ({
 
 import { SubscriptionUsage } from "./SubscriptionUsage.android";
 import type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
+import { DEFAULT_WIDGET_CONFIGURATION } from "./subscriptionWidgetPreferences";
 
 const now = Date.parse("2026-09-05T12:00:00.000Z");
 const provider = {
@@ -47,8 +50,12 @@ const snapshot = {
   providers: [provider, { ...provider, name: "Claude" }],
 } satisfies SubscriptionUsageSnapshot;
 
-function render(props: SubscriptionUsageSnapshot, colorScheme: "light" | "dark" = "dark") {
-  vi.setSystemTime(now);
+function render(
+  props: SubscriptionUsageSnapshot,
+  colorScheme: "light" | "dark" = "dark",
+  at = now,
+) {
+  vi.setSystemTime(at);
   return JSON.stringify(SubscriptionUsage(props, { colorScheme, configuration: undefined }));
 }
 
@@ -73,9 +80,10 @@ describe("SubscriptionUsage Android layout", () => {
     expect(tree).not.toContain("more in T3");
   });
 
-  it("counts the quotas that did not fit", () => {
+  it("keeps deliberately hidden quotas and configuration controls out of the widget", () => {
     const tree = render({ ...snapshot, providers: [{ ...provider, totalWindows: 5 }] });
-    expect(tree).toContain("3 more in T3");
+    expect(tree).not.toContain("more quota");
+    expect(tree).not.toContain("Configure in T3");
   });
 
   it("keeps quotas without an expiry deadline visible", () => {
@@ -86,8 +94,101 @@ describe("SubscriptionUsage Android layout", () => {
 
   it("invites connecting when nothing has been checked", () => {
     const tree = render({ checkedAt: 0, providers: [] }, "light");
-    expect(tree).toContain("Tap to connect in T3");
+    expect(tree).toContain("Open T3 to connect and configure usage.");
     expect(tree).not.toContain("As of ");
     expect(tree).toContain('"containerColor":"light-surface"');
+  });
+
+  it("supports a different reset display on each quota and recalculates time left", () => {
+    const props: SubscriptionUsageSnapshot = {
+      ...snapshot,
+      android: {
+        widgets: {},
+        defaults: {
+          checkedAt: now,
+          configuration: DEFAULT_WIDGET_CONFIGURATION,
+          emptyMessage: "",
+          groups: [
+            {
+              id: "codex:0",
+              name: "Codex · Personal",
+              detail: "",
+              totalWindows: 3,
+              windows: [
+                {
+                  id: "a",
+                  label: "Session",
+                  remaining: 60,
+                  reset: "Next reset Sep 5, 1:30 PM",
+                  resetsAt: now + 90 * 60_000,
+                  resetDisplay: "reset",
+                  expiresAt: now + 15 * 60_000,
+                },
+                {
+                  id: "b",
+                  label: "Weekly",
+                  remaining: 50,
+                  reset: "Next reset Sep 7, 3:00 PM",
+                  resetsAt: now + 51 * 3_600_000,
+                  resetDisplay: "both",
+                  expiresAt: now + 15 * 60_000,
+                },
+                {
+                  id: "c",
+                  label: "Monthly",
+                  remaining: 40,
+                  reset: "Next reset Sep 5, 2:15 PM",
+                  resetsAt: now + 135 * 60_000,
+                  resetDisplay: "remaining",
+                  expiresAt: now + 15 * 60_000,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const tree = render(props);
+    expect(tree).toContain("Next reset Sep 5, 1:30 PM");
+    expect(tree).toContain("Next reset Sep 7, 3:00 PM · 2d 3h left");
+    expect(tree).toContain("Reset in 2h 15m");
+    expect(tree).not.toContain("Next reset Sep 5, 2:15 PM");
+    expect(render(props, "dark", now + 60_000)).toContain("Reset in 2h 14m");
+    expect(render(props, "dark", now + 16 * 60_000)).not.toContain("Reset in");
+  });
+
+  it("does not invent a countdown when a reset time is unavailable", () => {
+    const props: SubscriptionUsageSnapshot = {
+      ...snapshot,
+      android: {
+        widgets: {},
+        defaults: {
+          checkedAt: now,
+          configuration: DEFAULT_WIDGET_CONFIGURATION,
+          emptyMessage: "",
+          groups: [
+            {
+              id: "codex:0",
+              name: "Codex · Personal",
+              detail: "",
+              totalWindows: 1,
+              windows: [
+                {
+                  id: "a",
+                  label: "Session",
+                  remaining: 60,
+                  reset: "Reset time unavailable",
+                  resetsAt: null,
+                  resetDisplay: "remaining",
+                  expiresAt: now + 15 * 60_000,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expect(render(props)).toContain("Reset time unavailable");
+    expect(render(props)).not.toContain("Reset in");
   });
 });
