@@ -148,6 +148,23 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("appends item detail to native labels in parentheses", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => options.callback?.(),
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [{ id: "snooze:hour", label: "In 1 hour", detail: "3:00 PM" }],
+        position: Option.none(),
+      });
+
+      assert.equal(buildFromTemplateMock.mock.calls[0]?.[0][0]?.label, "In 1 hour (3:00 PM)");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

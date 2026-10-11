@@ -69,6 +69,14 @@ class FakeElement {
     this.attributes.set(name, value);
   }
 
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  click() {
+    this.dispatchEvent(new FakeDomEvent("click"));
+  }
+
   dispatchEvent(event: FakeDomEvent) {
     for (const listener of this.listeners.get(event.type) ?? []) {
       listener(event);
@@ -86,6 +94,8 @@ class FakeElement {
     this.focused = true;
     this.dispatchEvent(new FakeDomEvent("focus"));
   }
+
+  scrollIntoView() {}
 
   blur() {
     const fakeDocument = document as unknown as FakeDocument;
@@ -177,6 +187,23 @@ class FakeDocument {
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
+
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+}
+
+function pressKey(key: string) {
+  const event = new KeyboardEvent("keydown", { key });
+  (document as unknown as FakeDocument).dispatchEvent(event as unknown as FakeDomEvent);
+  return event;
+}
+
+function focusedLabel() {
+  return (document as unknown as FakeDocument).activeElement?.textContent;
 }
 
 function findButton(label: string): FakeElement | undefined {
@@ -325,6 +352,156 @@ describe("showContextMenuFallback", () => {
 
     await expect(selectionPromise).resolves.toBe("copy:branch");
     expect(invoker.focused).toBe(true);
+  });
+});
+
+describe("showContextMenuFallback keyboard", () => {
+  it("focuses the first item and moves between enabled items with the arrow keys", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "pin", label: "Pin", disabled: true },
+      { id: "archive", label: "Archive" },
+    ]);
+    // The first item takes focus quietly so a right-click shows no highlight.
+    expect(focusedLabel()).toBe("Rename");
+    expect(findButton("Rename")?.attributes.get("role")).toBe("menuitem");
+    expect(findButton("Rename")?.style.background).toBe("transparent");
+
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(true);
+    expect(focusedLabel()).toBe("Rename");
+    expect(findButton("Rename")?.style.background).toBe("var(--accent)");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("End");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("Home");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("ArrowUp");
+    expect(focusedLabel()).toBe("Archive");
+
+    pressKey("Tab");
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("enters a submenu with ArrowRight and backs out with ArrowLeft and Escape", async () => {
+    const invoker = (document as unknown as FakeDocument).createElement("button");
+    (document as unknown as FakeDocument).body.appendChild(invoker);
+    invoker.focus();
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "copy:submenu",
+        label: "Copy",
+        children: [
+          { id: "copy:path", label: "Path" },
+          { id: "copy:branch", label: "Branch" },
+        ],
+      },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    pressKey("ArrowLeft");
+    expect(focusedLabel()).toBe("Copy");
+    expect(findButton("Path")).toBeUndefined();
+
+    pressKey("ArrowRight");
+    pressKey("Escape");
+    expect(focusedLabel()).toBe("Copy");
+    pressKey("Escape");
+
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(invoker.focused).toBe(true);
+  });
+
+  it("highlights the item reached by keyboard and ignores hover until the pointer moves", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "archive", label: "Archive" },
+    ]);
+    const rename = findButton("Rename");
+    const archive = findButton("Archive");
+
+    pressKey("ArrowDown");
+    expect(rename?.style.background).toBe("var(--accent)");
+    expect(archive?.style.background).toBe("transparent");
+
+    // Scrolling under a resting pointer fires mouseenter without movement.
+    archive?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Rename");
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10, clientY: 10 }) as unknown as FakeDomEvent,
+    );
+    archive?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Archive");
+    expect(rename?.style.background).toBe("transparent");
+    expect(archive?.style.background).toBe("var(--accent)");
+
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("names submenus after their trigger and reads detail after a pause", async () => {
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "snooze",
+        label: "Snooze",
+        children: [{ id: "snooze:hour", label: "In 1 hour", detail: "3:00 PM" }],
+      },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey("ArrowRight");
+    const menuLabels = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .filter((element) => element.attributes.get("role") === "menu")
+      .map((menu) => menu.attributes.get("aria-label"));
+    expect(menuLabels).toEqual([undefined, "Snooze"]);
+    expect(findButton("In 1 hour")?.attributes.get("aria-label")).toBe("In 1 hour, 3:00 PM");
+    expect(findButton("In 1 hour")?.textContent).toBe("In 1 hour3:00 PM");
+
+    pressKey("Escape");
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("keeps keyboard focus in the menu when hovering the parent closes a submenu", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "snooze", label: "Snooze", children: [{ id: "snooze:hour", label: "In 1 hour" }] },
+      { id: "archive", label: "Archive" },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("In 1 hour");
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10, clientY: 10 }) as unknown as FakeDomEvent,
+    );
+    const rootMenu = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .find((element) => element.attributes.get("role") === "menu");
+    rootMenu?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(findButton("In 1 hour")).toBeUndefined();
+    expect(focusedLabel()).toBe("Snooze");
+
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("leaves keys alone once focus is outside the menu", async () => {
+    const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+    (document as unknown as FakeDocument).activeElement?.blur();
+
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(false);
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
   });
 });
 
