@@ -147,6 +147,16 @@ export interface EnvironmentThreadShell {
   readonly source: OrchestrationV2ThreadShell;
 }
 
+/**
+ * A thread a background scheduled-task run launched. Thread lists leave it
+ * out; it stays searchable and opens from the task's row in Settings.
+ */
+export function isBackgroundRunThread(thread: {
+  readonly source?: Pick<OrchestrationV2ThreadShell, "background"> | undefined;
+}): boolean {
+  return thread.source?.background === true;
+}
+
 function iso(value: DateTime.Utc): string {
   return DateTime.formatIso(value);
 }

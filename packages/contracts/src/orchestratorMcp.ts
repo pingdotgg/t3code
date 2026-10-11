@@ -536,6 +536,12 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  runInBackground: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Hide each run's thread from the sidebar so frequent runs do not fill it; the user opens runs from Settings, Scheduled tasks. Needs bindToCurrentThread=false.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -559,6 +565,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
     description: "Whether requests must carry a valid signature.",
   }),
+  /** Present and true when runs are hidden from the sidebar. */
+  runInBackground: Schema.optional(Schema.Boolean),
+  /** Newest thread a background run of this task launched, readable with t3_thread_read. */
+  lastRunThreadId: Schema.optional(ThreadId),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -589,6 +599,12 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  runInBackground: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Hide each run's thread from the sidebar; the user opens runs from Settings, Scheduled tasks. Omit to leave as-is. Needs a task that is not bound to a thread.",
+    }),
+  ),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

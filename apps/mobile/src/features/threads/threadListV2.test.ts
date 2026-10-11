@@ -1726,6 +1726,31 @@ it("excludes subagents from navigation, search and ordering while retaining user
   ).toEqual([fork.id, root.id]);
 });
 
+it("leaves background scheduled-task runs out of the list, its search and ordering", () => {
+  const regular = makeThread({ id: ThreadId.make("regular"), title: "Inbox sweep notes" });
+  const run = makeThread({ id: ThreadId.make("background-run"), title: "Inbox sweep" });
+  const background = { ...run, source: { ...run.source, background: true } };
+  const threads = [regular, background];
+  expect(
+    buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
+      (item) => item.thread.id,
+    ),
+  ).toEqual([regular.id]);
+  expect(
+    buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "Inbox sweep",
+      now: NOW,
+    }).items.map((item) => item.thread.id),
+  ).toEqual([regular.id]);
+  expect(
+    getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
+      (thread) => thread.id,
+    ),
+  ).toEqual([regular.id]);
+});
+
 /* ─── Recycled-list equality + per-row clock scoping ─────────────────── */
 
 const BASE_MS = Date.parse(NOW);

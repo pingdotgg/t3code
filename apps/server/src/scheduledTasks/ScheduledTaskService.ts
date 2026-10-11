@@ -197,6 +197,8 @@ interface ScheduledTaskRow {
   readonly run_count: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
+  readonly run_in_background: number;
+  readonly last_run_thread_id: string | null;
 }
 
 interface WebhookDeliveryRow {
@@ -338,6 +340,8 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
       lastRunError: row.last_run_error,
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
+      runInBackground: row.run_in_background === 1,
+      lastRunThreadId: row.last_run_thread_id,
     });
   }).pipe(
     Effect.mapError((cause) => {
@@ -350,6 +354,16 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
       });
     }),
   );
+
+/**
+ * The thread a background run launches. Derived from the run rather than
+ * allocated, so the thread can be flagged before it exists and a replayed
+ * launch reuses it. The varying part comes last because scratch folders are
+ * named after the tail of the id.
+ */
+function backgroundRunThreadId(taskId: ScheduledTaskId, runKey: string): ThreadId {
+  return ThreadId.make(`thread:scheduled-task:${taskId}:${runKey}`);
+}
 
 /** Select poll candidates before decoding their schedules or other JSON payloads. */
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
@@ -413,6 +427,22 @@ export const layer = Layer.effect(
     const changesPubSub = yield* PubSub.sliding<void>(1);
     const notifyChanged = PubSub.publish(changesPubSub, undefined).pipe(Effect.asVoid);
 
+    // The newest thread a background run of the task launched. Read from the
+    // threads that exist rather than stored, so it survives turning the
+    // setting off and never points at a launch that created no thread.
+    const lastRunThreadIdColumn = sql`
+      (
+        SELECT run.thread_id
+        FROM scheduled_task_run_threads run
+        INNER JOIN orchestration_v2_projection_threads thread
+          ON thread.thread_id = run.thread_id
+        WHERE run.task_id = scheduled_tasks.task_id
+          AND thread.deleted_at IS NULL
+        ORDER BY run.created_at DESC, run.thread_id DESC
+        LIMIT 1
+      ) AS last_run_thread_id
+    `;
+
     const selectAllRows = () => sql<ScheduledTaskRow>`
       SELECT
         task_id,
@@ -436,7 +466,9 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        run_in_background,
+        ${lastRunThreadIdColumn}
       FROM scheduled_tasks
       ORDER BY updated_at DESC, task_id ASC
     `;
@@ -471,7 +503,9 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        run_in_background,
+        ${lastRunThreadIdColumn}
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `;
@@ -551,7 +585,8 @@ export const layer = Layer.effect(
           last_run_error,
           run_count,
           webhook_token,
-          webhook_secret
+          webhook_secret,
+          run_in_background
         )
         SELECT
           ${task.id},
@@ -575,7 +610,8 @@ export const layer = Layer.effect(
           ${task.lastRunError},
           ${task.runCount},
           ${webhook.token},
-          ${webhook.secret}
+          ${webhook.secret},
+          ${task.runInBackground ? 1 : 0}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -602,7 +638,8 @@ export const layer = Layer.effect(
           webhook_secret = CASE
             WHEN ${webhook.secretChanged ? 1 : 0} = 1 THEN excluded.webhook_secret
             ELSE scheduled_tasks.webhook_secret
-          END
+          END,
+          run_in_background = excluded.run_in_background
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -671,6 +708,19 @@ export const layer = Layer.effect(
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not record schedule task run.", { taskId: input.id, cause }),
+        ),
+      );
+
+    // Flags a background run's thread before it is launched, so its shell is
+    // never published without the flag.
+    const flagRunThread = (id: ScheduledTaskId, threadId: ThreadId, startedAtIso: string) =>
+      sql`
+        INSERT INTO scheduled_task_run_threads (thread_id, task_id, created_at)
+        VALUES (${threadId}, ${id}, ${startedAtIso})
+        ON CONFLICT (thread_id) DO NOTHING
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not register the background run thread.", { taskId: id, cause }),
         ),
       );
 
@@ -788,6 +838,18 @@ export const layer = Layer.effect(
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
+        const backgroundThreadId =
+          active.threadId === null && active.runInBackground
+            ? backgroundRunThreadId(
+                active.id,
+                webhook === undefined
+                  ? `${trigger}:${DateTime.toEpochMillis(startedAt)}`
+                  : `webhook:${webhook.deliveryId}`,
+              )
+            : undefined;
+        if (backgroundThreadId !== undefined) {
+          yield* flagRunThread(active.id, backgroundThreadId, startedAtIso);
+        }
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
@@ -811,6 +873,7 @@ export const layer = Layer.effect(
                   },
                   createdBy: active.createdBy,
                   creationSource: active.creationSource,
+                  ...(backgroundThreadId === undefined ? {} : { threadId: backgroundThreadId }),
                 }),
               )
             : yield* Effect.exit(
@@ -1078,6 +1141,10 @@ export const layer = Layer.effect(
           existingTask !== null &&
           existingTask.enabled === input.enabled &&
           isSameSchedule(existingTask.schedule, schedule);
+        // A task bound to a thread posts into it, so there is no run thread to hide.
+        const runInBackground =
+          (input.threadId ?? null) === null &&
+          (input.runInBackground ?? existingTask?.runInBackground ?? false);
         const task: ScheduledTask = {
           id,
           title: input.title,
@@ -1101,6 +1168,7 @@ export const layer = Layer.effect(
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
+          runInBackground,
         };
         yield* saveTask(task, input.requireExisting === true, webhook);
         yield* notifyChanged;

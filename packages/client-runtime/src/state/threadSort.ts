@@ -1,6 +1,6 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell, ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { EnvironmentThreadShell } from "./models.ts";
+import { isBackgroundRunThread, type EnvironmentThreadShell } from "./models.ts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -156,12 +156,20 @@ export function getLatestThreadForProject<
     readonly id: string;
     readonly projectId: ProjectId;
     readonly archivedAt: string | null;
+    readonly source?: Pick<OrchestrationV2ThreadShell, "background"> | undefined;
   } & ThreadSortInput,
 >(threads: readonly T[], projectId: ProjectId, sortOrder: SidebarThreadSortOrder): T | null {
   let latest: T | null = null;
   let latestTimestamp = Number.NEGATIVE_INFINITY;
   for (const thread of threads) {
-    if (thread.projectId !== projectId || thread.archivedAt !== null) continue;
+    // A background run is never the thread a project opens to.
+    if (
+      thread.projectId !== projectId ||
+      thread.archivedAt !== null ||
+      isBackgroundRunThread(thread)
+    ) {
+      continue;
+    }
     const timestamp = getThreadSortTimestamp(thread, sortOrder);
     if (
       latest === null ||

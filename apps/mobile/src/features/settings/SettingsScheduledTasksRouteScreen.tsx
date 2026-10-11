@@ -535,6 +535,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
                   prompt: editor.draft.prompt,
                   schedule: editor.draft.schedule,
                   enabled: editor.draft.enabled,
+                  runInBackground: editor.draft.runInBackground,
                 },
               });
             }}
@@ -660,6 +661,7 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
+      runInBackground: draft.task?.threadId ? false : draft.runInBackground,
       threadId: draft.task?.threadId ?? null,
       workspaceStrategy:
         draft.workspace === "root"
@@ -990,6 +992,21 @@ function TaskForm({
             onValueChange={(enabled) => setDraft({ ...draft, enabled })}
           />
         </View>
+        {draft.task?.threadId ? null : (
+          <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+            <View className="min-w-0 flex-1 gap-0.5">
+              <Text className="text-lg text-foreground">Run in the background</Text>
+              <Text className="text-sm text-foreground-muted">
+                Runs don't appear in the thread list.
+              </Text>
+            </View>
+            <ThemedSwitch
+              accessibilityLabel="Run in the background"
+              value={draft.runInBackground}
+              onValueChange={(runInBackground) => setDraft({ ...draft, runInBackground })}
+            />
+          </View>
+        )}
       </SettingsSection>
       {draft.schedule.mode === "fixed_time" ? (
         <Text className="px-2 text-sm text-foreground-muted">

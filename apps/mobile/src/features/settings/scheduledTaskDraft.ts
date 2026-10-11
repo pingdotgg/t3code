@@ -139,6 +139,8 @@ export type ScheduledTaskDraft = {
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
+  /** Hides each run's thread from thread lists. Not shown for tasks bound to a thread. */
+  readonly runInBackground: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
 };
@@ -162,6 +164,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.baseRef,
     draft.checkoutPath,
     draft.enabled,
+    draft.runInBackground,
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
@@ -190,6 +193,7 @@ export function createDraft(
     baseRef: "main",
     checkoutPath: "",
     enabled: true,
+    runInBackground: false,
     startFromOrigin: true,
     runtimeMode: "full-access",
   };
@@ -211,6 +215,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? task.workspaceStrategy.worktreePath
         : "",
     enabled: task.enabled,
+    runInBackground: task.runInBackground === true,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)

@@ -191,4 +191,23 @@ describe("sortThreads", () => {
 
     expect(latestThread?.id).toBe(ThreadId.make("thread-3"));
   });
+
+  it("skips background scheduled-task runs when picking a project's latest thread", () => {
+    const regular = makeThread({
+      id: ThreadId.make("thread-regular"),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:01:00.000Z",
+    });
+    const run = makeThread({
+      id: ThreadId.make("thread-background-run"),
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const background = { ...run, source: { ...run.source, background: true } };
+
+    expect(getLatestThreadForProject([regular, background], PROJECT_ID, "updated_at")?.id).toBe(
+      regular.id,
+    );
+    expect(getLatestThreadForProject([background], PROJECT_ID, "updated_at")).toBeNull();
+  });
 });

@@ -103,6 +103,23 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("leaves background scheduled-task runs out of navigation but keeps them readable", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const run = { ...root, id: ThreadId.make("background-run"), background: true };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, run] });
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      root.id,
+    ]);
+    expect(registry.get(threads.threadShellsAtom).map((thread) => thread.id)).toEqual([
+      root.id,
+      run.id,
+    ]);
+    dispose();
+    registry.dispose();
+  });
+
   it("leaves switched-off environments out of navigation", () => {
     const { registry, threads, catalogValueAtom } = makeHarness([
       environmentId,

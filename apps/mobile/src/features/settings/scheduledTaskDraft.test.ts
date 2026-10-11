@@ -256,6 +256,16 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("running a scheduled task in the background", () => {
+  it("edits the stored setting and reads a server that omits it as off", () => {
+    expect(createDraft(null, null).runInBackground).toBe(false);
+    expect(editDraft(legacyTask).runInBackground).toBe(false);
+    const draft = editDraft({ ...legacyTask, runInBackground: true });
+    expect(draft.runInBackground).toBe(true);
+    expect(hasScheduledTaskDraftChanges(draft, { ...draft, runInBackground: false })).toBe(true);
+  });
+});
+
 it("continues to default newly created tasks to origin", () => {
   expect(createDraft(null, null).startFromOrigin).toBe(true);
 });

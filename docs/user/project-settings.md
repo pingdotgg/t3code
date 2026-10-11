@@ -65,6 +65,10 @@ Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
 
+**Run in the background** keeps a task's runs out of the thread list; they stay
+searchable, and on desktop and web **Open last run** on the task's row opens
+the latest one.
+
 ## Webhook automations
 
 In **Settings → Scheduled tasks**, choose **On webhook**

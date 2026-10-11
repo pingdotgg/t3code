@@ -169,6 +169,13 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("running a scheduled task in the background", () => {
+  it("edits the stored setting and reads a server that omits it as off", () => {
+    expect(taskToDraft(legacyTask).runInBackground).toBe(false);
+    expect(taskToDraft({ ...legacyTask, runInBackground: true }).runInBackground).toBe(true);
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {

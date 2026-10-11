@@ -47,6 +47,8 @@ import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   useEnvironment,
@@ -118,6 +120,7 @@ const EMPTY_DRAFT: DraftState = {
   title: "",
   prompt: "",
   enabled: true,
+  runInBackground: false,
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
@@ -464,6 +467,15 @@ function ScheduledTaskRow({
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
+          {task.lastRunThreadId ? (
+            <Link
+              to="/$environmentId/$threadId"
+              params={buildThreadRouteParams(scopeThreadRef(environmentId, task.lastRunThreadId))}
+              className="underline underline-offset-2"
+            >
+              {task.runInBackground ? "Open last run" : "Open last background run"}
+            </Link>
+          ) : null}
         </div>
       }
       control={
@@ -924,6 +936,7 @@ function ScheduledTaskEditorDialog({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
+      runInBackground: draft.threadId ? false : draft.runInBackground,
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
@@ -1354,6 +1367,28 @@ function ScheduledTaskEditorDialog({
                 onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
               />
             </div>
+
+            {draft.threadId ? null : (
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="scheduled-task-background">Run in the background</Label>
+                  <p
+                    id="scheduled-task-background-description"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Runs don't appear in the sidebar. Open them from this list.
+                  </p>
+                </div>
+                <Switch
+                  id="scheduled-task-background"
+                  aria-describedby="scheduled-task-background-description"
+                  checked={draft.runInBackground}
+                  onCheckedChange={(runInBackground) =>
+                    setDraft((current) => ({ ...current, runInBackground }))
+                  }
+                />
+              </div>
+            )}
           </fieldset>
         </DialogPanel>
 

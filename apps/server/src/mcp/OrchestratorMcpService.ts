@@ -254,6 +254,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
+    ...(task.runInBackground ? { runInBackground: true } : {}),
+    ...(task.lastRunThreadId == null ? {} : { lastRunThreadId: task.lastRunThreadId }),
   };
 }
 
@@ -1558,6 +1560,12 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
+        if (input.runInBackground === true && bindToCurrentThread) {
+          return yield* failure(
+            "invalid_request",
+            "runInBackground hides the thread each run launches, so it needs bindToCurrentThread=false.",
+          );
+        }
         const modelSelection =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
@@ -1576,6 +1584,9 @@ const make = Effect.gen(function* () {
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
+          ...(input.runInBackground === undefined
+            ? {}
+            : { runInBackground: input.runInBackground }),
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1644,6 +1655,12 @@ const make = Effect.gen(function* () {
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
             : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+        if (input.runInBackground === true && threadId !== null) {
+          return yield* failure(
+            "invalid_request",
+            "runInBackground hides the thread each run launches, so it needs a task that is not bound to a thread.",
+          );
+        }
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -1658,6 +1675,9 @@ const make = Effect.gen(function* () {
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
+          ...(input.runInBackground === undefined
+            ? {}
+            : { runInBackground: input.runInBackground }),
         };
         const { task } = yield* scheduledTasks
           .upsert(upsertInput)

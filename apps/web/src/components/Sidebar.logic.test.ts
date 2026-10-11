@@ -460,6 +460,16 @@ describe("sidebar thread lineage helpers", () => {
     expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
   });
 
+  it("hides threads launched by background scheduled-task runs from the sidebar", () => {
+    const visible = makeThreadFixture({ id: ThreadId.make("thread-visible") });
+    const run = makeThreadFixture({ id: ThreadId.make("thread-background") });
+    const background = { ...run, source: { ...run.source, background: true } };
+
+    expect(
+      filterSidebarV2VisibleThreads([visible, background], null).map((thread) => thread.id),
+    ).toEqual([visible.id]);
+  });
+
   it("resolves the parent thread for fork sidebar affordances", () => {
     const parentId = ThreadId.make("thread-parent");
     const fallbackParentId = ThreadId.make("thread-fallback-parent");
