@@ -280,6 +280,48 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("mutes and unmutes a thread without marking it active", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:mute");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-mute"),
+      threadId,
+      projectId: ProjectId.make("project:mute"),
+      title: "Review bot",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const created = yield* projections.getThreadShell(threadId);
+    assert.ok(created);
+    let mutedAt: DateTime.Utc | null = null;
+    for (const [index, muted] of [true, true, false].entries()) {
+      yield* orchestrator.dispatch({
+        type: "thread.mute.set",
+        commandId: CommandId.make(`mute-${index}`),
+        threadId,
+        muted,
+      });
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.ok(shell);
+      assert.equal(shell.mutedAt != null, muted);
+      // Muting again keeps the original timestamp.
+      if (index === 0) mutedAt = shell.mutedAt ?? null;
+      if (index === 1) assert.deepEqual(shell.mutedAt, mutedAt);
+      assert.deepEqual(shell.updatedAt, created.updatedAt);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.thread.mutedAt != null, muted);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("implements a proposed plan that the command projection leaves out", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

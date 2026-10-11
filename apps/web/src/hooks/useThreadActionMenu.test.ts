@@ -48,6 +48,7 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/entities", () => ({
   readEnvironmentSupportsAutoSettleOptOut: () => true,
+  readEnvironmentSupportsMute: () => true,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
@@ -132,6 +133,7 @@ vi.mock("./useThreadActions", () => ({
         "unsnoozeThread",
         "pinThread",
         "confirmAndUnpinThread",
+        "setThreadMuted",
         "archiveThread",
         "deleteThread",
       ].map((action) => [
@@ -193,7 +195,7 @@ describe("thread menu permissions", () => {
     );
   });
 
-  it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
+  it.each(["rename", "regenerate-title", "delete", "pin", "settle", "mute", "archive"] as const)(
     "%s rechecks after the native menu closes",
     async (action) => {
       state.granted.add("secondary");

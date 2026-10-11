@@ -129,6 +129,7 @@ describe("startup agent activity", () => {
         }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
+        shell({ id: ThreadId.make("muted"), mutedAt: DateTime.makeUnsafe(NOW) }),
       ],
     });
     assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
@@ -308,6 +309,7 @@ describe("AgentAwarenessRelay", () => {
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      "thread.mute-set",
     ] as const) {
       assert.isTrue(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
@@ -666,6 +668,123 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state, null);
+    }),
+  );
+
+  it.effect("withdraws a muted thread and restores it when unmuted", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      yield* Ref.set(currentShell, shell({ mutedAt: yield* DateTime.now }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state, null);
+      yield* Ref.set(currentShell, shell());
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 3);
+      assert.notEqual(publications[2]?.state, null);
+    }),
+  );
+
+  // Mute and unmute reach the relay as thread.mute-set events; the unmute
+  // event's own time is the cutoff for terminal alerts.
+  const makeMuteRelay = Effect.fnUntraced(function* () {
+    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+    const pulls = yield* Queue.unbounded<void>();
+    const harness = yield* makeTestRelay({
+      domainEvents: Stream.fromEffectRepeat(
+        Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+      ),
+    });
+    yield* harness.relay.start();
+    yield* Queue.take(pulls);
+    const deliverMuteSet = Effect.fnUntraced(function* (
+      mutedAt: DateTime.Utc | null,
+      occurredAt: DateTime.Utc,
+    ) {
+      yield* Queue.offer(events, {
+        id: EventId.make(`event:mute:${DateTime.toEpochMillis(occurredAt)}`),
+        type: "thread.mute-set",
+        threadId: THREAD_ID,
+        occurredAt,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+          mutedAt,
+        },
+      });
+      yield* Queue.take(pulls);
+      yield* harness.relay.drain;
+    });
+    // Publish live work, then mute and let the withdrawal confirm.
+    yield* harness.relay.publishThread(THREAD_ID);
+    const mutedAt = yield* DateTime.now;
+    yield* Ref.set(harness.currentShell, shell({ mutedAt }));
+    yield* deliverMuteSet(mutedAt, mutedAt);
+    yield* TestClock.adjust("5 seconds");
+    yield* harness.relay.drain;
+    assert.equal(harness.publications.length, 2);
+    assert.equal(harness.publications[1]?.state, null);
+    return { ...harness, deliverMuteSet };
+  });
+
+  it.effect("keeps work that finished while muted quiet after unmuting", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, deliverMuteSet } = yield* makeMuteRelay();
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* Ref.set(
+        currentShell,
+        shell({ status: "completed", latestRunCompletedAt: finishedAt }),
+      );
+      yield* deliverMuteSet(null, yield* DateTime.now);
+      // Past the confirmation window a first terminal state would otherwise publish.
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+    }),
+  );
+
+  it.effect("alerts for work that finished after the unmute even when read later", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, deliverMuteSet } = yield* makeMuteRelay();
+      const unmutedAt = yield* DateTime.now;
+      yield* TestClock.adjust("3 seconds");
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          latestRunCompletedAt: DateTime.add(unmutedAt, { seconds: 1 }),
+        }),
+      );
+      yield* deliverMuteSet(null, unmutedAt);
+      // A first terminal state after a withdrawal waits out its confirmation.
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 3);
+      assert.equal(publications[2]?.state?.phase, "completed");
     }),
   );
 

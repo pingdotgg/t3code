@@ -478,6 +478,20 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
   });
 });
 
+export interface SetThreadMutedInput extends ThreadCommandInput {
+  readonly muted: boolean;
+}
+export const setThreadMuted = Effect.fn("EnvironmentCommands.setThreadMuted")(function* (
+  input: SetThreadMutedInput,
+) {
+  return yield* dispatch({
+    type: "thread.mute.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    muted: input.muted,
+  });
+});
+
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,
 ) {

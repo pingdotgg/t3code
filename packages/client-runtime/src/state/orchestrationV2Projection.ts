@@ -221,9 +221,10 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return { ...base, thread: event.payload };
-    // Visited tracking is read state, not activity: skip the updatedAt bump.
+    // Visited tracking and muting are not activity: skip the updatedAt bump.
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.mute-set":
       return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {

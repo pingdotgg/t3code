@@ -258,6 +258,7 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly setThreadMuted: (thread: EnvironmentThreadShell, muted: boolean) => Promise<boolean>;
   readonly moveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -273,6 +274,7 @@ export function useThreadListActions(): {
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
+  const setMutedMutation = useAtomCommand(threadEnvironment.setMuted, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -490,6 +492,27 @@ export function useThreadListActions(): {
       return true;
     },
     [setAutoSettleMutation],
+  );
+  const setThreadMuted = useCallback(
+    async (thread: EnvironmentThreadShell, muted: boolean) => {
+      selectionHaptic();
+      const result = await setMutedMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, muted },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not update notifications",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The notification setting could not be changed.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [setMutedMutation],
   );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
@@ -763,6 +786,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     moveThread,
     renameThread,
     regenerateThreadTitle,

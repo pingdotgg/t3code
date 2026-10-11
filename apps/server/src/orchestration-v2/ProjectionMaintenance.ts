@@ -227,6 +227,7 @@ export const layer: Layer.Layer<
       "thread.provider-switched",
       "thread.visited",
       "thread.marked-unread",
+      "thread.mute-set",
     ];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);

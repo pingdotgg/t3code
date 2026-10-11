@@ -17,6 +17,8 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  | "mute"
+  | "unmute"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -85,6 +87,7 @@ export interface ThreadActionMenuState {
   readonly isSettled: boolean;
   /** False while the user has turned automatic settlement off for this thread. */
   readonly autoSettleEnabled: boolean;
+  readonly isMuted: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
@@ -94,6 +97,8 @@ export interface ThreadActionMenuState {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
     readonly autoSettleOptOut: boolean;
+    /** Server understands thread.mute.set. */
+    readonly mute: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
@@ -214,6 +219,13 @@ export function buildThreadActionMenuItems(
               },
             ],
           },
+        ]
+      : []),
+    ...(state.supports.mute
+      ? [
+          state.isMuted
+            ? { id: "unmute" as const, label: "Unmute notifications", icon: "bell" }
+            : { id: "mute" as const, label: "Mute notifications", icon: "bell-off" },
         ]
       : []),
     {

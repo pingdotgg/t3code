@@ -154,6 +154,7 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     moveThread,
     renameThread,
     regenerateThreadTitle,
@@ -321,6 +322,7 @@ function ThreadNavigationSidebarPane(
     snoozeEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -732,6 +734,7 @@ function ThreadNavigationSidebarPane(
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
               autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+              muteSupported={muteEnvironmentIds.has(thread.environmentId)}
               reorderSupported={
                 item.item.pinned
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -745,6 +748,7 @@ function ThreadNavigationSidebarPane(
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
               onSetThreadAutoSettle={setThreadAutoSettle}
+              onSetThreadMuted={setThreadMuted}
               onMoveThread={moveThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -809,6 +813,8 @@ function ThreadNavigationSidebarPane(
       autoSettleOptOutEnvironmentIds,
       autoSettleOptOutEnvironmentIds,
       setThreadAutoSettle,
+      muteEnvironmentIds,
+      setThreadMuted,
       projectByKey,
       projectTitleByProjectKey,
       regenerateThreadTitle,

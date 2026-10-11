@@ -441,6 +441,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
+    case "thread.mute.set":
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
@@ -2392,6 +2393,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.snooze"
           | "thread.unsnooze"
           | "thread.auto-settle.set"
+          | "thread.mute.set"
           | "thread.pin"
           | "thread.unpin"
           | "thread.pin.reorder"
@@ -2869,6 +2871,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: unchanged ? thread.updatedAt : now,
           };
         }
+        // Muting changes delivery, not activity, so it keeps updatedAt.
+        case "thread.mute.set":
+          return {
+            ...thread,
+            mutedAt: command.muted ? (thread.mutedAt ?? now) : null,
+          };
         case "thread.pin": {
           // Pinning is a promotion: it clears the parked states rather than
           // silently outranking them — an explicit settle is un-settled and a
@@ -3223,6 +3231,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.unsnoozed" as const;
         case "thread.auto-settle.set":
           return "thread.auto-settle-set" as const;
+        case "thread.mute.set":
+          return "thread.mute-set" as const;
         case "thread.pin":
           return "thread.pinned" as const;
         case "thread.unpin":
@@ -10645,6 +10655,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.snooze":
       case "thread.unsnooze":
       case "thread.auto-settle.set":
+      case "thread.mute.set":
       case "thread.pin":
       case "thread.unpin":
       case "thread.pin.reorder":
