@@ -12,15 +12,21 @@ import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
-import { collectServerUpdateTargets, runUpdateEverything } from "./updateEverything.logic";
+import {
+  collectServerUpdateTargets,
+  describeUpdateEverything,
+  runUpdateEverything,
+} from "./updateEverything.logic";
 
 /**
- * The remote half of the sidebar update button: servers behind
- * `targetVersion` and outdated providers on every connected machine. Server
- * targets appear only once npm confirms `t3@<targetVersion>`. `run` performs
- * the whole pass, including this app's own download and install when given.
+ * The remote half of the sidebar update button: outdated providers on every
+ * connected machine, and servers behind the version this client runs or is
+ * about to install (`localUpdateVersion`). Server targets appear only once npm
+ * confirms that version. `run` performs the whole pass, including this app's
+ * own download and install when given.
  */
-export function useUpdateEverything(targetVersion: string = APP_VERSION) {
+export function useUpdateEverything(localUpdateVersion: string | null) {
+  const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
   const machinesAtom = useMemo(
     () =>
@@ -50,33 +56,23 @@ export function useUpdateEverything(targetVersion: string = APP_VERSION) {
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
 
-  const providerCount = providers.machines.reduce(
-    (count, machine) => count + machine.candidates.length,
-    0,
-  );
-  const lines = [
-    servers.length > 0
-      ? `Servers to ${targetVersion}: ${servers
-          .map((server) =>
-            server.selfUpdate === "desktop-managed"
-              ? `${server.serverLabel} (desktop app relaunches)`
-              : server.serverLabel,
-          )
-          .join(", ")}`
-      : null,
-    ...providers.machines.map(
-      (machine) =>
-        `Providers on ${machine.label}: ${machine.candidates
-          .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
-          .join(", ")}`,
-    ),
-  ].filter((line) => line !== null);
+  const { summary, lines } = describeUpdateEverything({
+    localVersion: localUpdateVersion,
+    servers,
+    providerMachines: providers.machines.map((machine) => ({
+      environmentId: machine.environmentId,
+      label: machine.label,
+      providers: machine.candidates.map(
+        (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+      ),
+    })),
+  });
 
   return {
-    hasUpdates: servers.length > 0 || providerCount > 0,
-    serverCount: servers.length,
-    providerCount,
-    /** One line per server group and provider machine, for confirmations. */
+    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    /** Short label for the tooltip and the confirmation title. */
+    summary,
+    /** One line per machine, for the confirmation. */
     lines,
     run: (local: { downloadLocal?: () => Promise<boolean>; installLocal?: () => Promise<void> }) =>
       runUpdateEverything({

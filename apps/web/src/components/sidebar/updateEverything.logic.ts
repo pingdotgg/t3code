@@ -99,3 +99,72 @@ export async function runUpdateEverything(steps: UpdateEverythingSteps): Promise
   ]);
   if (localReady) await steps.installLocal?.();
 }
+
+export interface UpdateEverythingPlan {
+  /** The version this desktop app installs, or null when it is not updating. */
+  readonly localVersion: string | null;
+  readonly servers: ReadonlyArray<
+    Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
+  >;
+  readonly providerMachines: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    /** Display names of the outdated providers on that machine. */
+    readonly providers: ReadonlyArray<string>;
+  }>;
+}
+
+function countLabel(count: number, noun: string): string | null {
+  return count === 0 ? null : `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function joinList(parts: ReadonlyArray<string>): string {
+  if (parts.length <= 2) return parts.join(" and ");
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+}
+
+/**
+ * Text for the sidebar tooltip and the confirmation. `summary` reads like
+ * "Update this app, 2 servers, and 3 providers". `lines` has one entry per
+ * machine, this app first, such as "alvin: server to 0.0.50, Codex, Claude".
+ */
+export function describeUpdateEverything(plan: UpdateEverythingPlan): {
+  readonly summary: string;
+  readonly lines: ReadonlyArray<string>;
+} {
+  const providerCount = plan.providerMachines.reduce(
+    (count, machine) => count + machine.providers.length,
+    0,
+  );
+  const summary = `Update ${joinList(
+    [
+      plan.localVersion ? "this app" : null,
+      countLabel(plan.servers.length, "server"),
+      countLabel(providerCount, "provider"),
+    ].filter((part) => part !== null),
+  )}`;
+
+  const machines = new Map<EnvironmentId, { label: string; items: string[] }>();
+  const itemsFor = (environmentId: EnvironmentId, label: string) => {
+    const existing = machines.get(environmentId);
+    if (existing) return existing.items;
+    const items: string[] = [];
+    machines.set(environmentId, { label, items });
+    return items;
+  };
+  for (const server of plan.servers) {
+    const kind = server.selfUpdate === "desktop-managed" ? "desktop app" : "server";
+    itemsFor(server.environmentId, server.serverLabel).push(`${kind} to ${server.targetVersion}`);
+  }
+  for (const machine of plan.providerMachines) {
+    itemsFor(machine.environmentId, machine.label).push(...machine.providers);
+  }
+
+  return {
+    summary,
+    lines: [
+      ...(plan.localVersion ? [`This app: ${plan.localVersion}, restarts last`] : []),
+      ...Array.from(machines.values(), ({ label, items }) => `${label}: ${items.join(", ")}`),
+    ],
+  };
+}

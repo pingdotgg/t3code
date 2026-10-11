@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectServerUpdateTargets,
+  describeUpdateEverything,
   runUpdateEverything,
   type UpdateEverythingMachine,
 } from "./updateEverything.logic";
@@ -106,5 +107,54 @@ describe("runUpdateEverything", () => {
     });
 
     expect(calls).toEqual(["providers", "servers"]);
+  });
+});
+
+describe("describeUpdateEverything", () => {
+  it("summarizes the run and lists each machine once", () => {
+    const alvin = EnvironmentId.make("alvin");
+    expect(
+      describeUpdateEverything({
+        localVersion: "0.0.50",
+        servers: [
+          {
+            environmentId: alvin,
+            serverLabel: "alvin",
+            selfUpdate: "boot-service",
+            targetVersion: "0.0.50",
+          },
+          {
+            environmentId: EnvironmentId.make("studio"),
+            serverLabel: "studio",
+            selfUpdate: "desktop-managed",
+            targetVersion: "0.0.50",
+          },
+        ],
+        providerMachines: [
+          { environmentId: alvin, label: "alvin", providers: ["Codex", "Claude"] },
+          { environmentId: EnvironmentId.make("box"), label: "box", providers: ["Cursor"] },
+        ],
+      }),
+    ).toEqual({
+      summary: "Update this app, 2 servers, and 3 providers",
+      lines: [
+        "This app: 0.0.50, restarts last",
+        "alvin: server to 0.0.50, Codex, Claude",
+        "studio: desktop app to 0.0.50",
+        "box: Cursor",
+      ],
+    });
+  });
+
+  it("reads naturally with one kind of update", () => {
+    expect(
+      describeUpdateEverything({
+        localVersion: null,
+        servers: [],
+        providerMachines: [
+          { environmentId: EnvironmentId.make("alvin"), label: "alvin", providers: ["Codex"] },
+        ],
+      }).summary,
+    ).toBe("Update 1 provider");
   });
 });

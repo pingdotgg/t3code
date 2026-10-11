@@ -2,7 +2,6 @@ import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { APP_VERSION } from "../../branding";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
@@ -28,6 +27,7 @@ import { SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   DesktopUpdateStatusIcon,
+  type DesktopUpdateStatusIconState,
   shouldContinueDesktopUpdateCheckAnimation,
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
@@ -66,25 +66,28 @@ export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
 
 function resolveSidebarUpdatePresentation({
   action,
-  hasRemoteUpdates,
+  showsEverything,
   isDownloading,
   showCheckIcon,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
-  readonly hasRemoteUpdates: boolean;
+  /** Remote work is waiting or running, and this app is not downloading. */
+  readonly showsEverything: boolean;
   readonly isDownloading: boolean;
   readonly showCheckIcon: boolean;
 }) {
-  const showUpdateDetails = action !== "none" || hasRemoteUpdates || isDownloading;
-  const iconStatus = showCheckIcon
+  const showUpdateDetails = action !== "none" || showsEverything || isDownloading;
+  const iconStatus: DesktopUpdateStatusIconState = showCheckIcon
     ? "checking"
-    : action === "install"
-      ? "downloaded"
-      : isDownloading
-        ? "downloading"
-        : action === "download" || hasRemoteUpdates
-          ? "available"
-          : "idle";
+    : isDownloading
+      ? "downloading"
+      : showsEverything
+        ? "everything"
+        : action === "install"
+          ? "downloaded"
+          : action === "download"
+            ? "available"
+            : "idle";
 
   return {
     iconStatus,
@@ -111,10 +114,6 @@ function SidebarUpdateArchitectureWarningContent() {
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
-}
-
-function pluralize(count: number, noun: string): string | null {
-  return count === 0 ? null : `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /** Downloads this app's update. Resolves true when it is ready to install;
@@ -220,8 +219,10 @@ function SidebarUpdateControl() {
   // Remote servers follow this app to the version it is about to install.
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
-  const everything = useUpdateEverything(localUpdateVersion ?? APP_VERSION);
+  const everything = useUpdateEverything(localUpdateVersion);
   const runsEverything = everything.hasUpdates && !isDownloading;
+  // Providers leave the list once queued, so the run keeps its own state.
+  const isRunningEverything = isUpdatingEverything && !isDownloading;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -229,29 +230,21 @@ function SidebarUpdateControl() {
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
-    hasRemoteUpdates: runsEverything,
+    showsEverything: runsEverything || isRunningEverything,
     isDownloading,
     showCheckIcon,
   });
-  const everythingTooltip = `Update ${[
-    localUpdateVersion ? "this app" : null,
-    pluralize(everything.serverCount, "server"),
-    pluralize(everything.providerCount, "provider"),
-  ]
-    .filter((part) => part !== null)
-    .join(", ")}`;
-  const tooltip =
-    isUpdatingEverything && !isDownloading
-      ? "Updating…"
-      : runsEverything
-        ? everythingTooltip
-        : showUpdateDetails
-          ? state
-            ? getDesktopUpdateButtonTooltip(state)
-            : "Update available"
-          : showCheckIcon
-            ? "Checking for updates…"
-            : "Check for updates";
+  const tooltip = isRunningEverything
+    ? "Updating…"
+    : runsEverything
+      ? everything.summary
+      : showUpdateDetails
+        ? state
+          ? getDesktopUpdateButtonTooltip(state)
+          : "Update available"
+        : showCheckIcon
+          ? "Checking for updates…"
+          : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -286,9 +279,7 @@ function SidebarUpdateControl() {
       try {
         const confirmed = await ensureLocalApi().dialogs.confirm(
           [
-            "Update everything?",
-            "",
-            ...(localUpdateVersion ? [`This app: install ${localUpdateVersion} and restart.`] : []),
+            `${everything.summary}?`,
             ...everything.lines,
             "",
             "Running tasks on these machines may be interrupted.",
@@ -381,15 +372,7 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  }, [
-    action,
-    everything,
-    isInteractionDisabled,
-    localUpdateVersion,
-    prefersReducedMotion,
-    runsEverything,
-    state,
-  ]);
+  }, [action, everything, isInteractionDisabled, prefersReducedMotion, runsEverything, state]);
 
   const handleCheckAnimationIteration = useCallback(() => {
     setIsCheckAnimationLatched(
@@ -420,7 +403,7 @@ function SidebarUpdateControl() {
               "text-(--sidebar-icon-color)",
               !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             ),
-        disabled && !showUpdateIconState && "opacity-60",
+        ((disabled && !showUpdateIconState) || isRunningEverything) && "opacity-60",
       )}
       onClick={handleAction}
       onBlur={() => {
