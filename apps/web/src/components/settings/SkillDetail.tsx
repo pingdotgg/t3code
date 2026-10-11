@@ -1,13 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Check, Copy } from "lucide";
 import { AlertTriangleIcon, MoreHorizontalIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useEffectEvent, useState } from "react";
 
-import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { MorphIcon } from "../MorphIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Skeleton } from "../ui/skeleton";
-import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SkillAgentIcon } from "./SkillAgents";
@@ -79,20 +80,7 @@ export function SkillDetail({
     details.copies.find((copy) => copy.folder === folderPath) ?? details.folder ?? null;
   const scripts = folder?.files.filter((file) => file.script).map((file) => file.path) ?? [];
 
-  const copyPath = (path: string) => {
-    void writeTextToClipboard(path, "skill path").then(
-      (copied) => {
-        if (copied) toastManager.add({ type: "success", title: "Path copied", description: path });
-      },
-      (error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: "Failed to copy path",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
-      },
-    );
-  };
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "skill path" });
 
   return (
     <section aria-label={`${row.name} details`} className="min-w-0 space-y-4 px-3 sm:px-4">
@@ -129,7 +117,7 @@ export function SkillDetail({
             );
           })}
           <span className="flex-1" />
-          {folder !== null || onUpdate !== null || onRemove !== null ? (
+          {onUpdate !== null || onRemove !== null ? (
             <Menu>
               <MenuTrigger
                 render={<Button size="icon-xs" variant="outline" aria-label="More actions" />}
@@ -137,9 +125,6 @@ export function SkillDetail({
                 <MoreHorizontalIcon />
               </MenuTrigger>
               <MenuPopup align="end">
-                {folder !== null ? (
-                  <MenuItem onClick={() => copyPath(folder.folder)}>Copy path</MenuItem>
-                ) : null}
                 {onUpdate !== null ? <MenuItem onClick={onUpdate}>Update</MenuItem> : null}
                 {onRemove !== null ? (
                   <MenuItem variant="destructive" onClick={onRemove}>
@@ -200,9 +185,24 @@ export function SkillDetail({
                 ))}
               </ToggleGroup>
             ) : null}
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
               {folder.folder}
             </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Copy path"
+                    onClick={() => copyToClipboard(folder.folder, undefined)}
+                  />
+                }
+              >
+                <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{isCopied ? "Copied" : "Copy path"}</TooltipPopup>
+            </Tooltip>
           </div>
         ) : null}
         {folder === null ? (
