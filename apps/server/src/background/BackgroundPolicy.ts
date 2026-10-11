@@ -12,8 +12,10 @@ import {
   resolveServerBackgroundActivitySettings,
   type ResolvedBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -40,8 +42,12 @@ export class BackgroundPolicy extends Context.Service<
     ) => Effect.Effect<void>;
     readonly reportHostPowerState: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
-    /** When any client last reported recent interaction (boot time until one does), so updates can wait for quiet. */
-    readonly lastClientInteractionAt: Effect.Effect<DateTime.Utc>;
+    /**
+     * Time since any client last reported recent interaction (since boot until
+     * one does), so updates can wait for quiet. Measured on the monotonic
+     * clock: time asleep and wall-clock jumps never count as quiet.
+     */
+    readonly sinceLastClientInteraction: Effect.Effect<Duration.Duration>;
     readonly streamChanges: Stream.Stream<BackgroundPolicySnapshot>;
     readonly subscribe: Effect.Effect<
       {
@@ -215,7 +221,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
-  const lastClientInteractionAtRef = yield* Ref.make(yield* DateTime.now);
+  const lastClientInteractionNanosRef = yield* Ref.make(yield* Clock.monotonicTimeNanos);
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
   const publishMutex = yield* Semaphore.make(1);
 
@@ -270,7 +276,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
         };
         yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
         if (input.recentlyInteracted) {
-          yield* Ref.set(lastClientInteractionAtRef, now);
+          yield* Ref.set(lastClientInteractionNanosRef, yield* Clock.monotonicTimeNanos);
         }
         yield* publishSnapshotUnlocked;
       }),
@@ -345,7 +351,11 @@ export const make = Effect.fn("background.policy.make")(function* () {
     removeRpcClient,
     reportHostPowerState: hostPowerMonitor.report,
     snapshot,
-    lastClientInteractionAt: Ref.get(lastClientInteractionAtRef),
+    sinceLastClientInteraction: Effect.zipWith(
+      Clock.monotonicTimeNanos,
+      Ref.get(lastClientInteractionNanosRef),
+      (now, last) => Duration.nanos(now - last),
+    ),
     streamChanges: Stream.fromPubSub(changes),
     subscribe: subscribeBeforeSnapshot(changes, snapshot, publishMutex),
     hasDemand,
