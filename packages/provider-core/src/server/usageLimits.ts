@@ -56,6 +56,11 @@ export function makeUnavailableUsageLimits(input: {
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
  * subscription windows will not start reporting them mid-turn.
+ *
+ * An update never completes a read. Merged onto a failed probe, or onto no
+ * probe at all, it keeps the windows it names but leaves the snapshot
+ * `probeFailed`. Otherwise one streamed window would read as the account's
+ * full list, and the next failed probe would keep it as the last good one.
  */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
@@ -88,12 +93,15 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  if (!changed && previous !== undefined) {
     return previous;
   }
+  const unavailable =
+    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
 
