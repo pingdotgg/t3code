@@ -779,6 +779,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "browser-search-engine",
+    title: "Search engine",
+    to: "/settings/integrations",
+    searchTerms: ["address bar url duckduckgo google bing brave kagi ecosia custom query"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
