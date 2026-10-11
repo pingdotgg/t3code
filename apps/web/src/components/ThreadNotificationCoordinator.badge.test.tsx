@@ -38,7 +38,10 @@ vi.mock("../threadNotifications", async (importOriginal) => ({
   setNotificationBadge: state.badge,
 }));
 
-import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+import {
+  COMPLETION_SETTLE_MS,
+  ThreadNotificationCoordinator,
+} from "./ThreadNotificationCoordinator";
 
 class TestNotification extends EventTarget {
   static permission = "granted";
@@ -142,6 +145,7 @@ async function render() {
     if (renderer) renderer.update(<ThreadNotificationCoordinator />);
     else renderer = create(<ThreadNotificationCoordinator />);
   });
+  await act(async () => vi.advanceTimersByTime(COMPLETION_SETTLE_MS));
 }
 
 beforeEach(() => {
@@ -155,6 +159,7 @@ beforeEach(() => {
   visibility = "visible";
   TestNotification.permission = "granted";
   TestNotification.sent = [];
+  vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("Notification", TestNotification);
   vi.stubGlobal("window", Object.assign(new EventTarget(), { focus: vi.fn() }));
@@ -172,6 +177,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
