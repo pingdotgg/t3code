@@ -57,10 +57,12 @@ describe("environment themes", () => {
       name: "Shared Light",
       appearance: "light",
       colors: { canvas: "oklch(0.95 0.01 250)", accent: "#1e66f5" },
+      css: "body { font-size: 15px; }",
       variants: { dark: { canvas: "#1a1b26" } },
     });
 
     expect(theme.label).toBe("Shared Light");
+    expect(theme.css).toBe("body { font-size: 15px; }");
     expect(theme.colors.accent).toBeTruthy();
     expect(theme.variants?.dark?.canvas).toBeTruthy();
     for (const role of THEME_COLOR_ROLES) {

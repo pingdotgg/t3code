@@ -51,6 +51,8 @@ vi.mock("../../localApi", async (importOriginal) => ({
   readLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
 }));
 
+vi.mock("@pierre/diffs/worker/worker.js?worker", () => ({ default: vi.fn() }));
+
 import { useSettingsRestore } from "./SettingsPanels";
 
 beforeEach(() => {

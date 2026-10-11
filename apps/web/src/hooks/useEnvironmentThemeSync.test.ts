@@ -33,7 +33,7 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
       contains: (name: string) => classes.has(name),
     },
   };
-  vi.stubGlobal("document", { documentElement: root });
+  vi.stubGlobal("document", { documentElement: root, querySelector: () => null });
   vi.stubGlobal("window", {
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,

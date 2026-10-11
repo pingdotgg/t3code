@@ -1,3 +1,8 @@
+import {
+  CHAT_BACKGROUND_TEXT_SHADOW_CLASSES,
+  CHAT_BACKGROUND_GLASS_SURFACE_CLASSES,
+  useHasTimelineBackground,
+} from "./ChatTimelineBackground";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
@@ -81,6 +86,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -534,6 +540,10 @@ interface MessagesTimelineProps {
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  /** Masks block row backdrop filters from sampling a wallpaper behind the list. */
+  topFadeMaskEnabled?: boolean;
+  /** Reserve header space inside the scrollport so rows can scroll beneath its blur. */
+  headerInset?: number;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
@@ -628,9 +638,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  topFadeMaskEnabled = true,
+  headerInset = 0,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const hasTimelineBackground = useHasTimelineBackground();
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
@@ -1117,12 +1130,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       rows,
       anchorMessageId,
       (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
-      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
+      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET + headerInset },
     );
     return config
       ? { ...config, onReady: handleAnchorReady, onSizeChanged: handleAnchorSizeChanged }
       : undefined;
-  }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
+  }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows, headerInset]);
   const maintainVisibleContentPosition = useMemo(
     () => ({
       data: true,
@@ -1428,13 +1441,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
         </div>
       );
     return (
-      <>
+      <div style={{ paddingTop: headerInset }}>
         {parentThreadLink === null ? leadingContent : null}
         {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
         {parentThreadLink !== null ? leadingContent : null}
-      </>
+      </div>
     );
-  }, [historyControls, onOpenThread, parentThreadLink, topFadeEnabled]);
+  }, [historyControls, onOpenThread, parentThreadLink, topFadeEnabled, headerInset]);
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
@@ -1548,9 +1561,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     footer === null
   ) {
     if (hideEmptyPlaceholder) {
-      // Occupy the pane with the theme surface so a thread switch cannot
-      // punch a hole through to the window chrome (white in light mode).
-      return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
+      // Occupy the pane with the theme surface (or the wallpaper behind it) so a
+      // thread switch cannot punch a hole through to the window chrome.
+      return (
+        <div
+          className={cn("h-full min-h-0", !hasTimelineBackground && "bg-background")}
+          data-timeline-loading="true"
+        />
+      );
     }
     return (
       <div className="flex h-full items-center justify-center">
@@ -1618,8 +1636,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onItemSizeChanged={reportContentOverflow}
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
+                topFadeEnabled && topFadeMaskEnabled && "topbar-scroll-fade",
               )}
+              style={{ "--chat-timeline-header-inset": `${headerInset}px` } as CSSProperties}
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
             />
@@ -1634,7 +1653,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 void listRef.current?.scrollToIndex({
                   index: item.rowIndex,
                   animated: true,
-                  viewOffset: 24,
+                  viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET + headerInset,
                 });
               }}
             />
@@ -2113,11 +2132,15 @@ function ContextCompactionTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
+  const glass = useHasTimelineBackground();
   return (
     <div
       role="separator"
       aria-label={row.label}
-      className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
+      className={cn(
+        "mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs",
+        glass && "text-foreground/80",
+      )}
     >
       <span className="h-px flex-1 bg-border/70" />
       <span
@@ -2182,6 +2205,20 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
       onRetry={asset ? refreshAssetUrl : undefined}
       actionsSource={asset ? { kind: "video", name: file.name, src, asset } : undefined}
     />
+  );
+}
+
+export function UserMessageBubble({ children }: { children: ReactNode }) {
+  const glass = useHasTimelineBackground();
+  return (
+    <div
+      className={cn(
+        "relative max-w-[80%] rounded-2xl p-3 text-message-foreground",
+        glass ? "surface-glass chat-wallpaper-user-surface" : "bg-message",
+      )}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -2402,7 +2439,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <UserMessageBubble>
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -2514,7 +2551,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             markdownCwd={ctx.markdownCwd}
           />
         </div>
-      </div>
+      </UserMessageBubble>
       {row.projectedItem &&
       row.projectedItem.item.status !== "completed" &&
       row.projectedItem.item.status !== "pending" &&
@@ -2683,6 +2720,7 @@ function TimelineRowTimestamp({
   className?: string;
   alwaysVisible?: boolean;
 }) {
+  const glass = useHasTimelineBackground();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -2691,6 +2729,7 @@ function TimelineRowTimestamp({
             className={cn(
               "pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-muted-foreground text-xs tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100",
               alwaysVisible && "pointer-events-auto static opacity-100",
+              glass && "text-foreground/80",
               className,
             )}
           />
@@ -2705,6 +2744,7 @@ function TimelineRowTimestamp({
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const glass = useHasTimelineBackground();
 
   return (
     <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
@@ -2713,7 +2753,10 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.runId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className={cn(
+          "flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          glass && "text-foreground/80",
+        )}
       >
         <span>{row.label}</span>
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
@@ -2749,13 +2792,18 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
   );
 }
 
+export function AssistantMessageSurface({ children }: { children: ReactNode }) {
+  return <div className="relative min-w-0 px-1 py-0.5">{children}</div>;
+}
+
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const hasTimelineBackground = useHasTimelineBackground();
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <AssistantMessageSurface>
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
         <div data-thread-find-text="true">
           <AssistantCitationSource
@@ -2766,6 +2814,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             listRef={ctx.listRef}
           >
             <ChatMarkdown
+              glassSurfaces={hasTimelineBackground}
+              className={cn(hasTimelineBackground && CHAT_BACKGROUND_TEXT_SHADOW_CLASSES)}
               text={messageText}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
@@ -2794,7 +2844,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             copyStreaming={row.assistantCopyStreaming}
           />
         ) : null}
-      </div>
+      </AssistantMessageSurface>
     </>
   );
 }
@@ -2880,6 +2930,7 @@ function AssistantMessageMeta({
   alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
+  const glass = useHasTimelineBackground();
 
   return (
     <div
@@ -2906,7 +2957,16 @@ function AssistantMessageMeta({
       ) : null}
       {!message.streaming && (
         <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+          <TooltipTrigger
+            render={
+              <p
+                className={cn(
+                  "text-muted-foreground text-xs tabular-nums",
+                  glass && "text-foreground/80",
+                )}
+              />
+            }
+          >
             {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
           </TooltipTrigger>
           <TooltipPopup>
@@ -3314,6 +3374,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   row: Extract<TimelineRow, { kind: "event" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const glass = useHasTimelineBackground();
   const groupId = `subagent-group:${row.id}`;
   const [expanded, setExpanded] = useState(() =>
     ctx.workGroupViewState.expandedEntries.has(groupId),
@@ -3400,7 +3461,12 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         {/* Virtualized rows must settle before disclosure scroll anchoring resumes. */}
         <CollapsiblePanel animate={false}>
           {expanded ? (
-            <div className="mt-1 mb-1 rounded-lg border border-border/60 bg-card/30 p-1">
+            <div
+              className={cn(
+                "mt-1 mb-1 rounded-lg border border-border/60 p-1",
+                glass ? CHAT_BACKGROUND_GLASS_SURFACE_CLASSES : "bg-card/30",
+              )}
+            >
               {members.map((item) => (
                 <V2LifecycleRow
                   environmentId={ctx.activeThreadEnvironmentId}
@@ -3710,6 +3776,28 @@ function toolIconAcceptsTint(
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
+  return (
+    <WorkingIndicator
+      createdAt={row.createdAt}
+      isCompacting={isCompacting}
+      isPreparingWorktree={isPreparingWorktree}
+      backgroundWorktreeSetup={backgroundWorktreeSetup}
+    />
+  );
+}
+
+export function WorkingIndicator({
+  createdAt,
+  isCompacting = false,
+  isPreparingWorktree = false,
+  backgroundWorktreeSetup = null,
+}: {
+  createdAt: string | null;
+  isCompacting?: boolean;
+  isPreparingWorktree?: boolean;
+  backgroundWorktreeSetup?: WorktreeSetupSnapshot | null;
+}) {
+  const glass = useHasTimelineBackground();
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
   const shimmer = isPreparingWorktree || isCompacting;
@@ -3717,16 +3805,21 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Setting up worktree…"
   ) : isCompacting ? (
     <CompactingLabel />
-  ) : row.createdAt ? (
+  ) : createdAt ? (
     <>
-      Working for <WorkingTimer createdAt={row.createdAt} />
+      Working for <WorkingTimer createdAt={createdAt} />
     </>
   ) : (
     "Working..."
   );
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+      <div
+        className={cn(
+          "flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums",
+          glass && "text-foreground/80",
+        )}
+      >
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
@@ -3813,7 +3906,7 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   );
 }
 
-function LiveActivityRow({
+export function LiveActivityRow({
   label,
   iconName,
   toolIcon,
@@ -4805,16 +4898,18 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   markdownCwd: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
+  const glass = useHasTimelineBackground();
   if (props.text.length === 0) {
     return null;
   }
   return (
     <ChatMarkdown
+      glassSurfaces={glass}
       text={props.text}
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className="text-message-foreground"
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
@@ -4989,11 +5084,11 @@ function ToolActivityIconView(props: {
   className: string;
   muted: boolean;
 }) {
-  const { resolvedTheme } = use(TimelineRowCtx);
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
+  const { resolvedTheme } = use(TimelineRowCtx);
   if (props.icon._tag === "website") {
     const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
     return src ? (
@@ -5398,6 +5493,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
+  const glass = useHasTimelineBackground();
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
@@ -5450,7 +5546,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         }
         label={
           <span
-            className={cn("text-sm font-medium", warning ? "text-warning" : "text-destructive")}
+            className={cn(
+              "text-sm font-medium",
+              warning ? "text-warning" : "text-destructive",
+              warning && glass && "text-foreground/90",
+            )}
           >
             {label}
           </span>
@@ -5590,7 +5690,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
-    ? "font-medium text-warning"
+    ? glass
+      ? "font-medium text-foreground/90"
+      : "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)

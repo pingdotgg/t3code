@@ -10,6 +10,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import type { ChatFileAttachment } from "~/types";
+import { cn } from "~/lib/utils";
+
+import { useHasTimelineBackground } from "./ChatTimelineBackground";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
@@ -31,6 +34,7 @@ export function HtmlRenderFrame(props: {
   readonly onOpen: (attachment: ChatFileAttachment) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
+  const glass = useHasTimelineBackground();
   // The frame takes the page's measured height at its own width, read before
   // first paint so the reserved box is already the right size.
   const boxRef = useRef<HTMLDivElement>(null);
@@ -91,7 +95,11 @@ export function HtmlRenderFrame(props: {
   }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
   return (
-    <div ref={boxRef} className="group/html-render relative" style={{ height }}>
+    <div
+      ref={boxRef}
+      className={cn("group/html-render relative", glass && "surface-glass")}
+      style={{ height }}
+    >
       {src !== null ? (
         <>
           <HtmlRenderDocument

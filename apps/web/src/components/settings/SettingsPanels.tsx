@@ -170,6 +170,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { TimelineBackgroundSettings } from "./TimelineBackgroundSettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -544,6 +545,13 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Contrast"]
         : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.timelineBackgroundImage !== DEFAULT_UNIFIED_SETTINGS.timelineBackgroundImage ||
+      settings.timelineBackgroundOpacity !== DEFAULT_UNIFIED_SETTINGS.timelineBackgroundOpacity ||
+      settings.timelineBackgroundBlur !== DEFAULT_UNIFIED_SETTINGS.timelineBackgroundBlur ||
+      settings.timelineTextShadowOpacity !== DEFAULT_UNIFIED_SETTINGS.timelineTextShadowOpacity ||
+      settings.timelineTextShadowBlur !== DEFAULT_UNIFIED_SETTINGS.timelineTextShadowBlur
+        ? ["Wallpaper"]
+        : []),
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
@@ -673,6 +681,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserLinkTarget,
       settings.browserAutoShowFloatingPreview,
       settings.appearanceContrast,
+      settings.timelineBackgroundImage,
+      settings.timelineBackgroundOpacity,
+      settings.timelineBackgroundBlur,
+      settings.timelineTextShadowOpacity,
+      settings.timelineTextShadowBlur,
       settings.diffColorScheme,
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
@@ -790,6 +803,11 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
+      timelineBackgroundImage: DEFAULT_UNIFIED_SETTINGS.timelineBackgroundImage,
+      timelineBackgroundOpacity: DEFAULT_UNIFIED_SETTINGS.timelineBackgroundOpacity,
+      timelineBackgroundBlur: DEFAULT_UNIFIED_SETTINGS.timelineBackgroundBlur,
+      timelineTextShadowOpacity: DEFAULT_UNIFIED_SETTINGS.timelineTextShadowOpacity,
+      timelineTextShadowBlur: DEFAULT_UNIFIED_SETTINGS.timelineTextShadowBlur,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -1514,6 +1532,7 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <TypographySection />
+      <TimelineBackgroundSettings />
     </SettingsPageContainer>
   );
 }

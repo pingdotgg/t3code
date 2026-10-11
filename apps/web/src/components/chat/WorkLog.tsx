@@ -1,3 +1,7 @@
+import {
+  CHAT_BACKGROUND_GLASS_SURFACE_CLASSES,
+  useHasTimelineBackground,
+} from "./ChatTimelineBackground";
 import { createContext, use, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
@@ -45,6 +49,7 @@ type RowContent = {
 };
 
 function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
+  const glass = useHasTimelineBackground();
   return (
     <div
       className={cn(
@@ -59,6 +64,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
       <div
         className={cn(
           "min-w-0 flex-1 text-secondary-label",
+          glass && "text-foreground/80",
           !wrapLabel && "truncate [&_*]:whitespace-nowrap",
         )}
       >
@@ -122,10 +128,12 @@ export function WorkLogDetails({
   children: ReactNode;
   kind?: "text" | "panel" | "media";
 }) {
+  const glass = useHasTimelineBackground();
   return (
     <div
       className={cn(
         "cursor-auto",
+        kind === "panel" && glass && CHAT_BACKGROUND_GLASS_SURFACE_CLASSES,
         kind === "text"
           ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
           : kind === "panel"

@@ -16,6 +16,11 @@
 
 /* On mobile, morph the expanded hero composer into the compact docked
    composer while it moves; the rest of the app remains visually stationary. */
+/* A persistent transition name prevents the composer glass from sampling its backdrop. */
+html[data-mobile-composer-route-transition="true"] [data-mobile-composer-transition] {
+  view-transition-name: t3-mobile-composer;
+}
+
 html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
 html[data-mobile-composer-route-transition="true"]::view-transition-new(root) {
   animation: none;
@@ -332,13 +337,53 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @utility surface-glass {
-  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  background: color-mix(
+    in srgb,
+    var(--surface-glass-color, var(--background)) var(--glass-opacity),
+    transparent
+  );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    background: var(--background) !important;
+    background: var(--surface-glass-color, var(--background)) !important;
   }
+}
+
+@utility chat-topbar-tint {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--background) 82%, transparent),
+    color-mix(in srgb, var(--background) 34%, transparent) 52%,
+    transparent
+  );
+  @variant dark {
+    background-image: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--background) 50%, transparent),
+      color-mix(in srgb, var(--background) 12%, transparent) 52%,
+      transparent
+    );
+  }
+}
+
+@utility chat-wallpaper-plan-surface {
+  --surface-glass-color: var(--card);
+  text-shadow: none;
+}
+
+@utility chat-wallpaper-user-surface {
+  --surface-glass-color: var(--message-surface);
+  text-shadow: none;
+  @variant dark {
+    :where(html:not([data-theme-id])) & {
+      --surface-glass-color: var(--card);
+    }
+  }
+}
+
+@utility chat-markdown-media-no-shadow {
+  text-shadow: none;
 }
 
 @utility alert-glass {
@@ -1448,9 +1493,15 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
 html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
-  background-color: var(--code-background);
+  --surface-glass-color: var(--code-background);
   border-color: var(--contrast-border);
   color: var(--code-foreground);
+}
+
+html[data-theme-id]
+  :is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock:not(.surface-glass) {
+  background-color: var(--code-background);
 }
 
 html[data-theme-id] .chat-markdown pre {
@@ -1892,7 +1943,7 @@ code {
 
 /* File links are Chips and own their color and focus ring. */
 .chat-markdown a:not(.chat-markdown-file-link) {
-  color: var(--info-foreground);
+  color: var(--chat-link-color, var(--info-foreground));
 }
 
 .chat-markdown a:not(.chat-markdown-file-link, [data-markdown-image-link]):hover,
@@ -1906,7 +1957,7 @@ code {
 :is(.chat-markdown, .composer-tiptap) blockquote {
   border-left: 2px solid var(--contrast-border);
   padding-left: 0.8rem;
-  color: var(--contrast-muted-foreground);
+  color: var(--chat-blockquote-color, var(--contrast-muted-foreground));
 }
 
 /* A quote in the composer is text the user is still writing; muting it reads

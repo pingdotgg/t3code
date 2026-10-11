@@ -189,6 +189,7 @@
             RESERVED_THEME_IDS.includes(value.id) ||
             !isThemeLabel(value.label) ||
             !isThemeAppearance(value.appearance) ||
+            (value.css !== undefined && typeof value.css !== "string") ||
             !isRecord(value.colors)
           ) {
             return false;
@@ -384,6 +385,12 @@
             }
           }
           setThemeColor(chromeColor);
+          if (effectiveCustomTheme?.css) {
+            const style = document.createElement("style");
+            style.dataset.themeCss = "";
+            style.textContent = effectiveCustomTheme.css;
+            document.head.append(style);
+          }
         } catch {
           // Mirror the runtime's storage-failure fallback: follow the OS.
           let prefersDark = true;

@@ -1,3 +1,11 @@
+import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import {
+  ChatTimelineBackground,
+  CHAT_BACKGROUND_TEXT_SHADOW_CLASSES,
+  useHasTimelineBackground,
+  useTimelineTextShadowStyle,
+} from "./chat/ChatTimelineBackground";
+import { ChatTopbarBlur } from "./chat/ChatTopbarBlur";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -134,7 +142,6 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -502,7 +509,6 @@ import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
-  MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
   runMobileComposerTransition,
 } from "./chat/draftHeroTransition";
@@ -1775,6 +1781,22 @@ export default function ChatView(props: ChatViewProps) {
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
+  const hasTimelineBackground = useHasTimelineBackground();
+  const timelineTextShadowStyle = useTimelineTextShadowStyle();
+  const [chatHeaderElement, setChatHeaderElement] = useState<HTMLElement | null>(null);
+  const [chatHeaderHeight, setChatHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    if (!chatHeaderElement || !hasTimelineBackground) return;
+    const measure = () => setChatHeaderHeight(chatHeaderElement.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(chatHeaderElement);
+    return () => observer.disconnect();
+  }, [chatHeaderElement, hasTimelineBackground]);
+  const timelineHeaderInset = hasTimelineBackground ? chatHeaderHeight : 0;
+  const timelineAnchorOffset =
+    (hasTimelineBackground ? CHAT_TIMELINE_ANCHOR_OFFSET : CHAT_LIST_ANCHOR_OFFSET) +
+    timelineHeaderInset;
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -1940,6 +1962,10 @@ export default function ChatView(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
+  const attachChatHeader = useCallback((element: HTMLElement | null) => {
+    threadPanelPopoverAnchorRef.current = element;
+    setChatHeaderElement(element);
+  }, []);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
@@ -6686,56 +6712,59 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      return;
-    }
-    positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
-    const positionAnchor = (remainingAttempts: number) => {
-      requestAnimationFrame(() => {
-        if (positionedTimelineAnchorRef.current !== messageId) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
-          }
-          return;
-        }
-        const scrollNode = list.getScrollableNode();
-        let finished = false;
-        const finishAnimatedPositioning = () => {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          window.clearTimeout(fallbackTimer);
-          scrollNode.removeEventListener("scrollend", finishAnimatedPositioning);
+  const onTimelineAnchorReady = useCallback(
+    (messageId: MessageId, anchorIndex: number) => {
+      if (pendingTimelineAnchorRef.current === messageId) {
+        pendingTimelineAnchorRef.current = null;
+      }
+      activeTimelineAnchorIndexRef.current = anchorIndex;
+      if (positionedTimelineAnchorRef.current === messageId) {
+        return;
+      }
+      positionedTimelineAnchorRef.current = messageId;
+      settledTimelineAnchorRef.current = null;
+      const positionAnchor = (remainingAttempts: number) => {
+        requestAnimationFrame(() => {
           if (positionedTimelineAnchorRef.current !== messageId) {
             return;
           }
-          const scrollOffset = list.getState().scroll;
-          void list.scrollToOffset({ offset: scrollOffset, animated: false });
-          settledTimelineAnchorRef.current = messageId;
-        };
-        const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
-        scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
-        void list.scrollToIndex({
-          index: anchorIndex,
-          animated: true,
-          viewPosition: 0,
-          viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+          const list = legendListRef.current;
+          if (!list) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
+            }
+            return;
+          }
+          const scrollNode = list.getScrollableNode();
+          let finished = false;
+          const finishAnimatedPositioning = () => {
+            if (finished) {
+              return;
+            }
+            finished = true;
+            window.clearTimeout(fallbackTimer);
+            scrollNode.removeEventListener("scrollend", finishAnimatedPositioning);
+            if (positionedTimelineAnchorRef.current !== messageId) {
+              return;
+            }
+            const scrollOffset = list.getState().scroll;
+            void list.scrollToOffset({ offset: scrollOffset, animated: false });
+            settledTimelineAnchorRef.current = messageId;
+          };
+          const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
+          scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
+          void list.scrollToIndex({
+            index: anchorIndex,
+            animated: true,
+            viewPosition: 0,
+            viewOffset: timelineAnchorOffset,
+          });
         });
-      });
-    };
-    requestAnimationFrame(() => positionAnchor(12));
-  }, []);
+      };
+      requestAnimationFrame(() => positionAnchor(12));
+    },
+    [timelineAnchorOffset],
+  );
   const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
     if (settledTimelineAnchorRef.current !== messageId) {
       return;
@@ -11329,17 +11358,20 @@ export default function ChatView(props: ChatViewProps) {
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
+          "relative flex min-h-0 min-w-0 flex-col overflow-x-hidden",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        style={timelineTextShadowStyle}
       >
+        <ChatTimelineBackground className="z-0" />
+        {hasTimelineBackground ? <ChatTopbarBlur /> : null}
         {/* Top bar */}
         <header
-          ref={threadPanelPopoverAnchorRef}
+          ref={attachChatHeader}
           data-chat-header
           className={cn(
-            "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+            "relative [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
             isElectron
               ? cn(
                   "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -11349,6 +11381,7 @@ export default function ChatView(props: ChatViewProps) {
                 )
               : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            hasTimelineBackground ? "isolate z-10" : "bg-background",
           )}
         >
           {isElectron && rightPanelControlsAtRoot ? (
@@ -11434,7 +11467,13 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            <div
+              className={cn(
+                "relative isolate flex min-h-0 flex-1 flex-col",
+                !hasTimelineBackground && "bg-background",
+                hasTimelineBackground && "-mt-[var(--workspace-topbar-height)]",
+              )}
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -11533,6 +11572,8 @@ export default function ChatView(props: ChatViewProps) {
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
+                topFadeMaskEnabled={!hasTimelineBackground}
+                headerInset={timelineHeaderInset}
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}
@@ -11567,11 +11608,12 @@ export default function ChatView(props: ChatViewProps) {
               ref={setComposerOverlayElement}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
-              className={
+              className={cn(
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+                  ? "pointer-events-none absolute inset-0 flex items-center"
+                  : "pointer-events-none absolute inset-x-0 bottom-0 pt-1.5 sm:pt-2",
+                hasTimelineBackground ? "z-[1]" : "z-20",
+              )}
             >
               <div
                 ref={draftHeroTransition.transitionGroupRef}
@@ -11584,7 +11626,10 @@ export default function ChatView(props: ChatViewProps) {
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div
-                        className="pb-4 group-has-data-[composer-shoulder-tab]/composer-stack:pb-0"
+                        className={cn(
+                          "pb-4 group-has-data-[composer-shoulder-tab]/composer-stack:pb-0",
+                          hasTimelineBackground && CHAT_BACKGROUND_TEXT_SHADOW_CLASSES,
+                        )}
                         style={
                           forceExpandedMobileComposer
                             ? { viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME }
@@ -11602,11 +11647,7 @@ export default function ChatView(props: ChatViewProps) {
                   <div
                     ref={draftHeroTransition.composerAnchorRef}
                     className="relative z-10"
-                    style={
-                      forceExpandedMobileComposer
-                        ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
-                        : undefined
-                    }
+                    data-mobile-composer-transition={forceExpandedMobileComposer || undefined}
                   >
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
