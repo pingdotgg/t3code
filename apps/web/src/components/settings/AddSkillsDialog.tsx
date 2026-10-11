@@ -4,12 +4,12 @@ import {
   type SkillInstallTarget,
   type SkillPreviewItem,
 } from "@t3tools/contracts";
-import { useId, useState } from "react";
+import { AlertTriangleIcon, SearchIcon } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -22,12 +22,18 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/** A source this big gets a filter above its list. */
+const FILTER_FROM = 8;
 
 /**
  * Install skills from a source, as `npx skills add` does: paste the source,
  * pick from the skills it holds, install for every agent at the current scope.
+ * The picker uses the Skills list's dense one-line rows.
  */
 export function AddSkillsDialog({
   open,
@@ -54,6 +60,7 @@ export function AddSkillsDialog({
     readonly skills: ReadonlyArray<SkillPreviewItem>;
   } | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<"finding" | "installing" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +77,7 @@ export function AddSkillsDialog({
       return;
     }
     setFound({ source: trimmed, skills: result.value.skills });
+    setFilter("");
     // Everything is ticked, up to what one install takes.
     setSelected(
       new Set(result.value.skills.slice(0, MAX_SKILLS_PER_INSTALL).map((skill) => skill.name)),
@@ -111,6 +119,28 @@ export function AddSkillsDialog({
       return next;
     });
   const full = selected.size >= MAX_SKILLS_PER_INSTALL;
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (found === null || needle.length === 0) return found?.skills ?? [];
+    return found.skills.filter(
+      (skill) =>
+        skill.folder.toLowerCase().includes(needle) ||
+        skill.name.toLowerCase().includes(needle) ||
+        (skill.description ?? "").toLowerCase().includes(needle),
+    );
+  }, [filter, found]);
+  // The header box acts on the rows shown, so a filter can pick a subset.
+  const shownSelected = shown.filter((skill) => selected.has(skill.name)).length;
+  const allShown = shown.length > 0 && shownSelected === shown.length;
+  const selectShown = (checked: boolean) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const skill of shown) {
+        if (!checked) next.delete(skill.name);
+        else if (next.size < MAX_SKILLS_PER_INSTALL) next.add(skill.name);
+      }
+      return next;
+    });
 
   return (
     <Dialog
@@ -119,7 +149,7 @@ export function AddSkillsDialog({
         if (busy === null) onOpenChange(next);
       }}
     >
-      <DialogPopup className="max-w-lg">
+      <DialogPopup className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Add skills</DialogTitle>
           <DialogDescription>
@@ -166,43 +196,82 @@ export function AddSkillsDialog({
               </p>
             </div>
             {found !== null ? (
-              <fieldset className="grid gap-1">
-                <legend className="mb-1.5 text-sm font-medium">
-                  {found.skills.length === 1 ? "1 skill" : `${found.skills.length} skills`}
-                </legend>
-                <div className="max-h-72 overflow-y-auto rounded-lg border">
-                  {found.skills.map((skill) => (
-                    <label
-                      key={skill.name}
-                      className="flex items-start gap-3 border-b px-3 py-2.5 last:border-b-0"
-                    >
-                      <Checkbox
-                        className="mt-0.5"
-                        checked={selected.has(skill.name)}
-                        disabled={full && !selected.has(skill.name)}
-                        onCheckedChange={(checked) => toggle(skill.name, checked === true)}
-                      />
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className="flex items-center gap-1.5">
-                          <span className="truncate font-mono text-sm">{skill.folder}</span>
-                          {skill.scripts ? (
-                            <Badge variant="warning" size="sm">
-                              Includes scripts
-                            </Badge>
-                          ) : null}
-                        </span>
-                        {skill.description ? (
-                          <span className="line-clamp-2 text-xs text-muted-foreground">
-                            {skill.description}
+              <fieldset className="grid gap-2">
+                <legend className="sr-only">Skills in {found.source}</legend>
+                {found.skills.length >= FILTER_FROM ? (
+                  <InputGroup>
+                    <InputGroupAddon>
+                      <SearchIcon />
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      size="sm"
+                      placeholder={`Filter ${found.skills.length} skills…`}
+                      value={filter}
+                      onChange={(event) => setFilter(event.target.value)}
+                      aria-label="Filter skills"
+                    />
+                  </InputGroup>
+                ) : null}
+                <div className="overflow-hidden rounded-lg border">
+                  <label className="flex items-center gap-3 border-b bg-muted/25 px-3 py-1.5 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={allShown}
+                      indeterminate={shownSelected > 0 && !allShown}
+                      disabled={shown.length === 0}
+                      onCheckedChange={(checked) => selectShown(checked === true)}
+                    />
+                    <span className="flex-1">
+                      {filter.trim() === "" ? "Select all" : "Select all shown"}
+                    </span>
+                    <span>
+                      {selected.size} of {found.skills.length} selected
+                    </span>
+                  </label>
+                  <ul className="max-h-[min(24rem,50vh)] divide-y divide-border/50 overflow-y-auto">
+                    {shown.length === 0 ? (
+                      <li className="px-3 py-4 text-sm text-muted-foreground">
+                        No skills match “{filter.trim()}”.
+                      </li>
+                    ) : null}
+                    {shown.map((skill) => (
+                      <li key={skill.name}>
+                        <label className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/40">
+                          <Checkbox
+                            checked={selected.has(skill.name)}
+                            disabled={full && !selected.has(skill.name)}
+                            onCheckedChange={(checked) => toggle(skill.name, checked === true)}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">
+                              {skill.folder}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {skill.description || "No description."}
+                            </span>
                           </span>
-                        ) : null}
-                        <span className="text-xs text-muted-foreground">
-                          {skill.files.length === 1 ? "1 file" : `${skill.files.length} files`}
-                          {skill.filesTruncated ? " or more" : ""}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
+                          {skill.scripts ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="inline-flex shrink-0 text-warning-foreground" />
+                                }
+                              >
+                                <AlertTriangleIcon
+                                  aria-label="Includes scripts"
+                                  className="size-4"
+                                />
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">Includes scripts</TooltipPopup>
+                            </Tooltip>
+                          ) : null}
+                          <span className="w-14 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+                            {skill.files.length === 1 ? "1 file" : `${skill.files.length} files`}
+                            {skill.filesTruncated ? "+" : ""}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
                 {found.skills.length > MAX_SKILLS_PER_INSTALL ? (
                   <p className="text-xs text-muted-foreground">
@@ -210,8 +279,13 @@ export function AddSkillsDialog({
                     afterwards.
                   </p>
                 ) : null}
-                <p className="text-xs text-muted-foreground">
-                  Skills can tell agents to run their scripts. Install only sources you trust.
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <AlertTriangleIcon
+                    aria-hidden
+                    className="size-3.5 shrink-0 text-warning-foreground"
+                  />
+                  marks skills with scripts agents can be told to run. Install only sources you
+                  trust.
                 </p>
               </fieldset>
             ) : null}
