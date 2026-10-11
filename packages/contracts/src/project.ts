@@ -446,6 +446,12 @@ export const ProjectReadFileResult = Schema.Struct({
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  /**
+   * Identifies the bytes read, for `ProjectWriteFileInput.expectedRevision`. Present only for a
+   * complete, valid UTF-8 read. Older servers never send one, so clients can use its presence
+   * to detect support for guarded writes.
+   */
+  revision: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -455,6 +461,8 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "operation_failed",
+  /** A guarded write found different contents, or no file, where it expected a revision. */
+  "file_changed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
 
@@ -510,6 +518,13 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  /**
+   * Best-effort pre-write check against `ProjectReadFileResult.revision`; a mismatch fails
+   * with `file_changed`. Writes through this server to the same file are serialized, but this
+   * is not an atomic compare-and-write: external changes after the check may be overwritten.
+   * Omit it to overwrite unconditionally.
+   */
+  expectedRevision: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
@@ -558,7 +573,9 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        (props.failure === "file_changed"
+          ? `Workspace file '${props.relativePath}' changed since it was read.`
+          : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

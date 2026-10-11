@@ -531,6 +531,8 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceFileChangedError":
+      return { failure: "file_changed", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }

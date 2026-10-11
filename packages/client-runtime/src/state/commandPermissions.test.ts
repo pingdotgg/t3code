@@ -7,6 +7,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -144,6 +145,29 @@ describe("command permissions", () => {
           yield* permissions.authorize(registry, env);
         }),
       ),
+  );
+  it.effect("requires filesystem:write for guarded file writes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const writeFile = createCommandPermissions(runtime, WS_METHODS.projectsWriteFile);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(writeFile.permissionAtom(env))).toBe(false);
+        expect(
+          (yield* writeFile.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+        ).toBe(AuthFilesystemWriteScope);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthFilesystemWriteScope],
+            permissions: [AuthFilesystemWriteScope],
+          }),
+        );
+        expect(registry.get(writeFile.permissionAtom(env))).toBe(true);
+        yield* writeFile.authorize(registry, env);
+      }),
+    ),
   );
   it("rechecks permission after waiting in a serial command lane", async () => {
     const registry = AtomRegistry.make();

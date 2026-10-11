@@ -3,6 +3,9 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -163,7 +166,90 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "export const answer = 42;\n",
           byteLength: 26,
           truncated: false,
+          revision: expect.any(String),
         });
+      }),
+    );
+
+    it.effect(
+      "reports a revision that is stable across identical bytes and changes with contents",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+
+          const first = yield* workspaceFileSystem.readFile({ cwd, relativePath: "src/index.ts" });
+          const again = yield* workspaceFileSystem.readFile({ cwd, relativePath: "src/index.ts" });
+          yield* writeTextFile(cwd, "src/index.ts", "export const answer = 43;\n");
+          const changed = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "src/index.ts",
+          });
+
+          expect(first.revision).toEqual(expect.any(String));
+          expect(again.revision).toBe(first.revision);
+          expect(changed.revision).not.toBe(first.revision);
+        }),
+    );
+
+    it.effect("keeps invalid UTF-8 readable without offering a revision for editing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+        yield* fileSystem.writeFile(path.join(cwd, "legacy.txt"), bytes);
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "legacy.txt" });
+
+        expect(result.contents).toBe("caf\uFFFD\n");
+        expect(result.truncated).toBe(false);
+        expect(result.revision).toBeUndefined();
+        expect(Array.from(yield* fileSystem.readFile(path.join(cwd, "legacy.txt")))).toEqual(
+          Array.from(bytes),
+        );
+      }),
+    );
+
+    it.effect("preserves a UTF-8 BOM through a guarded edit", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "bom.txt", "\uFEFFone\r\n");
+        const original = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.txt" });
+        expect(original.contents).toBe("\uFEFFone\r\n");
+        expect(original.revision).toEqual(expect.any(String));
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.txt",
+          contents: original.contents.replace("one", "two"),
+          expectedRevision: original.revision!,
+        });
+
+        expect(Array.from(yield* fileSystem.readFile(path.join(cwd, "bom.txt")))).toEqual(
+          Array.from(new TextEncoder().encode("\uFEFFtwo\r\n")),
+        );
+      }),
+    );
+
+    it.effect("omits the revision for a truncated read", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const oneMiB = 1024 * 1024;
+        yield* writeTextFile(cwd, "large.txt", "a".repeat(oneMiB + 1));
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.txt" });
+
+        expect(result.truncated).toBe(true);
+        expect(result.byteLength).toBe(oneMiB + 1);
+        expect(result.contents.length).toBe(oneMiB);
+        expect("revision" in result).toBe(false);
       }),
     );
 
@@ -186,6 +272,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "# Report\n",
           byteLength: 9,
           truncated: false,
+          revision: expect.any(String),
         });
       }),
     );
@@ -427,6 +514,245 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("writes when the revision from a prior read still matches", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+        const revision = (yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        })).revision;
+        expect(revision).toEqual(expect.any(String));
+
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/index.ts",
+          contents: "export const answer = 43;\n",
+          expectedRevision: revision!,
+        });
+
+        expect(result).toEqual({ relativePath: "src/index.ts" });
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/index.ts"))
+          .pipe(Effect.orDie);
+        expect(saved).toBe("export const answer = 43;\n");
+      }),
+    );
+
+    it.effect("rejects a stale revision without overwriting the changed file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+        const revision = (yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        })).revision;
+        expect(revision).toEqual(expect.any(String));
+        yield* writeTextFile(cwd, "src/index.ts", "// changed on disk\n");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/index.ts",
+            contents: "export const answer = 43;\n",
+            expectedRevision: revision!,
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceFileChangedError");
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "src/index.ts",
+        });
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/index.ts"))
+          .pipe(Effect.orDie);
+        expect(saved).toBe("// changed on disk\n");
+      }),
+    );
+
+    it.effect("rejects a revision for a file deleted after it was read", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+        const revision = (yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        })).revision;
+        expect(revision).toEqual(expect.any(String));
+        yield* fileSystem.remove(path.join(cwd, "src/index.ts")).pipe(Effect.orDie);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/index.ts",
+            contents: "export const answer = 43;\n",
+            expectedRevision: revision!,
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceFileChangedError");
+        const stat = yield* fileSystem
+          .stat(path.join(cwd, "src/index.ts"))
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(stat).toBeNull();
+      }),
+    );
+
+    it.effect("serializes guarded saves to one file without blocking another file", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "first.txt", "original");
+        yield* writeTextFile(cwd, "other.txt", "original");
+        const writeEntered = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            writeFileString: (filePath, contents, options) =>
+              Effect.gen(function* () {
+                if (contents === "first save") {
+                  yield* Deferred.succeed(writeEntered, undefined);
+                  yield* Deferred.await(releaseWrite);
+                }
+                yield* fileSystem.writeFileString(filePath, contents, options);
+              }),
+          }),
+        );
+        const original = yield* service.readFile({ cwd, relativePath: "first.txt" });
+        const first = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "first.txt",
+            contents: "first save",
+            expectedRevision: original.revision!,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(writeEntered);
+        const second = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "./first.txt",
+            contents: "second save",
+            expectedRevision: original.revision!,
+          })
+          .pipe(Effect.flip, Effect.forkChild);
+
+        // This must finish while the first file's write is still blocked.
+        yield* service.writeFile({ cwd, relativePath: "other.txt", contents: "independent" });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "other.txt"))).toBe("independent");
+        yield* Deferred.succeed(releaseWrite, undefined);
+        yield* Fiber.join(first);
+        expect((yield* Fiber.join(second))._tag).toBe("WorkspaceFileChangedError");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "first.txt"))).toBe("first save");
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("guards concurrent saves through symlink aliases", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "file.txt", "original");
+        yield* fs.symlink(path.join(cwd, "file.txt"), path.join(cwd, "link.txt"));
+        const original = yield* service.readFile({ cwd, relativePath: "file.txt" });
+        const results = yield* Effect.forEach(
+          ["file.txt", "link.txt"],
+          (relativePath) =>
+            service
+              .writeFile({
+                cwd,
+                relativePath,
+                contents: relativePath,
+                expectedRevision: original.revision!,
+              })
+              .pipe(Effect.exit),
+          { concurrency: "unbounded" },
+        );
+        expect(results.filter(Exit.isSuccess)).toHaveLength(1);
+        const saved = yield* fs.readFileString(path.join(cwd, "file.txt"));
+        expect(["file.txt", "link.txt"]).toContain(saved);
+      }),
+    );
+
+    it.effect("releases the file lock before refreshing the workspace index", () =>
+      Effect.gen(function* () {
+        const entries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "file.txt", "original");
+        const refreshEntered = yield* Deferred.make<void>();
+        const releaseRefresh = yield* Deferred.make<void>();
+        let firstRefresh = true;
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(WorkspaceEntries.WorkspaceEntries, {
+            ...entries,
+            refresh: () =>
+              Effect.gen(function* () {
+                if (firstRefresh) {
+                  firstRefresh = false;
+                  yield* Deferred.succeed(refreshEntered, undefined);
+                  yield* Deferred.await(releaseRefresh);
+                }
+              }),
+          }),
+        );
+        const first = yield* service
+          .writeFile({
+            cwd,
+            relativePath: "file.txt",
+            contents: "first save",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(refreshEntered);
+        const current = yield* service.readFile({ cwd, relativePath: "file.txt" });
+        yield* service.writeFile({
+          cwd,
+          relativePath: "file.txt",
+          contents: "second save",
+          expectedRevision: current.revision!,
+        });
+        expect((yield* service.readFile({ cwd, relativePath: "file.txt" })).contents).toBe(
+          "second save",
+        );
+        yield* Deferred.succeed(releaseRefresh, undefined);
+        yield* Fiber.join(first);
+      }),
+    );
+
+    it.effect("overwrites a changed file when no revision is expected", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+        yield* writeTextFile(cwd, "src/index.ts", "// changed on disk\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/index.ts",
+          contents: "export const answer = 43;\n",
+        });
+
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/index.ts"))
+          .pipe(Effect.orDie);
+        expect(saved).toBe("export const answer = 43;\n");
       }),
     );
   });
