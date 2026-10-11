@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 import { isWindowsPlatform } from "./utils";
 
 const WCO_CLASS_NAME = "wco";
@@ -6,6 +8,7 @@ const ELECTRON_WINDOWS_CLASS_NAME = "electron-windows";
 
 interface WindowControlsOverlayLike {
   readonly visible: boolean;
+  getTitlebarAreaRect(): DOMRect;
   addEventListener(type: "geometrychange", listener: EventListener): void;
   removeEventListener(type: "geometrychange", listener: EventListener): void;
 }
@@ -41,6 +44,22 @@ export function syncDocumentWindowControlsOverlayClass(): () => void {
   return () => {
     overlay.removeEventListener("geometrychange", update);
   };
+}
+
+function subscribeTitlebarArea(listener: () => void): () => void {
+  const overlay = getWindowControlsOverlay();
+  overlay?.addEventListener("geometrychange", listener);
+  return () => overlay?.removeEventListener("geometrychange", listener);
+}
+
+function getNativeTitlebarHeight(): number {
+  const overlay = getWindowControlsOverlay();
+  return overlay?.visible ? overlay.getTitlebarAreaRect().bottom : 0;
+}
+
+/** Height of the strip at the top of the window where native window controls paint over the page. */
+export function useNativeTitlebarHeight(): number {
+  return useSyncExternalStore(subscribeTitlebarArea, getNativeTitlebarHeight, () => 0);
 }
 
 function getElectronPlatformClassNames(
