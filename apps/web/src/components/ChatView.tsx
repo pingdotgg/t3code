@@ -12299,6 +12299,7 @@ export default function ChatView(props: ChatViewProps) {
             repository={cloudRepository}
             readOnly={envLocked}
             initialPage={cloudSetupPage}
+            inSetupConversation={selectsCloudEnvironmentSetup(activeModelOptions)}
             onSetup={async (config) => {
               if (!activeProject || !activeProviderInstanceId) return;
               const nextDraftId = newDraftId();

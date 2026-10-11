@@ -6,18 +6,20 @@ import {
   type ProviderCloudConfiguration,
   type ProviderCloudEnvironment,
 } from "@t3tools/contracts";
-import { PlusIcon, RefreshCwIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 
-import { CloudEnvironmentSetup } from "./CloudEnvironmentSetup";
+import { CloudEnvironmentCreate, CloudEnvironmentReview } from "./CloudEnvironmentSetup";
 import { Button } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
   DialogFooter,
   DialogHeader,
+  DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { RefreshIcon } from "../ui/refresh-icon";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
 interface CloudEnvironmentDialogProps {
@@ -25,8 +27,9 @@ interface CloudEnvironmentDialogProps {
   instanceId: ProviderInstanceId;
   repository?: string | undefined;
   readOnly?: boolean | undefined;
-  /** "review" opens straight onto the selected environment's setup and publish controls. */
+  /** "review" opens straight onto the selected environment's configuration and publishing. */
   initialPage?: "choose" | "review" | undefined;
+  inSetupConversation?: boolean | undefined;
   onSetup: (config: ProviderCloudConfiguration) => void;
   environments: readonly ProviderCloudEnvironment[];
   preferredId: string | undefined;
@@ -42,11 +45,14 @@ export function CloudEnvironmentDialog(props: CloudEnvironmentDialogProps) {
   const [choice, setChoice] = useState<string>();
   const [page, setPage] = useState<"choose" | "create" | "review">(props.initialPage ?? "choose");
   const selectedId = choice ?? props.preferredId;
-  const setupSelected = props.environments.some((entry) => entry.id === selectedId && entry.setup);
-  const available =
-    !props.error &&
-    !props.loading &&
-    props.environments.some((environment) => environment.id === selectedId);
+  const selected = props.environments.find((environment) => environment.id === selectedId);
+  const backToList =
+    props.initialPage === "review"
+      ? undefined
+      : () => {
+          setPage("choose");
+          props.onRefresh();
+        };
   return (
     <Dialog
       open
@@ -55,131 +61,118 @@ export function CloudEnvironmentDialog(props: CloudEnvironmentDialogProps) {
       }}
     >
       <DialogPopup>
-        <DialogHeader>
-          <DialogTitle>
-            {page === "create"
-              ? "Create a cloud environment"
-              : page === "review"
-                ? "Review cloud environment"
-                : "Run in Codex Cloud"}
-          </DialogTitle>
-          <DialogDescription>
-            {page === "create"
-              ? "Choose connected repositories, then prepare the environment in a setup conversation."
-              : page === "review"
-                ? "Review and publish the environment prepared by Codex."
-                : "Choose an environment for this thread. Your choice is remembered for this project."}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-3 px-6 pb-4">
-          {page !== "choose" ? (
-            <CloudEnvironmentSetup
-              environmentId={props.environmentId}
-              instanceId={props.instanceId}
-              repository={props.repository}
-              {...(page === "review" && selectedId ? { configId: selectedId } : {})}
-              onSetup={props.onSetup}
-              onChanged={props.onRefresh}
-              onBack={() => {
-                setChoice(undefined);
-                setPage("choose");
-                props.onRefresh();
-              }}
-            />
-          ) : (
-            <>
-              <Select
-                value={selectedId ?? null}
-                onValueChange={(value) => setChoice(value ?? undefined)}
-                disabled={
-                  props.readOnly ||
-                  props.loading ||
-                  props.error !== null ||
-                  props.environments.length === 0
-                }
-                items={props.environments.map((environment) => ({
-                  value: environment.id,
-                  label: environment.label,
-                }))}
-              >
-                <SelectTrigger aria-label="Codex Cloud environment">
-                  <SelectValue
-                    placeholder={props.loading ? "Loading environments…" : "Choose an environment"}
-                  />
-                </SelectTrigger>
-                <SelectPopup alignItemWithTrigger={false}>
-                  {props.environments.map((environment) => (
-                    <SelectItem key={environment.id} value={environment.id}>
-                      <span className="flex flex-col">
-                        <span>
-                          {environment.label}
-                          {environment.setup ? " · Setup draft" : ""}
-                        </span>
-                        {environment.repository ? (
-                          <span className="text-xs text-muted-foreground">
-                            {environment.repository} · Suggested
+        {page === "create" ? (
+          <CloudEnvironmentCreate
+            environmentId={props.environmentId}
+            instanceId={props.instanceId}
+            repository={props.repository}
+            onSetup={props.onSetup}
+            onCreated={props.onRefresh}
+            onBack={() => setPage("choose")}
+          />
+        ) : page === "review" && selectedId ? (
+          <CloudEnvironmentReview
+            environmentId={props.environmentId}
+            instanceId={props.instanceId}
+            configId={selectedId}
+            inSetupConversation={props.inSetupConversation ?? false}
+            onSetup={props.onSetup}
+            onChanged={props.onRefresh}
+            onBack={backToList}
+          />
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>Run in Codex Cloud</DialogTitle>
+              <DialogDescription>
+                Choose an environment for this thread. Your choice is remembered for this project.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <div className="flex gap-2">
+                <Select
+                  value={selectedId ?? null}
+                  onValueChange={(value) => setChoice(value ?? undefined)}
+                  disabled={
+                    props.readOnly ||
+                    props.loading ||
+                    props.error !== null ||
+                    props.environments.length === 0
+                  }
+                  items={props.environments.map((environment) => ({
+                    value: environment.id,
+                    label: environment.label,
+                  }))}
+                >
+                  <SelectTrigger className="min-w-0 flex-1" aria-label="Codex Cloud environment">
+                    <SelectValue
+                      placeholder={
+                        props.loading ? "Loading environments…" : "Choose an environment"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false}>
+                    {props.environments.map((environment) => (
+                      <SelectItem key={environment.id} value={environment.id}>
+                        <span className="flex flex-col">
+                          <span>
+                            {environment.label}
+                            {environment.setup ? " · Not published" : ""}
                           </span>
-                        ) : null}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+                          {environment.repository ? (
+                            <span className="text-xs text-muted-foreground">
+                              Suggested for {environment.repository}
+                            </span>
+                          ) : null}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Refresh environments"
+                  disabled={props.loading}
+                  onClick={props.onRefresh}
+                >
+                  <RefreshIcon />
+                </Button>
+              </div>
               {props.error ? (
                 <p role="alert" className="text-sm text-destructive">
                   {props.error}
                 </p>
               ) : !props.loading && props.environments.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No cloud environments found. Create one to get started.
+                  No cloud environments yet. Create one to get started.
                 </p>
               ) : null}
-              <div className="flex flex-wrap gap-2">
-                {!props.readOnly ? (
-                  <Button variant="outline" size="sm" onClick={() => setPage("create")}>
-                    <PlusIcon /> Create environment
-                  </Button>
-                ) : null}
-                {isCloudEnvironmentConfig(selectedId) ? (
-                  <Button variant="outline" size="sm" onClick={() => setPage("review")}>
-                    Review environment
-                  </Button>
-                ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={props.loading}
-                  onClick={props.onRefresh}
-                >
-                  <RefreshCwIcon /> Refresh
+            </DialogPanel>
+            <DialogFooter>
+              {!props.readOnly ? (
+                <Button variant="ghost" className="sm:mr-auto" onClick={() => setPage("create")}>
+                  <PlusIcon /> Create environment
                 </Button>
-              </div>
-            </>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={props.onClose}>
-            Back to draft
-          </Button>
-          {page !== "choose" ? (
-            <Button variant="outline" onClick={() => setPage("choose")}>
-              Back to environments
-            </Button>
-          ) : null}
-          {page === "choose" ? (
-            <Button
-              disabled={!available || props.readOnly}
-              onClick={() => {
-                if (available && selectedId) {
-                  if (setupSelected) setPage("review");
-                  else props.onSelect(selectedId);
-                }
-              }}
-            >
-              {setupSelected ? "Open setup" : "Use environment"}
-            </Button>
-          ) : null}
-        </DialogFooter>
+              ) : null}
+              {isCloudEnvironmentConfig(selected?.id) && !selected?.setup ? (
+                <Button variant="outline" onClick={() => setPage("review")}>
+                  Manage
+                </Button>
+              ) : null}
+              <Button
+                disabled={!selected || props.readOnly || props.loading || props.error !== null}
+                onClick={() => {
+                  if (!selected) return;
+                  if (selected.setup) setPage("review");
+                  else props.onSelect(selected.id);
+                }}
+              >
+                {selected?.setup ? "Review setup" : "Use environment"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogPopup>
     </Dialog>
   );

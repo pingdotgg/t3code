@@ -74,54 +74,90 @@ export function CloudEnvironmentSetup(props: {
       setBusy(false);
     }
   };
-  const button = (label: string, onPress: () => void, disabled = false) => (
+  const button = (
+    label: string,
+    onPress: () => void,
+    disabled = false,
+    tone: "primary" | "plain" | "danger" = "plain",
+  ) => (
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
-      className={
-        disabled ? "rounded-xl bg-grouped-card p-3 opacity-50" : "rounded-xl bg-grouped-card p-3"
-      }
+      className={`items-center rounded-xl p-3 ${tone === "primary" ? "bg-primary" : tone === "plain" ? "bg-grouped-card" : ""} ${disabled ? "opacity-50" : ""}`}
     >
-      <Text className="text-foreground">{label}</Text>
+      <Text
+        className={
+          tone === "primary"
+            ? "font-t3-medium text-primary-foreground"
+            : tone === "danger"
+              ? "text-sm text-danger-foreground"
+              : "text-foreground"
+        }
+      >
+        {label}
+      </Text>
     </Pressable>
   );
   const config = configuration.data;
+  const ready = config?.revision !== null && config?.revision !== undefined;
+  const field = (label: string, value: string) => (
+    <View className="gap-1">
+      <Text className="text-xs text-foreground-muted">{label}</Text>
+      <Text className="text-sm text-foreground">{value}</Text>
+    </View>
+  );
   return (
     <View className="gap-3">
-      <Text className="text-base font-semibold text-foreground">
-        {props.configId ? "Review cloud environment" : "Create a cloud environment"}
-      </Text>
       {props.configId ? (
         <>
-          <Text className="text-sm text-foreground">
-            {config?.name} · {config?.published ? "Published" : "Setup draft"}
-          </Text>
-          <Text className="text-sm text-foreground-muted">
-            Review the setup conversation and prepared files before publishing.
-          </Text>
+          <View className="flex-row items-start gap-2">
+            <View className="min-w-0 flex-1 gap-1">
+              <Text className="text-base font-semibold text-foreground">
+                {config?.name ?? "Cloud environment"}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {!config
+                  ? configuration.isPending
+                    ? "Loading configuration…"
+                    : "Could not load this environment."
+                  : config.published
+                    ? "Published. New cloud tasks start from this environment."
+                    : ready
+                      ? "Setup is ready to publish."
+                      : "Not published. Finish the setup conversation to publish it."}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh configuration"
+              disabled={configuration.isPending}
+              onPress={configuration.refresh}
+              hitSlop={8}
+              className="min-h-8 justify-center px-1 active:opacity-70 disabled:opacity-40"
+            >
+              <Text className="font-t3-medium text-xs text-primary">Refresh</Text>
+            </Pressable>
+          </View>
           {config ? (
             <>
-              <Text className="text-sm text-foreground">
-                Working directory: {config.cwd}
-                {"\n\n"}Install script:{"\n"}
-                {config.installScript || "None"}
-                {"\n\n"}Start skill:{"\n"}
-                {config.startSkill || "None"}
-              </Text>
-              {!config.published
-                ? button(
-                    "Open setup conversation",
-                    () => props.onSetup(config),
-                    busy || !canOperate,
-                  )
-                : null}
+              {field(
+                "Repositories",
+                config.repositories.map((repo) => `${repo.id} @ ${repo.ref}`).join(", ") || "None",
+              )}
+              {field("Directory", config.cwd || "Default")}
+              {field("Install", config.installScript || "None")}
+              {field("Start skill", config.startSkill || "None")}
               {button(
-                busy ? "Publishing…" : "Publish environment",
+                busy ? "Publishing…" : config.published ? "Republish" : "Publish environment",
                 () =>
                   void run({ instanceId: props.instanceId, operation: "publish", id: config.id }),
-                busy || !canOperate || config.revision === null,
+                busy || !canOperate || !ready,
+                "primary",
               )}
+              {!config.published
+                ? button("Continue setup", () => props.onSetup(config), busy || !canOperate)
+                : null}
               {button(
                 "Delete environment",
                 () =>
@@ -143,13 +179,16 @@ export function CloudEnvironmentSetup(props: {
                     ],
                   ),
                 busy || !canOperate,
+                "danger",
               )}
             </>
           ) : null}
-          {button("Refresh configuration", configuration.refresh, busy)}
         </>
       ) : (
         <>
+          <Text className="text-base font-semibold text-foreground">
+            Create a cloud environment
+          </Text>
           <TextInput
             accessibilityLabel="Environment name"
             placeholder="Environment name"
@@ -192,7 +231,7 @@ export function CloudEnvironmentSetup(props: {
             separate draft; your current prompt stays saved.
           </Text>
           {button(
-            busy ? "Creating environment…" : "Create and open setup",
+            busy ? "Creating…" : "Get started",
             () =>
               void run({
                 instanceId: props.instanceId,
@@ -202,6 +241,7 @@ export function CloudEnvironmentSetup(props: {
                 network: "package_managers",
               }),
             busy || !canOperate || !name.trim() || !ids.length,
+            "primary",
           )}
         </>
       )}
