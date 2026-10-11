@@ -14,7 +14,6 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
-  resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -96,17 +95,6 @@ describe("resolvePreviousWorktreeSeed", () => {
         currentWorktreePath: null,
       }),
     ).toEqual({ branch: "t3/live", worktreePath: "/repo/.t3/worktrees/live" });
-  });
-});
-
-describe("resolvePreviousWorktreeLabel", () => {
-  it("includes the branch when known", () => {
-    expect(resolvePreviousWorktreeLabel({ branch: "t3/fix-thing", worktreePath: "/wt" })).toBe(
-      "Previous worktree (t3/fix-thing)",
-    );
-    expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
-      "Previous worktree",
-    );
   });
 });
 

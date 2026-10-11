@@ -124,8 +124,8 @@ export interface PreviousWorktreeSeed {
 }
 
 // The most recently touched worktree in the project that the composer isn't
-// already pointing at. Backs the "Previous worktree" entry in the workspace
-// selector so a follow-up thread can hop back into the worktree you just
+// already pointing at. Backs the "Previous worktree" entry at the top of the
+// branch picker so a follow-up thread can hop back into the worktree you just
 // worked in without hunting for its branch. Archived threads don't compete —
 // the rest of the UI hides them, so their worktrees shouldn't resurface here.
 export function resolvePreviousWorktreeSeed(input: {
@@ -159,10 +159,6 @@ export function resolvePreviousWorktreeSeed(input: {
     }
   }
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
-}
-
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
 }
 
 export function resolveEffectiveEnvMode(input: {

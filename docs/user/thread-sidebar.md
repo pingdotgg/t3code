@@ -1,7 +1,7 @@
 # Working with threads
 
-Use a new thread for a separate task. Choose **New worktree** when its code changes
-need a separate branch and working directory.
+Use a new thread for a separate task. Check **New worktree** below the composer when
+its code changes need a separate branch and working directory.
 
 ## Start a thread
 

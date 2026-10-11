@@ -69,7 +69,10 @@ import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
 import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
+import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+
+const PREVIOUS_WORKTREE_ITEM_VALUE = "__previous_worktree__";
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
@@ -89,6 +92,8 @@ interface BranchToolbarBranchSelectorProps {
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
+  /** The project's most recent other worktree, offered first so a draft can hop back into it. */
+  previousWorktree?: { branch: string | null; onSelect: () => void } | null;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -111,6 +116,7 @@ export function BranchToolbarBranchSelector({
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
+  previousWorktree = null,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
@@ -307,6 +313,7 @@ export function BranchToolbarBranchSelector({
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
+  const showPreviousWorktree = previousWorktree !== null && trimmedBranchQuery.length === 0;
   const branchPickerItems = useMemo(() => {
     const items = [...branchNames];
     if (createBranchItemValue && !hasExactBranchMatch) {
@@ -315,8 +322,17 @@ export function BranchToolbarBranchSelector({
     if (checkoutPullRequestItemValue) {
       items.unshift(checkoutPullRequestItemValue);
     }
+    if (showPreviousWorktree) {
+      items.unshift(PREVIOUS_WORKTREE_ITEM_VALUE);
+    }
     return items;
-  }, [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
+  }, [
+    branchNames,
+    checkoutPullRequestItemValue,
+    createBranchItemValue,
+    hasExactBranchMatch,
+    showPreviousWorktree,
+  ]);
   const filteredBranchPickerItems = useMemo(
     () =>
       normalizedDeferredBranchQuery.length === 0
@@ -635,7 +651,15 @@ export function BranchToolbarBranchSelector({
       : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
-    if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
+    if (itemValue === PREVIOUS_WORKTREE_ITEM_VALUE && previousWorktree) {
+      handleOpenChange(false);
+      previousWorktree.onSelect();
+      onComposerFocusRequest?.();
+    } else if (
+      itemValue === checkoutPullRequestItemValue &&
+      prReference &&
+      onCheckoutPullRequestRequest
+    ) {
       handleOpenChange(false);
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);
@@ -648,6 +672,19 @@ export function BranchToolbarBranchSelector({
   }
 
   function renderPickerItem(itemValue: string, index: number) {
+    if (itemValue === PREVIOUS_WORKTREE_ITEM_VALUE && previousWorktree) {
+      return (
+        <ComboboxItem
+          hideIndicator
+          key={itemValue}
+          index={index}
+          value={itemValue}
+          onClick={() => selectPickerItem(itemValue)}
+        >
+          <PreviousWorktreeItemContent branch={previousWorktree.branch} />
+        </ComboboxItem>
+      );
+    }
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
@@ -726,11 +763,13 @@ export function BranchToolbarBranchSelector({
       statusText={branchStatusText}
       renderItem={renderPickerItem}
       getItemType={(item) =>
-        item === checkoutPullRequestItemValue
-          ? "checkout-pull-request"
-          : item === createBranchItemValue
-            ? "create-branch"
-            : "branch"
+        item === PREVIOUS_WORKTREE_ITEM_VALUE
+          ? "previous-worktree"
+          : item === checkoutPullRequestItemValue
+            ? "checkout-pull-request"
+            : item === createBranchItemValue
+              ? "create-branch"
+              : "branch"
       }
       originControl={
         isSelectingWorktreeBase

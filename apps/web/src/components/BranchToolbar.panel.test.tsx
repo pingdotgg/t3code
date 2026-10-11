@@ -74,9 +74,6 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
     expect(document.querySelector('[role="menu"]')).toBeNull();
     await act(async () => trigger.click());
     const items = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
-    expect(
-      items.find((item) => item.textContent === "New worktree")?.getAttribute("aria-disabled"),
-    ).toBe("true");
     await act(async () => items.find((item) => item.textContent === "remote")!.click());
     expect(onEnvironmentChange).toHaveBeenCalledWith("remote");
   } finally {
@@ -128,6 +125,49 @@ it.each([
       } else {
         expect(state.writeTextToClipboard).toHaveBeenCalledWith(copiedPath, "workspace path");
       }
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      state.worktreePath = "/tmp/worktree";
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each([
+  ["local", false, "worktree"],
+  ["worktree", true, "local"],
+] as const)(
+  "shows mode %s as a worktree checkbox checked=%s that switches to %s",
+  async (envMode, checked, nextMode) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    state.worktreePath = null;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onEnvModeChange = vi.fn();
+    try {
+      await act(async () => {
+        root.render(
+          <BranchToolbar
+            layout="panel"
+            panelSection="workspace"
+            environmentId={EnvironmentId.make("local")}
+            threadId={ThreadId.make("thread")}
+            showGitControls
+            envMode={envMode}
+            envLocked={false}
+            startFromOrigin={false}
+            onStartFromOriginChange={vi.fn()}
+            onEnvModeChange={onEnvModeChange}
+          />,
+        );
+      });
+      const checkbox = container.querySelector<HTMLElement>('[role="checkbox"]')!;
+      expect(checkbox.textContent).toBe("New worktree");
+      expect(checkbox.getAttribute("aria-checked")).toBe(String(checked));
+      await act(async () => checkbox.click());
+      expect(onEnvModeChange).toHaveBeenCalledWith(nextMode);
     } finally {
       await act(async () => root.unmount());
       container.remove();
