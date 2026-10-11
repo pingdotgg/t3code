@@ -747,6 +747,84 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
+  describe("an existing thread saved without options", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const base = provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] });
+    const providers = [
+      {
+        ...base,
+        models: base.models.map((model) => ({
+          ...model,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select" as const,
+                options: [
+                  { id: "medium", label: "Medium", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+                currentValue: "medium",
+              },
+              {
+                id: "contextWindow",
+                label: "Context",
+                type: "select" as const,
+                options: [
+                  { id: "200k", label: "200K" },
+                  { id: "1m", label: "1M", isDefault: true },
+                ],
+                currentValue: "1m",
+              },
+            ],
+          },
+        })),
+      },
+    ];
+    const settingsDefault = createModelSelection(instanceId, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+    ]);
+    const dispatchedSelection = (threadModelSelection: ReturnType<typeof createModelSelection>) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection,
+        projectModelSelection: settingsDefault,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+        planModeEnabled: false,
+      });
+      return createModelSelection(
+        instanceId,
+        state.selectedModel,
+        dispatch.modelOptionsForDispatch,
+      );
+    };
+
+    it("runs at its own defaults rather than the settings default's options", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5");
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("keeps the options it was saved with", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5", [
+        { id: "effort", value: "medium" },
+        { id: "contextWindow", value: "200k" },
+      ]);
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+  });
+
   it("keeps a custom-instance draft model while dropping unsupported options", () => {
     const instanceId = ProviderInstanceId.make("claude_openrouter");
     const driver = ProviderDriverKind.make("claudeAgent");
