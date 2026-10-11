@@ -3098,6 +3098,7 @@ it.layer(
               "codex",
               "cursor",
               "grok",
+              "kiro",
               "muse",
               "opencode",
               "pi",
