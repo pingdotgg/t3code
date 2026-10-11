@@ -33,6 +33,7 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   resolveSettledThreadTimestamp,
   sortSettledThreads,
@@ -2187,10 +2188,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-diff-addition-foreground">
-                    +{diff.insertions.toLocaleString()}
+                    +{formatDiffCount(diff.insertions)}
                   </span>{" "}
                   <span className="text-diff-deletion-foreground">
-                    −{diff.deletions.toLocaleString()}
+                    −{formatDiffCount(diff.deletions)}
                   </span>
                 </span>
               ) : null}

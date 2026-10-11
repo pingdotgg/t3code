@@ -1,5 +1,6 @@
 import type { V2ItemSupport } from "@t3tools/client-runtime/state/item-support";
 import { toolItemForDisplay } from "@t3tools/client-runtime/work-log/presentation";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { ThreadId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -160,7 +161,7 @@ export function buildThreadActivityInspector(
       if (item.additions !== undefined || item.deletions !== undefined) {
         fields.push({
           label: "Changes",
-          value: `+${(item.additions ?? 0).toLocaleString()} −${(item.deletions ?? 0).toLocaleString()}`,
+          value: `+${formatDiffCount(item.additions ?? 0)} −${formatDiffCount(item.deletions ?? 0)}`,
         });
       }
       break;
@@ -208,7 +209,7 @@ export function buildThreadActivityInspector(
         item.files
           .map(
             (file) =>
-              `${file.path}  +${file.additions.toLocaleString()} −${file.deletions.toLocaleString()}  ${file.kind}`,
+              `${file.path}  +${formatDiffCount(file.additions)} −${formatDiffCount(file.deletions)}  ${file.kind}`,
           )
           .join("\n"),
       );
