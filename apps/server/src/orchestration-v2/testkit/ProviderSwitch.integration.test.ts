@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   type ChatAttachment,
+  EnvironmentId,
   EventId,
   MessageId,
   type ModelSelection,
@@ -21,6 +22,10 @@ import {
   TurnItemId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2950,6 +2955,110 @@ describe("orchestration v2 provider switching", () => {
         assert.include(turns[2]?.text ?? "", "claude switched response");
         assert.include(turns[2]?.text ?? "", returnPrompt);
         assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
+      }),
+    ),
+  );
+
+  it.live("sends cited assistant quotes expanded in the turn and in the handoff", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("provider-switch-citations");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const citedPrompt = `Why ${serializeAssistantCitation({
+          version: 1,
+          environmentId: EnvironmentId.make("environment:citations"),
+          threadId,
+          messageId: MessageId.make("message:citations:source"),
+          text: "The release color is violet.",
+          comment: "Is this still true?",
+          start: 0,
+          end: 28,
+          prefix: "",
+          suffix: "",
+        })}`;
+        const expandedPrompt = expandAssistantCitationsForProvider(citedPrompt);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, text: string, modelSelection: ModelSelection) =>
+            Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:citations:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`message:citations:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    event.payload.status === "completed",
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:citations:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Citations",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send(1, citedPrompt, CODEX_MODEL_SELECTION);
+          yield* send(2, "Continue", CLAUDE_MODEL_SELECTION);
+          return yield* orchestrator.getThreadProjection(threadId);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "provider-switch-citations" },
+              layerRegistry,
+            ),
+          ),
+        );
+        const turns = yield* Ref.get(capturedTurns);
+
+        assert.equal(turns[0]?.text, expandedPrompt);
+        assert.include(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
+        assert.include(turns[1]?.text ?? "", expandedPrompt);
+        for (const turn of turns) assert.notInclude(turn.text, "t3-citation:");
+        // The stored message keeps its clickable link.
+        assert.equal(
+          projection.turnItems.find((item) => item.type === "user_message")?.text,
+          citedPrompt,
+        );
       }),
     ),
   );

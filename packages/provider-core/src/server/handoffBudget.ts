@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 
 import * as Config from "effect/Config";
 
@@ -142,7 +143,10 @@ export function historicalMessage(
 ): OrchestrationV2HistoricalMessage | null {
   let text: string;
   switch (item.type) {
+    // History is provider input; the stored message keeps its clickable citations.
     case "user_message":
+      text = expandAssistantCitationsForProvider(item.text);
+      break;
     case "assistant_message":
       text = item.text;
       break;

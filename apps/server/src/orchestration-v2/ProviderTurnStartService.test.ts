@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -15,7 +16,12 @@ import {
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -855,3 +861,41 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("fails a run whose expanded assistant quotes exceed the provider input limit", () =>
+  Effect.gen(function* () {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment-citation"),
+      threadId: ThreadId.make("thread-citation-source"),
+      messageId: MessageId.make("message-citation-source"),
+      text: "Quoted claim",
+      start: 0,
+      end: 12,
+      prefix: "",
+      suffix: "",
+    });
+    // Fits as a link, which the composer allows, but not once the quote expands.
+    const text = `${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length - 1)} ${citation}`;
+    expect(text.length).toBe(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(expandAssistantCitationsForProvider(text).length).toBeGreaterThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const harness = makeLocalCommandHarness({ text });
+
+    yield* harness.start;
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.runs.at(-1)?.status).toBe("failed");
+    expect(projection.messages.at(-1)?.text).toBe(text);
+    expect(projection.turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Message is too long",
+        failure: { class: "validation_error" },
+      },
+    ]);
+  }),
+);
