@@ -625,7 +625,14 @@ export class GhosttyTerminalSurface {
   private resizeNotified = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
-  private readonly suppressedKeyCodes = new Set<string>();
+  /**
+   * Codes whose latest press this surface encoded to the PTY. Only those get
+   * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
+   * host dispatcher that stopped the keydown before it reached the input —
+   * must not leak a Kitty report-event-types release the shell never saw
+   * pressed.
+   */
+  private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
@@ -1089,18 +1096,14 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    // Presses handled outside the terminal must also swallow their release:
-    // beforeKey runs side effects (keybindings, navigation sends), so it cannot
-    // be consulted again on keyup, and Kitty report-event-types sessions would
-    // otherwise receive a release for a press the shell never saw.
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
-      this.suppressedKeyCodes.add(event.code);
-      return;
-    }
+    // Every path that does not encode a new press also drops its release (see
+    // encodedKeyCodes). A repeat still owes the original press its release;
+    // beforeKey runs side effects, so keyup cannot re-ask it.
+    if (!event.repeat) this.encodedKeyCodes.delete(event.code);
+    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     // IME candidates belong to the textarea, even if the key also resembles
     // a local shortcut. Safari signals the initial composition with code 229.
     if (isTerminalCompositionKey(event, this.composing)) {
-      this.suppressedKeyCodes.add(event.code);
       return;
     }
     const mac = isMacPlatform(navigator.platform);
@@ -1113,7 +1116,6 @@ export class GhosttyTerminalSurface {
     if (selectAllShortcut) {
       event.preventDefault();
       event.stopPropagation();
-      this.suppressedKeyCodes.add(event.code);
       this.selectAll();
       return;
     }
@@ -1135,7 +1137,6 @@ export class GhosttyTerminalSurface {
       if (state !== null) {
         event.preventDefault();
         event.stopPropagation();
-        this.suppressedKeyCodes.add(event.code);
         const delta =
           event.key === "Home"
             ? -state.offset
@@ -1198,11 +1199,9 @@ export class GhosttyTerminalSurface {
           });
         }
       }
-      this.suppressedKeyCodes.add(event.code);
       return;
     }
     if (isTerminalPasteShortcut(event)) {
-      this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
         // Race the async clipboard read against the browser's own paste event:
@@ -1227,14 +1226,14 @@ export class GhosttyTerminalSurface {
     this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
-    this.suppressedKeyCodes.delete(event.code);
+    this.encodedKeyCodes.add(event.code);
     event.preventDefault();
     event.stopPropagation();
     this.options.onData(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    if (this.suppressedKeyCodes.delete(event.code)) return;
+    if (!this.encodedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
@@ -1247,6 +1246,24 @@ export class GhosttyTerminalSurface {
     this.options.onData(data);
   };
 
+  // A release delivered outside the textarea means the shell will never get
+  // one from here; forget the press so a later host-consumed chord on the same
+  // code cannot inherit it. Capture phase sees the keyup even if the focused
+  // element stops it.
+  private readonly onWindowKeyUp = (event: KeyboardEvent) => {
+    if (event.composedPath().includes(this.input)) return;
+    this.encodedKeyCodes.delete(event.code);
+  };
+
+  // A release while another app has focus never reaches the page, but a later
+  // non-repeated keydown of the same code proves it happened. Retire the press
+  // here, in capture phase before any host dispatcher can stop the event; onKeyDown
+  // re-adds the code when this surface encodes the new press itself. A key
+  // held across a window focus round trip keeps its press and its release.
+  private readonly onWindowKeyDown = (event: KeyboardEvent) => {
+    if (!event.repeat) this.encodedKeyCodes.delete(event.code);
+  };
+
   private readonly onFocus = () => {
     this.focused = true;
     this.cursorOn = true;
@@ -1256,10 +1273,12 @@ export class GhosttyTerminalSurface {
   private readonly onBlur = () => {
     this.focused = false;
     this.refreshHoveredLink();
-    // Suppressions survive blur deliberately: a shortcut that moves focus (for
-    // example terminal-toggle) must still swallow its own keyup if focus comes
-    // back before release. Stale entries are harmless — an encoding keydown
-    // always removes its code first.
+    // Encoded presses survive blur deliberately: a key held across a focus
+    // round trip still owes the shell its release. A press that moved focus
+    // (for example terminal-toggle) was never encoded, so its keyup stays
+    // swallowed if focus comes back before release. Releases that land
+    // elsewhere retire the press in onWindowKeyUp, and unseen ones on the next
+    // keydown of the same code in onWindowKeyDown.
     // The steady unfocused hollow cursor must not inherit an off blink phase.
     this.cursorOn = true;
     this.requestRender();
@@ -1755,6 +1774,8 @@ export class GhosttyTerminalSurface {
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.addEventListener("focus", this.onFocus);
     this.input.addEventListener("blur", this.onBlur);
     this.input.addEventListener("input", this.onInput);
@@ -1781,6 +1802,8 @@ export class GhosttyTerminalSurface {
   private removeEvents(): void {
     this.input.removeEventListener("keydown", this.onKeyDown);
     this.input.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.removeEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.removeEventListener("focus", this.onFocus);
     this.input.removeEventListener("blur", this.onBlur);
     this.input.removeEventListener("input", this.onInput);
