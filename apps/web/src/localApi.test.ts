@@ -127,6 +127,22 @@ describe("LocalApi", () => {
     expect(dismissContextMenuMock).toHaveBeenCalledOnce();
   });
 
+  it("abandons a desktop show that close invalidates while the preference read is pending", async () => {
+    styledContextMenuState.enabled = true;
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+    const items = [{ id: "delete", label: "Delete" }] as const;
+
+    const pendingShow = api.contextMenu.show(items);
+    await api.contextMenu.close();
+
+    await expect(pendingShow).resolves.toBeNull();
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
   it("uses the themed confirmation host when it is available", async () => {
     requestConfirmDialogMock.mockResolvedValue(true);
     const { createLocalApi } = await import("./localApi");
