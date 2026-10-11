@@ -1181,6 +1181,98 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("names the missing base ref behind a failed worktree add", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "repo");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            refName: "t3/deleted-base",
+            newRefName: "t3/new-thread",
+            path: pathService.join(parent, "worktree"),
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          detail: "git worktree add failed",
+          reason: "ref_not_found",
+        });
+        assert.include(error.message, "git worktree add failed (ref_not_found)");
+        assert.notInclude(error.message, "t3/deleted-base");
+      }),
+    );
+
+    it.effect.each([
+      { label: "worktree add", args: ["worktree", "add", "../worktree", "missing"] },
+      { label: "switch", args: ["switch", "missing"] },
+      { label: "branch", args: ["branch", "new-branch", "missing"] },
+      { label: "checkout -b", args: ["checkout", "-b", "new-branch", "missing"] },
+      { label: "checkout -b of a quoted name", args: ["checkout", "-b", "new", "o'brien"] },
+      { label: "merge-base", args: ["merge-base", "HEAD", "missing"] },
+      { label: "rev-parse --verify", args: ["rev-parse", "--verify", "missing"] },
+      { label: "log", args: ["log", "-1", "missing", "--"] },
+    ])("names a ref that does not exist behind a failed $label", ({ args }) =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "repo");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.missingRef",
+            cwd,
+            args,
+            env: { LC_ALL: "C" },
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, { reason: "ref_not_found" });
+      }),
+    );
+
+    it.effect.each([
+      // Git cannot tell a missing revision from a missing file in these.
+      { label: "an argument that may be a path", args: ["log", "-1", "missing"] },
+      { label: "a pathspec", args: ["checkout", "missing"] },
+      // The tag exists; it names a tree, which git reports in the same words.
+      { label: "a worktree from a non-commit", args: ["worktree", "add", "../tree", "tree-tag"] },
+      { label: "a non-commit revision", args: ["rev-parse", "--verify", "tree-tag^{commit}"] },
+    ])("leaves $label unclassified rather than calling it a missing ref", ({ args }) =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "repo");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["tag", "tree-tag", "HEAD^{tree}"]);
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.ambiguousMissingName",
+            cwd,
+            args,
+            env: { LC_ALL: "C" },
+          })
+          .pipe(Effect.flip);
+
+        assert.notProperty(error, "reason");
+      }),
+    );
+
     it.effect.each([
       {
         label: "a refused key",
@@ -2871,6 +2963,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "uncommitted work\n",
         );
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
+
+    it.effect("names the missing ref behind a failed switch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver.switchRef({ cwd, refName: "deleted-branch" }).pipe(Effect.flip);
+
+        assert.deepInclude(error, { detail: "git checkout failed", reason: "ref_not_found" });
       }),
     );
 
