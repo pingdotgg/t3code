@@ -69,19 +69,20 @@ export class ElectronSafeStorage extends Context.Service<
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
 
+  // Keep connection credentials on the same async provider as Clerk's token storage.
   return ElectronSafeStorage.of({
-    isEncryptionAvailable: Effect.try({
-      try: () => Electron.safeStorage.isEncryptionAvailable(),
+    isEncryptionAvailable: Effect.tryPromise({
+      try: () => Electron.safeStorage.isAsyncEncryptionAvailable(),
       catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
     }),
     encryptString: (value) =>
-      Effect.try({
-        try: () => Electron.safeStorage.encryptString(value),
+      Effect.tryPromise({
+        try: () => Electron.safeStorage.encryptStringAsync(value),
         catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
       }),
     decryptString: (value) =>
-      Effect.try({
-        try: () => Electron.safeStorage.decryptString(Buffer.from(value)),
+      Effect.tryPromise({
+        try: async () => (await Electron.safeStorage.decryptStringAsync(Buffer.from(value))).result,
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
       }),
     selectedStorageBackend: Effect.sync(() => {
