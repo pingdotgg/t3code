@@ -747,11 +747,6 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
-      yield* ThreadManagement.assertProviderInstanceEnabledForProject(
-        serverSettings,
-        input.projectId,
-        input.modelSelection.instanceId,
-      );
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -773,6 +768,13 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      yield* ThreadManagement.assertProviderInstanceEnabledForProject(
+        serverSettings,
+        receipts,
+        input.commandId,
+        input.projectId,
+        input.modelSelection.instanceId,
+      );
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before

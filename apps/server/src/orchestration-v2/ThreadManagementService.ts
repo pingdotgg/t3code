@@ -40,6 +40,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -291,23 +292,30 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 /**
- * Refuses to start a new turn on an instance a project has effectively
- * disabled, in either direction: the machine disabled it with no project
- * override, or the project disabled it over a machine-enabled instance.
- * Shared by `sendToThread` and by the intake layer's new-thread and
- * existing-thread dispatch paths, which all read settings themselves.
+ * Refuses a new turn on an instance the project has effectively disabled.
+ * A command that already has a receipt was let through before, so its retry
+ * replays instead of being refused under newer settings.
  */
 export const assertProviderInstanceEnabledForProject = (
   settings: ServerSettings.ServerSettingsService["Service"],
+  receipts: CommandReceiptStore.CommandReceiptStoreV2["Service"],
+  commandId: CommandId,
   projectId: ProjectId,
   instanceId: ProviderInstanceId,
 ): Effect.Effect<void, ThreadManagementProviderInstanceDisabledError> =>
-  settings.getSettings.pipe(
-    Effect.orDie,
-    Effect.flatMap((current) =>
-      resolveProjectProviderInstanceEnabled(current, projectId, instanceId)
+  receipts.getByCommandId(commandId).pipe(
+    Effect.orElseSucceed(() => Option.none()),
+    Effect.flatMap((receipt) =>
+      Option.isSome(receipt)
         ? Effect.void
-        : new ThreadManagementProviderInstanceDisabledError({ projectId, instanceId }),
+        : settings.getSettings.pipe(
+            Effect.orDie,
+            Effect.flatMap((current) =>
+              resolveProjectProviderInstanceEnabled(current, projectId, instanceId)
+                ? Effect.void
+                : new ThreadManagementProviderInstanceDisabledError({ projectId, instanceId }),
+            ),
+          ),
     ),
   );
 
@@ -371,6 +379,16 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  /**
+   * Bound form of `assertProviderInstanceEnabledForProject` for callers that
+   * already hold a `ThreadManagementService` instance but not the settings
+   * and receipt-store services it needs.
+   */
+  readonly assertProviderInstanceEnabled: (input: {
+    readonly projectId: ProjectId;
+    readonly commandId: CommandId;
+    readonly instanceId: ProviderInstanceId;
+  }) => Effect.Effect<void, ThreadManagementProviderInstanceDisabledError>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -481,6 +499,17 @@ const make = Effect.gen(function* () {
   const layerScope = yield* Effect.scope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+
+  const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
+    (input) =>
+      assertProviderInstanceEnabledForProject(
+        serverSettings,
+        receipts,
+        input.commandId,
+        input.projectId,
+        input.instanceId,
+      );
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -631,11 +660,11 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
         });
       }
-      yield* assertProviderInstanceEnabledForProject(
-        serverSettings,
-        input.projectId,
-        (input.modelSelection ?? target.thread.modelSelection).instanceId,
-      );
+      yield* assertProviderInstanceEnabled({
+        projectId: input.projectId,
+        commandId: input.commandId,
+        instanceId: (input.modelSelection ?? target.thread.modelSelection).instanceId,
+      });
 
       const steerableRun = latestSteerableRun(target);
       let dispatchMode: Extract<
@@ -957,6 +986,7 @@ const make = Effect.gen(function* () {
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
+    assertProviderInstanceEnabled,
     waitForThread,
     settleAfterRun,
     settleThread,
@@ -984,7 +1014,9 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
 export const layer: Layer.Layer<
   ThreadManagementService,
   never,
-  Orchestrator.OrchestratorV2 | ServerSettings.ServerSettingsService
+  | Orchestrator.OrchestratorV2
+  | ServerSettings.ServerSettingsService
+  | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
 );
@@ -995,4 +1027,5 @@ export const layerWithLegacyImporter: Layer.Layer<
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | Orchestrator.OrchestratorV2
   | ServerSettings.ServerSettingsService
+  | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make);

@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -58,13 +57,12 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "message.dispatch") {
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const projection = yield* threads.getThreadRecords(command.threadId, []);
-    yield* ThreadManagement.assertProviderInstanceEnabledForProject(
-      serverSettings,
-      projection.thread.projectId,
-      (command.modelSelection ?? projection.thread.modelSelection).instanceId,
-    );
+    yield* threads.assertProviderInstanceEnabled({
+      projectId: projection.thread.projectId,
+      commandId: command.commandId,
+      instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+    });
   }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

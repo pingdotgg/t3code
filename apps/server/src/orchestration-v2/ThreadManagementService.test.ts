@@ -23,6 +23,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -261,9 +263,14 @@ it("derives thread management messages from structural error attributes", () => 
   );
 });
 
+const layerReceiptsTest = CommandReceiptStore.layer.pipe(
+  Layer.provide(SqlitePersistence.layerMemory),
+);
+
 it.effect("refuses a new turn when the project effectively disables the instance", () => {
   const projectId = ProjectId.make("project:thread-management:gate-disabled");
   const instanceId = ProviderInstanceId.make("codex_work");
+  const commandId = CommandId.make("command:thread-management:gate-disabled");
   const layerTest = ServerSettings.layerTest({
     providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
     projectSettingsOverrides: {
@@ -273,9 +280,12 @@ it.effect("refuses a new turn when the project effectively disables the instance
 
   return Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const error = yield* Effect.flip(
       ThreadManagementService.assertProviderInstanceEnabledForProject(
         settings,
+        receipts,
+        commandId,
         projectId,
         instanceId,
       ),
@@ -288,12 +298,13 @@ it.effect("refuses a new turn when the project effectively disables the instance
     expect(error.message).toBe(
       `Provider instance "${instanceId}" is disabled for project ${projectId}.`,
     );
-  }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
 });
 
 it.effect("allows a new turn when the project enables an instance the machine disabled", () => {
   const projectId = ProjectId.make("project:thread-management:gate-enabled");
   const instanceId = ProviderInstanceId.make("codex_work");
+  const commandId = CommandId.make("command:thread-management:gate-enabled");
   const layerTest = ServerSettings.layerTest({
     providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
     projectSettingsOverrides: {
@@ -303,26 +314,33 @@ it.effect("allows a new turn when the project enables an instance the machine di
 
   return Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     yield* ThreadManagementService.assertProviderInstanceEnabledForProject(
       settings,
+      receipts,
+      commandId,
       projectId,
       instanceId,
     );
-  }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
 });
 
 it.effect("inherits the machine value when the project has no override", () => {
   const projectId = ProjectId.make("project:thread-management:gate-inherit");
   const instanceId = ProviderInstanceId.make("codex_work");
+  const commandId = CommandId.make("command:thread-management:gate-inherit");
   const layerTest = ServerSettings.layerTest({
     providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
   });
 
   return Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const error = yield* Effect.flip(
       ThreadManagementService.assertProviderInstanceEnabledForProject(
         settings,
+        receipts,
+        commandId,
         projectId,
         instanceId,
       ),
@@ -331,7 +349,7 @@ it.effect("inherits the machine value when the project has no override", () => {
     expect(error).toBeInstanceOf(
       ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
     );
-  }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.provide(layerTest), Effect.provide(layerReceiptsTest));
 });
 
 it.effect("classifies projection infrastructure failures separately from a missing thread", () => {
@@ -349,6 +367,7 @@ it.effect("classifies projection infrastructure failures separately from a missi
       }),
     ),
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
   );
 
   return Effect.gen(function* () {
@@ -383,6 +402,7 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
       }),
     ),
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
   );
 
   return Effect.gen(function* () {
@@ -415,6 +435,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
       ),
     ),
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
   );
   return Effect.gen(function* () {
     const service = yield* ThreadManagementService.ThreadManagementService;
@@ -463,6 +484,7 @@ it.effect.each([
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -534,6 +556,7 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -580,6 +603,7 @@ it.effect.each([
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),

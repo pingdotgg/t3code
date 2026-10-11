@@ -17,6 +17,7 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -185,7 +186,14 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const shell = yield* projections.getThreadShell(threadId);
       assert.equal(shell?.runtimeMode, "full-access");
       assert.equal(shell?.title, "Before");
-    }).pipe(Effect.provide(ThreadManagement.layer.pipe(Layer.provide(ServerSettings.layerTest())))),
+    }).pipe(
+      Effect.provide(
+        ThreadManagement.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
 
   it.effect("lets the write through when the thread stays within the caller's modes", () =>
@@ -196,6 +204,13 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const outcome = yield* renameRacingTheUser(threadId, false);
       assert.deepEqual(outcome, { renamed: true });
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "Renamed by the agent");
-    }).pipe(Effect.provide(ThreadManagement.layer.pipe(Layer.provide(ServerSettings.layerTest())))),
+    }).pipe(
+      Effect.provide(
+        ThreadManagement.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
 });
