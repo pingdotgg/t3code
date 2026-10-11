@@ -481,6 +481,8 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
+  /** The rows are a held snapshot of the previous thread while the next one loads. */
+  paintOnly?: boolean;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   parentThreadLink?: {
@@ -595,6 +597,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   turnDiffSummaries,
   routeThreadKey,
   displayThreadKey,
+  paintOnly = false,
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
@@ -655,7 +658,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const previousLatestRunRef = useRef(latestRun);
   // The list stays mounted across thread switches. Its first end pins on the
   // new thread must snap, not glide, even if that thread is mid-turn.
-  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
+  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
@@ -1214,24 +1217,28 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && isAtEnd !== undefined) {
+    if (position && state && isAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
       const row = index === undefined ? undefined : state.elementAtIndex(index);
       const element = listRef.current?.getScrollableNode();
       if (row && element) {
-        rememberTimelinePosition(listIdentityKey, {
-          ...position,
-          // DOM geometry includes the header and the virtualizer's layout adjustment.
-          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
-          scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
-          disclosures: {
-            runs: paintedExpandedRunIds,
-            workGroups: paintedExpandedWorkGroupIds,
-            attempts: paintedExpandedAttemptIds,
-            workGroupState: workGroupViewState,
+        rememberTimelinePosition(
+          listIdentityKey,
+          {
+            ...position,
+            // DOM geometry includes the header and the virtualizer's layout adjustment.
+            offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
+            scrollOffset: element.scrollTop,
+            atEnd: isAtEnd,
+            disclosures: {
+              runs: paintedExpandedRunIds,
+              workGroups: paintedExpandedWorkGroupIds,
+              attempts: paintedExpandedAttemptIds,
+              workGroupState: workGroupViewState,
+            },
           },
-        });
+          liveFollowEnabled && !anchoredEndSpace,
+        );
       }
     }
     if (isAtEnd !== undefined && !citationPositioning) {
@@ -1283,6 +1290,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    liveFollowEnabled,
+    anchoredEndSpace,
+    paintOnly,
     restoringThreadPosition,
     listRef,
     minimapItems,
@@ -1295,6 +1305,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
   }, [handleScroll, rows.length]);
+
+  const savedLiveFollowEnabledRef = useRef(liveFollowEnabled);
+  useLayoutEffect(() => {
+    const wasFollowing = savedLiveFollowEnabledRef.current;
+    savedLiveFollowEnabledRef.current = liveFollowEnabled;
+    if (wasFollowing && !liveFollowEnabled) handleScroll();
+  }, [handleScroll, liveFollowEnabled]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
