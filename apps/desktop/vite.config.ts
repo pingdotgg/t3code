@@ -146,6 +146,7 @@ export default defineConfig({
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
+    globalSetup: ["./scripts/ensure-electron-runtime.mjs"],
     setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
   },
 });

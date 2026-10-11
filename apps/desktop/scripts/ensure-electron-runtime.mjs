@@ -177,6 +177,10 @@ export function ensureElectronRuntime() {
   return electronPath;
 }
 
+export function setup() {
+  ensureElectronRuntime();
+}
+
 // `file://${argv[1]}` never matches on Windows (drive letters need `file:///C:/`).
 if (process.argv[1] && NodeURL.pathToFileURL(process.argv[1]).href === import.meta.url) {
   const electronPath = ensureElectronRuntime();
