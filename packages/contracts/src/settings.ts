@@ -634,22 +634,13 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
-    cloudEnvironment: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Cloud environment",
-        description:
-          "Legacy default for existing cloud threads. New threads choose their environment from Run on.",
-        providerSettingsForm: { hidden: true, clearWhenEmpty: "omit" },
-      }),
-    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs", "cloudEnvironment"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

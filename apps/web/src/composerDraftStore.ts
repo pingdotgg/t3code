@@ -25,8 +25,7 @@ import {
   ThreadId,
   SnapShotSource,
   keepCloudRun,
-  CLOUD_ENVIRONMENT_OPTION_ID,
-  CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
+  isCloudRunOption,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -3039,14 +3038,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
-            // survives Composer 2 → 2.5 and new chats.
+            // survives Composer 2 → 2.5 and new chats. Where a chat runs is
+            // picked per chat, so the run location never becomes sticky.
             const nextSelection = createModelSelection(
               normalized.instanceId,
               normalized.model,
               (normalized.options ?? current?.options)?.filter(
-                (option) =>
-                  option.id !== CLOUD_ENVIRONMENT_OPTION_ID &&
-                  option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
+                (option) => !isCloudRunOption(option),
               ),
             );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
@@ -3306,11 +3304,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // itself keeps preserving its current model on trait changes.
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
-              const stickyOptions = providerOpts?.filter(
-                (option) =>
-                  option.id !== CLOUD_ENVIRONMENT_OPTION_ID &&
-                  option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
-              );
+              const stickyOptions = providerOpts?.filter((option) => !isCloudRunOption(option));
               if (stickyOptions?.length) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,

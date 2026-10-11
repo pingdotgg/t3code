@@ -21,6 +21,12 @@ const record = Schema.Record(Schema.String, Schema.Unknown);
 const decodeMessage = Schema.decodeUnknownSync(Schema.fromJsonString(record));
 const decodeParams = Schema.decodeUnknownSync(record);
 
+// The cloud supplies its own developer instructions for a collaboration mode.
+const withoutDeveloperInstructions = (mode: Record<string, unknown>) => ({
+  ...mode,
+  settings: { ...decodeParams(mode.settings), developer_instructions: null },
+});
+
 /** Translate local app-server envelopes into the cloud's saved-environment protocol. */
 export function codexCloudMessage(message: string, config: ProviderCloudConfiguration): string {
   const wire = decodeMessage(message);
@@ -67,15 +73,7 @@ export function codexCloudMessage(message: string, config: ProviderCloudConfigur
       params: {
         ...cloudParams,
         ...(collaborationMode && typeof collaborationMode === "object"
-          ? {
-              collaborationMode: {
-                ...decodeParams(collaborationMode),
-                settings: {
-                  ...decodeParams(decodeParams(collaborationMode).settings),
-                  developer_instructions: null,
-                },
-              },
-            }
+          ? { collaborationMode: withoutDeveloperInstructions(decodeParams(collaborationMode)) }
           : {}),
         ...(!config.published ? { turnTrigger: "environment_onboarding" } : {}),
       },
@@ -167,5 +165,40 @@ export const makeCodexCloudClientFactory = (
             cause,
           }),
       ),
+    ),
+});
+
+/**
+ * A cloud conversation's session is its own, and its files live in the
+ * cloud: nothing to share, checkpoint, roll back, or fork from here.
+ */
+export const withCloudConversationCapabilities = (
+  adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+): ProviderAdapter.ProviderAdapterV2["Service"] => ({
+  ...adapter,
+  getCapabilities: () =>
+    adapter.getCapabilities().pipe(
+      Effect.map((capabilities) => ({
+        ...capabilities,
+        sessions: {
+          ...capabilities.sessions,
+          supportsMultipleProviderThreadsPerSession: false,
+          supportsRuntimeModeSwitchInSession: false,
+        },
+        threads: {
+          ...capabilities.threads,
+          canRollbackThread: false,
+          canForkThread: false,
+          canForkFromTurn: false,
+          canForkFromSubagentThread: false,
+        },
+        checkpointing: {
+          ...capabilities.checkpointing,
+          appCanCheckpointFilesystem: false,
+          supportsNestedCheckpointScopes: false,
+          providerCanRollbackConversation: false,
+          providerRollbackReturnsSnapshot: false,
+        },
+      })),
     ),
 });

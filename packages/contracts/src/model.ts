@@ -58,14 +58,14 @@ export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
  * Run on, offered when the provider snapshot has `cloudRun`; it is never a
  * model trait, so option editors that rebuild a selection must carry it over.
  */
-export const CLOUD_RUN_OPTION_ID = "cloud";
-export const CLOUD_ENVIRONMENT_OPTION_ID = "cloudEnvironment";
+const CLOUD_RUN_OPTION_ID = "cloud";
+const CLOUD_ENVIRONMENT_OPTION_ID = "cloudEnvironment";
 /**
  * Marks the conversation that sets up or edits a Codex Cloud environment with
  * the `$cloud-environment-onboarding:setup` skill. Only these threads offer
  * Edit and Publish environment.
  */
-export const CLOUD_ENVIRONMENT_SETUP_OPTION_ID = "cloudEnvironmentSetup";
+const CLOUD_ENVIRONMENT_SETUP_OPTION_ID = "cloudEnvironmentSetup";
 
 /** Whether an option belongs to the run location rather than the model. */
 export const isCloudRunOption = (option: ProviderOptionSelection): boolean =>
@@ -89,21 +89,41 @@ export function selectedCloudEnvironment(
   return typeof value === "string" ? value : undefined;
 }
 
+/** Where a selection runs in the cloud; `null` runs it on its machine. */
+interface CloudRunPlacement {
+  readonly environment?: string | undefined;
+  readonly setup?: boolean | undefined;
+}
+
+/** Replaces a selection's run location options, keeping its model traits. */
+export function withCloudRunOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  placement: CloudRunPlacement | null,
+): Array<ProviderOptionSelection> {
+  return [
+    ...(options ?? []).filter((option) => !isCloudRunOption(option)),
+    ...(placement
+      ? [
+          { id: CLOUD_RUN_OPTION_ID, value: true },
+          ...(placement.environment
+            ? [{ id: CLOUD_ENVIRONMENT_OPTION_ID, value: placement.environment }]
+            : []),
+          ...(placement.setup ? [{ id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true }] : []),
+        ]
+      : []),
+  ];
+}
+
 /** Carries run location options through editors that only know model traits. */
 export function keepCloudRunOptions(
   next: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   current: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
   if (!selectsCloudRun(current)) return next ?? undefined;
-  const destination = selectedCloudEnvironment(next) ?? selectedCloudEnvironment(current);
-  return [
-    ...(next ?? []).filter((option) => !isCloudRunOption(option)),
-    { id: CLOUD_RUN_OPTION_ID, value: true },
-    ...(destination ? [{ id: CLOUD_ENVIRONMENT_OPTION_ID, value: destination }] : []),
-    ...(selectsCloudEnvironmentSetup(current)
-      ? [{ id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true }]
-      : []),
-  ];
+  return withCloudRunOptions(next, {
+    environment: selectedCloudEnvironment(next) ?? selectedCloudEnvironment(current),
+    setup: selectsCloudEnvironmentSetup(current),
+  });
 }
 
 /** Whether a Codex Cloud environment id names an editable configuration, which can be set up and published. */

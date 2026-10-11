@@ -2473,7 +2473,7 @@ describe("composerDraftStore sticky composer settings", () => {
     resetComposerDraftStore();
   });
 
-  it("keeps the cloud destination in its draft without seeding unrelated projects", () => {
+  it("keeps the cloud run in its draft without seeding new chats", () => {
     const threadId = ThreadId.make("cloud-destination");
     const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
     const selection = modelSelection(CODEX_DRIVER, "gpt-5.4", {
@@ -2491,13 +2491,11 @@ describe("composerDraftStore sticky composer settings", () => {
       draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE]?.options,
     ).toEqual(selection.options);
     const current = useComposerDraftStore.getState();
-    expect(current.stickyModelSelectionByProvider[CODEX_INSTANCE]?.options).not.toContainEqual({
-      id: "cloudEnvironment",
-      value: "project-environment",
-    });
-    expect(
-      current.stickyOptionsByModelByProvider[CODEX_INSTANCE]?.[selection.model],
-    ).not.toContainEqual({ id: "cloudEnvironment", value: "project-environment" });
+    const traitsOnly = [{ id: "reasoningEffort", value: "medium" }];
+    expect(current.stickyModelSelectionByProvider[CODEX_INSTANCE]?.options).toEqual(traitsOnly);
+    expect(current.stickyOptionsByModelByProvider[CODEX_INSTANCE]?.[selection.model]).toEqual(
+      traitsOnly,
+    );
   });
 
   it("stores a sticky model selection", () => {

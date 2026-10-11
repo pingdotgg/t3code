@@ -66,8 +66,8 @@ from the other home.
 
 ## Run in Codex Cloud
 
-Set **Cloud environment** in Codex's provider settings to run threads in Codex
-Cloud from **Run on**. See [Run in the cloud](./cloud-runs.md).
+Choose **Run on → Codex Cloud** to run a new thread in one of your Codex Cloud
+environments. See [Run in the cloud](./cloud-runs.md).
 
 ## Switch accounts in an existing thread
 

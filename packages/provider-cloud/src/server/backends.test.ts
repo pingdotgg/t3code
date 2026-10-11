@@ -37,6 +37,7 @@ const runInput = (session?: string) => {
     input: {
       cwd: "/repo",
       prompt: "--fix the flaky test",
+      cloudEnvironment: "my-env",
       session,
       onTask: (task: CloudTask) => Effect.sync(() => void tasks.push(task)),
     },
@@ -44,7 +45,7 @@ const runInput = (session?: string) => {
 };
 
 describe("Codex Cloud backend", () => {
-  it.effect("uses the validated thread destination instead of the legacy provider default", () =>
+  it.effect("submits to the id the thread's environment resolves to", () =>
     Effect.gen(function* () {
       const { cli, calls } = scriptedCli([
         ok(TASK_URL),
@@ -52,8 +53,7 @@ describe("Codex Cloud backend", () => {
       ]);
       const backend = makeCodexCloudBackend({
         cli,
-        environment: "legacy",
-        validateEnvironment: (id) => {
+        resolveEnvironment: (id) => {
           assert.equal(id, "selected");
           return Effect.succeed("canonical-id");
         },
@@ -67,8 +67,7 @@ describe("Codex Cloud backend", () => {
       const { cli, calls } = scriptedCli([]);
       const backend = makeCodexCloudBackend({
         cli,
-        environment: "legacy",
-        validateEnvironment: () =>
+        resolveEnvironment: () =>
           Effect.fail(new CloudCliError({ detail: "Environment unavailable" })),
       });
       const result = yield* backend
@@ -87,7 +86,7 @@ describe("Codex Cloud backend", () => {
         ok("[READY] Fix flaky test\nmy-env  •  just now\n+12/-3\n"),
         ok("Applied patch to 2 files.\n"),
       ]);
-      const backend = makeCodexCloudBackend({ cli, environment: "my-env", pollInterval: 0 });
+      const backend = makeCodexCloudBackend({ cli, pollInterval: 0 });
       const { tasks, input } = runInput();
 
       const result = yield* backend.run(input);
@@ -114,7 +113,7 @@ describe("Codex Cloud backend", () => {
         ok(TASK_URL),
         ok("[READY] Explain the code\nmy-env  •  just now\nno diff\n"),
       ]);
-      const backend = makeCodexCloudBackend({ cli, environment: "my-env" });
+      const backend = makeCodexCloudBackend({ cli });
 
       const result = yield* backend.run(runInput().input);
 
@@ -135,10 +134,10 @@ describe("Codex Cloud backend", () => {
         { stdout: "Patch failed to apply: conflict in a.ts\n", stderr: "", code: 1 },
       ]);
 
-      const erroredExit = yield* makeCodexCloudBackend({ cli: errored.cli, environment: "e" })
+      const erroredExit = yield* makeCodexCloudBackend({ cli: errored.cli })
         .run(runInput().input)
         .pipe(Effect.exit);
-      const conflictExit = yield* makeCodexCloudBackend({ cli: conflict.cli, environment: "e" })
+      const conflictExit = yield* makeCodexCloudBackend({ cli: conflict.cli })
         .run(runInput().input)
         .pipe(Effect.exit);
 
@@ -155,9 +154,8 @@ describe("Codex Cloud backend", () => {
   it.effect("refuses to run without an environment", () =>
     Effect.gen(function* () {
       const { cli, calls } = scriptedCli([]);
-      const exit = yield* makeCodexCloudBackend({ cli, environment: "" })
-        .run(runInput().input)
-        .pipe(Effect.exit);
+      const { cloudEnvironment: _, ...input } = runInput().input;
+      const exit = yield* makeCodexCloudBackend({ cli }).run(input).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit));
       assert.strictEqual(calls.length, 0);
     }),

@@ -14,7 +14,7 @@ Choose **Run on → Codex Cloud**, then select an environment. T3 remembers the
 choice per project and account. To create one inside T3:
 
 1. Select **Create environment**, name it, and choose connected GitHub repositories.
-2. Select **Create and open setup**. T3 opens a separate setup draft and preserves
+2. Select **Get started**. T3 opens a separate setup draft and preserves
    your original prompt. Send the setup message to let Codex prepare and test the environment.
 3. When setup is done, select **Publish environment** above the composer in the
    setup conversation. **Edit environment** shows its configuration first. These

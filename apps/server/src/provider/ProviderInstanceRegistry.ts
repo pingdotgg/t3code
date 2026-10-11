@@ -135,31 +135,7 @@ export class ProviderInstanceRegistry extends Context.Service<
   }
 >()("t3/provider/ProviderInstanceRegistry") {}
 
-/** Discover destinations using the enabled account in the current registry. */
-export const listCloudEnvironments = Effect.fn("ProviderInstanceRegistry.listCloudEnvironments")(
-  function* (input: ProviderCloudEnvironmentsInput) {
-    const registry = yield* ProviderInstanceRegistry;
-    const instance = yield* registry.getInstance(input.instanceId);
-    if (!instance?.enabled || !instance.listCloudEnvironments)
-      return yield* new ProviderSetupError({
-        instanceId: input.instanceId,
-        operation: "list-cloud-environments",
-        detail: "This provider cannot list cloud environments.",
-      });
-    return yield* instance.listCloudEnvironments(input.repository).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderSetupError({
-            instanceId: input.instanceId,
-            operation: "list-cloud-environments",
-            detail: cause.detail,
-          }),
-      ),
-    );
-  },
-);
-
-/** Cloud setup operations share the enabled provider account and registry lifecycle. */
+/** The enabled instance's cloud environments; the RPCs below all go through it. */
 const getCloudEnvironments = Effect.fn("ProviderInstanceRegistry.getCloudEnvironments")(function* (
   instanceId: ProviderInstanceId,
 ) {
@@ -175,6 +151,13 @@ const getCloudEnvironments = Effect.fn("ProviderInstanceRegistry.getCloudEnviron
 });
 const cloudSetupError = (instanceId: ProviderInstanceId, cause: ProviderDriverError) =>
   new ProviderSetupError({ instanceId, operation: "cloud-environments", detail: cause.detail });
+export const listCloudEnvironments = Effect.fn("ProviderInstanceRegistry.listCloudEnvironments")(
+  function* (input: ProviderCloudEnvironmentsInput) {
+    return yield* (yield* getCloudEnvironments(input.instanceId))
+      .list(input.repository)
+      .pipe(Effect.mapError((cause) => cloudSetupError(input.instanceId, cause)));
+  },
+);
 export const listCloudRepositories = Effect.fn("ProviderInstanceRegistry.listCloudRepositories")(
   function* (input: ProviderCloudRepositoriesInput) {
     return yield* (yield* getCloudEnvironments(input.instanceId))

@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -9,11 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { ArrowLeftIcon } from "lucide-react";
 
-import {
-  mutateCloudEnvironment,
-  providerCloudConfiguration,
-  providerCloudRepositories,
-} from "../../cloudRunStore";
+import { cloudEnvironments } from "../../cloudRunStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -35,31 +30,22 @@ interface CloudEnvironmentTarget {
   instanceId: ProviderInstanceId;
 }
 
-/** Runs one environment mutation and reports a readable failure. */
-function useCloudEnvironmentMutation(target: CloudEnvironmentTarget) {
+/** Runs one environment change at a time; failures surface as toasts. */
+export function useCloudEnvironmentMutation(environmentId: EnvironmentId | null) {
   const [busy, setBusy] = useState<ProviderCloudEnvironmentMutation["operation"] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const canOperate = useAtomValue(mutateCloudEnvironment.permissionAtom(target.environmentId));
-  const mutate = useAtomCommand(mutateCloudEnvironment);
+  const canOperate = useAtomValue(cloudEnvironments.mutate.permissionAtom(environmentId));
+  const mutate = useAtomCommand(cloudEnvironments.mutate);
   const run = async (input: ProviderCloudEnvironmentMutation) => {
-    if (busy || !canOperate) return null;
+    if (busy || !canOperate || !environmentId) return null;
     setBusy(input.operation);
-    setError(null);
     try {
-      const result = await mutate({ environmentId: target.environmentId, input });
-      if (result._tag === "Success") return { value: result.value };
-      const failure = squashAtomCommandFailure(result);
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : "The request failed. Refresh before trying again; it may have completed.",
-      );
-      return null;
+      const result = await mutate({ environmentId, input });
+      return result._tag === "Success" ? { value: result.value } : null;
     } finally {
       setBusy(null);
     }
   };
-  return { busy, error, canOperate, run };
+  return { busy, canOperate, run };
 }
 
 /** A dialog title with an optional way back to the environment list. */
@@ -104,9 +90,9 @@ export function CloudEnvironmentCreate(
   const [network, setNetwork] = useState<"disabled" | "package_managers" | "unrestricted">(
     "package_managers",
   );
-  const mutation = useCloudEnvironmentMutation(props);
+  const mutation = useCloudEnvironmentMutation(props.environmentId);
   const repositories = useEnvironmentQuery(
-    providerCloudRepositories({
+    cloudEnvironments.repositories({
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, query },
     }),
@@ -208,11 +194,6 @@ export function CloudEnvironmentCreate(
             </SelectPopup>
           </Select>
         </div>
-        {mutation.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {mutation.error}
-          </p>
-        ) : null}
       </DialogPanel>
       <DialogFooter>
         <p className="mr-auto self-center text-xs text-muted-foreground">
@@ -251,9 +232,9 @@ export function CloudEnvironmentReview(
   },
 ) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const mutation = useCloudEnvironmentMutation(props);
+  const mutation = useCloudEnvironmentMutation(props.environmentId);
   const configuration = useEnvironmentQuery(
-    providerCloudConfiguration({
+    cloudEnvironments.configuration({
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, id: props.configId },
     }),
@@ -316,11 +297,6 @@ export function CloudEnvironmentReview(
               </pre>
             </dd>
           </dl>
-        ) : null}
-        {mutation.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {mutation.error}
-          </p>
         ) : null}
       </DialogPanel>
       <DialogFooter>

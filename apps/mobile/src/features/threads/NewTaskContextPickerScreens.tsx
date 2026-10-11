@@ -313,7 +313,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                       key={environment.id}
                       title={environment.label}
                       {...(environment.repository
-                        ? { subtitle: `${environment.repository} · Suggested` }
+                        ? { subtitle: `Suggested for ${environment.repository}` }
                         : {})}
                       selected={flow.cloudEnvironmentId === environment.id}
                       disabled={flow.cloudEnvironments.isPending}

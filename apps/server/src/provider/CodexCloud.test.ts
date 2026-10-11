@@ -5,8 +5,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeCodexCloud } from "./CodexCloud.ts";
 
+const instanceId = ProviderInstanceId.make("codex-work");
 const config = {
   id: "asenvcfg_test",
   name: "T3 Code",
@@ -24,8 +26,11 @@ const config = {
     cwd: "/workspace/t3code",
   },
 };
-const run = (
-  input: ProviderCloudEnvironmentMutation,
+/** Runs `use` against a scoped Codex home and an HTTP boundary that never leaves the test. */
+const withCloud = <A>(
+  use: (
+    cloud: Effect.Success<ReturnType<typeof makeCodexCloud>>,
+  ) => Effect.Effect<A, ProviderDriverError>,
   respond: (path: string, method: string, body: unknown) => { body: unknown; status?: number },
 ) =>
   Effect.gen(function* () {
@@ -36,8 +41,7 @@ const run = (
       path.join(home, "auth.json"),
       JSON.stringify({ tokens: { access_token: "private-access", account_id: "test-account" } }),
     );
-    const cloud = yield* makeCodexCloud(input.instanceId, home);
-    return yield* cloud.mutate(input);
+    return yield* use(yield* makeCodexCloud(instanceId, home));
   }).pipe(
     Effect.provideService(
       HttpClient.HttpClient,
@@ -60,7 +64,10 @@ const run = (
     Effect.scoped,
     Effect.provide(NodeServices.layer),
   );
-const instanceId = ProviderInstanceId.make("codex-work");
+const run = (
+  input: ProviderCloudEnvironmentMutation,
+  respond: (path: string, method: string, body: unknown) => { body: unknown; status?: number },
+) => withCloud((cloud) => cloud.mutate(input), respond);
 
 describe("Codex Cloud configuration lifecycle", () => {
   it.effect(
@@ -167,5 +174,52 @@ describe("Codex Cloud configuration lifecycle", () => {
       assert.equal(method, "DELETE");
       return { body: {} };
     }).pipe(Effect.map((result) => assert.isNull(result))),
+  );
+});
+
+describe("Codex Cloud environment discovery", () => {
+  const respond = (options: { repositoryFailure?: boolean; status?: number }) => (path: string) => {
+    if (path.startsWith("/v1/environment-configs"))
+      return { body: { data: [{ ...config, version_revision: 2 }], next_cursor: null } };
+    const byRepo = path.endsWith("/by-repo/github/pingdotgg/t3code");
+    return {
+      status: options.status ?? (byRepo && options.repositoryFailure ? 500 : 200),
+      body: byRepo
+        ? [{ id: "env-project", label: "T3 Code" }]
+        : [
+            { id: "env-other", label: "Other" },
+            { id: "env-project", label: "T3 Code" },
+          ],
+    };
+  };
+  it.effect("lists configurations, then exec environments with the repository match first", () =>
+    withCloud((cloud) => cloud.list("pingdotgg/t3code"), respond({})).pipe(
+      Effect.map((environments) =>
+        assert.deepStrictEqual(environments, [
+          { id: "asenvcfg_test", label: "T3 Code", setup: false },
+          { id: "env-project", label: "T3 Code", repository: "pingdotgg/t3code" },
+          { id: "env-other", label: "Other" },
+        ]),
+      ),
+    ),
+  );
+  it.effect("keeps every environment when the repository lookup fails", () =>
+    withCloud((cloud) => cloud.list("pingdotgg/t3code"), respond({ repositoryFailure: true })).pipe(
+      Effect.map((environments) =>
+        assert.deepStrictEqual(
+          environments.map((environment) => environment.id),
+          ["asenvcfg_test", "env-other", "env-project"],
+        ),
+      ),
+    ),
+  );
+  it.effect("reports a rejected sign-in without exposing credentials", () =>
+    withCloud((cloud) => cloud.list(), respond({ status: 401 })).pipe(
+      Effect.result,
+      Effect.map((result) => {
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") assert.notInclude(result.failure.message, "private-access");
+      }),
+    ),
   );
 });

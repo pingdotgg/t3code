@@ -19,6 +19,7 @@ export interface CloudTask {
 export interface CloudRunInput {
   readonly cwd: string;
   readonly prompt: string;
+  /** The Codex Cloud environment the thread chose, for runtimes that need one. */
   readonly cloudEnvironment?: string;
   /** The cloud session earlier turns of this thread ran in, for runtimes that continue one. */
   readonly session: string | undefined;
@@ -84,14 +85,14 @@ const parseCodexTask = (stdout: string): CloudTask | undefined => {
 };
 
 /**
- * Codex Cloud: each turn submits a task to the configured environment, polls
+ * Codex Cloud: each turn submits a task to the thread's environment, polls
  * it until Codex finishes, then applies the task's diff to the thread's
  * workspace so it lands like any local turn's changes.
  */
 export const makeCodexCloudBackend = (options: {
   readonly cli: CloudCli;
-  readonly environment: string;
-  readonly validateEnvironment?: (environment: string) => Effect.Effect<string, CloudCliError>;
+  /** Resolves the environment a thread asked for to the id `codex cloud exec` takes. */
+  readonly resolveEnvironment?: (environment: string) => Effect.Effect<string, CloudCliError>;
   readonly pollInterval?: Duration.Input;
 }): CloudBackend => {
   const { cli } = options;
@@ -107,12 +108,11 @@ export const makeCodexCloudBackend = (options: {
     label: "Codex Cloud",
     continuesSessions: false,
     run: Effect.fnUntraced(function* (input) {
-      const requestedEnvironment = input.cloudEnvironment ?? options.environment;
-      if (!requestedEnvironment)
+      if (!input.cloudEnvironment)
         return yield* fail("Choose a Codex Cloud environment from Run on before sending.");
-      const environment = options.validateEnvironment
-        ? yield* options.validateEnvironment(requestedEnvironment)
-        : requestedEnvironment;
+      const environment = options.resolveEnvironment
+        ? yield* options.resolveEnvironment(input.cloudEnvironment)
+        : input.cloudEnvironment;
       // `-` reads the prompt from stdin, so no prompt text is ever parsed as an argument.
       const submitted = yield* cli({
         args: ["cloud", "exec", "--env", environment, "-"],

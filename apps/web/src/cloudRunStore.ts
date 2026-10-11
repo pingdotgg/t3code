@@ -1,9 +1,4 @@
-import {
-  createEnvironmentRpcCommand,
-  createEnvironmentRpcQueryAtomFamily,
-} from "@t3tools/client-runtime/state/runtime";
-import { WS_METHODS } from "@t3tools/contracts";
-export { preferredCloudEnvironment } from "@t3tools/contracts";
+import { createCloudEnvironmentAtoms } from "@t3tools/client-runtime/state/cloud-environments";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -11,15 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { connectionAtomRuntime } from "./connection/runtime";
 import { resolveStorage } from "./lib/storage";
 
-export const providerCloudEnvironments = createEnvironmentRpcQueryAtomFamily(
-  connectionAtomRuntime,
-  {
-    label: "environment-data:providers:cloud-environments",
-    tag: WS_METHODS.providerListCloudEnvironments,
-    staleTimeMs: 30_000,
-    idleTtlMs: 5 * 60_000,
-  },
-);
+export const cloudEnvironments = createCloudEnvironmentAtoms(connectionAtomRuntime);
 
 const Preferences = Schema.Struct({ byProject: Schema.Record(Schema.String, Schema.String) });
 const decodePreferences = Schema.decodeUnknownOption(Preferences);
@@ -29,7 +16,7 @@ interface CloudRunPreferences {
   remember: (projectKey: string, environmentId: string) => void;
 }
 
-/** Remember destinations per host, project, and account without changing provider settings. */
+/** The cloud environment last chosen per host, project, and provider instance. */
 export const useCloudRunPreferences = create<CloudRunPreferences>()(
   persist(
     (set) => ({
@@ -51,30 +38,3 @@ export const useCloudRunPreferences = create<CloudRunPreferences>()(
     },
   ),
 );
-
-export const providerCloudRepositories = createEnvironmentRpcQueryAtomFamily(
-  connectionAtomRuntime,
-  {
-    label: "environment-data:providers:cloud-repositories",
-    tag: WS_METHODS.providerListCloudRepositories,
-    staleTimeMs: 60_000,
-    idleTtlMs: 5 * 60_000,
-  },
-);
-export const providerCloudConfiguration = createEnvironmentRpcQueryAtomFamily(
-  connectionAtomRuntime,
-  {
-    label: "environment-data:providers:cloud-configuration",
-    tag: WS_METHODS.providerReadCloudConfiguration,
-    staleTimeMs: 5_000,
-    idleTtlMs: 5 * 60_000,
-  },
-);
-export const mutateCloudEnvironment = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "cloud environment",
-  tag: WS_METHODS.providerMutateCloudEnvironment,
-  concurrency: {
-    mode: "singleFlight",
-    key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
-  },
-});

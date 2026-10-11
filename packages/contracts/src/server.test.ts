@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  preferredCloudEnvironment,
   resolveEnvironmentMachineKind,
   ServerConfig,
   ServerObservability,
@@ -264,5 +265,22 @@ describe("resolveEnvironmentMachineKind", () => {
     expect(
       resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
     ).toBe("server");
+  });
+});
+
+describe("preferredCloudEnvironment", () => {
+  const environments = [
+    { id: "project", label: "T3 Code", repository: "pingdotgg/t3code" },
+    { id: "other", label: "Other" },
+  ];
+  it("prefers a remembered choice that still exists, then an unambiguous repository match", () => {
+    expect(preferredCloudEnvironment(environments, "other")).toBe("other");
+    expect(preferredCloudEnvironment(environments, "deleted")).toBe("project");
+    expect(
+      preferredCloudEnvironment(
+        [...environments, { id: "second", label: "Second", repository: "pingdotgg/t3code" }],
+        undefined,
+      ),
+    ).toBeUndefined();
   });
 });

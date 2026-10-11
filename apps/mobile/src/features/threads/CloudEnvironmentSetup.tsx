@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import type {
   EnvironmentId,
@@ -10,15 +9,29 @@ import type {
 } from "@t3tools/contracts";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import {
-  mutateCloudEnvironment,
-  providerCloudConfiguration,
-  providerCloudRepositories,
-} from "../../state/cloud-runs";
+import { cloudEnvironments } from "../../state/cloud-runs";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-/** Uses the host's cloud account for setup from either mobile connection mode. */
+/** Runs one environment change at a time; failures surface as toasts. */
+function useCloudEnvironmentMutation(environmentId: EnvironmentId) {
+  const [busy, setBusy] = useState(false);
+  const canOperate = useAtomValue(cloudEnvironments.mutate.permissionAtom(environmentId));
+  const mutate = useAtomCommand(cloudEnvironments.mutate);
+  const run = async (input: ProviderCloudEnvironmentMutation) => {
+    if (busy || !canOperate) return null;
+    setBusy(true);
+    try {
+      const result = await mutate({ environmentId, input });
+      return result._tag === "Success" ? { value: result.value } : null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, canOperate, run };
+}
+
+/** Creates and reviews cloud environments with the host's cloud account. */
 export function CloudEnvironmentSetup(props: {
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
@@ -31,13 +44,10 @@ export function CloudEnvironmentSetup(props: {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [ids, setIds] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const canOperate = useAtomValue(mutateCloudEnvironment.permissionAtom(props.environmentId));
-  const mutate = useAtomCommand(mutateCloudEnvironment);
+  const { busy, canOperate, run: mutate } = useCloudEnvironmentMutation(props.environmentId);
   const repositories = useEnvironmentQuery(
     !props.configId
-      ? providerCloudRepositories({
+      ? cloudEnvironments.repositories({
           environmentId: props.environmentId,
           input: { instanceId: props.instanceId, query },
         })
@@ -45,34 +55,19 @@ export function CloudEnvironmentSetup(props: {
   );
   const configuration = useEnvironmentQuery(
     props.configId
-      ? providerCloudConfiguration({
+      ? cloudEnvironments.configuration({
           environmentId: props.environmentId,
           input: { instanceId: props.instanceId, id: props.configId },
         })
       : null,
   );
   const run = async (input: ProviderCloudEnvironmentMutation) => {
-    if (busy || !canOperate) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await mutate({ environmentId: props.environmentId, input });
-      if (result._tag === "Failure") {
-        const failure = squashAtomCommandFailure(result);
-        setError(
-          failure instanceof Error
-            ? failure.message
-            : "The request failed. Refresh before retrying; it may have completed.",
-        );
-        return;
-      }
-      props.onChanged();
-      if (input.operation === "create" && result.value) props.onSetup(result.value);
-      else if (input.operation === "delete") props.onBack();
-      else configuration.refresh();
-    } finally {
-      setBusy(false);
-    }
+    const result = await mutate(input);
+    if (!result) return;
+    props.onChanged();
+    if (input.operation === "create" && result.value) props.onSetup(result.value);
+    else if (input.operation === "delete") props.onBack();
+    else configuration.refresh();
   };
   const button = (
     label: string,
@@ -245,9 +240,9 @@ export function CloudEnvironmentSetup(props: {
           )}
         </>
       )}
-      {error || repositories.error || configuration.error ? (
+      {repositories.error || configuration.error ? (
         <Text accessibilityRole="alert" className="text-destructive">
-          {error ?? repositories.error ?? configuration.error}
+          {repositories.error ?? configuration.error}
         </Text>
       ) : null}
       {button("Back to environments", props.onBack, busy)}
@@ -265,11 +260,9 @@ export function CloudEnvironmentSetupBar(props: {
   instanceId: ProviderInstanceId;
   configId: string;
 }) {
-  const [busy, setBusy] = useState(false);
-  const canOperate = useAtomValue(mutateCloudEnvironment.permissionAtom(props.environmentId));
-  const mutate = useAtomCommand(mutateCloudEnvironment);
+  const { busy, canOperate, run } = useCloudEnvironmentMutation(props.environmentId);
   const configuration = useEnvironmentQuery(
-    providerCloudConfiguration({
+    cloudEnvironments.configuration({
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, id: props.configId },
     }),
@@ -277,22 +270,14 @@ export function CloudEnvironmentSetupBar(props: {
   const config = configuration.data;
   if (!config) return null;
   const publish = async () => {
-    setBusy(true);
-    try {
-      const result = await mutate({
-        environmentId: props.environmentId,
-        input: { instanceId: props.instanceId, operation: "publish", id: config.id },
-      });
-      if (result._tag === "Success") configuration.refresh();
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({ instanceId: props.instanceId, operation: "publish", id: config.id });
+    if (result) configuration.refresh();
   };
   return (
     <View className="flex-row items-center gap-2 px-4 pb-2">
       <SymbolView name="cloud" size={12} tintColorClassName="accent-foreground-muted" />
       <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-        {config.name} · {config.published ? "Published" : "Setup draft"}
+        {config.name} · {config.published ? "Published" : "Not published"}
       </Text>
       <Pressable
         accessibilityRole="button"

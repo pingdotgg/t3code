@@ -1,13 +1,10 @@
-import type { ProviderCloudConfiguration } from "@t3tools/contracts";
 import {
-  CLOUD_RUN_OPTION_ID,
-  CLOUD_ENVIRONMENT_OPTION_ID,
-  CLOUD_ENVIRONMENT_SETUP_OPTION_ID,
-  isCloudRunOption,
   keepCloudRun,
   selectsCloudRun,
   selectedCloudEnvironment,
   preferredCloudEnvironment,
+  withCloudRunOptions,
+  type ProviderCloudConfiguration,
   type ProviderCloudEnvironment,
 } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -64,7 +61,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
-import { providerCloudEnvironments } from "../../state/cloud-runs";
+import { cloudEnvironments as cloudEnvironmentAtoms } from "../../state/cloud-runs";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -142,11 +139,11 @@ import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValid
 // Sticky picks seed new tasks; where one runs is picked per task, never carried over.
 function withoutCloudRun(selection: ModelSelection): ModelSelection {
   if (!selectsCloudRun(selection.options)) return selection;
-  const options = selection.options?.filter((option) => !isCloudRunOption(option));
+  const options = withCloudRunOptions(selection.options, null);
   return {
     instanceId: selection.instanceId,
     model: selection.model,
-    ...(options && options.length > 0 ? { options } : {}),
+    ...(options.length > 0 ? { options } : {}),
   };
 }
 
@@ -721,7 +718,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       : undefined;
   const cloudEnvironments = useEnvironmentQuery(
     cloudRunSelected && cloudRequiresEnvironment && selectedProject && selectedModel
-      ? providerCloudEnvironments({
+      ? cloudEnvironmentAtoms.list({
           environmentId: selectedProject.environmentId,
           input: { instanceId: selectedModel.instanceId, ...(repository ? { repository } : {}) },
         })
@@ -756,11 +753,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: {
           ...selectedModel,
-          options: [
-            ...(selectedModel.options ?? []).filter((option) => !isCloudRunOption(option)),
-            { id: CLOUD_RUN_OPTION_ID, value: true },
-            { id: CLOUD_ENVIRONMENT_OPTION_ID, value: id },
-          ],
+          options: withCloudRunOptions(selectedModel.options, { environment: id }),
         },
       });
       savePreferences({
@@ -791,7 +784,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       return;
     const preferredId = preferredCloudEnvironment(
       cloudEnvironments.data,
-      preferences?.cloudEnvironmentByProject?.[preferenceKey],
+      preferences.cloudEnvironmentByProject?.[preferenceKey],
     );
     if (preferredId) setCloudEnvironment(preferredId);
   }, [
@@ -809,15 +802,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const setCloudRun = useCallback(
     (cloud: boolean) => {
       if (!selectedModel || !selectedProjectDraftKey) return;
-      const options = [
-        ...(selectedModel.options ?? []).filter(
-          (option) =>
-            option.id !== CLOUD_RUN_OPTION_ID &&
-            option.id !== CLOUD_ENVIRONMENT_SETUP_OPTION_ID &&
-            (cloud || option.id !== CLOUD_ENVIRONMENT_OPTION_ID),
-        ),
-        ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
-      ];
+      const options = withCloudRunOptions(
+        selectedModel.options,
+        cloud ? { environment: cloudEnvironmentId } : null,
+      );
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: {
           instanceId: selectedModel.instanceId,
@@ -826,7 +814,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         },
       });
     },
-    [selectedModel, selectedProjectDraftKey],
+    [cloudEnvironmentId, selectedModel, selectedProjectDraftKey],
   );
 
   const openCloudSetup = useCallback(
@@ -840,11 +828,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: {
           instanceId: selectedModel.instanceId,
           model: selectedModel.model,
-          options: [
-            { id: CLOUD_RUN_OPTION_ID, value: true },
-            { id: CLOUD_ENVIRONMENT_OPTION_ID, value: config.id },
-            { id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true },
-          ],
+          options: withCloudRunOptions([], { environment: config.id, setup: true }),
         },
         runtimeMode: "full-access",
       });

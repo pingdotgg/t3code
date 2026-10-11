@@ -1,6 +1,7 @@
 import {
   ProviderDriverKind,
   type ProviderCloudConfiguration,
+  type ProviderCloudEnvironment,
   type ProviderCloudEnvironmentMutation,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -64,13 +65,23 @@ const ConfigList = Schema.Struct({
   ),
   next_cursor: Schema.NullOr(Schema.String),
 });
+const LegacyEnvironments = Schema.Array(
+  Schema.Struct({
+    id: Schema.NonEmptyString,
+    label: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+);
 const Operation = Schema.Struct({
   id: Schema.NonEmptyString,
   kind: Schema.Literal("APPROVE_ENVIRONMENT_CONFIG_DRAFT"),
   state: Schema.Literals(["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]),
 });
 
-/** Keeps CLI credentials on the host and implements the ChatGPT cloud configuration protocol. */
+/**
+ * Codex Cloud environments for one Codex home, using its ChatGPT sign-in on
+ * the host. Covers both kinds: the environments `codex cloud exec` runs in,
+ * and the environment configurations the Codex app sets up and publishes.
+ */
 export const makeCodexCloud = Effect.fn("makeCodexCloud")(function* (
   instanceId: ProviderInstanceId,
   homePath: string,
@@ -179,7 +190,7 @@ export const makeCodexCloud = Effect.fn("makeCodexCloud")(function* (
         isDriverError(cause) ? cause : error("Could not read connected GitHub repositories."),
       ),
     );
-  const list = () =>
+  const listConfigs = () =>
     Effect.gen(function* () {
       const environments = new Map<string, { id: string; label: string; setup: boolean }>();
       for (const scope of ["user", "workspace"]) {
@@ -205,6 +216,62 @@ export const makeCodexCloud = Effect.fn("makeCodexCloud")(function* (
       }
       return [...environments.values()].sort((a, b) => a.label.localeCompare(b.label));
     });
+  const decodeLegacy = Schema.decodeUnknownEffect(LegacyEnvironments);
+  const listLegacy = (route: string) =>
+    request(`/wham/environments${route}`).pipe(
+      Effect.flatMap(decodeLegacy),
+      Effect.mapError((cause) =>
+        isDriverError(cause) ? cause : error("Could not read Codex Cloud environments."),
+      ),
+    );
+  /** `codex cloud exec` environments, the ones matching `repository` first and marked. */
+  const listExecEnvironments = (repository?: string) =>
+    Effect.gen(function* () {
+      const all = yield* listLegacy("");
+      // A repository lookup is only a suggestion. Failure must not hide the global list.
+      const matching = repository
+        ? yield* listLegacy(
+            `/by-repo/github/${repository.split("/").map(encodeURIComponent).join("/")}`,
+          ).pipe(Effect.orElseSucceed(() => []))
+        : [];
+      const matchingIds = new Set(matching.map((environment) => environment.id));
+      return [...new Map([...all, ...matching].map((entry) => [entry.id, entry])).values()]
+        .map((environment): ProviderCloudEnvironment => ({
+          id: environment.id,
+          label: environment.label?.trim() || environment.id,
+          ...(repository && matchingIds.has(environment.id) ? { repository } : {}),
+        }))
+        .sort(
+          (a, b) =>
+            Number(Boolean(b.repository)) - Number(Boolean(a.repository)) ||
+            a.label.localeCompare(b.label),
+        );
+    });
+  /** Every environment a thread can run in; configurations are skipped where the account has none. */
+  const list = (repository?: string) =>
+    Effect.gen(function* () {
+      const configs = yield* listConfigs().pipe(Effect.orElseSucceed(() => []));
+      return [...configs, ...(yield* listExecEnvironments(repository))];
+    });
+  /** The `codex cloud exec` environment a thread asked for, by id or unambiguous name. */
+  const resolveExecEnvironment = (requested: string) =>
+    listExecEnvironments().pipe(
+      Effect.flatMap((environments) => {
+        const exact = environments.find((environment) => environment.id === requested);
+        const matches = exact
+          ? [exact]
+          : environments.filter(
+              (environment) => environment.label.toLowerCase() === requested.toLowerCase(),
+            );
+        return matches.length === 1 && matches[0]
+          ? Effect.succeed(matches[0].id)
+          : Effect.fail(
+              error(
+                "This Codex Cloud environment is unavailable. Choose an environment in a new thread.",
+              ),
+            );
+      }),
+    );
   const mutate = (
     input: ProviderCloudEnvironmentMutation,
   ): Effect.Effect<ProviderCloudConfiguration | null, ProviderDriverError> =>
@@ -291,5 +358,5 @@ export const makeCodexCloud = Effect.fn("makeCodexCloud")(function* (
         TimeoutError: () => error("Publishing is still running. Refresh to check its result."),
       }),
     );
-  return { readAuth, list, listRepositories, read, mutate };
+  return { readAuth, list, resolveExecEnvironment, listRepositories, read, mutate };
 });

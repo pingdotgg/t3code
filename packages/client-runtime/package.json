@@ -139,6 +139,10 @@
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
     },
+    "./state/cloud-environments": {
+      "types": "./src/state/cloudEnvironments.ts",
+      "default": "./src/state/cloudEnvironments.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
