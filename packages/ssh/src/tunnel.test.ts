@@ -286,8 +286,8 @@ describe("ssh tunnel scripts", () => {
       Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Layer.succeed(HttpClient.HttpClient, testHttpClient),
       Layer.succeed(NetService.NetService, testNetService),
-      SshPasswordPrompt.disabledLayer,
-      SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
     );
     const target = {
       alias: "devbox",
@@ -297,7 +297,7 @@ describe("ssh tunnel scripts", () => {
     } as const;
 
     return Effect.gen(function* () {
-      const manager = yield* SshEnvironmentManager;
+      const manager = yield* SshTunnel.SshEnvironmentManager;
       yield* manager.ensureEnvironment(target);
 
       yield* manager.closeLocalForwards;
