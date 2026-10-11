@@ -157,7 +157,7 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
-  describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("SSH release pairing", () => {
+  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("SSH release pairing", () => {
     it.effect.each(["0.0.46-nightly.20261004.2652", ARCHIVE.archiveVersion, "1.2.4", "0.0.0-dev"])(
       "mints pairing tokens with the running server's CLI version %s",
       (serverVersion) =>
