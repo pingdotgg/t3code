@@ -215,11 +215,13 @@ function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  disabledReason?: string | null,
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
     enabled,
     status: enabled ? "idle" : "disabled",
+    message: enabled ? null : (disabledReason ?? null),
   };
 }
 
@@ -403,8 +405,6 @@ export const make = Effect.gen(function* () {
       fullChangelog: allowsPrerelease,
     });
   });
-
-  const shouldEnableAutoUpdates = resolveDisabledReason.pipe(Effect.map(Option.isNone));
 
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
     reason: string,
@@ -923,8 +923,12 @@ export const make = Effect.gen(function* () {
       }
 
       const settings = yield* desktopSettings.get;
-      const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(createBaseUpdateState(settings.updateChannel, enabled, environment));
+      const disabledReasonOption = yield* resolveDisabledReason;
+      const enabled = Option.isNone(disabledReasonOption);
+      const disabledReason = Option.getOrNull(disabledReasonOption);
+      yield* setState(
+        createBaseUpdateState(settings.updateChannel, enabled, environment, disabledReason),
+      );
       if (!enabled) {
         return;
       }
@@ -994,8 +998,10 @@ export const make = Effect.gen(function* () {
             ),
           );
 
-        const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
+        const disabledReasonOption = yield* resolveDisabledReason;
+        const enabled = Option.isNone(disabledReasonOption);
+        const disabledReason = Option.getOrNull(disabledReasonOption);
+        yield* setState(createBaseUpdateState(nextChannel, enabled, environment, disabledReason));
 
         if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);

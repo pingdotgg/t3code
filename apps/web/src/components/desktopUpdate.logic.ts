@@ -71,6 +71,9 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  if (!state.enabled || state.status === "disabled") {
+    return state.message ?? "Automatic updates are unavailable on this build.";
+  }
   if (state.status === "available") {
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
@@ -120,4 +123,15 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   return (
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );
+}
+
+export function canChangeDesktopUpdateChannel(state: DesktopUpdateState | null): boolean {
+  return state !== null && state.enabled;
+}
+
+export function getDesktopUpdateTrackDescription(state: DesktopUpdateState | null): string {
+  if (state && !state.enabled) {
+    return state.message ?? "Automatic updates are unavailable on this build.";
+  }
+  return "Use stable releases or nightly builds. Switch back anytime.";
 }
