@@ -152,17 +152,18 @@ describe("isAutoSettlementCandidate", () => {
     ).toBe(false);
   });
 
-  it("settles a thread whose only background work is a command left running", () => {
+  it("holds a thread whose only background work is a live command", () => {
+    // The agent may be waiting on the command, which wakes it when it exits.
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({
           pendingBackgroundTasks: [
-            { taskId: "dev", kind: "command", description: "vp run dev --share" },
+            { taskId: "ci", kind: "command", description: "gh run watch --exit-status" },
           ],
         }),
         NOW_MS,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("keeps snoozed threads parked until they wake early on error or completion", () => {
@@ -356,6 +357,44 @@ describe("resolveAutoSettlementAt", () => {
         thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
       }),
     ).toBeNull();
+  });
+
+  it("does not settle on merge or inactivity while a background command runs", () => {
+    const idle = shell({
+      latestUserMessageAt: at(-4 * DAY_MS),
+      latestRunCompletedAt: at(-3 * DAY_MS),
+    });
+    const waiting = {
+      ...idle,
+      pendingBackgroundTasks: [{ taskId: "ci", kind: "command" as const }],
+    };
+    const merged = {
+      state: "merged" as const,
+      mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)),
+    };
+    const onMerge = {
+      thread: waiting,
+      pullRequest: merged,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    };
+    const onInactivity = {
+      thread: waiting,
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 2,
+      autoSettleOnMerge: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(onMerge)).toBeNull();
+    expect(ThreadSettlementService.resolveAutoSettlementAt(onInactivity)).toBeNull();
+    // Once the command exits, both rules settle the same thread.
+    expect(ThreadSettlementService.resolveAutoSettlementAt({ ...onMerge, thread: idle })).toEqual(
+      at(-3 * DAY_MS),
+    );
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...onInactivity, thread: idle }),
+    ).toEqual(at(-3 * DAY_MS));
   });
 
   it("settles inactive threads even when their pull request remains open", () => {
