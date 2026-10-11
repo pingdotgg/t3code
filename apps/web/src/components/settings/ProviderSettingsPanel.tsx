@@ -289,8 +289,11 @@ interface ProviderSettingsTarget {
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
   readonly environmentIds?: readonly EnvironmentId[];
-  /** The project in scope, if any. Narrows the enable toggle to that project's override. */
-  readonly projectId?: ProjectId | null;
+  /**
+   * The project's checkouts on the selected environment, if a project is in
+   * scope. The enable toggle writes each one's override so they never diverge.
+   */
+  readonly projectIds?: readonly ProjectId[];
 }
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
@@ -462,7 +465,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
               ? target.instanceId
               : undefined
           }
-          projectId={target.projectId ?? null}
+          projectIds={target.projectIds ?? []}
         />
       ) : null}
     </>
@@ -473,19 +476,19 @@ function SelectedEnvironmentProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
-  projectId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectId: ProjectId | null;
+  readonly projectIds: readonly ProjectId[];
 }) {
   return (
     <RemoteSessionGatedProviderSettings
       environment={environment}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
-      projectId={projectId}
+      projectIds={projectIds}
     />
   );
 }
@@ -494,12 +497,12 @@ function RemoteSessionGatedProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
-  projectId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectId: ProjectId | null;
+  readonly projectIds: readonly ProjectId[];
 }) {
   const sessionState = useEnvironmentSessionState(environment.environmentId);
   const operateAccess = resolveRemoteOperateAccess({
@@ -513,7 +516,7 @@ function RemoteSessionGatedProviderSettings({
       operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
-      projectId={projectId}
+      projectIds={projectIds}
     />
   );
 }
@@ -523,13 +526,13 @@ function AccessGatedProviderSettings({
   operateAccess,
   deviceTabs,
   targetInstanceId,
-  projectId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly operateAccess: ProviderOperateAccess;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectId: ProjectId | null;
+  readonly projectIds: readonly ProjectId[];
 }) {
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
@@ -552,7 +555,7 @@ function AccessGatedProviderSettings({
       readOnly={access.kind === "read-only"}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
-      projectId={projectId}
+      projectIds={projectIds}
     />
   );
 }
@@ -563,14 +566,14 @@ export function EnvironmentProviderSettings({
   readOnly = false,
   deviceTabs,
   targetInstanceId,
-  projectId = null,
+  projectIds = [],
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  /** The project in scope, if any. Narrows the enable toggle to that project's override. */
-  readonly projectId?: ProjectId | null;
+  /** The project's checkouts on this environment, if a project is in scope. */
+  readonly projectIds?: readonly ProjectId[];
   /**
    * Grey out and freeze every write control when this session's credential
    * lacks `providers:manage` on the environment. Selecting providers
@@ -969,39 +972,31 @@ export function EnvironmentProviderSettings({
       favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
+    const representativeProjectId = projectIds[0];
+    const writeProjectEnablement = (next: boolean | undefined) => {
+      updateSettings({
+        projectSettingsOverrides: buildProviderInstanceEnablementOverridePatch(
+          settings,
+          projectIds,
+          row.instanceId,
+          next,
+        ),
+      });
+    };
     const projectEnablement =
-      projectId === null
+      representativeProjectId === undefined
         ? undefined
         : {
             value:
-              settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[
-                row.instanceId
-              ],
+              settings.projectSettingsOverrides[representativeProjectId]
+                ?.providerInstanceEnablement?.[row.instanceId],
             effectiveEnabled: resolveProjectProviderInstanceEnabled(
               settings,
-              projectId,
+              representativeProjectId,
               row.instanceId,
             ),
-            onChange: (next: boolean) => {
-              updateSettings({
-                projectSettingsOverrides: buildProviderInstanceEnablementOverridePatch(
-                  settings,
-                  projectId,
-                  row.instanceId,
-                  next,
-                ),
-              });
-            },
-            onReset: () => {
-              updateSettings({
-                projectSettingsOverrides: buildProviderInstanceEnablementOverridePatch(
-                  settings,
-                  projectId,
-                  row.instanceId,
-                  undefined,
-                ),
-              });
-            },
+            onChange: (next: boolean) => writeProjectEnablement(next),
+            onReset: () => writeProjectEnablement(undefined),
           };
 
     return (

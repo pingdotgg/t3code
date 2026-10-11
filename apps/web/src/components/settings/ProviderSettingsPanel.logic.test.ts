@@ -239,13 +239,37 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
   const instanceId = ProviderInstanceId.make("codex_work");
   const otherInstanceId = ProviderInstanceId.make("claudeAgent_personal");
 
+  it("writes the same choice to every checkout of the project", () => {
+    const siblingId = ProjectId.make("project-a-worktree");
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {
+        [siblingId]: { newWorktreesStartFromOrigin: true },
+      },
+    };
+
+    expect(
+      buildProviderInstanceEnablementOverridePatch(
+        settings,
+        [projectId, siblingId],
+        instanceId,
+        false,
+      ),
+    ).toEqual({
+      [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+      [siblingId]: {
+        newWorktreesStartFromOrigin: true,
+        providerInstanceEnablement: { [instanceId]: false },
+      },
+    });
+  });
+
   it("sets an override when the project has none yet", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
       projectSettingsOverrides: {},
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, true),
+      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, true),
     ).toEqual({ [projectId]: { providerInstanceEnablement: { [instanceId]: true } } });
   });
 
@@ -260,7 +284,7 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, true),
+      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, true),
     ).toEqual({
       [projectId]: {
         newWorktreesStartFromOrigin: true,
@@ -277,7 +301,7 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, undefined),
+      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({ [projectId]: null });
   });
 
@@ -292,7 +316,7 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, projectId, instanceId, undefined),
+      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({
       [projectId]: {
         newWorktreesStartFromOrigin: true,
