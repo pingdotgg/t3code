@@ -237,6 +237,12 @@ that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
+A provider runs a runtime mode it does not offer as `approval-required`, so a
+child would ask for approval on every command. To avoid that, an explicit
+`runtimeMode` the target does not list in `orchestrator_capabilities`
+`runtimeModes` is refused, and an inherited mode steps down to the broadest
+mode the target offers.
+
 Each delegated review round uses a new `delegate_task` call with the original brief,
 prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
 a distinct `clientRequestId` per round, stable across retries of that round.
