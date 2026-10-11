@@ -1069,6 +1069,71 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  it.effect("settles a delegated child once when its restart chain reaches the cap", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:restart-capped-parent");
+      const projectId = ProjectId.make("project:restart-capped-parent");
+      const runId = RunId.make("run:restart-capped-parent");
+      const rootNodeId = NodeId.make("node:restart-capped-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:restart-capped-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "restart-capped-child",
+        completionWake: "always",
+        continuationPending: false,
+        now,
+      });
+      let sourceRunId = child.childRunId;
+      for (let ordinal = 2; ordinal <= 4; ordinal += 1) {
+        const nextRunId = RunId.make(`run:restart-capped-child:${ordinal}`);
+        const event = runEvent({
+          threadId: child.childThreadId,
+          runId: nextRunId,
+          ordinal,
+          status: "cancelled",
+          now,
+        });
+        yield* eventSink.write({
+          commandId: reconcileCommandId(`restart-capped-child:${ordinal}`),
+          events: [
+            { ...event, payload: { ...event.payload, restartContinuationOfRunId: sourceRunId } },
+          ],
+        });
+        sourceRunId = nextRunId;
+      }
+      const continuation = continueRestartedRun({
+        threadId: child.childThreadId,
+        sourceRunId,
+      }).pipe(Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })));
+      yield* continuation;
+      yield* continuation;
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(parent.subagents.find((task) => task.id === child.taskId)?.status, "cancelled");
+      assert.equal(
+        parent.contextTransfers.filter(
+          (transfer) => transfer.sourceThreadId === child.childThreadId,
+        ).length,
+        1,
+      );
+      const stoppedChild = yield* orchestrator.getThreadProjection(child.childThreadId);
+      assert.equal(stoppedChild.runs.length, 4);
+    }),
+  );
+
   it.effect("settles a restart-cancelled child whose continuation declines to start", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

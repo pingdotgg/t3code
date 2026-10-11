@@ -541,17 +541,64 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      // A provider-native subagent thread has no runs: its work is a runless
-      // root turn, plus items under it (Claude's live progress item), that
-      // only the dead provider process could settle. Left running, the child
-      // would show as working forever.
+      // A crash can persist the task before its turn item. It still died with
+      // the provider, while an app-owned child settles through its own thread.
+      const cancelledSubagentIds = new Set(
+        events.flatMap((event) => (event.type === "subagent.updated" ? [event.payload.id] : [])),
+      );
+      for (const subagent of projection.subagents ?? []) {
+        if (
+          isAppOwnedDelegation(subagent) ||
+          !isNonterminalSubagentStatus(subagent.status) ||
+          cancelledSubagentIds.has(subagent.id) ||
+          projection.runs.some((run) => run.id === subagent.runId && run.status === "rolled_back")
+        )
+          continue;
+        recordCancelledBackgroundWork(
+          projection.runs.find((run) => run.id === subagent.runId)?.providerThreadId ??
+            subagent.providerThreadId,
+          { kind: "subagent", label: subagent.title?.slice(0, 160) ?? "subagent", id: subagent.id },
+        );
+        events.push({
+          id: yield* allocateEventId(),
+          type: "subagent.updated",
+          threadId: projection.thread.id,
+          ...(subagent.runId === null ? {} : { runId: subagent.runId }),
+          nodeId: subagent.id,
+          driver: subagent.driver,
+          providerInstanceId: subagent.providerInstanceId,
+          occurredAt: now,
+          payload: { ...subagent, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+        const node = projection.nodes.find((candidate) => candidate.id === subagent.id);
+        if (
+          node !== undefined &&
+          isNonterminalNodeStatus(node.status) &&
+          !cancelledStaleNodeIds.has(node.id)
+        ) {
+          cancelledStaleNodeIds.add(node.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            providerInstanceId: subagent.providerInstanceId,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        }
+      }
+      // A native child has no app runs. Its nodes and streaming items must
+      // settle too, or the dead provider leaves it looking busy forever.
       const cancelledStaleItemIds = new Set(
         events.flatMap((event) => (event.type === "turn-item.updated" ? [event.payload.id] : [])),
       );
       for (const node of projection.nodes) {
         if (
-          node.kind !== "root_turn" ||
           node.runId !== null ||
+          messageRequestNodeIds.has(node.id) ||
+          delegatedTaskNodeIds.has(node.id) ||
           !isNonterminalNodeStatus(node.status) ||
           cancelledStaleNodeIds.has(node.id)
         ) {
@@ -589,12 +636,27 @@ export const make = Effect.gen(function* () {
               status: "cancelled",
               completedAt: now,
               updatedAt: now,
-              ...(item.type === "reasoning" || item.type === "assistant_message"
+              ...(item.type === "reasoning" ||
+              item.type === "assistant_message" ||
+              item.type === "proposed_plan"
                 ? { streaming: false }
                 : {}),
             },
           });
         }
+      }
+      for (const turn of projection.providerTurns ?? []) {
+        if (turn.runAttemptId !== null || (turn.status !== "pending" && turn.status !== "running"))
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "provider-turn.updated",
+          threadId: projection.thread.id,
+          nodeId: turn.nodeId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...turn, status: "cancelled", completedAt: now },
+        });
       }
       // All provider processes are gone on startup/shutdown: clear any
       // persisted Waiting roster (including idle threads from settled roots)

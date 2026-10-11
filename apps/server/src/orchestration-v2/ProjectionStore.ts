@@ -611,6 +611,15 @@ function needsRecovery(
             ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
             ["pending", "running", "waiting"].includes(item.status) &&
             !projection.runs.some((run) => run.id === item.runId && run.status === "rolled_back"),
+        ) ||
+        projection.subagents.some(
+          (task) =>
+            (task.origin !== "app_owned" || task.childThreadId === null) &&
+            ["pending", "running", "waiting"].includes(task.status) &&
+            !projection.runs.some((run) => run.id === task.runId && run.status === "rolled_back"),
+        ) ||
+        projection.providerTurns.some(
+          (turn) => turn.runAttemptId === null && ["pending", "running"].includes(turn.status),
         )
       );
   }
@@ -3694,6 +3703,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 UNION
                 SELECT thread_id FROM orchestration_v2_effect_outbox
                 WHERE status IN ('pending', 'running')
+                UNION
+                SELECT task.thread_id FROM orchestration_v2_projection_subagents AS task
+                WHERE (task.origin != 'app_owned' OR task.child_thread_id IS NULL)
+                  AND task.status IN ('pending', 'running', 'waiting')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS run
+                    WHERE run.run_id = task.run_id AND run.status = 'rolled_back'
+                  )
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_provider_turns
+                WHERE run_attempt_id IS NULL AND status IN ('pending', 'running')
               `;
           }
         })();
@@ -4050,6 +4070,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND item.status IN ('pending', 'running', 'waiting')
                       AND item.run_id IS NOT NULL
                   )
+                  OR run.run_id IN (
+                    SELECT run_id FROM orchestration_v2_projection_subagents
+                    WHERE thread_id = ${threadId}
+                      AND status IN ('pending', 'running', 'waiting')
+                      AND (origin != 'app_owned' OR child_thread_id IS NULL)
+                  )
                 )
               ORDER BY run.ordinal ASC
             `,
@@ -4069,7 +4095,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE node.thread_id = ${threadId}
                 AND node.status IN ('pending', 'starting', 'running', 'waiting')
                 AND (
-                  (node.run_id IS NULL AND node.kind = 'root_turn')
+                  node.run_id IS NULL
                   OR node.run_id IN (
                     SELECT run_id FROM orchestration_v2_projection_runs
                     WHERE thread_id = ${threadId}
@@ -4086,6 +4112,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     FROM orchestration_v2_projection_turn_items AS item
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
+                  )
+                  OR node.node_id IN (
+                    SELECT subagent_id FROM orchestration_v2_projection_subagents
+                    WHERE thread_id = ${threadId}
+                      AND status IN ('pending', 'running', 'waiting')
+                      AND (origin != 'app_owned' OR child_thread_id IS NULL)
                   )
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
@@ -4106,6 +4138,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  OR subagent.origin != 'app_owned'
+                  OR subagent.child_thread_id IS NULL
                 )
               ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
             `,
@@ -4170,14 +4204,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               FROM orchestration_v2_projection_provider_turns AS provider_turn
               WHERE provider_turn.thread_id = ${threadId}
                 AND provider_turn.status IN ('pending', 'starting', 'running', 'waiting')
-                AND provider_turn.run_attempt_id IN (
-                  SELECT attempt_id FROM orchestration_v2_projection_run_attempts
-                  WHERE thread_id = ${threadId}
-                    AND run_id IN (
-                      SELECT run_id FROM orchestration_v2_projection_runs
-                      WHERE thread_id = ${threadId}
-                        AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-                    )
+                AND (
+                  provider_turn.run_attempt_id IS NULL
+                  OR provider_turn.run_attempt_id IN (
+                    SELECT attempt_id FROM orchestration_v2_projection_run_attempts
+                    WHERE thread_id = ${threadId}
+                      AND run_id IN (
+                        SELECT run_id FROM orchestration_v2_projection_runs
+                        WHERE thread_id = ${threadId}
+                          AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                      )
+                  )
                 )
               ORDER BY provider_turn.provider_thread_id ASC, provider_turn.ordinal ASC
             `,
@@ -4213,7 +4250,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       SELECT node_id FROM orchestration_v2_projection_nodes
                       WHERE thread_id = ${threadId}
                         AND run_id IS NULL
-                        AND kind = 'root_turn'
                         AND status IN ('pending', 'running', 'waiting')
                     )
                   )
