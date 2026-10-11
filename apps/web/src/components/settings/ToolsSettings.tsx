@@ -754,6 +754,7 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
         title={isProjectScope ? "This project" : "MCP servers"}
         hideTitle={!isProjectScope}
       >
+        {isProjectScope ? null : <T3McpServerRow />}
         {ownRows.length === 0 ? (
           <SettingsRow
             title={isProjectScope ? "No servers just for this project" : "No servers yet"}
@@ -870,6 +871,35 @@ function McpServersPanel({ tabs }: { tabs: ReactNode }) {
         </AlertDialogPopup>
       </AlertDialog>
     </>
+  );
+}
+
+/**
+ * T3 Code's own server, which every session gets so agents can reach threads,
+ * the browser and other T3 tools. It isn't a setting, so it can't be switched
+ * off; its name is reserved (see `isValidMcpServerName`).
+ */
+function T3McpServerRow() {
+  return (
+    <SettingsRow
+      title={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate">t3-code</span>
+          <Badge variant="outline" size="sm">
+            Built in
+          </Badge>
+        </span>
+      }
+      description="T3 Code's own tools: threads, tasks, the browser and devices."
+      control={
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex" />}>
+            <Switch aria-label="t3-code server" checked disabled />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Every agent session gets this server.</TooltipPopup>
+        </Tooltip>
+      }
+    />
   );
 }
 
