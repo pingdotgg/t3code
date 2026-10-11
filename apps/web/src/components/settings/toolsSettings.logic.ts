@@ -25,10 +25,18 @@ export function validateToolsSearch(raw: Record<string, unknown>): { tab?: Tools
 export type SkillGroupKind = "project" | "personal" | "plugin" | "system";
 
 export const SKILL_GROUP_LABELS: Readonly<Record<SkillGroupKind, string>> = {
-  project: "Repository",
-  personal: "Personal",
+  project: "This project",
+  personal: "Global",
   plugin: "Plugins",
   system: "Built in",
+};
+
+/** What each section means, beside its name. */
+export const SKILL_GROUP_HINTS: Readonly<Record<SkillGroupKind, string>> = {
+  project: "Lives in this repo",
+  personal: "In all your projects",
+  plugin: "From the agents' plugins",
+  system: "Ships with the agent",
 };
 
 export interface SkillProviderRef {
@@ -171,8 +179,10 @@ export function filterSkillRows(rows: ReadonlyArray<SkillRow>, query: string) {
 
 /** What the server knows about a row's folders: see `skills.inspect`. */
 export interface SkillRowDetails {
-  /** The first copy's folder, to view its files; null when no folder was inspected. */
+  /** The copy shown first: the installed one, else the first found; null when none was inspected. */
   readonly folder: SkillFolderInfo | null;
+  /** Each distinct folder holding a skill of this name, the shown one first. */
+  readonly copies: ReadonlyArray<SkillFolderInfo>;
   /** Some copy holds a script an agent could run. */
   readonly scripts: boolean;
   /** Two copies of the name have different SKILL.md text. */
@@ -183,6 +193,7 @@ export interface SkillRowDetails {
 
 const NO_DETAILS: SkillRowDetails = {
   folder: null,
+  copies: [],
   scripts: false,
   conflict: false,
   installed: null,
@@ -198,12 +209,16 @@ export function skillRowDetails(
   });
   if (infos.length === 0) return NO_DETAILS;
   // Two agents reaching one folder through a link report two paths for one copy.
-  const hashByFolder = new Map(infos.map((info) => [info.folder, info.hash]));
+  const byFolder = new Map(infos.map((info) => [info.folder, info]));
+  const copies = [...byFolder.values()].toSorted(
+    (left, right) => Number(right.installed !== undefined) - Number(left.installed !== undefined),
+  );
   return {
-    folder: infos[0] ?? null,
-    scripts: infos.some((info) => info.scripts),
-    conflict: new Set(hashByFolder.values()).size > 1,
-    installed: infos.find((info) => info.installed !== undefined)?.installed ?? null,
+    folder: copies[0] ?? null,
+    copies,
+    scripts: copies.some((info) => info.scripts),
+    conflict: new Set(copies.map((info) => info.hash)).size > 1,
+    installed: copies.find((info) => info.installed !== undefined)?.installed ?? null,
   };
 }
 
@@ -212,7 +227,7 @@ export function skillRowDetails(
  * so a pack of skills reads as one block with one switch. Rows with no
  * recorded source come first, under no heading.
  */
-export function splitRowsBySource<Row extends { readonly name: string }>(
+export function splitRowsBySource<Row>(
   rows: ReadonlyArray<Row>,
   sourceOf: (row: Row) => string | null,
 ): ReadonlyArray<{ readonly source: string | null; readonly rows: ReadonlyArray<Row> }> {
@@ -230,9 +245,129 @@ export function splitRowsBySource<Row extends { readonly name: string }>(
     .map(([source, sourceRows]) => ({ source, rows: sourceRows }));
 }
 
-/** Whether `providers` covers only some of the enabled instances, so the row should name them. */
-export function skillReachesSomeProviders(row: SkillRow, enabledProviderCount: number): boolean {
-  return row.providers.length < enabledProviderCount;
+/** An enabled agent on the page, as its icon and name show it. */
+export interface SkillAgent {
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly accentColor?: string | undefined;
+}
+
+export function skillAgents(providers: ReadonlyArray<ServerProvider>): ReadonlyArray<SkillAgent> {
+  return providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => ({
+      instanceId: provider.instanceId,
+      driverKind: provider.driver,
+      displayName: provider.displayName ?? provider.instanceId,
+      ...(provider.accentColor === undefined ? {} : { accentColor: provider.accentColor }),
+    }));
+}
+
+/** Which enabled agents load a skill, and which don't. */
+export interface SkillAvailability {
+  /** Every enabled agent loads it, so the row shows one mark instead of every icon. */
+  readonly everyone: boolean;
+  readonly agents: ReadonlyArray<SkillAgent>;
+  readonly missing: ReadonlyArray<SkillAgent>;
+}
+
+export function skillAvailability(
+  row: SkillRow,
+  agents: ReadonlyArray<SkillAgent>,
+): SkillAvailability {
+  const loads = new Set(row.providers.map((provider) => provider.instanceId));
+  const present = agents.filter((agent) => loads.has(agent.instanceId));
+  const missing = agents.filter((agent) => !loads.has(agent.instanceId));
+  return { everyone: agents.length > 0 && missing.length === 0, agents: present, missing };
+}
+
+const joinNames = (names: ReadonlyArray<string>) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+export function availabilityNote(value: SkillAvailability): string {
+  return value.everyone
+    ? "Available to all your agents"
+    : value.agents.length === 0
+      ? "No enabled agent loads this skill"
+      : `Not available to ${joinNames(value.missing.map((agent) => agent.displayName))}`;
+}
+
+/**
+ * Why a skill needs a look, in one plain sentence, or null. Only a conflict
+ * marks the row itself; the rest show in the Needs attention filter and on
+ * the skill's page.
+ */
+export interface SkillAttention {
+  readonly kind: "conflict" | "missing";
+  readonly detail: string;
+}
+
+export function skillAttention(
+  row: SkillRow,
+  details: SkillRowDetails,
+  agents: ReadonlyArray<SkillAgent>,
+): SkillAttention | null {
+  if (details.conflict) {
+    return {
+      kind: "conflict",
+      detail: `Different skills are named “${row.name}”. Its switch turns all of them on or off.`,
+    };
+  }
+  // A plugin or built-in skill belongs to its agent; others never load it.
+  if (row.group !== "project" && row.group !== "personal") return null;
+  const availability = skillAvailability(row, agents);
+  if (availability.missing.length === 0) return null;
+  return {
+    kind: "missing",
+    detail: `Not available to ${joinNames(availability.missing.map((agent) => agent.displayName))}.`,
+  };
+}
+
+/** Rows with no recorded source show first; a pack collapses past this many rows. */
+export const SOURCE_GROUP_PREVIEW = 3;
+
+/** The tree's usual order (folders first, then names), with the root SKILL.md on top. */
+export function compareSkillFiles(
+  left: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+  right: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+): number {
+  const pinned = Number(right.path === "SKILL.md") - Number(left.path === "SKILL.md");
+  if (pinned !== 0) return pinned;
+  const shared = Math.min(left.segments.length, right.segments.length);
+  for (let depth = 0; depth < shared; depth += 1) {
+    const a = left.segments[depth] ?? "";
+    const b = right.segments[depth] ?? "";
+    if (a === b) continue;
+    const aFolder = depth < left.segments.length - 1 || left.isDirectory;
+    const bFolder = depth < right.segments.length - 1 || right.isDirectory;
+    if (aFolder !== bFolder) return aFolder ? -1 : 1;
+    return (
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }) || (a < b ? -1 : 1)
+    );
+  }
+  return left.segments.length - right.segments.length;
+}
+
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** SKILL.md without its header, for the rendered view. */
+export function skillBody(contents: string): string {
+  const match = FRONTMATTER.exec(contents);
+  return (match === null ? contents : contents.slice(match[0].length)).replace(
+    /^(?:[ \t]*\r?\n)*/,
+    "",
+  );
 }
 
 // ── MCP servers ────────────────────────────────────────────────────

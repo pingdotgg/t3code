@@ -39,6 +39,8 @@ export const SkillFileEntry = Schema.Struct({
   path: Schema.String,
   size: NonNegativeInt,
   executable: Schema.Boolean,
+  /** A file an agent could run: executable, under `bin/`, or a script by its extension. */
+  script: Schema.Boolean,
 });
 export type SkillFileEntry = typeof SkillFileEntry.Type;
 

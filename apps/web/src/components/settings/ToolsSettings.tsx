@@ -8,7 +8,6 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettingsPatch,
-  type SkillFolderInfo,
   type SkillInstallTarget,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -19,14 +18,14 @@ import {
   skillsDisabledPatch,
 } from "@t3tools/shared/agentTools";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import { MoreHorizontalIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { MoreHorizontalIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAfterDelay } from "../../hooks/useAfterDelay";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -40,12 +39,16 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { RefreshIcon } from "../ui/refresh-icon";
+import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddSkillsDialog } from "./AddSkillsDialog";
 import { McpServerDialog } from "./McpServerDialog";
-import { SkillFilesDialog } from "./SkillFilesDialog";
+import { SettingsGroup } from "./SettingsGroup";
+import { SkillDetail } from "./SkillDetail";
+import { SkillListSection, type SkillListRow } from "./SkillList";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -55,10 +58,12 @@ import {
   groupSkillRows,
   listMcpServerRows,
   type McpServerRow,
+  SKILL_GROUP_HINTS,
   SKILL_GROUP_LABELS,
-  skillReachesSomeProviders,
+  skillAgents,
+  skillAttention,
+  type SkillGroupKind,
   type SkillRow,
-  type SkillRowDetails,
   skillRowDetails,
   splitRowsBySource,
   type ToolsTab,
@@ -66,6 +71,8 @@ import {
 import { useScopedSettings, useScopedSettingsWriteAllowed } from "./useScopedSettings";
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+/** A scan that finishes sooner than this shows no placeholder at all. */
+const SKELETON_DELAY_MS = 150;
 
 interface ToolsTarget {
   readonly environmentId: EnvironmentId;
@@ -212,6 +219,9 @@ function SkillsPanel() {
     reportFailure: false,
   });
   const [query, setQuery] = useState("");
+  const [onlyAttention, setOnlyAttention] = useState(false);
+  // The skill whose page is open in place of the list.
+  const [openName, setOpenName] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const enabledProviders = useMemo(
     () => providers.filter((provider) => provider.enabled),
@@ -231,10 +241,6 @@ function SkillsPanel() {
   const updateSkill = useAtomCommand(serverEnvironment.updateSkill, { reportFailure: false });
   const removeSkill = useAtomCommand(serverEnvironment.removeSkill, { reportFailure: false });
   const [adding, setAdding] = useState(false);
-  const [viewing, setViewing] = useState<{
-    readonly name: string;
-    readonly folder: SkillFolderInfo;
-  } | null>(null);
   const [removingSkill, setRemovingSkill] = useState<{
     readonly name: string;
     readonly target: SkillInstallTarget;
@@ -321,13 +327,36 @@ function SkillsPanel() {
   }, [cwd, refresh, scanKey]);
 
   const rows = useMemo(() => collectSkillRows(providers, cwd), [cwd, providers]);
-  const groups = useMemo(() => groupSkillRows(filterSkillRows(rows, query)), [query, rows]);
+  const agents = useMemo(() => skillAgents(providers), [providers]);
   const detailsByName = useMemo(
     () => new Map(rows.map((row) => [row.name, skillRowDetails(row, foldersByPath)])),
     [foldersByPath, rows],
   );
   const detailsOf = (row: SkillRow) =>
     detailsByName.get(row.name) ?? skillRowDetails(row, foldersByPath);
+  const attentionNames = useMemo(
+    () =>
+      new Set(
+        rows
+          .filter((row) => {
+            const details = detailsByName.get(row.name);
+            return details !== undefined && skillAttention(row, details, agents) !== null;
+          })
+          .map((row) => row.name),
+      ),
+    [agents, detailsByName, rows],
+  );
+  const visibleRows = useMemo(
+    () =>
+      filterSkillRows(rows, query).filter((row) => !onlyAttention || attentionNames.has(row.name)),
+    [attentionNames, onlyAttention, query, rows],
+  );
+  const groups = useMemo(() => groupSkillRows(visibleRows), [visibleRows]);
+  const totals = useMemo(() => {
+    const counts = new Map<SkillGroupKind, number>();
+    for (const row of rows) counts.set(row.group, (counts.get(row.group) ?? 0) + 1);
+    return counts;
+  }, [rows]);
 
   const setSkillsDisabled = (skillRows: ReadonlyArray<SkillRow>, disabled: boolean) =>
     persist(({ settings, projectId }) =>
@@ -338,152 +367,153 @@ function SkillsPanel() {
         disabled,
       ),
     );
-  const setSkillDisabled = (name: string, disabled: boolean) => {
-    const row = rows.find((candidate) => candidate.name === name);
-    if (row !== undefined) setSkillsDisabled([row], disabled);
+  const projectOverrides = (name: string) =>
+    isProjectScope &&
+    targets.some(
+      (candidate) =>
+        candidate.projectId !== null &&
+        Object.hasOwn(
+          target?.settings.projectSettingsOverrides[candidate.projectId]?.disabledSkills ?? {},
+          name,
+        ),
+    );
+  const listItem = (row: SkillRow): SkillListRow => ({
+    row,
+    details: detailsOf(row),
+    disabled: isSkillDisabled(disabledSkills, row.name),
+    overridden: projectOverrides(row.name),
+  });
+  const updateOf = (row: SkillRow) => {
+    const installed = detailsOf(row).installed;
+    return installed === null || !canInstall
+      ? null
+      : () => void runSkillAction("update", { name: row.name, target: installed.target });
   };
+  const removeOf = (row: SkillRow) => {
+    const installed = detailsOf(row).installed;
+    return installed === null || !canInstall
+      ? null
+      : () => setRemovingSkill({ name: row.name, target: installed.target });
+  };
+
+  const opened = openName === null ? null : (rows.find((row) => row.name === openName) ?? null);
+  const showSkeleton = useAfterDelay(rows.length === 0 && refreshing, SKELETON_DELAY_MS);
 
   return (
     <>
-      <SettingsSection
-        {...searchableSetting("tools-skills")}
-        hideTitle
-        variant="plain"
-        className="px-3 sm:px-4"
-      >
-        <div className="flex items-center gap-2">
-          <InputGroup className="min-w-0 flex-1">
-            <InputGroupAddon>
-              <SearchIcon />
-            </InputGroupAddon>
-            <InputGroupInput
-              size="sm"
-              placeholder="Filter skills"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              aria-label="Filter skills"
-            />
-          </InputGroup>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  aria-label="Rescan skills"
-                  disabled={refreshing || environmentId === null}
-                  onClick={() => void refresh(true)}
-                />
-              }
-            >
-              <RefreshCwIcon className={refreshing ? "size-3.5 animate-spin" : "size-3.5"} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">Rescan skill folders</TooltipPopup>
-          </Tooltip>
-          {installTarget !== null && canInstall ? (
-            <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
-              <PlusIcon className="size-3.5" aria-hidden />
-              Add skills
-            </Button>
-          ) : null}
-        </div>
-        {skillActionError !== null ? (
-          <p className="mt-2 text-xs text-destructive-foreground">{skillActionError}</p>
-        ) : null}
-      </SettingsSection>
-      {rows.length === 0 ? (
-        <SettingsSection title="Skills">
-          <SettingsRow
-            title={refreshing ? "Looking for skills…" : "No skills found"}
-            description={
-              refreshing
-                ? undefined
-                : "Agents load skills from folders like ~/.agents/skills and .claude/skills. Add one there and rescan."
-            }
-          />
-        </SettingsSection>
-      ) : groups.length === 0 ? (
-        <SettingsSection title="Skills">
-          <SettingsRow title={`No skills match “${query.trim()}”`} />
-        </SettingsSection>
+      {opened !== null && environmentId !== null ? (
+        <SkillDetail
+          key={opened.name}
+          row={opened}
+          details={detailsOf(opened)}
+          agents={agents}
+          groupLabel={SKILL_GROUP_LABELS[opened.group]}
+          environmentId={environmentId}
+          onBack={() => setOpenName(null)}
+          onUpdate={updateOf(opened)}
+          onRemove={removeOf(opened)}
+        />
       ) : (
-        groups.map(({ group, rows: groupRows }) => (
-          <SettingsSection key={group} title={SKILL_GROUP_LABELS[group]}>
-            {splitRowsBySource(groupRows, (row) => detailsOf(row).installed?.source ?? null).map(
-              ({ source, rows: sourceRows }) => {
-                const renderRow = (row: SkillRow) => {
-                  const details = detailsOf(row);
-                  const { folder, installed } = details;
-                  return (
-                    <SkillSettingsRow
-                      key={row.name}
-                      row={row}
-                      details={details}
-                      disabled={isSkillDisabled(disabledSkills, row.name)}
-                      overridden={
-                        isProjectScope &&
-                        targets.some(
-                          (candidate) =>
-                            candidate.projectId !== null &&
-                            Object.hasOwn(
-                              target?.settings.projectSettingsOverrides[candidate.projectId]
-                                ?.disabledSkills ?? {},
-                              row.name,
-                            ),
-                        )
-                      }
-                      showProviders={skillReachesSomeProviders(row, enabledProviders.length)}
-                      canWrite={canWrite}
-                      onChange={(enabled) => setSkillDisabled(row.name, !enabled)}
-                      onView={folder === null ? null : () => setViewing({ name: row.name, folder })}
-                      onUpdate={
-                        installed === null || !canInstall
-                          ? null
-                          : () =>
-                              void runSkillAction("update", {
-                                name: row.name,
-                                target: installed.target,
-                              })
-                      }
-                      onRemove={
-                        installed === null || !canInstall
-                          ? null
-                          : () => setRemovingSkill({ name: row.name, target: installed.target })
-                      }
+        <>
+          <SettingsSection
+            {...searchableSetting("tools-skills")}
+            hideTitle
+            variant="plain"
+            className="px-3 sm:px-4"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <InputGroup className="w-full min-w-0 sm:w-auto sm:flex-1">
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+                <InputGroupInput
+                  size="sm"
+                  placeholder="Search skills…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  aria-label="Search skills"
+                />
+              </InputGroup>
+              {rows.length > 0 ? (
+                <Button
+                  size="sm"
+                  variant={onlyAttention ? "secondary" : "outline"}
+                  aria-pressed={onlyAttention}
+                  onClick={() => setOnlyAttention((value) => !value)}
+                >
+                  Needs attention ({attentionNames.size})
+                </Button>
+              ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      aria-label={refreshing ? "Rescanning skills" : "Rescan skills"}
+                      disabled={refreshing || environmentId === null}
+                      onClick={() => void refresh(true)}
                     />
-                  );
-                };
-                if (source === null) return sourceRows.map(renderRow);
-                const allOff = sourceRows.every((row) => isSkillDisabled(disabledSkills, row.name));
-                return (
-                  <div key={`source:${source}`} className="border-t first:border-t-0">
-                    <SettingsRow
-                      title={
-                        <span className="text-muted-foreground">
-                          From <span className="font-mono text-foreground">{source}</span>
-                        </span>
-                      }
-                      control={
-                        <Switch
-                          aria-label={`Skills from ${source}`}
-                          checked={!allOff}
-                          disabled={!canWrite}
-                          onCheckedChange={(enabled) => setSkillsDisabled(sourceRows, !enabled)}
-                        />
-                      }
-                    />
-                    <div className="ps-4">{sourceRows.map(renderRow)}</div>
-                  </div>
-                );
-              },
-            )}
+                  }
+                >
+                  <RefreshIcon refreshing={refreshing} />
+                </TooltipTrigger>
+                <TooltipPopup side="top">Rescan skill folders</TooltipPopup>
+              </Tooltip>
+              {installTarget !== null && canInstall ? (
+                <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+                  <PlusIcon className="size-3.5" aria-hidden />
+                  Add skills
+                </Button>
+              ) : null}
+            </div>
+            {skillActionError !== null ? (
+              <p className="mt-2 text-xs text-destructive-foreground">{skillActionError}</p>
+            ) : null}
           </SettingsSection>
-        ))
+          {showSkeleton ? <SkillsSkeleton /> : null}
+          {rows.length === 0 && !refreshing ? (
+            <SettingsSection title="Skills">
+              <SettingsRow
+                title="No skills yet"
+                description="Agents load skills from folders like ~/.agents/skills and .claude/skills. Add skills from a source, or put one there and rescan."
+              />
+            </SettingsSection>
+          ) : rows.length > 0 && groups.length === 0 ? (
+            <SettingsSection title="Skills">
+              <SettingsRow
+                title={
+                  onlyAttention && query.trim() === ""
+                    ? "Nothing needs attention."
+                    : `No skills match “${query.trim()}”`
+                }
+              />
+            </SettingsSection>
+          ) : (
+            groups.map(({ group, rows: groupRows }) => (
+              <SkillListSection
+                key={group}
+                title={SKILL_GROUP_LABELS[group]}
+                hint={SKILL_GROUP_HINTS[group]}
+                total={totals.get(group) ?? groupRows.length}
+                groups={splitRowsBySource(
+                  groupRows.map(listItem),
+                  (item) => item.details.installed?.source ?? null,
+                )}
+                emptyText="No matching skills."
+                agents={agents}
+                canWrite={canWrite}
+                onToggle={(skillRows, enabled) => setSkillsDisabled(skillRows, !enabled)}
+                onOpen={setOpenName}
+              />
+            ))
+          )}
+          <p className="px-3 text-xs text-muted-foreground sm:px-4">
+            Turning a skill off hides it from Claude, Codex and OpenCode, and from the composer's
+            skill menu. Other agents may still load it on their own. Changes apply to new sessions.
+          </p>
+        </>
       )}
-      <p className="px-3 text-xs text-muted-foreground sm:px-4">
-        Turning a skill off hides it from Claude, Codex and OpenCode, and from the composer's skill
-        menu. Other agents may still load it on their own. Changes apply to new sessions.
-      </p>
       {adding && environmentId !== null && installTarget !== null ? (
         <AddSkillsDialog
           open
@@ -492,17 +522,6 @@ function SkillsPanel() {
           target={installTarget}
           scopeLabel={scopeLabel}
           onInstalled={afterSkillChange}
-        />
-      ) : null}
-      {viewing !== null && environmentId !== null ? (
-        <SkillFilesDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setViewing(null);
-          }}
-          environmentId={environmentId}
-          name={viewing.name}
-          folder={viewing.folder}
         />
       ) : null}
       <AlertDialog
@@ -522,7 +541,10 @@ function SkillsPanel() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (removingSkill) void runSkillAction("remove", removingSkill);
+                if (removingSkill) {
+                  void runSkillAction("remove", removingSkill);
+                  if (removingSkill.name === openName) setOpenName(null);
+                }
                 setRemovingSkill(null);
               }}
             >
@@ -535,113 +557,27 @@ function SkillsPanel() {
   );
 }
 
-function SkillSettingsRow({
-  row,
-  details,
-  disabled,
-  overridden,
-  showProviders,
-  canWrite,
-  onChange,
-  onView,
-  onUpdate,
-  onRemove,
-}: {
-  readonly row: SkillRow;
-  readonly details: SkillRowDetails;
-  readonly disabled: boolean;
-  readonly overridden: boolean;
-  readonly showProviders: boolean;
-  readonly canWrite: boolean;
-  readonly onChange: (enabled: boolean) => void;
-  readonly onView: (() => void) | null;
-  readonly onUpdate: (() => void) | null;
-  readonly onRemove: (() => void) | null;
-}) {
-  const lockedOff = row.disabledByProvider;
+/** Placeholder rows for a slow first scan, laid out like the sections they stand in for. */
+function SkillsSkeleton() {
   return (
-    <SettingsRow
-      title={
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-mono">{row.name}</span>
-          {overridden ? (
-            <Badge variant="info" size="sm">
-              This project
-            </Badge>
-          ) : null}
-          {details.conflict ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Badge variant="warning" size="sm">
-                  Conflict
-                </Badge>
-              </TooltipTrigger>
-              <TooltipPopup side="top" className="max-w-sm">
-                Different skills share this name. The switch turns all of them on or off:
-                {row.paths.map((path) => (
-                  <span key={path} className="block truncate font-mono">
-                    {path}
-                  </span>
-                ))}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-        </span>
-      }
-      description={
-        lockedOff
-          ? "Turned off in the agent's own settings."
-          : (row.description ?? row.paths[0] ?? undefined)
-      }
-      className={disabled || lockedOff ? "[&_h3]:text-muted-foreground" : undefined}
-      control={
-        <>
-          {showProviders ? (
-            <span className="flex items-center gap-1">
-              {row.providers.map((provider) => (
-                <Tooltip key={provider.instanceId}>
-                  <TooltipTrigger render={<span className="inline-flex" />}>
-                    <ProviderInstanceIcon
-                      driverKind={provider.driver}
-                      displayName={provider.displayName}
-                      badgeContent="none"
-                      className="size-4"
-                    />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{provider.displayName}</TooltipPopup>
-                </Tooltip>
-              ))}
-            </span>
-          ) : null}
-          <Switch
-            aria-label={`${row.name} skill`}
-            checked={!disabled && !lockedOff}
-            disabled={!canWrite || lockedOff}
-            onCheckedChange={onChange}
-          />
-          {onView !== null || onUpdate !== null || onRemove !== null ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button size="icon-sm" variant="ghost-muted" aria-label={`${row.name} options`} />
-                }
-              >
-                <MoreHorizontalIcon className="size-4" />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {onView !== null ? <MenuItem onClick={onView}>View files</MenuItem> : null}
-                {onUpdate !== null ? <MenuItem onClick={onUpdate}>Update</MenuItem> : null}
-                {onRemove !== null ? (
-                  <MenuItem variant="destructive" onClick={onRemove}>
-                    Remove
-                  </MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-        </>
-      }
-    />
+    <div aria-hidden className="space-y-2.5">
+      <div className="flex min-h-7 items-center px-3 sm:px-4">
+        <Skeleton className="h-3.5 w-24" />
+      </div>
+      <SettingsGroup>
+        <ul className="divide-y divide-border/50">
+          {[0, 1, 2, 3].map((row) => (
+            <li key={row} className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
+              <span className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-28" />
+                <Skeleton className="h-3 w-3/4" />
+              </span>
+              <Skeleton shape="pill" className="h-4 w-14" />
+            </li>
+          ))}
+        </ul>
+      </SettingsGroup>
+    </div>
   );
 }
 
