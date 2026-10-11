@@ -1,9 +1,19 @@
 package expo.modules.t3composereditor
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
+import android.os.Looper
 import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputContentInfo
+import androidx.core.view.inputmethod.EditorInfoCompat
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.util.concurrent.Executor
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -12,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -19,6 +30,7 @@ import org.robolectric.annotation.Config
 class ComposerPasteTest {
   private val context = RuntimeEnvironment.getApplication()
   private val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+  private val imageBytes = byteArrayOf(1, 2, 3, 4)
   private val editor = SelectionAwareEditText(context).apply {
     textPasteThresholdBytes = 32 * 1024
     maxInputChars = 120_000
@@ -119,5 +131,56 @@ class ComposerPasteTest {
     assertFalse(pasteAsText())
     assertEquals("unchanged", editor.text.toString())
     assertNull(intercepted)
+  }
+
+  private fun commitContent(mimeType: String): Pair<Boolean, List<String>> {
+    val info = EditorInfo()
+    val connection = editor.onCreateInputConnection(info)!!
+    assertTrue(EditorInfoCompat.getContentMimeTypes(info).contains("image/*"))
+    val pasted = mutableListOf<String>()
+    editor.copyExecutor = Executor { it.run() }
+    editor.pasteImagesListener = { pasted += it }
+    val uri = Uri.parse("content://com.example/sticker")
+    shadowOf(context.contentResolver).registerInputStream(uri, ByteArrayInputStream(imageBytes))
+    val content = InputContentInfo(uri, ClipDescription("sticker", arrayOf(mimeType)))
+    val handled = connection.commitContent(content, 0, null)
+    shadowOf(Looper.getMainLooper()).idle()
+    return handled to pasted
+  }
+
+  @Test
+  fun keyboardCommittedImagesArePasted() {
+    val (handled, pasted) = commitContent("image/png")
+
+    assertTrue(handled)
+    assertEquals(1, pasted.size)
+    assertTrue(pasted.single().startsWith("file://"))
+    assertTrue(pasted.single().endsWith(".png"))
+    assertArrayEquals(imageBytes, File(Uri.parse(pasted.single()).path!!).readBytes())
+  }
+
+  @Test
+  fun keyboardCommittedImagesKeepTheirMimeTypeExtension() {
+    val (handled, pasted) = commitContent("image/gif")
+
+    assertTrue(handled)
+    assertTrue(pasted.single().endsWith(".gif"))
+  }
+
+  @Test
+  fun keyboardCommittedNonImagesAreRejected() {
+    val (handled, pasted) = commitContent("application/pdf")
+
+    assertFalse(handled)
+    assertTrue(pasted.isEmpty())
+  }
+
+  @Test
+  fun readOnlyEditorRejectsKeyboardCommittedImages() {
+    editor.readOnly = true
+    val (handled, pasted) = commitContent("image/png")
+
+    assertFalse(handled)
+    assertTrue(pasted.isEmpty())
   }
 }
