@@ -19,6 +19,10 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  presentWaitingRowStatus,
+  type WaitingRowStatus,
+} from "@t3tools/client-runtime/state/thread-execution";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
@@ -115,6 +119,24 @@ const DONE_STATUS_LABEL: StatusLabel = {
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
+
+// A waiting row stays grey like the plain "Waiting" label; the icon names the
+// kind of work it waits on, as in the thread's work log.
+const WAITING_ICON_BY_KIND: Record<WaitingRowStatus["kind"], AppSymbolName> = {
+  subagent: { ios: "sparkles", android: "auto_awesome" },
+  command: "terminal",
+  monitor: "eye",
+  background_task: "clock",
+};
+
+function waitingStatusLabel(status: WaitingRowStatus): StatusLabel {
+  return {
+    label: status.label,
+    icon: WAITING_ICON_BY_KIND[status.kind],
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  };
+}
 
 // Menus keep lifecycle and title regeneration together. Archive keeps its
 // own surface (thread screen / settings) rather than crowding v2 rows.
@@ -632,11 +654,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // so checking a thread on any device clears it everywhere.
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
+  // A waiting row names what the task waits on.
+  const waitingStatus =
+    status === "waiting" ? presentWaitingRowStatus(thread.pendingBackgroundTasks) : null;
   const statusLabel =
+    // The detailed label wins; the plain "Waiting" covers rosters without named work.
+    (waitingStatus ? waitingStatusLabel(waitingStatus) : undefined) ??
     // A native /goal keeps the agent going across turns until it is met.
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+      : workingLabel) ??
+    (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.
@@ -962,6 +990,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
+  // VoiceOver reads the row as one element, so it carries what a waiting task waits on.
+  const accessibilityLabel = [
+    thread.title,
+    waitingStatus?.label,
+    props.hasQueuedMessages ? "messages queued to send" : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const swipeAccessibilityHint = !canOperateThread
     ? "Opens the thread"
     : secondaryAction === null
@@ -1003,7 +1039,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         ) : null}
         {statusLabel ? (
-          <View className="flex-row items-center gap-1">
+          <View className="max-w-48 flex-row items-center gap-1">
             <SymbolView
               name={statusLabel.icon}
               size={13}
@@ -1014,8 +1050,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               weight="semibold"
             />
             <Text
+              numberOfLines={1}
               className={cn(
-                "text-xs font-t3-bold",
+                "shrink text-xs font-t3-bold",
                 selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
               )}
             >
@@ -1197,9 +1234,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -1229,9 +1264,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}

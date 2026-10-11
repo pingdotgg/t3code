@@ -433,6 +433,31 @@ export function presentProviderGoal(
   };
 }
 
+export interface WaitingRowStatus {
+  /** "Waiting on Review src/math.ts" or "Waiting on 2 subagents and 1 monitor". */
+  readonly label: string;
+  /** The kind that leads the label, for the row's icon. */
+  readonly kind: BackgroundWorkKind;
+}
+
+/**
+ * What a waiting thread's list row says it waits on. Only work that wakes the
+ * agent counts; a dev server it left running is not why the task is underway.
+ */
+export function presentWaitingRowStatus(
+  tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+): WaitingRowStatus | null {
+  const presentation = presentPendingBackgroundWork(
+    tasks.filter((task) => backgroundWorkHoldsCompletion([task])),
+  );
+  const [first] = presentation?.items ?? [];
+  if (presentation === null || first === undefined) return null;
+  return {
+    label: presentation.items.length === 1 ? `Waiting on ${first.label}` : presentation.title,
+    kind: first.kind,
+  };
+}
+
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */
 export function notificationChildThreadId(
   source: OrchestrationV2NotificationSource,
