@@ -3,8 +3,9 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import { FolderPlusIcon, SettingsIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -39,7 +40,7 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 // Picker value for the "Add project" row; real entries are keyed by logical
@@ -77,6 +78,7 @@ export function DraftHeroHeadline({
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
+  const navigate = useNavigate();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
   const environmentLabelById = useMemo(
@@ -346,6 +348,30 @@ export function DraftHeroHeadline({
                     primaryEnvironmentId={primaryEnvironmentId}
                     machineByEnvironmentId={environmentMachineById}
                   />
+                ) : null}
+                {entry && item.value === activeProjectKey ? (
+                  // Only the selected project's row gets settings. Stopping the
+                  // click keeps the row from also selecting it, as in the
+                  // sidebar's project picker.
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    title={`Project settings for ${entry.group.displayName}`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setPickerOpen(false);
+                      void navigate({
+                        to: "/projects/$projectKey",
+                        params: { projectKey: entry.group.projectKey },
+                      });
+                    }}
+                  >
+                    <SettingsIcon className="size-3.5" />
+                  </Button>
                 ) : null}
               </ComboboxItem>
             );
