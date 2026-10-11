@@ -612,5 +612,39 @@ describe("mobile model options", () => {
         selection,
       );
     });
+
+    it("rejects a project-disabled antigravity instance's selection instead of keeping it", () => {
+      const antigravityInstanceId = ProviderInstanceId.make("antigravity_work");
+      const config = {
+        providers: [
+          {
+            instanceId: antigravityInstanceId,
+            driver: "antigravity",
+            displayName: "Antigravity Work",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            availability: "available",
+            models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
+          },
+        ],
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [antigravityInstanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              enabled: true,
+            },
+          },
+          projectSettingsOverrides: {
+            [projectId]: { providerInstanceEnablement: { [antigravityInstanceId]: false } },
+          },
+        },
+      } as unknown as ServerConfig;
+      const selection = { instanceId: antigravityInstanceId, model: "model-a" };
+
+      expect(resolveSelectableModelSelection(config, selection, projectId)).toBeNull();
+      expect(resolveSelectableModelSelection(config, selection, null)).toBe(selection);
+    });
   });
 });

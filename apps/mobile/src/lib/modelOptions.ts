@@ -74,6 +74,25 @@ function isProviderEnabledForProject(
     : provider.enabled;
 }
 
+/**
+ * Whether the project has explicitly turned this instance off, as opposed
+ * to it merely being disabled or unreachable at the machine level.
+ */
+function isProjectDisabledOverride(
+  config: T3ServerConfig | null | undefined,
+  provider: { readonly instanceId: ModelSelection["instanceId"] } | undefined,
+  projectId: ProjectId | null,
+): boolean {
+  if (!provider || !projectId || !config?.settings) {
+    return false;
+  }
+  return (
+    config.settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[
+      provider.instanceId
+    ] === false
+  );
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -143,7 +162,7 @@ export function resolveSelectableModelSelection(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   if (driver === "antigravity") {
-    return selection;
+    return isProjectDisabledOverride(config, provider, projectId) ? null : selection;
   }
   return provider &&
     isProviderEnabledForProject(config, provider, projectId) &&
