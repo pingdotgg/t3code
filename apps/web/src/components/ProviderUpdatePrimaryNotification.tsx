@@ -54,7 +54,8 @@ function ProviderUpdateToastIcon({ provider }: { provider: ServerProvider }) {
         acpRegistryIconUrl={provider.iconUrl}
         iconClassName="size-4"
       />
-      <span className="absolute -right-1 -bottom-1 inline-flex size-3 items-center justify-center rounded-full bg-popover">
+      {/* ProviderInstanceIcon stacks at z-30, so the badge must sit above it. */}
+      <span className="absolute -right-1 -bottom-1 z-40 inline-flex size-3 items-center justify-center rounded-full bg-popover">
         <DownloadIcon aria-hidden="true" className="size-2.5 text-success" strokeWidth={2.5} />
       </span>
     </span>
