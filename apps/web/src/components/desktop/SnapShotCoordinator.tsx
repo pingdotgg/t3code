@@ -11,7 +11,7 @@ import {
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
-import { useClientSettings } from "../../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { readThreadShell } from "../../state/entities";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
@@ -207,12 +207,15 @@ export function SnapShotCoordinator() {
     settings.snapShotPlaySound ? settings.snapShotSound : null,
   );
   const animateCaptures = useClientSettings((settings) => settings.snapShotAnimations);
+  const enabled = useClientSettings((settings) => settings.snapShotEnabled);
   const captureTargetsRef = useRef(new Map<string, Promise<CaptureTarget | null>>());
   const lastTargetRef = useRef<CaptureTarget | null>(null);
   const targetResolutionRef = useRef<Promise<CaptureTarget | null> | null>(null);
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
   const soundedCaptureIdsRef = useRef(new Set<string>());
+  // Undelivered captures stay pending and every drain revisits them, so report each failure once.
+  const reportedCaptureFailuresRef = useRef(new Map<string, unknown>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
   const currentTarget = routeThreadRef ?? routeDraftId;
@@ -257,7 +260,15 @@ export function SnapShotCoordinator() {
     [captureSound],
   );
 
+  const reportOnce = useCallback((id: string, toast: Parameters<typeof toastManager.add>[0]) => {
+    if (reportedCaptureFailuresRef.current.get(id) === toast.title) return;
+    reportedCaptureFailuresRef.current.set(id, toast.title);
+    toastManager.add(toast);
+  }, []);
+
   const drain = useCallback(async () => {
+    // Captures left pending while SnapShots are off wait until they are turned back on.
+    if (!getClientSettings().snapShotEnabled) return;
     const bridge = getDesktopSnapShotBridge();
     if (!bridge) return;
     if (drainingRef.current) {
@@ -270,19 +281,21 @@ export function SnapShotCoordinator() {
         rerunRequestedRef.current = false;
         const pending = await bridge.listPendingSnapShots();
         for (const item of pending) {
+          if (!getClientSettings().snapShotEnabled) return;
           playCaptureSound(item.id);
           const capturedTarget = await resolveSnapShotDeliveryTarget(
             captureTargetsRef.current,
             item.id,
             resolveCaptureTarget,
           );
+          if (!getClientSettings().snapShotEnabled) return;
           const target = capturedTarget
             ? resolveExistingSnapShotTarget(capturedTarget, routeThreadRef)
             : null;
           if (!target) {
             await dismissSnapShotAnimation(item.id);
-            soundedCaptureIdsRef.current.delete(item.id);
-            toastManager.add(
+            reportOnce(
+              item.id,
               stackedThreadToast({
                 type: "error",
                 title: "Snapshot taken, but no project is available",
@@ -296,10 +309,11 @@ export function SnapShotCoordinator() {
             await deliverSnapShot(bridge, item, target);
             captureTargetsRef.current.delete(item.id);
             soundedCaptureIdsRef.current.delete(item.id);
+            reportedCaptureFailuresRef.current.delete(item.id);
           } catch (error) {
             await dismissSnapShotAnimation(item.id);
-            soundedCaptureIdsRef.current.delete(item.id);
-            toastManager.add(
+            reportOnce(
+              item.id,
               stackedThreadToast({
                 type: "error",
                 title: "Snapshot failed",
@@ -327,11 +341,11 @@ export function SnapShotCoordinator() {
       });
     drainingRef.current = operation;
     return operation;
-  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [playCaptureSound, reportOnce, resolveCaptureTarget, routeThreadRef]);
 
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
-    if (!bridge) return;
+    if (!bridge || !enabled) return;
     void drain();
     const unsubscribe = bridge.onSnapShotEvent((event) => {
       switch (event.type) {
@@ -388,7 +402,7 @@ export function SnapShotCoordinator() {
       }
     });
     return unsubscribe;
-  }, [animateCaptures, drain, playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [animateCaptures, drain, enabled, playCaptureSound, resolveCaptureTarget, routeThreadRef]);
 
   useEffect(() => {
     const dismissOnBlur = () => {
