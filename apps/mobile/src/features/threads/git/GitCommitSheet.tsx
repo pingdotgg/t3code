@@ -1,6 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
@@ -134,7 +135,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   Files
                 </Text>
                 <Text className="text-foreground-muted text-xs leading-normal">
-                  {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
+                  {selectedFiles.length} selected · +{formatDiffCount(selectedInsertions)} / -
+                  {formatDiffCount(selectedDeletions)}
                 </Text>
               </View>
               <View className="flex-row items-center gap-2">
@@ -171,10 +173,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                       {file.path}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                      +{file.insertions}
+                      +{formatDiffCount(file.insertions)}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                      -{file.deletions}
+                      -{formatDiffCount(file.deletions)}
                     </Text>
                   </View>
                 ))}
@@ -250,10 +252,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                         </View>
                         <View className="items-end gap-1">
                           <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                            +{file.insertions}
+                            +{formatDiffCount(file.insertions)}
                           </Text>
                           <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                            -{file.deletions}
+                            -{formatDiffCount(file.deletions)}
                           </Text>
                         </View>
                       </View>

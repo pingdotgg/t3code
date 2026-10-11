@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -410,7 +411,13 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   const ghCalls: string[] = [];
 
   const fail = (cwd: string, detail: string, cause?: unknown, operation = "fakeGh") =>
-    new SourceControlProviderFailure({ provider: "github", operation, cwd, detail, cause });
+    new SourceControlProviderFailure({
+      provider: SourceControlProviderKind.make("github"),
+      operation,
+      cwd,
+      detail,
+      cause,
+    });
 
   /** `operation` is the provider method the call answers, which a failure reports. */
   const execute = (input: {
@@ -534,7 +541,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   /** What GitHubSourceControlProvider makes of a pull request it read. */
   const toChangeRequest = (summary: FakePullRequestSummary): ChangeRequest => ({
     ...summary,
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     state: summary.state ?? "open",
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
@@ -546,7 +553,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
 
   return {
     service: {
-      kind: "github",
+      kind: SourceControlProviderKind.make("github"),
       // The GitHub provider's own lookup rule and template convention, which GitManager reads
       // instead of the kind.
       headBranchProbe: ({ headSelectors }) => ({
@@ -602,7 +609,10 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
                 if (raw.length === 0) return [];
                 const decoded = decodeGitHubPullRequestListJson(raw);
                 return Result.isSuccess(decoded)
-                  ? decoded.success.map((record) => ({ provider: "github" as const, ...record }))
+                  ? decoded.success.map((record) => ({
+                      provider: SourceControlProviderKind.make("github"),
+                      ...record,
+                    }))
                   : [];
               }),
             ),
@@ -2841,7 +2851,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         operation: "lookupStatusPr",
         branch: "feature/status-rate-limited",
         errorTag: "SourceControlProviderError",
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         providerOperation: "listChangeRequests",
         errorDetail: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
       });

@@ -64,6 +64,13 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import {
+  readSecretFieldValues,
+  SOURCE_CONTROL_HOST_SECRET_FIELDS,
+  type SourceControlHostSecretSlot,
+  sourceControlHostSecretName,
+  writeSecretFieldValues,
+} from "./sourceControl/sourceControlHostSecrets.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -157,18 +164,47 @@ function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
-const BITBUCKET_SECRET_NAMES = {
-  accessToken: "bitbucket-access-token",
-  apiToken: "bitbucket-api-token",
-} as const;
-const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
+const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
-/** Hosts are case-insensitive; a patch can arrive before decoding lowercased its keys. */
-function gitHubTokenSecretName(host: string): string {
-  return `github-token-${Buffer.from(host.trim().toLowerCase(), "utf8").toString("base64url")}`;
+/** Each host's settings with every secret slot's value replaced by `map(slot, value)`. */
+function mapSlotValues(
+  hosts: ServerSettings["sourceControlHosts"],
+  map: (slot: SourceControlHostSecretSlot, value: string) => string,
+): ServerSettings["sourceControlHosts"] {
+  return Object.fromEntries(
+    Object.entries(hosts).map(([kind, fields]) => {
+      const secretFields = SOURCE_CONTROL_HOST_SECRET_FIELDS.get(kind) ?? [];
+      if (secretFields.length === 0) return [kind, fields];
+      const next = { ...fields };
+      for (const field of secretFields) {
+        if (!(field in next)) continue;
+        next[field] = writeSecretFieldValues(
+          next[field],
+          readSecretFieldValues(next[field]).map(
+            ([serverHost, value]) => [serverHost, map({ kind, field, serverHost }, value)] as const,
+          ),
+        );
+      }
+      return [kind, next];
+    }),
+  );
 }
 
-const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
+/** Every saved secret slot in `hosts`, with its current value. */
+function sourceControlHostSecretSlots(
+  hosts: ServerSettings["sourceControlHosts"],
+): ReadonlyArray<SourceControlHostSecretSlot & { readonly value: string }> {
+  return Object.entries(hosts).flatMap(([kind, fields]) =>
+    (SOURCE_CONTROL_HOST_SECRET_FIELDS.get(kind) ?? []).flatMap((field) =>
+      readSecretFieldValues(fields[field]).map(([serverHost, value]) => ({
+        kind,
+        field,
+        serverHost,
+        value,
+      })),
+    ),
+  );
+}
 
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
@@ -206,18 +242,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  const bitbucket = {
-    ...settings.bitbucket,
-    accessToken: redactSecret(settings.bitbucket.accessToken),
-    apiToken: redactSecret(settings.bitbucket.apiToken),
-  };
-  const github = {
-    ...settings.github,
-    tokens: Object.fromEntries(
-      Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
-    ),
-  };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket, github };
+  const sourceControlHosts = mapSlotValues(settings.sourceControlHosts, (_slot, value) =>
+    redactSecret(value),
+  );
+  return { ...settings, providerInstances, usageLimitSources, sourceControlHosts };
 }
 
 export function applyProviderInstanceMutation(
@@ -394,9 +422,59 @@ const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    // Retired for `sourceControlHosts`; read only by `migrateLegacySourceControlSettings`.
+    bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   }),
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
+
+/** The secret store names the retired `bitbucket` and `github` keys kept their tokens under. */
+const LEGACY_BITBUCKET_SECRET_NAMES: Readonly<Record<string, string>> = {
+  accessToken: "bitbucket-access-token",
+  apiToken: "bitbucket-api-token",
+};
+const legacyGitHubTokenSecretName = (host: string) =>
+  `github-token-${Buffer.from(host.trim().toLowerCase(), "utf8").toString("base64url")}`;
+
+/**
+ * Folds the retired `bitbucket` and `github` keys into `sourceControlHosts`, unless the new key
+ * already holds that host. Returns the secret store entries to copy to their new names.
+ */
+function migrateLegacySourceControlSettings(
+  settings: ServerSettings,
+  legacy: {
+    readonly bitbucket?: Readonly<Record<string, unknown>> | undefined;
+    readonly github?: Readonly<Record<string, unknown>> | undefined;
+  },
+): {
+  readonly settings: ServerSettings;
+  readonly secretMoves: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+} {
+  const sourceControlHosts = { ...settings.sourceControlHosts };
+  const secretMoves: Array<{ readonly from: string; readonly to: string }> = [];
+  if (legacy.bitbucket !== undefined && sourceControlHosts.bitbucket === undefined) {
+    sourceControlHosts.bitbucket = legacy.bitbucket;
+    for (const [field, from] of Object.entries(LEGACY_BITBUCKET_SECRET_NAMES)) {
+      if (legacy.bitbucket[field] !== SECRET_REDACTED) continue;
+      secretMoves.push({
+        from,
+        to: sourceControlHostSecretName({ kind: "bitbucket", field, serverHost: null }),
+      });
+    }
+  }
+  if (legacy.github !== undefined && sourceControlHosts.github === undefined) {
+    sourceControlHosts.github = legacy.github;
+    for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
+      if (serverHost === null || value !== SECRET_REDACTED) continue;
+      secretMoves.push({
+        from: legacyGitHubTokenSecretName(serverHost),
+        to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
+      });
+    }
+  }
+  return { settings: { ...settings, sourceControlHosts }, secretMoves };
+}
 
 // Drivers that start disabled, so a session in the history means the user
 // turned them on before the instance kept an explicit flag.
@@ -724,54 +802,41 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Moves Bitbucket tokens hand-edited into settings.json into the secret store as they load,
-   * so plaintext does not stay on disk. If the store is unavailable, the token keeps working
-   * from the file and the move is retried on the next load.
+   * Moves source control host secrets hand-edited into settings.json into the secret store as
+   * they load, so plaintext does not stay on disk. If the store is unavailable, the secret keeps
+   * working from the file and the move is retried on the next load.
    */
-  const moveInlineBitbucketTokens = (settings: ServerSettings) =>
+  const moveInlineSourceControlHostSecrets = (settings: ServerSettings) =>
     Effect.gen(function* () {
-      const bitbucket = { ...settings.bitbucket };
-      let moved = false;
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        const value = bitbucket[field];
-        if (value.length === 0 || value === SECRET_REDACTED) continue;
+      const moved = new Set<string>();
+      for (const slot of sourceControlHostSecretSlots(settings.sourceControlHosts)) {
+        if (slot.value.length === 0 || slot.value === SECRET_REDACTED) continue;
         const stored = yield* secretStore
-          .set(BITBUCKET_SECRET_NAMES[field], textEncoder.encode(value))
+          .set(sourceControlHostSecretName(slot), textEncoder.encode(slot.value))
           .pipe(
             Effect.as(true),
             Effect.catch(() =>
-              Effect.logWarning("failed to move a Bitbucket token into the secret store", {
-                field,
+              Effect.logWarning("failed to move a source control secret into the secret store", {
+                kind: slot.kind,
+                field: slot.field,
               }).pipe(Effect.as(false)),
             ),
           );
-        if (!stored) continue;
-        bitbucket[field] = SECRET_REDACTED;
-        moved = true;
+        if (stored) moved.add(sourceControlHostSecretName(slot));
       }
-      const tokens = { ...settings.github.tokens };
-      for (const [host, value] of Object.entries(tokens)) {
-        if (value.length === 0 || value === SECRET_REDACTED) continue;
-        const stored = yield* secretStore
-          .set(gitHubTokenSecretName(host), textEncoder.encode(value))
-          .pipe(
-            Effect.as(true),
-            Effect.catch(() =>
-              Effect.logWarning("failed to move a GitHub token into the secret store", {
-                host,
-              }).pipe(Effect.as(false)),
-            ),
-          );
-        if (!stored) continue;
-        tokens[host] = SECRET_REDACTED;
-        moved = true;
-      }
-      return moved ? { ...settings, bitbucket, github: { ...settings.github, tokens } } : settings;
+      if (moved.size === 0) return settings;
+      return {
+        ...settings,
+        sourceControlHosts: mapSlotValues(settings.sourceControlHosts, (slot, value) =>
+          moved.has(sourceControlHostSecretName(slot)) ? SECRET_REDACTED : value,
+        ),
+      };
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
+    let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     // A file that failed to decode must stay on disk for the user to repair;
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
@@ -782,6 +847,10 @@ const make = Effect.gen(function* () {
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
         legacyProviders = legacySettings.value.providers;
+        legacySourceControl = {
+          bitbucket: legacySettings.value.bitbucket,
+          github: legacySettings.value.github,
+        };
       }
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
@@ -855,12 +924,48 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
+    // Copied, not moved: the old entry is removed only after the new file is written. A token
+    // that cannot be read or copied leaves the retired keys in place, so the migration runs again
+    // on the next load instead of dropping it.
+    const legacySecretsCopied = yield* Effect.forEach(
+      settingsFileTrusted
+        ? migrateLegacySourceControlSettings(folded, legacySourceControl).secretMoves
+        : [],
+      (move) =>
+        secretStore.get(move.from).pipe(
+          Effect.flatMap((secret) =>
+            Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
+          ),
+          Effect.as(true),
+          Effect.catch(() =>
+            Effect.logWarning("failed to copy a source control secret to its new name", {
+              secretName: move.to,
+            }).pipe(Effect.as(false)),
+          ),
+        ),
+    ).pipe(Effect.map((copied) => copied.every(Boolean)));
+    const hasLegacySourceControl =
+      settingsFileTrusted &&
+      legacySecretsCopied &&
+      (legacySourceControl.bitbucket !== undefined || legacySourceControl.github !== undefined);
+    const sourceControlMigration = hasLegacySourceControl
+      ? migrateLegacySourceControlSettings(folded, legacySourceControl)
+      : { settings: folded, secretMoves: [] };
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
-    const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
-    // A file still carrying the retired `providers` map is rewritten once so
-    // the migrated instances persist and the old key disappears.
-    if (migrated !== loaded || (settingsFileTrusted && legacyProviders !== undefined)) {
+    const migrated = settingsFileTrusted
+      ? yield* moveInlineSourceControlHostSecrets(sourceControlMigration.settings)
+      : folded;
+    // A file still carrying the retired `providers`, `bitbucket`, or `github` keys is rewritten
+    // once so the migrated values persist and the old keys disappear.
+    if (
+      migrated !== loaded ||
+      (settingsFileTrusted && legacyProviders !== undefined) ||
+      hasLegacySourceControl
+    ) {
       yield* writeSettingsAtomically(migrated);
+      for (const move of sourceControlMigration.secretMoves) {
+        yield* secretStore.remove(move.from).pipe(Effect.ignore);
+      }
     }
     return migrated;
   });
@@ -933,39 +1038,30 @@ const make = Effect.gen(function* () {
           managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         };
       }
-      const bitbucket = { ...settings.bitbucket };
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        if (bitbucket[field] !== SECRET_REDACTED) continue;
+      const storedSecrets = new Map<string, string>();
+      for (const slot of sourceControlHostSecretSlots(settings.sourceControlHosts)) {
+        if (slot.value !== SECRET_REDACTED) continue;
         const secret = yield* secretStore
-          .get(BITBUCKET_SECRET_NAMES[field])
+          .get(sourceControlHostSecretName(slot))
           .pipe(
             Effect.mapError(
               (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
             ),
           );
-        bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
-      }
-      const tokens: Record<string, string> = {};
-      for (const [host, value] of Object.entries(settings.github.tokens)) {
-        if (value !== SECRET_REDACTED) {
-          tokens[host] = value;
-          continue;
-        }
-        const secret = yield* secretStore
-          .get(gitHubTokenSecretName(host))
-          .pipe(
-            Effect.mapError(
-              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
-            ),
-          );
-        tokens[host] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+        storedSecrets.set(
+          sourceControlHostSecretName(slot),
+          Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        );
       }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-        bitbucket,
-        github: { ...settings.github, tokens },
+        sourceControlHosts: mapSlotValues(settings.sourceControlHosts, (slot, value) =>
+          value === SECRET_REDACTED
+            ? (storedSecrets.get(sourceControlHostSecretName(slot)) ?? "")
+            : value,
+        ),
       };
     });
 
@@ -1107,56 +1203,36 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const bitbucket = { ...next.bitbucket };
-      for (const field of BITBUCKET_SECRET_FIELDS) {
-        let value = bitbucket[field];
-        if (value === SECRET_REDACTED) {
-          // The marker keeps what is saved. A plaintext value hand-edited into settings.json
-          // is not in the secret store yet, so move it there instead of dropping it.
-          const inline = current.bitbucket[field];
-          if (inline === SECRET_REDACTED || inline.length === 0) continue;
-          value = inline;
-        }
-        const secretName = BITBUCKET_SECRET_NAMES[field];
-        if (value.length === 0) {
-          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
-          continue;
-        }
-        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
-        bitbucket[field] = SECRET_REDACTED;
-      }
-
-      const tokens: Record<string, string> = {};
-      for (const [rawHost, raw] of Object.entries(next.github.tokens)) {
-        const host = rawHost.trim().toLowerCase();
-        let value = raw;
-        if (value === SECRET_REDACTED) {
-          // The marker keeps what is saved; a hand-edited plaintext token moves into the store.
-          const inline = current.github.tokens[host];
-          if (inline === undefined || inline === SECRET_REDACTED || inline.length === 0) {
-            tokens[host] = SECRET_REDACTED;
-            continue;
-          }
-          value = inline;
-        }
-        const secretName = gitHubTokenSecretName(host);
-        if (value.length === 0) {
-          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
-          continue;
-        }
-        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
-        tokens[host] = SECRET_REDACTED;
-      }
-      const nextHosts = new Set(
-        Object.keys(next.github.tokens).map((host) => host.trim().toLowerCase()),
+      // Hand-edited plaintext not yet in the store, so the redaction marker can move it there.
+      const inlineSecrets = new Map(
+        sourceControlHostSecretSlots(current.sourceControlHosts).flatMap((slot) =>
+          slot.value.length > 0 && slot.value !== SECRET_REDACTED
+            ? [[sourceControlHostSecretName(slot), slot.value] as const]
+            : [],
+        ),
       );
-      for (const host of Object.keys(current.github.tokens)) {
-        if (nextHosts.has(host.trim().toLowerCase())) continue;
-        changes.push({
-          kind: "remove",
-          secretName: gitHubTokenSecretName(host),
-          operation: "remove-stale-secret",
-        });
+      const nextSecretNames = new Set<string>();
+      const sourceControlHosts = mapSlotValues(next.sourceControlHosts, (slot, raw) => {
+        const secretName = sourceControlHostSecretName(slot);
+        // The marker keeps what is saved; a hand-edited plaintext value moves into the store.
+        const value = raw === SECRET_REDACTED ? inlineSecrets.get(secretName) : raw;
+        if (value === undefined) {
+          nextSecretNames.add(secretName);
+          return SECRET_REDACTED;
+        }
+        if (value.length === 0) {
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+          return "";
+        }
+        nextSecretNames.add(secretName);
+        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
+        return SECRET_REDACTED;
+      });
+      for (const slot of sourceControlHostSecretSlots(current.sourceControlHosts)) {
+        const secretName = sourceControlHostSecretName(slot);
+        if (nextSecretNames.has(secretName)) continue;
+        if (changes.some((change) => change.secretName === secretName)) continue;
+        changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
       }
 
       return {
@@ -1164,8 +1240,7 @@ const make = Effect.gen(function* () {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-          bitbucket,
-          github: { ...next.github, tokens },
+          sourceControlHosts,
         },
         changes,
       };

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,11 +18,12 @@ import {
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
 import * as Json from "./gitCafePullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: ["ready", "draft", "close", "reopen", "merge", "update-branch"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   // Only through a stack: GitCafe's one branch update restacks every layer above it.
   updateMethods: ["rebase"],
@@ -176,7 +178,7 @@ export const make = Effect.gen(function* () {
 
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
-      provider: "gitcafe",
+      provider: SourceControlProviderKind.make("gitcafe"),
       operation,
       reason: "failed",
       detail,
@@ -207,7 +209,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (error) =>
           new PullRequestProviderError({
-            provider: "gitcafe",
+            provider: SourceControlProviderKind.make("gitcafe"),
             operation,
             reason: error.reason,
             detail: error.detail,
@@ -475,7 +477,7 @@ export const make = Effect.gen(function* () {
   });
 
   const provider: PullRequestProviderApi = {
-    kind: "gitcafe",
+    kind: SourceControlProviderKind.make("gitcafe"),
     capabilities: CAPABILITIES,
     getViewer: (input) =>
       read(

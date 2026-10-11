@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * The Azure DevOps driver: repository operations, discovery, and pull requests through `az`.
  *
@@ -10,7 +11,7 @@ import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvide
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 export const driver = defineSourceControlDriver({
-  kind: "azure-devops",
+  kind: SourceControlProviderKind.make("azure-devops"),
   make: Effect.all({
     sourceControl: AzureDevOpsSourceControlProvider.make,
     discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),

@@ -10,11 +10,21 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
-  getNewProjectGitHubRepository,
-  getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  getNewProjectPublishTarget,
+  getNewProjectPublishTargets,
+  getNewProjectRepository,
+  type NewProjectPublishTarget,
   normalizePastedCloneUrl,
+  addProjectRemoteSourceLabel,
+  addProjectRemoteSourcePathHint,
+  addProjectRemoteSourceProvider,
+  buildAddProjectRemoteSourceReadiness,
+  sortAddProjectProviderSources,
+  type AddProjectRemoteSource,
+  type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -39,7 +49,7 @@ import {
   type FilesystemBrowseResult,
   type ProjectId,
   type SourceControlDiscoveryResult,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
@@ -187,14 +197,7 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
-import {
-  AzureDevOpsIcon,
-  BitbucketIcon,
-  GitCafeIcon,
-  GitHubIcon,
-  GitLabIcon,
-  ForgejoIcon,
-} from "./Icons";
+import { sourceControlIcon } from "~/sourceControlPresentation";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -219,6 +222,7 @@ import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindin
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
@@ -257,12 +261,6 @@ interface AddProjectEnvironmentOption {
   readonly status: string;
 }
 
-type AddProjectRemoteProviderKind = Extract<
-  SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitcafe"
->;
-type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
-
 type AddProjectCloneFlow =
   | {
       readonly step: "repository";
@@ -278,83 +276,18 @@ type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
-  "url",
-  "github",
-  "gitlab",
-  "forgejo",
-  "bitbucket",
-  "azure-devops",
-  "gitcafe",
-];
-const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
-  "github",
-  "gitlab",
-  "forgejo",
-  "bitbucket",
-  "azure-devops",
-  "gitcafe",
-];
-
-function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
-  switch (source) {
-    case "github":
-      return "GitHub";
-    case "forgejo":
-      return "Forgejo / Gitea";
-    case "gitlab":
-      return "GitLab";
-    case "bitbucket":
-      return "Bitbucket";
-    case "azure-devops":
-      return "Azure DevOps";
-    case "gitcafe":
-      return "GitCafe";
-    case "url":
-      return "Git URL";
-  }
-}
-
-function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
-  switch (source) {
-    case "forgejo":
-    case "github":
-    case "gitcafe":
-      return "owner/repo";
-    case "gitlab":
-      return "group/project";
-    case "bitbucket":
-      return "workspace/repository";
-    case "azure-devops":
-      return "project/repository";
-    case "url":
-      return "URL";
-  }
-}
-
-function remoteProjectSourceProvider(
-  source: AddProjectRemoteSource,
-): AddProjectRemoteProviderKind | null {
-  return source === "url" ? null : source;
-}
-
 function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: string): ReactNode {
-  switch (source) {
-    case "github":
-      return <GitHubIcon className={className} />;
-    case "forgejo":
-      return <ForgejoIcon className={className} />;
-    case "gitlab":
-      return <GitLabIcon className={className} />;
-    case "bitbucket":
-      return <BitbucketIcon className={className} />;
-    case "azure-devops":
-      return <AzureDevOpsIcon className={className} />;
-    case "gitcafe":
-      return <GitCafeIcon className={className} />;
-    case "url":
-      return <LinkIcon className={className} />;
-  }
+  if (source === "url") return <LinkIcon className={className} />;
+  const Icon = sourceControlIcon(sourceControlClients.get(source));
+  return <Icon className={className} />;
+}
+
+function sourceControlHostIcon(
+  definition: NewProjectPublishTarget["definition"],
+  className: string,
+): ReactNode {
+  const Icon = sourceControlIcon(definition);
+  return <Icon className={className} />;
 }
 
 function projectFaviconIcon(project: Project): ReactNode {
@@ -367,82 +300,26 @@ function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string
   if (flow.source === "url") {
     return "Enter Git clone URL";
   }
-  return `Enter ${remoteProjectSourceLabel(flow.source)} repository (${remoteProjectSourcePathHint(flow.source)})`;
+  return `Enter ${addProjectRemoteSourceLabel(flow.source)} repository (${addProjectRemoteSourcePathHint(flow.source)})`;
 }
 
-function sourceProviderKind(source: AddProjectRemoteSource): AddProjectRemoteProviderKind | null {
-  return source === "url" ? null : source;
-}
-
-function sortAddProjectProviderSources(
-  readinessBySource: AddProjectRemoteSourceReadiness,
-): ReadonlyArray<AddProjectRemoteProviderKind> {
-  return REMOTE_PROJECT_PROVIDER_SOURCES.toSorted((left, right) => {
-    const leftReady = readinessBySource[left].ready;
-    const rightReady = readinessBySource[right].ready;
-    if (leftReady !== rightReady) {
-      return leftReady ? -1 : 1;
-    }
-    return remoteProjectSourceLabel(left).localeCompare(remoteProjectSourceLabel(right));
-  });
-}
-
-type AddProjectRemoteSourceReadiness = Record<
-  AddProjectRemoteSource,
-  { readonly ready: boolean; readonly hint: string | null }
->;
-
-function buildAddProjectRemoteSourceReadiness(
+/** The palette's readiness, pointing at Settings by its menu path. */
+function buildPaletteRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
 ): AddProjectRemoteSourceReadiness {
-  const unavailable = {
-    ready: false,
-    hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
-  } as const;
-  const defaultReadiness: AddProjectRemoteSourceReadiness = {
-    url: { ready: true, hint: null },
-    github: unavailable,
-    gitlab: unavailable,
-    forgejo: unavailable,
-    bitbucket: unavailable,
-    "azure-devops": unavailable,
-    gitcafe: unavailable,
+  const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+  return (source) => {
+    const entry = readiness(source);
+    return entry.hint === null
+      ? entry
+      : {
+          ...entry,
+          hint: entry.hint.replace(
+            "Open Source Control settings",
+            "Open Settings -> Source Control",
+          ),
+        };
   };
-
-  if (!discovery) {
-    return defaultReadiness;
-  }
-
-  const providerByKind = new Map(
-    discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
-  );
-  const readiness = { ...defaultReadiness };
-
-  for (const source of REMOTE_PROJECT_SOURCES) {
-    const kind = sourceProviderKind(source);
-    if (!kind) continue;
-    const provider = providerByKind.get(kind);
-    if (!provider) {
-      readiness[source] = unavailable;
-      continue;
-    }
-    if (provider.status !== "available") {
-      readiness[source] = { ready: false, hint: provider.installHint };
-      continue;
-    }
-    if (provider.auth.status === "unauthenticated") {
-      readiness[source] = {
-        ready: false,
-        hint:
-          Option.getOrNull(provider.auth.detail) ??
-          `${provider.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
-      };
-      continue;
-    }
-    readiness[source] = { ready: true, hint: null };
-  }
-
-  return readiness;
 }
 
 function errorMessage(error: unknown): string {
@@ -895,7 +772,11 @@ function OpenCommandPaletteDialog(props: {
     /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
-  const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
+  const [newProjectPublishes, setNewProjectPublishes] = useState(false);
+  // The host picked beside the publish toggle; null takes the first ready host, GitHub when ready.
+  const [newProjectPublishKind, setNewProjectPublishKind] =
+    useState<SourceControlProviderKind | null>(null);
+  const [newProjectHostPickerOpen, setNewProjectHostPickerOpen] = useState(false);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
@@ -1615,7 +1496,8 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId });
-      setNewProjectPublishesToGitHub(false);
+      setNewProjectPublishes(false);
+      setNewProjectPublishKind(null);
       pushPaletteView({
         addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
         groups: [],
@@ -1670,13 +1552,13 @@ function OpenCommandPaletteDialog(props: {
       ];
 
       for (const source of orderedSources) {
-        const label = remoteProjectSourceLabel(source);
+        const label = addProjectRemoteSourceLabel(source);
         const title = source === "url" ? "Git URL" : `${label} repository`;
         const description =
           source === "url"
             ? "Clone from a remote URL"
-            : `Clone ${label} ${remoteProjectSourcePathHint(source)}`;
-        const readiness = readinessBySource[source];
+            : `Clone ${label} ${addProjectRemoteSourcePathHint(source)}`;
+        const readiness = readinessBySource(source);
         const disabledHint = readiness.hint;
 
         const titleTrailingContent = readiness.ready ? undefined : (
@@ -1764,7 +1646,7 @@ function OpenCommandPaletteDialog(props: {
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
           environmentId,
-          buildAddProjectRemoteSourceReadiness(
+          buildPaletteRemoteSourceReadiness(
             browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null,
           ),
         ),
@@ -2102,13 +1984,13 @@ function OpenCommandPaletteDialog(props: {
       "repository",
       "repo",
       "git",
-      "github",
-      "gitlab",
-      "forgejo",
-      "bitbucket",
-      "azure",
-      "devops",
-      "gitcafe",
+      // Every host's name, spelled as a word: "azure devops" searches as `azure` and `devops`.
+      ...sourceControlClients.definitions.flatMap((definition) =>
+        definition.pickerLabel
+          .toLowerCase()
+          .split(/[^a-z0-9]+/u)
+          .filter(Boolean),
+      ),
       "url",
       "environment",
     ],
@@ -2353,7 +2235,7 @@ function OpenCommandPaletteDialog(props: {
     currentView.groups[0]?.value === sourceSelectionViewValue
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
-          buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
+          buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data),
         )
       : currentView?.groups[0]?.value === "themes"
         ? changeThemeItem.groups
@@ -2550,8 +2432,12 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
-  const newProjectGitHubTarget =
-    newProjectFlow === null ? null : getNewProjectGitHubTarget(sourceControlDiscovery.data ?? null);
+  const newProjectPublishTargets =
+    newProjectFlow === null ? [] : getNewProjectPublishTargets(sourceControlDiscovery.data ?? null);
+  const newProjectPublishTarget = getNewProjectPublishTarget(
+    newProjectPublishTargets,
+    newProjectPublishKind,
+  );
   const newProjectName = query.trim();
   const canSubmitNewProject =
     newProjectFlow !== null &&
@@ -2569,7 +2455,7 @@ function OpenCommandPaletteDialog(props: {
       const created = await createNewProject({
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
-        github: newProjectPublishesToGitHub ? newProjectGitHubTarget : null,
+        publishTo: newProjectPublishes ? newProjectPublishTarget : null,
       });
       if (created) setOpen(false);
     } finally {
@@ -2603,7 +2489,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const provider = remoteProjectSourceProvider(addProjectCloneFlow.source);
+      const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
         const destinationPath = getCloneDestinationPath(
           getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
@@ -2875,7 +2761,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
   const newProjectPathPreview =
     newProjectsRoot === null ? null : getNewProjectPathPreview(newProjectsRoot, newProjectName);
-  const newProjectGitHubToggleValue = "new-project:github";
+  const newProjectPublishToggleValue = "new-project:publish";
   // The name step's way out to folders and clones, for the selected machine.
   // It replaces the name step (and a sources view for another machine under
   // it), so Back returns to wherever New project was opened from.
@@ -2962,7 +2848,7 @@ function OpenCommandPaletteDialog(props: {
           ],
         };
   const newProjectOptionGroups: CommandPaletteView["groups"] =
-    newProjectGitHubTarget === null || newProjectPathPreview === null
+    newProjectPublishTarget === null || newProjectPathPreview === null
       ? []
       : [
           {
@@ -2971,22 +2857,81 @@ function OpenCommandPaletteDialog(props: {
             items: [
               {
                 kind: "action",
-                value: newProjectGitHubToggleValue,
+                value: newProjectPublishToggleValue,
                 searchTerms: [],
-                title: "Create private repository on GitHub",
+                title:
+                  newProjectPublishTargets.length > 1
+                    ? "Create private repository"
+                    : `Create private repository on ${newProjectPublishTarget.definition.label}`,
                 description:
                   newProjectName.length > 0
-                    ? getNewProjectGitHubRepository(newProjectGitHubTarget, newProjectPathPreview)
-                    : (newProjectGitHubTarget.account ?? "Your GitHub account"),
-                icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+                    ? getNewProjectRepository(newProjectPublishTarget, newProjectPathPreview)
+                    : (newProjectPublishTarget.owner ??
+                      `Your ${newProjectPublishTarget.definition.label} account`),
+                icon: sourceControlHostIcon(newProjectPublishTarget.definition, ITEM_ICON_CLASS),
                 titleTrailingContent: (
-                  <span className="pointer-events-none ms-auto flex">
-                    <Checkbox checked={newProjectPublishesToGitHub} tabIndex={-1} aria-hidden />
+                  <span className="ms-auto flex items-center gap-2">
+                    {newProjectPublishTargets.length > 1 ? (
+                      // The row toggles on click, so the picker keeps its clicks to itself. The
+                      // row also cancels pointerdown to keep focus in the input, which drops the
+                      // mousedown Select opens on, so the picker opens on click instead.
+                      <span
+                        className="flex"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          // React bubbles the popup's clicks here through its portal; only the
+                          // trigger opens the picker.
+                          if (!event.currentTarget.contains(event.target as Node)) return;
+                          if (!isCreatingNewProject) setNewProjectHostPickerOpen(true);
+                        }}
+                      >
+                        <Select
+                          disabled={isCreatingNewProject}
+                          open={newProjectHostPickerOpen}
+                          onOpenChange={setNewProjectHostPickerOpen}
+                          value={newProjectPublishTarget.definition.kind}
+                          onValueChange={(kind) => {
+                            if (kind !== null) setNewProjectPublishKind(kind);
+                          }}
+                        >
+                          <SelectTrigger
+                            size="xs"
+                            variant="ghost"
+                            aria-label="Host for the new repository"
+                          >
+                            <SelectValue>
+                              {(kind: SourceControlProviderKind) =>
+                                sourceControlClients.get(kind).label
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="end" alignItemWithTrigger={false}>
+                            {newProjectPublishTargets.map((target) => (
+                              <SelectItem
+                                key={target.definition.kind}
+                                hideIndicator
+                                value={target.definition.kind}
+                              >
+                                <span className="inline-flex items-center gap-1.5">
+                                  {sourceControlHostIcon(target.definition, "size-3.5")}
+                                  {target.definition.label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                      </span>
+                    ) : null}
+                    <span className="pointer-events-none flex">
+                      <Checkbox checked={newProjectPublishes} tabIndex={-1} aria-hidden />
+                    </span>
                   </span>
                 ),
+                // The create in flight keeps the choice it started with.
+                ...(isCreatingNewProject ? { disabled: true } : {}),
                 keepOpen: true,
                 run: async () => {
-                  setNewProjectPublishesToGitHub((publishes) => !publishes);
+                  setNewProjectPublishes((publishes) => !publishes);
                 },
               },
             ],
@@ -3460,7 +3405,7 @@ function OpenCommandPaletteDialog(props: {
     newProjectFlow !== null
       ? highlightedItemValue === null
         ? "Create"
-        : highlightedItemValue === newProjectGitHubToggleValue
+        : highlightedItemValue === newProjectPublishToggleValue
           ? "Toggle"
           : "Select"
       : addProjectCloneFlow?.step === "repository"

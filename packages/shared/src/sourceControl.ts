@@ -1,8 +1,5 @@
-import type {
-  RepositoryIdentity,
-  SourceControlProviderInfo,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import type { RepositoryIdentity, SourceControlProviderInfo } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon:
@@ -26,11 +23,6 @@ export interface ChangeRequestTerminology {
   readonly shortLabel: string;
   readonly singular: string;
 }
-
-export const DEFAULT_CHANGE_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
-  shortLabel: "PR",
-  singular: "pull request",
-};
 
 const GITHUB_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "github",
@@ -124,7 +116,7 @@ export function resolveChangeRequestPresentation(
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
     case "gitcafe":
       return GITCAFE_CHANGE_REQUEST_PRESENTATION;
-    case "unknown":
+    default:
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
 }
@@ -133,20 +125,6 @@ function resolveChangeRequestPresentationForKind(
   kind: SourceControlProviderKind,
 ): ChangeRequestPresentation {
   return resolveChangeRequestPresentation({ kind, name: "", baseUrl: "" });
-}
-
-export function getChangeRequestTerminology(
-  provider: SourceControlProviderInfo | null | undefined,
-): ChangeRequestTerminology {
-  if (!provider) {
-    return DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
-  }
-
-  const presentation = resolveChangeRequestPresentation(provider);
-  return {
-    shortLabel: presentation.shortName,
-    singular: presentation.longName,
-  };
 }
 
 export function getChangeRequestTerminologyForKind(
@@ -244,7 +222,11 @@ export function detectSourceControlProviderFromRemoteUrl(
   const hostname = parseHostName(host);
 
   if (isGitCafeHost(hostname)) {
-    return { kind: "gitcafe", name: "GitCafe", baseUrl: toBaseUrl(hostname) };
+    return {
+      kind: SourceControlProviderKind.make("gitcafe"),
+      name: "GitCafe",
+      baseUrl: toBaseUrl(hostname),
+    };
   }
 
   if (
@@ -253,7 +235,7 @@ export function detectSourceControlProviderFromRemoteUrl(
     hasDnsLabel(hostname, "gitea")
   ) {
     return {
-      kind: "forgejo",
+      kind: SourceControlProviderKind.make("forgejo"),
       name: "Forgejo",
       baseUrl: /^https?:/iu.test(remoteUrl.trim())
         ? new URL(remoteUrl.trim()).origin
@@ -263,7 +245,7 @@ export function detectSourceControlProviderFromRemoteUrl(
 
   if (isGitHubHost(hostname)) {
     return {
-      kind: "github",
+      kind: SourceControlProviderKind.make("github"),
       name: hostname === "github.com" ? "GitHub" : "GitHub Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
@@ -271,7 +253,7 @@ export function detectSourceControlProviderFromRemoteUrl(
 
   if (isGitLabHost(hostname)) {
     return {
-      kind: "gitlab",
+      kind: SourceControlProviderKind.make("gitlab"),
       name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
@@ -279,7 +261,7 @@ export function detectSourceControlProviderFromRemoteUrl(
 
   if (isAzureDevOpsHost(hostname)) {
     return {
-      kind: "azure-devops",
+      kind: SourceControlProviderKind.make("azure-devops"),
       name: "Azure DevOps",
       baseUrl: toBaseUrl(host),
     };
@@ -287,14 +269,14 @@ export function detectSourceControlProviderFromRemoteUrl(
 
   if (isBitbucketHost(hostname)) {
     return {
-      kind: "bitbucket",
+      kind: SourceControlProviderKind.make("bitbucket"),
       name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }
 
   return {
-    kind: "unknown",
+    kind: SourceControlProviderKind.make("unknown"),
     name: host,
     baseUrl: toBaseUrl(host),
   };

@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
 import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
@@ -109,12 +110,15 @@ export function formatHeaderDiffSummary(
 } {
   if (files) {
     return {
-      additions: `+${files.reduce((total, file) => total + file.additions, 0)}`,
-      deletions: `-${files.reduce((total, file) => total + file.deletions, 0)}`,
+      additions: `+${formatDiffCount(files.reduce((total, file) => total + file.additions, 0))}`,
+      deletions: `-${formatDiffCount(files.reduce((total, file) => total + file.deletions, 0))}`,
     };
   }
   if (parsedDiff.kind !== "files") return { additions: null, deletions: null };
-  return { additions: `+${parsedDiff.additions}`, deletions: `-${parsedDiff.deletions}` };
+  return {
+    additions: `+${formatDiffCount(parsedDiff.additions)}`,
+    deletions: `-${formatDiffCount(parsedDiff.deletions)}`,
+  };
 }
 
 export function useReviewDiffData(input: {

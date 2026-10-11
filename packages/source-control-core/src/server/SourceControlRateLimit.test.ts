@@ -1,10 +1,11 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
-const github = { provider: "github" as const, host: "github.com" };
+const github = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
 
 it.effect("isolates cooldowns for verified credentials on the same host", () =>
   Effect.gen(function* () {
@@ -41,7 +42,7 @@ it.effect("backs off repeated rate limits until a successful request", () =>
     const firstPause = yield* Effect.flip(limits.check(github));
     assert.deepInclude(firstPause, {
       _tag: "SourceControlRateLimitPausedError",
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       host: "github.com",
       retryAt: 30_000,
     });
@@ -105,8 +106,20 @@ it.effect("keeps providers and hosts isolated", () =>
     const lease = yield* limits.check(github);
     yield* limits.recordRateLimit({ ...github, lease });
 
-    assert.equal(yield* limits.check({ provider: "gitlab", host: "github.com" }), 0);
-    assert.equal(yield* limits.check({ provider: "github", host: "github.example.com" }), 0);
+    assert.equal(
+      yield* limits.check({
+        provider: SourceControlProviderKind.make("gitlab"),
+        host: "github.com",
+      }),
+      0,
+    );
+    assert.equal(
+      yield* limits.check({
+        provider: SourceControlProviderKind.make("github"),
+        host: "github.example.com",
+      }),
+      0,
+    );
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );
 

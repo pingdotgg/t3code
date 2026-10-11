@@ -634,6 +634,11 @@ export const PullRequestProviderSummary = Schema.Struct({
   kind: SourceControlProviderKind,
   /** False where a search has to be applied to the rows after they arrive. */
   searchesOnHost: Schema.Boolean,
+  /**
+   * The actions this host can carry out, so a row can offer them before its detail is read.
+   * Absent from servers older than this field; clients then offer what they always did.
+   */
+  actions: Schema.optional(Schema.Array(PullRequestAction)),
   projectCount: PositiveInt,
   /** False when the provider's CLI or credentials are missing, with `detail` saying which. */
   configured: Schema.Boolean,
@@ -1301,38 +1306,54 @@ export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.T
  * symptom. The reason names keep their `cli-` prefix for wire compatibility; for GitHub and
  * Bitbucket they mean "no credential" and "a refused credential", not a missing tool.
  */
-const PROVIDER_REQUIREMENT: Partial<
-  Record<SourceControlProviderKind, { readonly missing: string; readonly unauthenticated: string }>
-> = {
-  github: {
-    missing:
-      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
-    unauthenticated:
-      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
-  },
-  forgejo: {
-    missing:
-      "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
-    unauthenticated:
-      "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
-  },
-  gitlab: {
-    missing:
-      "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
-    unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
-  },
-  "azure-devops": {
-    missing:
-      "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
-    unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
-  },
-  bitbucket: {
-    missing:
-      "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
-    unauthenticated:
-      "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
-  },
-};
+const PROVIDER_REQUIREMENT = new Map<
+  string,
+  { readonly missing: string; readonly unauthenticated: string }
+>([
+  [
+    "github",
+    {
+      missing:
+        "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+      unauthenticated:
+        "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    },
+  ],
+  [
+    "forgejo",
+    {
+      missing:
+        "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+      unauthenticated:
+        "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+    },
+  ],
+  [
+    "gitlab",
+    {
+      missing:
+        "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
+      unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
+    },
+  ],
+  [
+    "azure-devops",
+    {
+      missing:
+        "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
+      unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
+    },
+  ],
+  [
+    "bitbucket",
+    {
+      missing:
+        "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+      unauthenticated:
+        "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    },
+  ],
+]);
 
 /**
  * The host a project's repository is addressed below. `canonicalKey` is the normalized remote,
@@ -1394,7 +1415,7 @@ export function pullRequestProviderRequirement(
   provider: SourceControlProviderKind,
   reason: PullRequestUnavailableReason,
 ): string | null {
-  const requirement = PROVIDER_REQUIREMENT[provider];
+  const requirement = PROVIDER_REQUIREMENT.get(provider);
   if (requirement === undefined) return null;
   switch (reason) {
     case "cli-missing":
@@ -1427,7 +1448,7 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
 
   override get message(): string {
     const requirement =
-      this.provider === undefined ? undefined : PROVIDER_REQUIREMENT[this.provider];
+      this.provider === undefined ? undefined : PROVIDER_REQUIREMENT.get(this.provider);
     switch (this.reason) {
       case "cli-missing":
         return (

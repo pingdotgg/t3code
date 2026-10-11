@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ProjectId, type PullRequestSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -5,7 +6,7 @@ import { newestPullRequestObservation, newestPullRequestSummary } from "./pullRe
 
 function summary(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {
   return {
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     projectId: ProjectId.make("pull-request-cache-test"),
     repository: "acme/widget",
     number: 7,
