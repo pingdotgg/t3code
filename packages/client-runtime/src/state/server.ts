@@ -1175,6 +1175,33 @@ export function createServerEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    // Skills installed from a source: read-only facts about the skill folders
+    // the agents report, and the installs that change them.
+    inspectSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:skills:inspect",
+      tag: WS_METHODS.skillsInspect,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    previewSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:preview",
+      tag: WS_METHODS.skillsPreview,
+    }),
+    installSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:install",
+      tag: WS_METHODS.skillsInstall,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    updateSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:update",
+      tag: WS_METHODS.skillsUpdate,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    removeSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:remove",
+      tag: WS_METHODS.skillsRemove,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

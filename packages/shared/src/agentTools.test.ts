@@ -10,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { mcpServerEnabledPatch, skillsDisabledPatch } from "./agentTools.ts";
 import { resolveProjectSettings } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -89,6 +90,43 @@ describe("project tools overrides", () => {
       "grill-me",
       "prepare-pr",
     ]);
+  });
+});
+
+describe("skill switches", () => {
+  it("turns an inherited skill back on for a project whatever its case", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      disabledSkills: ["Grill-Me"],
+      projectSettingsOverrides: { [projectId]: { disabledSkills: { "GRILL-ME": true } } },
+    } satisfies ServerSettings;
+    const next = applyServerSettingsPatch(
+      settings,
+      skillsDisabledPatch(settings, projectId, ["grill-me"], false),
+    );
+    // One switch replaces the differently cased one, spelled as the environment spells it.
+    expect(next.projectSettingsOverrides[projectId]?.disabledSkills).toEqual({ "Grill-Me": false });
+    expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual([]);
+  });
+});
+
+describe("skill switch names", () => {
+  it("switches a skill named __proto__ like any other", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, disabledSkills: [] } satisfies ServerSettings;
+    const next = applyServerSettingsPatch(
+      settings,
+      skillsDisabledPatch(settings, projectId, ["__proto__"], true),
+    );
+    expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual(["__proto__"]);
+  });
+});
+
+describe("server switch names", () => {
+  it("refuses a server the settings only inherit from Object", () => {
+    expect(
+      mcpServerEnabledPatch(DEFAULT_SERVER_SETTINGS, projectId, "constructor", false),
+    ).toBeNull();
+    expect(mcpServerEnabledPatch(DEFAULT_SERVER_SETTINGS, null, "constructor", false)).toBeNull();
   });
 });
 

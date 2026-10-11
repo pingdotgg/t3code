@@ -7,6 +7,10 @@
       "types": "./src/client.ts",
       "import": "./src/client.ts"
     },
+    "./server/AgentSkillFolders": {
+      "types": "./src/server/AgentSkillFolders.ts",
+      "import": "./src/server/AgentSkillFolders.ts"
+    },
     "./server/adapterDriver": {
       "types": "./src/server/adapterDriver.ts",
       "import": "./src/server/adapterDriver.ts"

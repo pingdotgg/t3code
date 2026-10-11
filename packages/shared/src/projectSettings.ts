@@ -232,18 +232,21 @@ function mergeProjectMcpServers(
   return merged as McpServers;
 }
 
-/** The environment's disabled skills with a project's per-name switches applied. */
+/**
+ * The environment's disabled skills with a project's per-name switches
+ * applied. Names match ignoring case, as agents and the composer match them.
+ */
 export function mergeProjectDisabledSkills(
   environment: DisabledSkills,
   project: DisabledSkillsProjectOverride | undefined,
 ): DisabledSkills {
   if (project === undefined) return environment;
-  const disabled = new Set(environment);
+  const disabled = new Map(environment.map((name) => [name.toLowerCase(), name]));
   for (const [name, off] of Object.entries(project)) {
-    if (off) disabled.add(name);
-    else disabled.delete(name);
+    if (off) disabled.set(name.toLowerCase(), disabled.get(name.toLowerCase()) ?? name);
+    else disabled.delete(name.toLowerCase());
   }
-  return [...disabled].sort();
+  return [...disabled.values()].sort();
 }
 
 /** Replace the project's entry, dropping it entirely when nothing is overridden. */

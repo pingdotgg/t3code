@@ -645,6 +645,9 @@ importers:
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
+      skills:
+        specifier: 1.7.1
+        version: 1.7.1
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
@@ -10939,6 +10942,11 @@ packages:
 
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
+  skills@1.7.1:
+    resolution: {integrity: sha512-LUHR/+3D3evhwejiMfBStH7ndqJkV9UlwkjH1LpQ8j1g1cJO1yrXs+R+xS0AuV6E7iX0uZt44xEMAPZC+o40nA==}
+    engines: {node: '>=22.20.0'}
+    hasBin: true
 
   slugify@1.6.9:
     resolution: {integrity: sha512-vZ7rfeehZui7wQs438JXBckYLkIIdfHOXsaVEUMyS5fHo1483l1bMdo0EDSWYclY0yZKFOipDy4KHuKs6ssvdg==}
@@ -22298,6 +22306,11 @@ snapshots:
       totalist: 3.0.1
 
   sisteransi@1.0.5: {}
+
+  skills@1.7.1:
+    dependencies:
+      tar: 7.5.22
+      yaml: 2.9.0
 
   slugify@1.6.9: {}
 
