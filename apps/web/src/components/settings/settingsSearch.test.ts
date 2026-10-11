@@ -153,6 +153,17 @@ describe("searchSettings", () => {
     });
   });
 
+  it("registers Styled Context Menu as a desktop-only setting", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "styled-context-menu")).toMatchObject({
+      title: "Styled Context Menu",
+      to: "/settings/appearance",
+      desktopOnly: true,
+    });
+    expect(searchSettings("styled context menu").map((item) => item.id)).not.toContain(
+      "styled-context-menu",
+    );
+  });
+
   it("hides macOS-only settings on other platforms", () => {
     vi.stubGlobal("navigator", { platform: "Win32" });
     try {
