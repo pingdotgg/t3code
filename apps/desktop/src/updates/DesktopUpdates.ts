@@ -196,6 +196,39 @@ const {
   logError: logUpdaterError,
 } = DesktopObservability.makeComponentLogger("desktop-updater");
 
+// Fixed electron-updater messages for install checks that fail before any
+// installer command runs. These errors carry no code or exit status.
+const UPDATER_INSTALL_FAILURE_REASONS = [
+  ["No update filepath provided", "no-installer-path"],
+  ["Neither dpkg nor apt command found", "no-package-manager"],
+] as const;
+
+// electron-updater messages can embed the feed or download URL, credentials
+// included, so an updater failure logs only these bounded fields of its cause:
+// the error code (`ERR_UPDATER_*`, `HTTP_ERROR_404`, `ENOTFOUND`), the exit
+// status of a failed installer command such as a dismissed pkexec prompt, and
+// a fixed reason for known install checks.
+function describeUpdaterFailureCause(cause: unknown): {
+  readonly errorCode?: string;
+  readonly exitStatus?: number;
+  readonly reason?: string;
+} {
+  if (!(cause instanceof Error)) return {};
+  const exitStatus = / exited with code (\d{1,3})$/.exec(cause.message)?.[1];
+  const reason = UPDATER_INSTALL_FAILURE_REASONS.find(([prefix]) =>
+    cause.message.startsWith(prefix),
+  )?.[1];
+  return {
+    ...(reason ? { reason } : {}),
+    ...("code" in cause &&
+    typeof cause.code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,63}$/.test(cause.code)
+      ? { errorCode: cause.code }
+      : {}),
+    ...(exitStatus ? { exitStatus: Number(exitStatus) } : {}),
+  };
+}
+
 function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYmlConfig>> {
   const entries: Record<string, string> = {};
   for (const line of raw.split("\n")) {
@@ -323,6 +356,17 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A Linux process with the no_new_privs flag can never gain root through
+  // pkexec or sudo, and the flag is permanent. Chromium sets it on processes
+  // that app.relaunch() starts.
+  const hasNoNewPrivs =
+    environment.platform === "linux"
+      ? fileSystem.readFileString("/proc/self/status", "utf-8").pipe(
+          Effect.map((status) => /^NoNewPrivs:\s*1$/m.test(status)),
+          Effect.orElseSucceed(() => false),
+        )
+      : Effect.succeed(false);
+
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
     Effect.flatMap(
@@ -443,6 +487,7 @@ export const make = Effect.gen(function* () {
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               channel: error.channel,
+              ...describeUpdaterFailureCause(error.cause),
             });
             return true;
           }),
@@ -486,6 +531,7 @@ export const make = Effect.gen(function* () {
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               channel: error.channel,
+              ...describeUpdaterFailureCause(error.cause),
             });
             return { accepted: true, completed: false };
           },
@@ -653,11 +699,20 @@ export const make = Effect.gen(function* () {
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
+                const causeContext = describeUpdaterFailureCause(error.cause);
+                // An installer command that exits under no_new_privs failed to
+                // get root, whatever the command printed.
+                const reason =
+                  causeContext.exitStatus !== undefined && (yield* hasNoNewPrivs)
+                    ? "no-new-privs"
+                    : causeContext.reason;
                 yield* logUpdaterError(error.message, {
                   errorTag: error._tag,
                   channel: error.channel,
                   isSilent: error.isSilent,
                   isForceRunAfter: error.isForceRunAfter,
+                  ...causeContext,
+                  ...(reason ? { reason } : {}),
                 });
                 return { accepted: true, completed: false, failed: true };
               },
@@ -812,6 +867,7 @@ export const make = Effect.gen(function* () {
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
         operation: error.operation,
+        ...describeUpdaterFailureCause(error.cause),
       });
       return;
     }
@@ -832,6 +888,7 @@ export const make = Effect.gen(function* () {
     yield* logUpdaterError(error.message, {
       errorTag: error._tag,
       operation: error.operation,
+      ...describeUpdaterFailureCause(error.cause),
     });
   });
 
