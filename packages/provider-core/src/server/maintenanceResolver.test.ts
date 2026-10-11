@@ -797,6 +797,30 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "stays manual for a mise launcher at a native-looking path",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-wrapper-capabilities");
+        const wrapperPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(wrapperPath), { recursive: true });
+        NodeFS.writeFileSync(
+          wrapperPath,
+          '#!/bin/bash\nmise use -g --quiet "native-package-tool" || exit 1\nexec mise x "native-package-tool" -- "native-package-tool" "$@"\n',
+        );
+        NodeFS.chmodSync(wrapperPath, 0o755);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: wrapperPath, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        // The path matches the native installer's layout, but the file is a
+        // mise launcher whose own updater exits 0 without updating anything.
+        expect(capabilities.update).toBeNull();
+      }),
+  );
+
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-yarn-capabilities");
