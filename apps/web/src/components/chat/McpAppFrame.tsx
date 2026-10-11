@@ -117,6 +117,7 @@ export function McpAppFrame(props: {
       fileName: mcpAppFileName(app),
       mimeType: "text/html",
       disposition: "inline" as const,
+      renderIntent: "mcp-app" as const,
     }),
     [app],
   );
