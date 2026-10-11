@@ -86,7 +86,7 @@ test("accepts a release commit already contained in main", async () => {
   }
 });
 
-function fixture({ releases = [nightly(7)], comparisonStatus = "ahead" } = {}) {
+function fixture({ releases = [nightly(7)], comparisonStatus = "ahead", files } = {}) {
   const calls = [];
   return {
     calls,
@@ -100,7 +100,7 @@ function fixture({ releases = [nightly(7)], comparisonStatus = "ahead" } = {}) {
             listReleases() {},
             async compareCommitsWithBasehead(params) {
               calls.push(params);
-              return { data: { status: comparisonStatus } };
+              return { data: { status: comparisonStatus, files } };
             },
           },
         },
@@ -137,6 +137,16 @@ test("releases new commits at six hours and after an idle period", async () => {
 test("skips unchanged commits after the gap", async () => {
   const { options } = fixture({ comparisonStatus: "identical" });
   assert.equal(await shouldReleaseNightly(options), false);
+});
+
+test("Nix pin updates alone do not trigger another nightly", async () => {
+  const pin = { filename: "packaging/nix/releases.json" };
+  const { options } = fixture({ files: [pin] });
+  assert.equal(await shouldReleaseNightly(options), false);
+  const mixed = fixture({ files: [pin, { filename: "apps/desktop/src/app.ts" }] });
+  assert.equal(await shouldReleaseNightly(mixed.options), true);
+  const renamed = fixture({ files: [{ ...pin, previous_filename: "apps/desktop/src/app.ts" }] });
+  assert.equal(await shouldReleaseNightly(renamed.options), true);
 });
 
 test("uses publication time, not release order or the tagged commit date", async () => {

@@ -1,0 +1,12 @@
+{
+  "stable": {
+    "version": "0.0.45",
+    "publishedAt": "2026-10-02T18:17:31Z",
+    "sha256": "ab7b0a86d1ea657ccc162b60b772c61f70bc7c8b9e259b46939d53bb38faa02a"
+  },
+  "nightly": {
+    "version": "0.0.46-nightly.20261005.2689",
+    "publishedAt": "2026-10-05T17:36:38Z",
+    "sha256": "76464a166f3c8894198a6cd523917730354de02f9bda6626cab9c816ec8fc46a"
+  }
+}

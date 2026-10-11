@@ -76,6 +76,34 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+### NixOS
+
+On x86_64 Linux, run the stable or nightly desktop app:
+
+```bash
+nix run github:pingdotgg/t3code#stable
+nix run github:pingdotgg/t3code#nightly
+```
+
+For a declarative install, add `inputs.t3code.url = "github:pingdotgg/t3code";`
+to your system flake and pass `specialArgs = { inherit inputs; };` to
+`nixpkgs.lib.nixosSystem`. Then select the package in a NixOS module:
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.t3code.packages.${pkgs.stdenv.hostPlatform.system}.stable
+  ];
+}
+```
+
+Use `.nightly` for nightly builds. `.default` and `.t3code` select stable.
+From the system flake directory, run `nix flake update t3code`, then
+`sudo nixos-rebuild switch --flake .#<hostname>` to upgrade. The lock file
+keeps the selected version pinned until you update it. The app's automatic
+updater is disabled for this package; use Nix to upgrade it.
+
 ### The `t3` command
 
 The desktop app includes the `t3` command-line tool. To run it from any
