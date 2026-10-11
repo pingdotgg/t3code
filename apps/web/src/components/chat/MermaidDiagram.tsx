@@ -2,6 +2,7 @@ import DOMPurify from "dompurify";
 import type { Mermaid } from "mermaid";
 import { use, useState } from "react";
 
+import { serializeCodeBlockToMarkdown } from "../../markdown-clipboard";
 import { Button } from "../ui/button";
 
 type MermaidRenderResult =
@@ -204,7 +205,11 @@ export function MermaidDiagram({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div
+      className="overflow-x-auto"
+      data-markdown-mermaid=""
+      data-markdown-copy={serializeCodeBlockToMarkdown(source, "mermaid")}
+    >
       <button
         type="button"
         aria-label="Expand diagram"

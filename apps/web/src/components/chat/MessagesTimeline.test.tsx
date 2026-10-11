@@ -3,12 +3,17 @@
 import {
   ApprovalRequestId,
   CheckpointRef,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  decodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
 import {
   act,
   createRef,
@@ -483,6 +488,78 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it.each([false, true])(
+    "copies context records only when their chip is selected: %s",
+    async (selectChip) => {
+      vi.unstubAllGlobals();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const record = {
+        version: 1 as const,
+        kind: "image" as const,
+        contextId: ComposerContextId.make("image-1"),
+        label: "shot.png",
+        attachmentId: "attachment-1",
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+      };
+      const link = `[shot.png](t3-context://v1/image/${record.contextId})`;
+      const source = `\`\`\`mermaid\nflowchart LR\n    A --> B\n%% ${link}\n\`\`\``;
+      const container = document.createElement("div");
+      container.innerHTML = `<div class="chat-markdown"><p>Before</p><div data-markdown-mermaid=""><button><svg><text>A</text></svg></button></div><p>After</p><button><span>shot.png</span></button></div>`;
+      container
+        .querySelector("[data-markdown-mermaid]")!
+        .setAttribute("data-markdown-copy", source);
+      const chip = container.querySelector(".chat-markdown > button")!;
+      chip.setAttribute("data-markdown-copy", link);
+      document.body.append(container);
+      const selection = window.getSelection()!;
+      const range = document.createRange();
+      range.setStartBefore(container.querySelector("p")!);
+      range.setEndAfter(selectChip ? chip : container.querySelectorAll("p")[1]!);
+      selection.addRange(range);
+      const clipboard = new Map<string, string>();
+      const preventDefault = vi.fn();
+      const entry = buildUserTimelineEntry("Before\n\nAfter");
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={[
+                {
+                  ...entry,
+                  message: { ...entry.message, context: { version: 1, records: [record] } },
+                },
+              ]}
+            />,
+          );
+        });
+        renderer!.root
+          .find((node) => typeof node.props.onCopyCapture === "function")
+          .props.onCopyCapture({
+            clipboardData: { setData: (type: string, value: string) => clipboard.set(type, value) },
+            preventDefault,
+          });
+        expect(preventDefault).toHaveBeenCalledTimes(selectChip ? 1 : 0);
+        if (selectChip) {
+          expect(clipboard.get("text/plain")).toContain(source);
+          expect(
+            decodeComposerContextFragment(clipboard.get(COMPOSER_CONTEXT_CLIPBOARD_MIME))?.records,
+          ).toEqual([record]);
+        } else {
+          expect(clipboard.size).toBe(0);
+        }
+      } finally {
+        await act(() => renderer?.unmount());
+        selection.removeAllRanges();
+        container.remove();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("shows dynamic tool input without cached output when the row is expanded", async () => {
     activityTestState.expanded = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
