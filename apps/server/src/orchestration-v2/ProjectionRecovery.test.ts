@@ -682,7 +682,10 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       preparedState.providerSessions.map((session) => session.id),
       [preparedSessionId],
     );
-    assert.equal(restartContinuationRun(preparedState)?.id, preparedRunId);
+    assert.equal(
+      restartContinuationRun(preparedState, DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"))?.id,
+      preparedRunId,
+    );
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`

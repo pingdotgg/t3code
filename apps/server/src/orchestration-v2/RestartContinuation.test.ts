@@ -36,6 +36,7 @@ const driver = ProviderDriverKind.make("codex");
 const providerThreadId = ProviderThreadId.make("provider-thread:restart");
 const sessionId = ProviderSessionId.make("session:restart");
 const attemptId = RunAttemptId.make("attempt:restart");
+const testNow = DateTime.makeUnsafe("2026-10-03T10:00:00.000Z");
 // "No project" threads belong to the environment's Scratch project.
 const scratchProjectId = ProjectId.make("project:scratch");
 
@@ -93,7 +94,7 @@ function makeProjection() {
 
 it("requires matching saved native state for an unfinished root run", () => {
   const projection = makeProjection();
-  assert.equal(restartContinuationRun(projection)?.id, runId);
+  assert.equal(restartContinuationRun(projection, testNow)?.id, runId);
   for (const invalid of [
     { ...projection, thread: { ...projection.thread, archivedAt: {} } },
     { ...projection, thread: { ...projection.thread, deletedAt: {} } },
@@ -126,7 +127,7 @@ it("requires matching saved native state for an unfinished root run", () => {
       "interrupted",
     ].map((status) => ({ ...projection, runs: [{ ...projection.runs[0]!, status }] })),
   ])
-    assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection));
+    assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection, testNow));
 });
 
 it.effect.each([
@@ -167,7 +168,7 @@ it.effect.each([
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection;
-      assert.equal(restartContinuationRun(projection) !== undefined, shouldContinue);
+      assert.equal(restartContinuationRun(projection, testNow) !== undefined, shouldContinue);
       const dispatch = [] as Array<unknown>;
       yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
         Effect.provide(
@@ -201,9 +202,9 @@ it("continues a live turn whose session the adapter never marked running", () =>
       providerSessions: [{ ...projection.providerSessions[0]!, status }],
     }) as OrchestrationV2ThreadProjection;
   for (const status of ["starting", "ready", "running", "waiting"])
-    assert.equal(restartContinuationRun(withSessionStatus(status))?.id, runId, status);
+    assert.equal(restartContinuationRun(withSessionStatus(status), testNow)?.id, runId, status);
   for (const status of ["stopped", "error"])
-    assert.isUndefined(restartContinuationRun(withSessionStatus(status)), status);
+    assert.isUndefined(restartContinuationRun(withSessionStatus(status), testNow), status);
 });
 
 it("recovers an admitted continuation after another crash before provider start", () => {
@@ -221,7 +222,7 @@ it("recovers an admitted continuation after another crash before provider start"
     providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
     providerTurns: [],
   };
-  assert.equal(restartContinuationRun(starting)?.id, runId);
+  assert.equal(restartContinuationRun(starting, testNow)?.id, runId);
 });
 
 it("recovers an accepted steering restart before the replacement turn starts", () => {
@@ -234,7 +235,7 @@ it("recovers an accepted steering restart before the replacement turn starts", (
     providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
     providerTurns: [],
   } as unknown as OrchestrationV2ThreadProjection;
-  assert.equal(restartContinuationRun(starting)?.id, runId);
+  assert.equal(restartContinuationRun(starting, testNow)?.id, runId);
 });
 
 it("does not continue settled root runs with restart-cancelled background work", () => {
@@ -255,11 +256,14 @@ it("does not continue settled root runs with restart-cancelled background work",
   for (const projectId of [scratchProjectId, projection.thread.projectId])
     for (const status of ["completed", "waiting"] as const)
       assert.isUndefined(
-        restartContinuationRun({
-          ...settled,
-          thread: { ...settled.thread, projectId },
-          runs: [{ ...settled.runs[0]!, status }],
-        }),
+        restartContinuationRun(
+          {
+            ...settled,
+            thread: { ...settled.thread, projectId },
+            runs: [{ ...settled.runs[0]!, status }],
+          },
+          testNow,
+        ),
       );
 });
 
@@ -851,10 +855,13 @@ it.effect("continues a cut run past queued follow-ups, which stay held", () =>
   Effect.gen(function* () {
     const live = makeProjection();
     assert.equal(
-      restartContinuationRun({
-        ...live,
-        runs: [...live.runs, queuedFollowUp],
-      } as unknown as OrchestrationV2ThreadProjection)?.id,
+      restartContinuationRun(
+        {
+          ...live,
+          runs: [...live.runs, queuedFollowUp],
+        } as unknown as OrchestrationV2ThreadProjection,
+        testNow,
+      )?.id,
       runId,
     );
     const cut = cutMidTurn();
@@ -984,10 +991,13 @@ it.effect("continues a resumed queued run that ran after an earlier continuation
     };
     const live = makeProjection();
     assert.equal(
-      restartContinuationRun({
-        ...live,
-        runs: [...live.runs, finishedContinuation],
-      } as unknown as OrchestrationV2ThreadProjection)?.id,
+      restartContinuationRun(
+        {
+          ...live,
+          runs: [...live.runs, finishedContinuation],
+        } as unknown as OrchestrationV2ThreadProjection,
+        testNow,
+      )?.id,
       runId,
     );
     const cut = cutMidTurn({ completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00.000Z") });
@@ -1139,9 +1149,21 @@ it.effect.each(["snoozed", "settled"] as const)(
           ? { snoozedUntil: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z") }
           : { settledOverride: "settled" as const }),
       };
-      assert.isUndefined(restartContinuationRun({ ...live, thread }));
+      assert.isUndefined(restartContinuationRun({ ...live, thread }, testNow));
       assert.deepEqual(yield* continuationTexts({ ...cutMidTurn(), thread }), []);
     }),
+);
+
+it.effect("continues a thread whose snooze already elapsed", () =>
+  Effect.gen(function* () {
+    const live = makeProjection();
+    const thread = {
+      ...live.thread,
+      snoozedUntil: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+    };
+    assert.equal(restartContinuationRun({ ...live, thread }, testNow)?.id, runId);
+    assert.lengthOf(yield* continuationTexts({ ...cutMidTurn(), thread }), 1);
+  }),
 );
 
 it.effect.each(["pending", "cancelled"] as const)(
@@ -1156,7 +1178,7 @@ it.effect.each(["pending", "cancelled"] as const)(
       };
       if (secretStatus === "pending")
         assert.isUndefined(
-          restartContinuationRun({ ...makeProjection(), turnItems: projection.turnItems }),
+          restartContinuationRun({ ...makeProjection(), turnItems: projection.turnItems }, testNow),
         );
       assert.deepEqual(yield* continuationTexts(projection), []);
     }),

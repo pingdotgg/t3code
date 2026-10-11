@@ -4585,6 +4585,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           restartContinuationBlocked(
             { ...projection, turnItems: secretRequests.turnItems },
             source,
+            yield* DateTime.now,
           ) ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.

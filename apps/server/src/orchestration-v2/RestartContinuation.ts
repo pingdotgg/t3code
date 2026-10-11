@@ -32,12 +32,17 @@ export function restartContinuationBlocked(
     "thread" | "runtimeRequests" | "providerTurns" | "turnItems"
   >,
   source: OrchestrationV2Run,
+  now: DateTime.Utc,
 ): boolean {
+  // An elapsed snooze no longer holds the thread. The early wakes the settlement
+  // service counts (a run that completed or failed after the snooze) cannot
+  // apply here: the source is the latest run and it was cut, not finished.
   if (
     projection.thread.archivedAt !== null ||
     projection.thread.deletedAt !== null ||
     projection.thread.settledOverride === "settled" ||
-    projection.thread.snoozedUntil != null
+    (projection.thread.snoozedUntil != null &&
+      DateTime.isGreaterThan(projection.thread.snoozedUntil, now))
   )
     return true;
   const turn = latestProviderTurnForAttempt(projection.providerTurns, source.activeAttemptId);
@@ -90,6 +95,7 @@ export function restartContinuationRun(
     | "runtimeRequests"
     | "turnItems"
   >,
+  now: DateTime.Utc,
 ): OrchestrationV2Run | undefined {
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -106,7 +112,7 @@ export function restartContinuationRun(
       restartPromptSource(run, projection.runs, projection.providerTurns, projection.attempts) !==
         undefined);
   if (run.status !== "running" && !preparedContinuation) return;
-  if (restartContinuationBlocked(projection, run)) return;
+  if (restartContinuationBlocked(projection, run, now)) return;
   const liveTurnRequired = !preparedContinuation;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
@@ -190,7 +196,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       (isWorktreeContinuationRun(source) &&
         source.status === "cancelled" &&
         !projection.providerTurns.some((turn) => turn.runAttemptId === source.activeAttemptId)) ||
-      restartContinuationBlocked(projection, source) ||
+      restartContinuationBlocked(projection, source, yield* DateTime.now) ||
       isRestartNoteSource(source, projection.providerTurns)
     )
       return;
