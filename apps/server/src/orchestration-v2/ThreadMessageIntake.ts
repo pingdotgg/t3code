@@ -64,6 +64,14 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
     });
   }
+  if (command.type === "delegated_task.request") {
+    const parent = yield* threads.getThreadRecords(command.parentThreadId, []);
+    yield* threads.assertProviderInstanceEnabled({
+      projectId: parent.thread.projectId,
+      commandId: command.commandId,
+      instanceId: command.modelSelection.instanceId,
+    });
+  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
