@@ -293,7 +293,14 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           {
             header: "Approach",
             question: "Which approach?",
-            options: [{ label: "Simple", description: "Use fewer moving parts" }],
+            options: [
+              {
+                label: "Simple",
+                description: "Use fewer moving parts",
+                preview: "  **Review this draft**\n\n```ts\nconst batch = 1;\n```\n",
+              },
+              { label: "Safe", description: "Keep the current setup" },
+            ],
             multiSelect: true,
           },
         ],
@@ -303,7 +310,14 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           id: "Which approach?",
           header: "Approach",
           question: "Which approach?",
-          options: [{ label: "Simple", description: "Use fewer moving parts" }],
+          options: [
+            {
+              label: "Simple",
+              description: "Use fewer moving parts",
+              preview: "  **Review this draft**\n\n```ts\nconst batch = 1;\n```\n",
+            },
+            { label: "Safe", description: "Keep the current setup" },
+          ],
           multiSelect: true,
         },
       ],

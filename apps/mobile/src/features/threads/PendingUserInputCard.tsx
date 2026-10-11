@@ -2,7 +2,7 @@ import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -92,6 +92,11 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const [focusedOption, setFocusedOption] = useState<{
+    requestId: RuntimeRequestId;
+    questionId: string;
+    optionIndex: number;
+  } | null>(null);
   const questionCount = props.pendingUserInput.questions.length;
   // Message responses start a new run and remain available after the provider exits.
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
@@ -272,6 +277,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         ) : null}
         {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
+          const previewOption =
+            focusedOption?.requestId === props.pendingUserInput.requestId &&
+            focusedOption.questionId === question.id
+              ? question.options[focusedOption.optionIndex]
+              : undefined;
           return (
             <View key={question.id} className="gap-2 pt-1">
               <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
@@ -281,7 +291,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 {question.question}
               </Text>
               <View className="gap-2">
-                {question.options.map((option) => {
+                {question.options.map((option, optionIndex) => {
                   const optionValue = option.value ?? option.label.trim();
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
@@ -296,13 +306,18 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
                         selected ? "border-primary bg-primary/10" : "border-border bg-input",
                       )}
-                      onPress={() =>
+                      onPress={() => {
+                        setFocusedOption({
+                          requestId: props.pendingUserInput.requestId,
+                          questionId: question.id,
+                          optionIndex,
+                        });
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
                           optionValue,
-                        )
-                      }
+                        );
+                      }}
                     >
                       <View className="min-w-0 flex-1 gap-0.5">
                         <Text
@@ -323,6 +338,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   );
                 })}
               </View>
+              {previewOption?.preview?.trim() ? (
+                <View className="gap-1.5 rounded-2xl border border-border bg-input p-3.5">
+                  <Text className="font-t3-bold text-xs text-foreground-muted">
+                    Preview · {previewOption.label}
+                  </Text>
+                  <Text selectable className="font-sans text-sm leading-5 text-foreground">
+                    {previewOption.preview}
+                  </Text>
+                </View>
+              ) : null}
               {question.allowCustomAnswer !== false ? (
                 <QuestionAttachments
                   requestId={props.pendingUserInput.requestId}
@@ -330,9 +355,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
                   value={draft?.customAnswer ?? ""}
-                  onChangeText={(value) =>
-                    props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
-                  }
+                  onChangeText={(value) => {
+                    setFocusedOption(null);
+                    props.onChangeCustomAnswer(
+                      props.pendingUserInput.requestId,
+                      question.id,
+                      value,
+                    );
+                  }}
                   onInputFocusChange={props.onInputFocusChange}
                 />
               ) : null}

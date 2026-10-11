@@ -9,6 +9,7 @@ import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import ChatMarkdown from "../ChatMarkdown";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -73,12 +74,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
-  const activeQuestion = progress.activeQuestion;
+  const activeQuestion = prompt.questions[progress.questionIndex];
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
     optionValue: string;
+  } | null>(null);
+  const [focusedOption, setFocusedOption] = useState<{
+    questionId: string;
+    optionIndex: number;
   } | null>(null);
   // Collapsing hides everything but the header so a tall prompt stops covering
   // the thread the user is trying to read. Scoped to a single question: the card
@@ -88,6 +93,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // sending from the composer advances the active question.
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
+
+  if (focusedOption && focusedOption.questionId !== activeQuestion?.id) {
+    setFocusedOption(null);
+  }
 
   useEffect(() => {
     onAdvanceRef.current = onAdvance;
@@ -127,8 +136,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }, [activeQuestion?.id, disabled]);
 
   const handleOptionSelection = useCallback(
-    (questionId: string, optionValue: string) => {
+    (questionId: string, optionValue: string, optionIndex: number) => {
       if (disabled || isResponding) return;
+      setFocusedOption({ questionId, optionIndex });
       if (activeQuestion?.multiSelect) {
         onToggleOption(questionId, optionValue);
         return;
@@ -171,7 +181,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      handleOptionSelection(activeQuestion.id, option.value ?? option.label);
+      handleOptionSelection(activeQuestion.id, option.value ?? option.label, optionIndex);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -182,6 +192,19 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const customAnswerActive = progress.customAnswer.trim().length > 0;
+  // The focused option previews; otherwise the selected one, or the first before any answer.
+  const selectedOptionValue = progress.selectedOptionValues.at(-1);
+  const previewOptionIndex =
+    focusedOption?.questionId === activeQuestion.id
+      ? focusedOption.optionIndex
+      : customAnswerActive
+        ? -1
+        : selectedOptionValue === undefined
+          ? 0
+          : activeQuestion.options.findIndex(
+              (option) => (option.value ?? option.label) === selectedOptionValue,
+            );
+  const previewOption = activeQuestion.options[previewOptionIndex];
 
   return (
     <Collapsible
@@ -290,8 +313,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     key={`${activeQuestion.id}:${optionValue}`}
                     type="button"
                     disabled={disabled || isResponding}
+                    onMouseEnter={() =>
+                      setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
+                    }
+                    onFocus={() =>
+                      setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
+                    }
                     onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
+                      handleOptionSelection(activeQuestion.id, optionValue, index);
                     }}
                     className={className}
                   >
@@ -300,6 +329,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
               })}
             </div>
+            {previewOption?.preview?.trim() ? (
+              <section
+                aria-label={`Preview: ${previewOption.label}`}
+                className="mt-2 min-w-0 rounded-md border border-border/60 bg-muted/25 p-2.5"
+              >
+                <p className="mb-1.5 text-3xs font-medium text-muted-foreground">
+                  Preview · {previewOption.label}
+                </p>
+                <ChatMarkdown
+                  key={`${activeQuestion.id}:${previewOptionIndex}`}
+                  text={previewOption.preview}
+                  cwd={undefined}
+                  parseRawHtml={false}
+                />
+              </section>
+            ) : null}
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>
       </CollapsiblePanel>
