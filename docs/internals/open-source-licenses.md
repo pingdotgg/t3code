@@ -61,7 +61,7 @@ supplies the label shown to users. Use `includeInBundles` when those differ, suc
 server tool that should appear in both client manifests but is not bundled into either client.
 
 The `agent-device` and `expo-device-hub` custom notices take their versions from the
-[shared installer pins](../../packages/shared/src/deviceToolVersions.ts). Keep their package names
+[installer pins](../../apps/server/src/device/deviceToolVersions.json). Keep their package names
 in the config; their versions do not need manual updates.
 
 Use `packageOverrides` only when an installed npm archive omits its notice or has incorrect

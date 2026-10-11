@@ -1,5 +1,4 @@
 import type { DeviceToolVersions } from "@t3tools/contracts";
-import { DEVICE_TOOL_VERSIONS } from "@t3tools/shared/deviceToolVersions";
 /**
  * Pinned installs of the two external tools device support is built on.
  *
@@ -25,6 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import DEVICE_TOOL_VERSIONS from "./deviceToolVersions.json" with { type: "json" };
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
 export const DEVICE_HUB_VERSION = DEVICE_TOOL_VERSIONS[DEVICE_HUB_PACKAGE];
