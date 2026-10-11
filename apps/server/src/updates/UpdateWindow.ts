@@ -9,6 +9,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
+import * as CodexInstallation from "../provider/CodexInstallation.ts";
 import * as ProviderMaintenanceCoordinator from "../provider/providerMaintenanceCommandCoordinator.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -58,6 +60,10 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
   const terminals = yield* TerminalManager.TerminalManager;
+  const managedInstalls = [
+    yield* CodexInstallation.CodexInstallation,
+    yield* AntigravityInstallation.AntigravityInstallation,
+  ];
 
   /** Returns what keeps the window closed; empty means open. */
   const blockers = Effect.fn("updates.UpdateWindow.blockers")(function* (restartsServer: boolean) {
@@ -84,6 +90,15 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     );
     if (providerUpdating) found.push("provider-update");
     if (restartsServer && (yield* terminals.hasBusyTerminals)) found.push("terminal-work");
+    // A first install downloads inside this server, so a restart would discard it.
+    if (restartsServer) {
+      for (const installation of managedInstalls) {
+        const { phase } = yield* installation.state;
+        if (phase === "downloading" || phase === "extracting" || phase === "verifying") {
+          found.push("provider-install");
+        }
+      }
+    }
 
     if (Duration.isLessThan(yield* backgroundPolicy.sinceLastClientInteraction, QUIET_PERIOD)) {
       found.push("recent-interaction");
