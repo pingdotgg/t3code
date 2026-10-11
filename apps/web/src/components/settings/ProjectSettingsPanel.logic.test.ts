@@ -15,9 +15,13 @@ describe("projectGroupTitleNeedsUpdate", () => {
     );
   });
 
-  it("skips an update when every member already has the next title", () => {
-    expect(projectGroupTitleNeedsUpdate(["Shared name", "Shared name"], "Shared name", true)).toBe(
-      false,
-    );
+  it("persists an explicit edit even when every member already has the next title", () => {
+    expect(projectGroupTitleNeedsUpdate(["repo", "repo"], "repo", true)).toBe(true);
+  });
+
+  it("still skips an untouched blur when member titles diverge", () => {
+    expect(
+      projectGroupTitleNeedsUpdate(["local-title", "remote-title"], "local-title", false),
+    ).toBe(false);
   });
 });
