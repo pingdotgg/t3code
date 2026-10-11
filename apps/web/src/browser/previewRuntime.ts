@@ -3,14 +3,44 @@ import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3t
 
 import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
   readEnvironmentSupportsServerBrowser,
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
 
+/**
+ * Where a tab the user opens should run. The desktop app draws its own
+ * server's tabs natively, so those stay agent-drivable at no cost. A remote
+ * environment's tabs would stream, so the desktop opens them in its own
+ * browser instead: no latency, and it reaches what this computer reaches. The
+ * user can move a tab to the environment when only it can reach the page.
+ */
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
-  return readEnvironmentSupportsServerBrowser(environmentId) ? "server" : undefined;
+  if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
+  if (
+    isPreviewSupportedInRuntime() &&
+    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
+  ) {
+    return undefined;
+  }
+  return "server";
+}
+
+/**
+ * The other browser a tab can move to, or null when it has none: a desktop
+ * tab of a remote environment can move to that environment's browser, and back.
+ */
+export function alternatePreviewRuntime(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  serverBrowser: boolean,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
+): PreviewRuntime | null {
+  if (!snapshot || !serverBrowser || !isPreviewSupportedInRuntime()) return null;
+  if (environmentId === primaryEnvironmentId) return null;
+  return snapshot.runtime === "server" ? "desktop" : "server";
 }
 
 /** Electron hosts its own browser tabs; other clients need the environment to host them. */

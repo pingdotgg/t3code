@@ -89,7 +89,12 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
-export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
+export function expandCollapsedComposerCursor(
+  text: string,
+  cursorInput: number,
+  literalText = false,
+): number {
+  if (literalText) return clampCursor(text, cursorInput);
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
   if (segments.length === 0) {
@@ -155,14 +160,24 @@ function clampCollapsedComposerCursorForSegments(
   return Math.max(0, Math.min(collapsedLength, Math.floor(cursorInput)));
 }
 
-export function clampCollapsedComposerCursor(text: string, cursorInput: number): number {
+export function clampCollapsedComposerCursor(
+  text: string,
+  cursorInput: number,
+  literalText = false,
+): number {
+  if (literalText) return clampCursor(text, cursorInput);
   return clampCollapsedComposerCursorForSegments(
     splitPromptIntoComposerSegments(text),
     cursorInput,
   );
 }
 
-export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
+export function collapseExpandedComposerCursor(
+  text: string,
+  cursorInput: number,
+  literalText = false,
+): number {
+  if (literalText) return clampCursor(text, cursorInput);
   const expandedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
   if (segments.length === 0) {
@@ -291,15 +306,36 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
+/**
+ * Length of the leading part of `pasted` that continues an `@` path query
+ * typed at the end of `lineBefore`, the line's plain text up to the caret. A
+ * chip must read there as one non-space character, so it never passes for a
+ * typed `@path`.
+ */
+export function pastedPathQueryLength(
+  lineBefore: string,
+  pasted: string,
+  pathQueryActive = true,
+): number {
+  if (!pathQueryActive) return 0;
+  if (detectComposerTrigger(lineBefore, lineBefore.length)?.kind !== "path") return 0;
+  return /^\S*/.exec(pasted)![0].length;
+}
+
 /** Caret and trigger after replacing composer text and continuing at the end. */
-export function composerStateAtPromptEnd(text: string): {
+export function composerStateAtPromptEnd(
+  text: string,
+  literalText = false,
+): {
   cursor: number;
   trigger: ComposerTrigger | null;
 } {
-  const cursor = collapseExpandedComposerCursor(text, text.length);
+  const cursor = collapseExpandedComposerCursor(text, text.length, literalText);
   return {
     cursor,
-    trigger: detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+    trigger: literalText
+      ? null
+      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
   };
 }
 

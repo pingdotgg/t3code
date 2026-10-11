@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
@@ -26,9 +27,11 @@ import {
   OrchestratorProjectionError,
 } from "../../orchestration-v2/Orchestrator.ts";
 
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
@@ -36,6 +39,7 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
+import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
@@ -65,6 +69,12 @@ import {
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
+
+// Registration asks for every service the thread tools declare; these cases call none that use them.
+const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+);
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
@@ -131,7 +141,7 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-it.effect("checks capability before accessing services through the production registration", () =>
+it.effect("checks capability through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     expect(server.tools.some(({ tool }) => tool.name === "t3_thread_organize")).toBe(true);
@@ -149,10 +159,10 @@ it.effect("checks capability before accessing services through the production re
     expect(result.structuredContent).toBeUndefined();
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
       ),
     ),
   ),
@@ -190,7 +200,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
     expect(validate({ sequence: "invalid" }).valid).toBe(false);
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -305,7 +315,7 @@ it.effect("returns invalid parameter errors through the production registration"
     expect(error._tag).toBe("InvalidParams");
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -330,7 +340,7 @@ it.effect("keeps unexpected handler defects private through the production regis
     ]);
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -395,12 +405,12 @@ it.effect("resolves reused attachment references from stored metadata", () =>
 );
 
 const clientScope = (
-  runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+  access: McpInvocationContext.McpClientCaller["access"],
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("mcp-core-environment"),
   requestNamespace: "client:session-1",
   thread: undefined,
-  client: { sessionId: "session-1", label: "Claude Code", runtimeModeCeiling },
+  client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
 });
@@ -448,7 +458,67 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  deletedAt: null,
+                },
+              } as never),
+            dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("a read-only client reads threads and is refused every write before it runs", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (name: string, args: Record<string, unknown>) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("read-only"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const configuration = yield* call("t3_thread_configuration", {
+      threadId: "other-project-thread",
+    });
+    expect(configuration.isError).toBe(false);
+    expect(configuration.structuredContent).toMatchObject({ runtimeMode: "auto" });
+
+    const pinned = yield* call("t3_thread_organize", {
+      action: "pin",
+      threadId: "other-project-thread",
+    });
+    expect(declaredFailure(pinned)).toMatchObject({ code: "capability_denied" });
+    expect(dispatched).toEqual([]);
+
+    const configure = yield* call("t3_thread_configure", {
+      threadId: "other-project-thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+    });
+    expect(declaredFailure(configure)).toMatchObject({ code: "capability_denied" });
+    expect(dispatched).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -464,18 +534,24 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
                 thread: {
                   id: ThreadId.make("other-project-thread"),
                   projectId: "other-project",
+                  modelSelection: { instanceId: "codex", model: "gpt-5" },
                   runtimeMode: "auto",
                   interactionMode: "default",
                   deletedAt: null,
                 },
               } as never),
-            dispatch: () => Effect.succeed({ sequence: 7 } as never),
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched.push("dispatch");
+                return { sequence: 7 } as never;
+              }),
           }),
         ),
       ),
     ),
   ),
 );
+const dispatched: Array<string> = [];
 
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
@@ -625,6 +701,64 @@ it.effect("a caller cannot interrupt a thread that runs above its own modes", ()
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      ),
+    ),
+  ),
+);
+
+it.effect("only the caller that prepared a pending upload can discard it", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (
+      name: string,
+      args: Record<string, unknown>,
+      invocation: McpInvocationContext.McpInvocationScope,
+    ) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const prepared = yield* call(
+      "t3_attachment_prepare_upload",
+      { upload: { name: "shot.png", mimeType: "image/png", sizeBytes: 4 } },
+      scope,
+    );
+    const { attachmentId } = prepared.structuredContent as { readonly attachmentId: string };
+    const otherThread = {
+      ...scope,
+      requestNamespace: "other-session",
+      thread: { ...scope.thread!, threadId: ThreadId.make("other-thread") },
+    };
+
+    const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
+    expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
+
+    // Another prepare a day later keeps it: the file outlives its URL's 24 hours
+    // by as long as the upload took, up to the URL's own lifetime.
+    yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
+    yield* call(
+      "t3_attachment_prepare_upload",
+      { upload: { name: "later.png", mimeType: "image/png", sizeBytes: 4 } },
+      scope,
+    );
+
+    // A new provider session of the same thread still owns the upload.
+    const discarded = yield* call(
+      "t3_attachment_discard",
+      { attachmentId },
+      { ...scope, requestNamespace: "mcp-core-session-2" },
+    );
+    expect(discarded.isError).toBe(false);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerAttachmentToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
+        Layer.provide(NodeServices.layer),
       ),
     ),
   ),

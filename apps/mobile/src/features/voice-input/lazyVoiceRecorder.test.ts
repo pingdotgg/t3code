@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { VoiceInputController } from "@t3tools/client-runtime/voice-input";
 
-import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
+import { createLazyVoiceRecorder, type VoiceRecordingInput } from "./lazyVoiceRecorder";
 
 type Status = { readonly isFinished: boolean };
 type State = { readonly isRecording: boolean };
@@ -30,12 +30,19 @@ function createNativeRecorder(uri: string) {
       listeners.add(listener);
       return { remove: () => listeners.delete(listener) };
     }),
+    getAvailableInputs: vi.fn((): ReadonlyArray<VoiceRecordingInput> => [
+      { uid: "car", name: "CarPlay", type: "CarAudio" },
+      { uid: "built-in", name: "iPhone Microphone", type: "MicrophoneBuiltIn" },
+    ]),
+    setInput: vi.fn((_uid: string) => undefined),
     release: vi.fn(),
     emit: (status: Status) => listeners.forEach((listener) => listener(status)),
   };
 }
 
-function createHarness() {
+function createHarness(
+  selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null,
+) {
   const created: Array<ReturnType<typeof createNativeRecorder>> = [];
   const statuses: Status[] = [];
   const recorder = createLazyVoiceRecorder({
@@ -45,6 +52,7 @@ function createHarness() {
       return native;
     },
     onStatus: (status) => statuses.push(status),
+    ...(selectInput ? { selectInput } : {}),
   });
   return { recorder, created, statuses };
 }
@@ -77,6 +85,29 @@ describe("createLazyVoiceRecorder", () => {
 
     expect(created).toHaveLength(1);
     expect(created[0]!.prepareToRecordAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the preferred input after preparing, when the session lists inputs", async () => {
+    const { recorder, created } = createHarness(
+      (inputs) => inputs.find((input) => input.type === "MicrophoneBuiltIn") ?? null,
+    );
+
+    await recorder.prepareToRecordAsync();
+
+    expect(created[0]!.setInput).toHaveBeenCalledWith("built-in");
+  });
+
+  it("keeps the system input when none is preferred or the preferred one disconnects", async () => {
+    const unpreferred = createHarness(() => null);
+    await unpreferred.recorder.prepareToRecordAsync();
+    expect(unpreferred.created[0]!.setInput).not.toHaveBeenCalled();
+
+    const disconnected = createHarness((inputs) => inputs[1] ?? null);
+    await disconnected.recorder.prepareToRecordAsync();
+    disconnected.created[0]!.setInput.mockImplementationOnce(() => {
+      throw new Error("Preferred input not found");
+    });
+    await expect(disconnected.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
   });
 
   it("forwards status events until the recorder is released", async () => {

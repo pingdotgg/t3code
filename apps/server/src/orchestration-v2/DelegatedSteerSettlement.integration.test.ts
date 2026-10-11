@@ -25,16 +25,11 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import {
-  ProviderAdapterSteerRunError,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -89,8 +84,8 @@ it.effect.each([
     Effect.gen(function* () {
       const name = `delegated-steer-settlement-${scenario.name}`;
       const cwd = yield* checkpointWorkspace(name);
-      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-      const started: ProviderAdapterV2TurnInput[] = [];
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
       let steerCalls = 0;
       // The continuation worker's queue. A closed gate holds the request the
       // worker took, and `workerReady` signals each time the worker asks for
@@ -117,7 +112,7 @@ it.effect.each([
           }),
         },
       );
-      const adapter: ProviderAdapterV2Shape = {
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
         getCapabilities: () => Effect.succeed(capabilities),
@@ -187,7 +182,7 @@ it.effect.each([
               steerTurn: (turn) =>
                 Effect.gen(function* () {
                   steerCalls += 1;
-                  return yield* new ProviderAdapterSteerRunError({
+                  return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
                     driver,
                     providerThreadId: turn.providerThread.id,
                     providerTurnId: turn.providerTurnId,
@@ -235,7 +230,7 @@ it.effect.each([
             Effect.map(Option.flatten),
           );
         // startTurn's running turn is ingested on the adapter event fiber.
-        const runningTurn = (turn: ProviderAdapterV2TurnInput) =>
+        const runningTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             const running = yield* awaitEvent(
               ["provider-turn.updated"],
@@ -248,7 +243,7 @@ it.effect.each([
             return running.value.payload;
           });
         // Ends the run's provider turn and waits for the run to settle.
-        const settle = (input: ProviderAdapterV2TurnInput) =>
+        const settle = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             const turn = yield* runningTurn(input);
             yield* Queue.offer(events, {

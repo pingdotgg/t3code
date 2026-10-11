@@ -2,7 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -16,8 +16,8 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
-import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -315,9 +315,14 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const platform = input.platform ?? (yield* HostProcessPlatform);
+  const platform = input.platform ?? (yield* HostProcess.Platform);
   const userHome =
-    input.userHome ?? resolveAntigravityUserHome(platform, input.baseEnv ?? process.env);
+    input.userHome ??
+    resolveAntigravityUserHome(
+      platform,
+      input.baseEnv ?? process.env,
+      yield* HostProcess.HomeDirectory,
+    );
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
     (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
@@ -440,7 +445,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly auth?: AntigravityAuthConfig;
   /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
-}): AcpSpawnInput {
+}): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
     args: input.profile.platform === "linux" ? ["--uid="] : [],

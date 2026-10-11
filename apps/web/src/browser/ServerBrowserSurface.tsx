@@ -41,6 +41,7 @@ import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
+import { observeResize } from "~/lib/observeResize";
 
 /** Chrome-row controls for a server tab; commands require current ownership. */
 export interface ServerBrowserHandle {
@@ -51,7 +52,7 @@ export interface ServerBrowserHandle {
   readonly canvas: () => HTMLCanvasElement | null;
 }
 
-const RESIZE_DEBOUNCE_MS = 150;
+const RESIZE_THROTTLE_MS = 150;
 const ACCESS_RETRY_MS = 10_000;
 // A recent probe answer near a new tap stands in for that tap's own answer,
 // which on a slow link arrives after the tap ends.
@@ -153,6 +154,8 @@ export function ServerBrowserSurface(props: {
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
+  /** The page opened a new tab from this viewer's click; the viewer should switch to it. */
+  readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
@@ -166,6 +169,7 @@ export function ServerBrowserSurface(props: {
     onFirstFrame,
     onViewport,
     onControl,
+    onPopup,
     className,
     ref,
   } = props;
@@ -218,6 +222,7 @@ export function ServerBrowserSurface(props: {
     onViewport?.(viewport),
   );
   const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
+  const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
   // Frame cap in device px, fixed per socket. It grows with the surface and
   // never shrinks, so only outgrowing it reconnects.
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
@@ -329,15 +334,11 @@ export function ServerBrowserSurface(props: {
     const element = canvasRef.current?.parentElement;
     if (!element) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const measure = () => {
-      timer = null;
-      const rect = element.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
-      const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
-      const previous = sizeRef.current;
-      if (previous?.width === size.width && previous.height === size.height) return;
-      sizeRef.current = size;
-      if (followSize) clientRef.current?.send({ type: "resize", ...size });
+    let capTimer: ReturnType<typeof setTimeout> | null = null;
+    const growCap = () => {
+      capTimer = null;
+      const size = sizeRef.current;
+      if (!size) return;
       const ratio = window.devicePixelRatio || 1;
       const width = Math.round(size.width * ratio);
       const height = Math.round(size.height * ratio);
@@ -350,15 +351,31 @@ export function ServerBrowserSurface(props: {
             },
       );
     };
-    const observer = new ResizeObserver(() => {
-      if (timer !== null) clearTimeout(timer);
-      // The first size connects right away; later ones settle before resizing the page.
-      timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_DEBOUNCE_MS);
+    const measure = () => {
+      timer = null;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
+      const previous = sizeRef.current;
+      if (previous?.width === size.width && previous.height === size.height) return;
+      sizeRef.current = size;
+      if (followSize) clientRef.current?.send({ type: "resize", ...size });
+      // Outgrowing the cap reconnects the stream, so grow it once the size settles
+      // rather than on every throttled resize of a drag.
+      if (capTimer !== null) clearTimeout(capTimer);
+      capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
+    };
+    const stopObserving = observeResize(element, () => {
+      // A pending measure reads the latest size when it fires, so a drag resizes
+      // the page at most every RESIZE_THROTTLE_MS and still ends on the final size.
+      if (timer !== null) return;
+      // The first size connects right away.
+      timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_THROTTLE_MS);
     });
-    observer.observe(element);
     return () => {
-      observer.disconnect();
+      stopObserving();
       if (timer !== null) clearTimeout(timer);
+      if (capTimer !== null) clearTimeout(capTimer);
     };
   }, [followSize]);
 
@@ -397,6 +414,7 @@ export function ServerBrowserSurface(props: {
         },
         onClipboard: (text) => void copyPageText(text),
         onDownload: offerDownload,
+        onPopup: popupOpened,
         onFileChooser: setFileChooser,
         onViewport: (viewport) => {
           viewportRef.current = viewport;

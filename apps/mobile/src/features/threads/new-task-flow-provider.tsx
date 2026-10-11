@@ -1,3 +1,6 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
@@ -21,7 +24,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -484,9 +487,25 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const attachments = selectedProjectDraft.attachments;
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
-  // checked-in t3.json, then the server's configured default.
-  const t3ProjectFileQuery = useEnvironmentQuery(
+  // checked-in t3.json, then the server's configured default (which a new
+  // project with no threads yet replaces with its checkout).
+  const fileAccessSession = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? environmentSession.sessionStateAtom(selectedProject.environmentId)
+      : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(selectedProject?.environmentId ?? null);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const fileAccessPending =
+    selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
+  const t3ProjectFileQuery = useEnvironmentQuery(
+    canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
@@ -517,8 +536,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // A thread without a project runs in a plain folder, so worktree mode
   // would leave it unsendable: it is always local and offers no choice.
   const canChooseWorkspace = !isScratchDraft;
+  const selectedProjectHasThreads =
+    selectedProject !== null &&
+    threads.some(
+      (thread) =>
+        thread.environmentId === selectedProject.environmentId &&
+        thread.projectId === selectedProject.id,
+    );
   const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
-    ? projectSettings.settings.defaultThreadEnvMode
+    ? resolveNewThreadEnvMode({
+        projectSettings,
+        workspaceRoot: selectedProject?.workspaceRoot ?? null,
+        newProjectsRoot: selectedEnvironmentServerConfig?.newProjectsRoot,
+        projectHasThreads: selectedProjectHasThreads,
+      })
     : "local";
   // While the file read is pending and nothing above it decided, the
   // resolved default is provisional. Nothing may write it into the draft
@@ -527,7 +558,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const defaultWorkspaceModeSettled =
     selectedProjectDraft.workspaceSelection?.mode !== undefined ||
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    !t3ProjectFileQuery.isPending;
+    (!t3ProjectFileQuery.isPending && !fileAccessPending);
   const workspaceMode = canChooseWorkspace
     ? (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode)
     : "local";
@@ -1087,7 +1118,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
         ) ?? selectedModel;
-      if (text.length === 0 || !draftModelSelection) {
+      // A shared image or file is a task on its own; text is optional.
+      if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
         return null;
       }
       // A saved choice from before the project went no-project must not

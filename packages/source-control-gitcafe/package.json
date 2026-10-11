@@ -1,0 +1,56 @@
+{
+  "name": "@t3tools/source-control-gitcafe",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/gitCafeHosts": {
+      "types": "./src/server/gitCafeHosts.ts",
+      "import": "./src/server/gitCafeHosts.ts"
+    },
+    "./server/GitCafeApi": {
+      "types": "./src/server/GitCafeApi.ts",
+      "import": "./src/server/GitCafeApi.ts"
+    },
+    "./server/GitCafeCredentials": {
+      "types": "./src/server/GitCafeCredentials.ts",
+      "import": "./src/server/GitCafeCredentials.ts"
+    },
+    "./server/gitCafePullRequestJson": {
+      "types": "./src/server/gitCafePullRequestJson.ts",
+      "import": "./src/server/gitCafePullRequestJson.ts"
+    },
+    "./server/GitCafePullRequestProvider": {
+      "types": "./src/server/GitCafePullRequestProvider.ts",
+      "import": "./src/server/GitCafePullRequestProvider.ts"
+    },
+    "./server/GitCafeSourceControlProvider": {
+      "types": "./src/server/GitCafeSourceControlProvider.ts",
+      "import": "./src/server/GitCafeSourceControlProvider.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

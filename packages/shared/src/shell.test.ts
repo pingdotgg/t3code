@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -15,6 +15,7 @@ import {
   listLoginShellCandidates,
   mergePathEntries,
   mergePathValues,
+  preferGitForWindowsBinary,
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
@@ -342,7 +343,7 @@ effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
       expect(
         yield* isCommandAvailable("definitely-not-installed", {
           env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-        }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
       ).toBe(false);
     }),
   );
@@ -353,7 +354,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     Effect.gen(function* () {
       const result = yield* resolveCommandPath("definitely-not-installed", {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
     }),
@@ -367,7 +368,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     Effect.gen(function* () {
       const probed: Array<string> = [];
       const result = yield* resolveCommandPath("definitely-not-installed", { env }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provide(
           FileSystem.layerNoop({
@@ -425,7 +426,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         const resolved = yield* resolveCommandPath(command, {
           env: { PATH: cwd, PATHEXT: ".CMD" },
         }).pipe(
-          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(CommandResolutionCache, new Map()),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
@@ -458,7 +459,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       yield* TestClock.adjust("30 seconds");
       expect(yield* resolveCommandPath("appeared", options)).toBe(executable);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
@@ -505,10 +506,74 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       );
       expect(probed).toEqual([path.join(first, "cursor.CMD"), path.join(second, "late.EXE")]);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+});
+
+describe("preferGitForWindowsBinary", () => {
+  const files =
+    (...paths: Array<string>) =>
+    (filePath: string) =>
+      paths.includes(filePath);
+
+  it("runs the git.exe Git for Windows' launcher would start", () => {
+    // 2.56+ on x64. The PATHEXT scan returns the extension in PATHEXT's case.
+    expect(
+      preferGitForWindowsBinary(
+        "C:\\Program Files\\Git\\cmd\\git.EXE",
+        {},
+        files(
+          "C:\\Program Files\\Git\\ucrt64\\bin\\git.exe",
+          "C:\\Program Files\\Git\\mingw64\\bin\\git.exe",
+        ),
+      ),
+    ).toBe("C:\\Program Files\\Git\\ucrt64\\bin\\git.exe");
+    // Before 2.56, and the portable build's bin launcher.
+    expect(
+      preferGitForWindowsBinary(
+        "D:\\PortableGit\\bin\\git.exe",
+        {},
+        files("D:\\PortableGit\\mingw64\\bin\\git.exe"),
+      ),
+    ).toBe("D:\\PortableGit\\mingw64\\bin\\git.exe");
+    expect(
+      preferGitForWindowsBinary(
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        {},
+        files("C:\\Program Files\\Git\\clangarm64\\bin\\git.exe"),
+      ),
+    ).toBe("C:\\Program Files\\Git\\clangarm64\\bin\\git.exe");
+  });
+
+  it("keeps the launcher when MSYSTEM is set", () => {
+    // The real git.exe only adds its own folders to PATH when MSYSTEM is unset;
+    // without them a `#!/bin/sh` hook cannot start.
+    expect(
+      preferGitForWindowsBinary(
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        { MSYSTEM: "MINGW64" },
+        files("C:\\Program Files\\Git\\mingw64\\bin\\git.exe"),
+      ),
+    ).toBe("C:\\Program Files\\Git\\cmd\\git.exe");
+  });
+
+  it("keeps the launcher when no git.exe sits beside it", () => {
+    expect(preferGitForWindowsBinary("C:\\Program Files\\Git\\cmd\\git.exe", {}, () => false)).toBe(
+      "C:\\Program Files\\Git\\cmd\\git.exe",
+    );
+  });
+
+  it("leaves other gits and other launchers alone", () => {
+    const everything = () => true;
+    expect(preferGitForWindowsBinary("C:\\Users\\me\\scoop\\shims\\git.exe", {}, everything)).toBe(
+      "C:\\Users\\me\\scoop\\shims\\git.exe",
+    );
+    expect(preferGitForWindowsBinary("C:\\Program Files\\Git\\cmd\\gitk.exe", {}, everything)).toBe(
+      "C:\\Program Files\\Git\\cmd\\gitk.exe",
+    );
+  });
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
@@ -517,7 +582,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
       );
 
@@ -536,7 +601,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         ["run", "value & calc", "%PATH%", 'quote"value'],
         { env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" } },
       ).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provideService(
           SpawnExecutableResolution,
@@ -563,9 +628,9 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         env: { CODEX_HOME: "C:\\Users\\tester\\.codex" },
         extendEnv: true,
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           PATH: "C:\\Users\\tester\\AppData\\Roaming\\npm",
           PATHEXT: ".COM;.EXE;.BAT;.CMD",
         }),
@@ -592,7 +657,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       };
       const resolve = (command: string, path: string, resolver = scan) =>
         resolveSpawnCommand(command, [], { env: { PATH: path, PATHEXT: ".EXE" } }).pipe(
-          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(SpawnExecutableResolution, resolver),
         );
 
@@ -627,12 +692,36 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
   );
 
+  it.effect("keeps launcher swaps apart for environments with and without MSYSTEM", () =>
+    Effect.gen(function* () {
+      let scans = 0;
+      const scan: SpawnExecutableResolver = () => {
+        scans++;
+        return "C:\\Git\\cmd\\git.exe";
+      };
+      const resolve = (env: NodeJS.ProcessEnv) =>
+        resolveSpawnCommand("git", [], {
+          env: { PATH: "C:\\Git\\cmd", PATHEXT: ".EXE", ...env },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, scan),
+        );
+
+      yield* resolve({});
+      yield* resolve({});
+      expect(scans).toBe(1);
+      // A swap made without MSYSTEM must not reach a child that has it set.
+      yield* resolve({ MSYSTEM: "MINGW64" });
+      expect(scans).toBe(2);
+    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+  );
+
   it.effect("does not fall back to a shell for unresolved Windows commands", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("missing & calc", ["unsafe & value"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
       );
 

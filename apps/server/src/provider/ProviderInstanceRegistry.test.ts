@@ -31,14 +31,15 @@ import {
   EnvironmentId,
   type ClaudeSettings,
   type CodexSettings,
-  type CursorSettings,
-  type GrokSettings,
-  type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -50,20 +51,21 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
-import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
+import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
+import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
+import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as ModelManifest from "./ModelManifest.ts";
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
 
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -150,7 +152,7 @@ const makeTildeProviderFixtures = Effect.fn(
 )(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const homePath = expandHomePath("~");
+  const homePath = yield* HostProcess.HomeDirectory;
   const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
     directory: homePath,
     prefix: ".t3-provider-path-test-",
@@ -172,7 +174,6 @@ const makeTildeProviderFixtures = Effect.fn(
   );
   yield* fileSystem.writeFileString(
     codexScriptPath,
-    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
     JSON.stringify({ rootThreadId: "probe-thread", notifications: [] }),
   );
   yield* fileSystem.chmod(codexPath, 0o755);
@@ -201,7 +202,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
   // dependency while still surfacing NodeServices to the test body (the
   // codex driver's `create` yields `ChildProcessSpawner` directly).
-  const layerBase = ServerConfig.layerTest(process.cwd(), {
+  const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -228,9 +229,12 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
+  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provideMerge(layerBase),
   );
@@ -341,12 +345,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("reports Codex's answer when a redemption changed nothing", () =>
     Effect.gen(function* () {
-      if (yield* isHostWindows) return;
+      if (yield* HostProcess.isWindows) return;
       const fileSystem = yield* FileSystem.FileSystem;
       const fixtures = yield* makeTildeProviderFixtures();
       yield* fileSystem.writeFileString(
         fixtures.codexScriptPath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
         JSON.stringify({
           rootThreadId: "probe-thread",
           notifications: [],
@@ -379,7 +382,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
     Effect.gen(function* () {
-      if (yield* isHostWindows) return;
+      if (yield* HostProcess.isWindows) return;
 
       const fixtures = yield* makeTildeProviderFixtures();
 
@@ -496,7 +499,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       return { outcome, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide(layerTest),
     );
 
@@ -591,7 +594,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       }),
     ),
   );
-  const layerBase = AntigravityInstallation.AntigravityInstallation.layer.pipe(
+  const layerBaseDeps = AntigravityInstallation.AntigravityInstallation.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
@@ -609,9 +612,12 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
+  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provideMerge(layerBase),
   );

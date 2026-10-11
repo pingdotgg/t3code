@@ -44,14 +44,10 @@ import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
-import {
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
-} from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const PROJECT_ID = "project:cutover";
 const ACTIVE_THREAD = "thread:cutover:active";
@@ -422,7 +418,7 @@ interface CapturedTurn {
 }
 
 const unimplemented = (detail: string) =>
-  Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 
 const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =>
   ({
@@ -432,7 +428,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -551,7 +547,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
                   failure: null,
                   threadDisposition: "reusable",
                 },
-              ] satisfies ReadonlyArray<ProviderAdapterV2Event>);
+              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>);
             }),
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,
@@ -561,7 +557,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
           forkThread: () => unimplemented("forkThread unused in cutover test"),
         };
       }),
-  }) satisfies ProviderAdapterV2Shape;
+  }) satisfies ProviderAdapter.ProviderAdapterV2["Service"];
 
 const waitForIdle = Effect.fn("LegacyV1Cutover.waitForIdle")(function* (threadId: ThreadId) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
