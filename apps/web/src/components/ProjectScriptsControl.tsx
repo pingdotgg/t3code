@@ -50,6 +50,7 @@ import { cn } from "~/lib/utils";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
@@ -322,7 +323,7 @@ export default function ProjectScriptsControl({
               <span
                 className={cn(
                   "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                  isPanel && "not-sr-only ml-0 truncate",
+                  isPanel && cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                 )}
               >
                 {primaryScript.name}
@@ -387,7 +388,9 @@ export default function ProjectScriptsControl({
               onClick={() => setActionsMenuOpen({ presentation, scripts: false, imports: true })}
             >
               <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span className="min-w-0 truncate">Actions</span>
+              <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                Actions
+              </span>
             </ThreadDetailsControl>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
             <Menu
@@ -456,7 +459,7 @@ export default function ProjectScriptsControl({
             <span
               className={cn(
                 "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                isPanel && "not-sr-only ml-0.5",
+                isPanel && cn("not-sr-only ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS),
               )}
             >
               {isPanel ? "Add project script" : "Add action"}

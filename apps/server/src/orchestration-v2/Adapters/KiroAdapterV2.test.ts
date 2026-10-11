@@ -17,7 +17,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,17 +28,18 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as ServerConfig from "../../config.ts";
-import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
   ProviderAdapterV2RuntimePolicy,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   decodeAcpReplayTranscript,
   makeAcpReplayCompletenessAssertion,
@@ -48,8 +48,8 @@ import {
 import {
   makeProviderReplayGate,
   type ProviderReplayGate,
-} from "../testkit/ProviderReplayGate.testkit.ts";
-import { readProviderReplayTranscript } from "../testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayGate";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import {
   kiroAutopilotValue,
   kiroPermissionDisposition,
@@ -59,9 +59,8 @@ import { KIRO_PROVIDER, makeKiroAdapterV2 } from "./KiroAdapterV2.ts";
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-kiro-v2-adapter-" }).pipe(
-    Layer.provide(NodeServices.layer),
-  ),
+  McpProviderSessions.layer,
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
 const SESSION_ID = "sess_abb5e0cf-d4a2-4360-9f03-2f8f0889a707";
@@ -339,15 +338,10 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   const scriptPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
   );
-  const adapter = makeKiroAdapterV2({
+  const adapter = yield* makeKiroAdapterV2({
     instanceId,
     settings: ENABLED_KIRO_SETTINGS,
     environment: {},
-    childProcessSpawner,
-    crypto: yield* Crypto.Crypto,
-    fileSystem,
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
-    serverConfig: yield* ServerConfig.ServerConfig,
     selfInvocation: yield* resolveSelfInvocation(),
     makeRuntime: (runtimeInput) =>
       makeAcpReplayRuntime({

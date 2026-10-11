@@ -1,20 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { KiroSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {
   type AcpReplayTranscript,
   AcpReplayTranscriptDecodeError,
@@ -30,10 +28,7 @@ function layerKiroProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(`kiro-${transcript.scenario}`).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
@@ -47,15 +42,10 @@ function layerKiroProviderAdapterRegistryReplay(
       const scriptPath = yield* path
         .fromFileUrl(new URL("../../../scripts/acp-replay-agent.ts", import.meta.url))
         .pipe(Effect.orDie);
-      const adapter = makeKiroAdapterV2({
+      const adapter = yield* makeKiroAdapterV2({
         instanceId: ProviderInstanceId.make("kiro"),
         settings: KIRO_REPLAY_SETTINGS,
         environment: {},
-        childProcessSpawner,
-        crypto: yield* Crypto.Crypto,
-        fileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,
@@ -70,7 +60,7 @@ function layerKiroProviderAdapterRegistryReplay(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerHost, NodeServices.layer, IdAllocator.layer)),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(

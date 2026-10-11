@@ -4,15 +4,15 @@ import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   acpPermissionDisposition,
   type AcpPermissionDisposition,
   type AcpRuntimePolicy,
-} from "./AcpClientPolicy.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+} from "@t3tools/provider-acp/server/clientPolicy";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
  * CLI V3 runs only when asked for (`--agent-engine=v3`); the default engine is
@@ -124,7 +124,6 @@ export interface KiroAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "spawn"
 > {
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly settings: KiroAcpRuntimeSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
 }
@@ -134,17 +133,15 @@ export const makeKiroAcpRuntime = (
 ): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const { childProcessSpawner, settings, environment, ...runtimeOptions } = input;
+    const { settings, environment, ...runtimeOptions } = input;
     const context = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...runtimeOptions,
         spawn: buildKiroAcpSpawnInput(settings, input.cwd, environment),
-      }).pipe(
-        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
-      ),
+      }),
     );
     return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
   });

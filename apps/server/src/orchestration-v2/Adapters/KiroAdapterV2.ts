@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   KiroSettings,
@@ -7,21 +7,37 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import * as Crypto from "effect/Crypto";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as ServerConfig from "../../config.ts";
-import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
-import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  AcpProviderCapabilitiesV2,
+  makeAcpAdapterV2,
+  type AcpAdapterV2Flavor,
+  type AcpAdapterV2RuntimeInput,
+} from "@t3tools/provider-acp/server/adapter";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
+import {
+  ProviderAdapterDriverCreateError,
+  type ProviderAdapterDriver,
+  type ProviderAdapterDriverCreateInput,
+} from "@t3tools/provider-core/server/adapterDriver";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import type * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   KIRO_AUTOPILOT_CONFIG_ID,
   KIRO_EFFORT_CONFIG_ID,
@@ -31,21 +47,6 @@ import {
   kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "../../provider/acp/KiroAcpSupport.ts";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
-import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
-import {
-  ProviderAdapterDriverCreateError,
-  type ProviderAdapterDriver,
-  type ProviderAdapterDriverCreateInput,
-} from "../ProviderAdapterDriver.ts";
-import {
-  AcpProviderCapabilitiesV2,
-  makeAcpAdapterV2,
-  type AcpAdapterV2Flavor,
-  type AcpAdapterV2RuntimeInput,
-} from "./AcpAdapterV2.ts";
 
 export const KIRO_PROVIDER = ProviderDriverKind.make("kiro");
 /** T3's slug for "Kiro default", and Kiro's documented default model id. */
@@ -69,12 +70,7 @@ export interface KiroAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: KiroSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   /**
    * Kiro's id for "Kiro default" (the provider snapshot's `--list-models`
@@ -87,7 +83,7 @@ export interface KiroAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
@@ -279,7 +275,6 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
       const { runtimePolicy: _runtimePolicy, processEnvironment, ...runtimeInput } = input;
       return makeKiroAcpRuntime({
         ...runtimeInput,
-        childProcessSpawner: options.childProcessSpawner,
         settings: options.settings,
         environment: { ...options.environment, ...processEnvironment },
       });
@@ -314,19 +309,17 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
   };
 }
 
-export function makeKiroAdapterV2(options: KiroAdapterV2Options) {
-  return makeAcpAdapterV2({
+export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
+  options: KiroAdapterV2Options,
+) {
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeKiroAcpAdapterFlavor(options),
-    crypto: options.crypto,
-    fileSystem: options.fileSystem,
-    idAllocator: options.idAllocator,
-    serverConfig: options.serverConfig,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
-}
+});
 
 export type KiroAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -334,8 +327,9 @@ export type KiroAdapterV2DriverEnv =
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
+  | McpProviderSessions.McpProviderSessions
   | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig;
+  | ProviderHost.ProviderHost;
 
 /**
  * `defaultModel` reads Kiro's id for "Kiro default" from the provider
@@ -349,19 +343,15 @@ export const makeKiroAdapterV2Driver = (
   defaultConfig: (): KiroSettings => DEFAULT_KIRO_SETTINGS,
   create: Effect.fn("KiroAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<KiroSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
+      const selfInvocation = yield* resolveSelfInvocation();
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return makeKiroAdapterV2({
+      return yield* makeKiroAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-        crypto: yield* Crypto.Crypto,
-        fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
-        selfInvocation: yield* resolveSelfInvocation(),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        selfInvocation,
         ...(defaultModel === undefined ? {} : { defaultModel }),
         nativeLogging: (threadId) =>
           makeNativeLogger({

@@ -1,8 +1,39 @@
 diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
-index c342e90bffde9ad5044b6167bdde2e19be219270..5d3e4407aa1bb68b873cf164adf5a9f0b487bb0b 100644
+index c342e90bffde9ad5044b6167bdde2e19be219270..4a045490f0650b4a0c821b3e799cf3d18531417f 100644
 --- a/lib/module/views/NativeStackView.native.js
 +++ b/lib/module/views/NativeStackView.native.js
-@@ -370,6 +370,17 @@ export function NativeStackView({
+@@ -17,8 +17,12 @@ const ANDROID_DEFAULT_HEADER_HEIGHT = 56;
+ function isFabric() {
+   return 'nativeFabricUIManager' in global;
+ }
++function SceneNavigationProvider({ presentationEnvelope, ...props }) {
++  return presentationEnvelope ? props.children : /*#__PURE__*/_jsx(NavigationProvider, props);
++}
+ const useNativeDriver = Platform.OS !== 'web';
+ const SceneView = ({
++  presentationEnvelope,
+   index,
+   focused,
+   shouldFreeze,
+@@ -231,7 +235,8 @@ const SceneView = ({
+       }
+     }
+   });
+-  return /*#__PURE__*/_jsx(NavigationProvider, {
++  return /*#__PURE__*/_jsx(SceneNavigationProvider, {
++    presentationEnvelope,
+     route: route,
+     navigation: navigation,
+     children: /*#__PURE__*/_jsx(ScreenStackItem, {
+@@ -353,6 +358,7 @@ const SceneView = ({
+   });
+ };
+ export function NativeStackView({
++  presentationEnvelope,
+   state,
+   navigation,
+   descriptors,
+@@ -370,6 +376,17 @@ export function NativeStackView({
    return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
      children: /*#__PURE__*/_jsx(ScreenStack, {
        style: styles.container,
@@ -20,6 +51,14 @@ index c342e90bffde9ad5044b6167bdde2e19be219270..5d3e4407aa1bb68b873cf164adf5a9f0
        children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
          const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
          const isFocused = state.index === index;
+@@ -386,6 +403,7 @@ export function NativeStackView({
+         // due to component being unmounted. To avoid this, we don't freeze the previous screen there
+         const shouldFreeze = isFabric() ? !isPreloaded && !isFocused && !isBelowFocused && !isModalOnIos : !isPreloaded && !isFocused && !isModalOnIos;
+         return /*#__PURE__*/_jsx(SceneView, {
++          presentationEnvelope,
+           index: index,
+           focused: isFocused,
+           shouldFreeze: shouldFreeze,
 diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
 index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d6f55b11e 100644
 --- a/lib/module/views/useHeaderConfigProps.js
@@ -28,7 +67,7 @@ index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d
        }
        return item;
      }
-+    if (item.type === 'mailSearchToolbar') {
++    if (item.type === 'mailSearchToolbar' || item.type === 'searchBarPlacement') {
 +      return {
 +        ...item,
 +        index
@@ -42,7 +81,7 @@ index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d
        return processedItem;
      }
 -    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom' and 'spacing'.`);
-+    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing' and 'mailSearchToolbar'.`);
++    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing', 'mailSearchToolbar' and 'searchBarPlacement'.`);
    }).filter(item => item != null);
  };
  const transformIcon = icon => {
@@ -151,6 +190,10 @@ index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb215
      /**
       * A React Element to display as the item.
       */
+@@ -864,1 +864,3 @@
+     sharesBackground?: boolean;
++    /** Native bar axis preference on iOS 27.1 and later. */
++    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
 diff --git a/src/types.tsx b/src/types.tsx
 index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9eb16f1a80 100644
 --- a/src/types.tsx
@@ -169,6 +212,10 @@ index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9e
    /**
     * A React Element to display as the item.
     */
+@@ -920,1 +920,3 @@
+   sharesBackground?: boolean;
++  /** Native bar axis preference on iOS 27.1 and later. */
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
 diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
 index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51672d7d0e 100644
 --- a/src/views/useHeaderConfigProps.tsx
@@ -189,3 +236,110 @@ index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51
                >
                  {item.element}
                </ScreenStackHeaderRightView>
+diff --git a/lib/typescript/src/views/NativeStackView.native.d.ts b/lib/typescript/src/views/NativeStackView.native.d.ts
+index c0d37db3b4a2a4e9340c76333821f44a87cd624b..eb3db8f511799b335a17edea31a2acd17627f909 100644
+--- a/lib/typescript/src/views/NativeStackView.native.d.ts
++++ b/lib/typescript/src/views/NativeStackView.native.d.ts
+@@ -1,11 +1,12 @@
+ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@react-navigation/native';
+ import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
+ type Props = {
++    presentationEnvelope?: boolean;
+     state: StackNavigationState<ParamListBase>;
+     navigation: NativeStackNavigationHelpers;
+     descriptors: NativeStackDescriptorMap;
+     describe: (route: RouteProp<ParamListBase>, placeholder: boolean) => NativeStackDescriptor;
+ };
+-export declare function NativeStackView({ state, navigation, descriptors, describe, }: Props): import("react/jsx-runtime").JSX.Element;
++export declare function NativeStackView({ presentationEnvelope, state, navigation, descriptors, describe, }: Props): import("react/jsx-runtime").JSX.Element;
+ export {};
+ //# sourceMappingURL=NativeStackView.native.d.ts.map
+\ No newline at end of file
+diff --git a/src/views/NativeStackView.native.tsx b/src/views/NativeStackView.native.tsx
+index 416cd90057cea362371a4308dd9985b086c5ccaa..7188a3daf0af2004303b21f89d3c0c7073517ef8 100644
+--- a/src/views/NativeStackView.native.tsx
++++ b/src/views/NativeStackView.native.tsx
+@@ -51,7 +51,14 @@ function isFabric() {
+   return 'nativeFabricUIManager' in global;
+ }
+
++// A presentation envelope contains descriptors from its owning navigator.
++// Its synthetic route must not override those descriptors' focus state.
++function SceneNavigationProvider({ presentationEnvelope, ...props }: React.ComponentProps<typeof NavigationProvider> & { presentationEnvelope?: boolean }) {
++  return presentationEnvelope ? props.children : <NavigationProvider {...props} />;
++}
++
+ type SceneViewProps = {
++  presentationEnvelope?: boolean;
+   index: number;
+   focused: boolean;
+   shouldFreeze: boolean;
+@@ -74,6 +81,7 @@ type SceneViewProps = {
+ const useNativeDriver = Platform.OS !== 'web';
+
+ const SceneView = ({
++  presentationEnvelope,
+   index,
+   focused,
+   shouldFreeze,
+@@ -356,7 +364,7 @@ const SceneView = ({
+       );
+
+   return (
+-    <NavigationProvider route={route} navigation={navigation}>
++    <SceneNavigationProvider presentationEnvelope={presentationEnvelope} route={route} navigation={navigation}>
+       <ScreenStackItem
+         screenId={route.key}
+         activityState={isPreloaded ? 0 : 2}
+@@ -493,11 +501,12 @@ const SceneView = ({
+           </HeaderHeightContext.Provider>
+         </AnimatedHeaderHeightContext.Provider>
+       </ScreenStackItem>
+-    </NavigationProvider>
++    </SceneNavigationProvider>
+   );
+ };
+
+ type Props = {
++  presentationEnvelope?: boolean;
+   state: StackNavigationState<ParamListBase>;
+   navigation: NativeStackNavigationHelpers;
+   descriptors: NativeStackDescriptorMap;
+@@ -508,6 +517,7 @@ type Props = {
+ };
+
+ export function NativeStackView({
++  presentationEnvelope,
+   state,
+   navigation,
+   descriptors,
+@@ -555,6 +565,7 @@ export function NativeStackView({
+
+           return (
+             <SceneView
++              presentationEnvelope={presentationEnvelope}
+               key={route.key}
+               index={index}
+               focused={isFocused}
+diff --git a/lib/typescript/src/views/NativeStackView.d.ts b/lib/typescript/src/views/NativeStackView.d.ts
+--- a/lib/typescript/src/views/NativeStackView.d.ts
++++ b/lib/typescript/src/views/NativeStackView.d.ts
+@@ -1,6 +1,7 @@
+ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@react-navigation/native';
+ import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
+ type Props = {
++    presentationEnvelope?: boolean;
+     state: StackNavigationState<ParamListBase>;
+     navigation: NativeStackNavigationHelpers;
+     descriptors: NativeStackDescriptorMap;
+diff --git a/src/views/NativeStackView.tsx b/src/views/NativeStackView.tsx
+--- a/src/views/NativeStackView.tsx
++++ b/src/views/NativeStackView.tsx
+@@ -24,6 +24,7 @@
+ import { AnimatedHeaderHeightContext } from '../utils/useAnimatedHeaderHeight';
+
+ type Props = {
++    presentationEnvelope?: boolean;
+   state: StackNavigationState<ParamListBase>;
+   // This is used for the native implementation of the stack.
+   navigation: NativeStackNavigationHelpers;

@@ -60,7 +60,8 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { isTerminalUrl } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -103,9 +104,8 @@ function maxDrawerHeight(): number {
   return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * MAX_DRAWER_HEIGHT_RATIO));
 }
 
-function clampDrawerHeight(height: number): number {
+function clampDrawerHeight(height: number, maxHeight = maxDrawerHeight()): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
-  const maxHeight = maxDrawerHeight();
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
@@ -264,7 +264,12 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "copy"
+  | "paste"
+  | "select-all"
+  | "scroll-to-bottom";
 
 /** Post-selection popup: available selection actions, always enabled. */
 export function terminalSelectionMenuItems(options?: {
@@ -279,8 +284,8 @@ export function terminalSelectionMenuItems(options?: {
 }
 
 /**
- * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
+ * Right-click menu for selection, clipboard, and local scrollback actions.
+ * Paste is always offered: the browser
  * (and Electron's default editing menu) can only paste into an editable
  * element, so a canvas terminal never gets a usable entry from them.
  */
@@ -296,6 +301,8 @@ export function terminalContextMenuItems(options: {
       disabled: !hasSelection,
     })),
     { id: "paste", label: "Paste", ...(options.readOnly ? { disabled: true } : {}) },
+    { id: "select-all", label: "Select all" },
+    { id: "scroll-to-bottom", label: "Jump to latest" },
   ];
 }
 
@@ -749,6 +756,14 @@ export function TerminalViewport({
           case "paste":
             await pasteFromClipboard(requestId);
             return;
+          case "select-all":
+            terminalRef.current?.selectAll();
+            focusIfCurrent(requestId);
+            return;
+          case "scroll-to-bottom":
+            terminalRef.current?.scrollToBottom();
+            focusIfCurrent(requestId);
+            return;
         }
       };
 
@@ -1165,13 +1180,16 @@ export default function ThreadTerminalDrawer({
     false,
     Schema.Boolean,
   );
-  const controlledDrawerHeight = clampDrawerHeight(height);
+  // The stored height is the user's preference; the window only clamps what renders.
+  const controlledDrawerHeight = height;
+  const [windowMaxDrawerHeight, setWindowMaxDrawerHeight] = useState(maxDrawerHeight);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
     threadId,
     height: controlledDrawerHeight,
   }));
-  const drawerHeight =
+  const preferredDrawerHeight =
     drawerHeightState.threadId === threadId ? drawerHeightState.height : controlledDrawerHeight;
+  const drawerHeight = clampDrawerHeight(preferredDrawerHeight, windowMaxDrawerHeight);
   const setDrawerHeight = useCallback(
     (update: SetStateAction<number>) => {
       setDrawerHeightState((current) => {
@@ -1185,17 +1203,16 @@ export default function ThreadTerminalDrawer({
     },
     [controlledDrawerHeight, threadId],
   );
-  const setDrawerHeightFromWindowResize = useEffectEvent((nextHeight: number) => {
-    setDrawerHeight(nextHeight);
-  });
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
+  const preferredDrawerHeightRef = useRef(preferredDrawerHeight);
   const lastSyncedHeightRef = useRef(controlledDrawerHeight);
   const onHeightChangeRef = useRef(onHeightChange);
   const resizeStateRef = useRef<{
     pointerId: number;
     startY: number;
     startHeight: number;
+    drawer: HTMLElement | null;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
 
@@ -1378,15 +1395,24 @@ export default function ThreadTerminalDrawer({
     onHeightChangeRef.current = onHeightChange;
   }, [onHeightChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // A render mid-drag (the window cap moved) must not replace the live height.
+    const resizeState = resizeStateRef.current;
+    if (resizeState) {
+      resizeState.drawer?.style.setProperty("height", `${drawerHeightRef.current}px`);
+      return;
+    }
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
 
+  useEffect(() => {
+    preferredDrawerHeightRef.current = preferredDrawerHeight;
+  }, [preferredDrawerHeight]);
+
   const syncHeight = useCallback((nextHeight: number) => {
-    const clampedHeight = clampDrawerHeight(nextHeight);
-    if (lastSyncedHeightRef.current === clampedHeight) return;
-    lastSyncedHeightRef.current = clampedHeight;
-    onHeightChangeRef.current(clampedHeight);
+    if (lastSyncedHeightRef.current === nextHeight) return;
+    lastSyncedHeightRef.current = nextHeight;
+    onHeightChangeRef.current(nextHeight);
   }, []);
 
   useEffect(() => {
@@ -1402,26 +1428,26 @@ export default function ThreadTerminalDrawer({
       pointerId: event.pointerId,
       startY: event.clientY,
       startHeight: drawerHeightRef.current,
+      drawer: event.currentTarget.parentElement,
     };
   }, []);
 
-  const handleResizePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const clampedHeight = clampDrawerHeight(
-        resizeState.startHeight + (resizeState.startY - event.clientY),
-      );
-      if (clampedHeight === drawerHeightRef.current) {
-        return;
-      }
-      didResizeDuringDragRef.current = true;
-      drawerHeightRef.current = clampedHeight;
-      setDrawerHeight(clampedHeight);
-    },
-    [setDrawerHeight],
-  );
+  // Writes the height straight to the drawer while dragging so the edge lands in
+  // the pointer's frame; React state commits once on release.
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const clampedHeight = clampDrawerHeight(
+      resizeState.startHeight + (resizeState.startY - event.clientY),
+    );
+    if (clampedHeight === drawerHeightRef.current) {
+      return;
+    }
+    didResizeDuringDragRef.current = true;
+    drawerHeightRef.current = clampedHeight;
+    resizeState.drawer?.style.setProperty("height", `${clampedHeight}px`);
+  }, []);
 
   const handleResizePointerEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1431,13 +1457,21 @@ export default function ThreadTerminalDrawer({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (!didResizeDuringDragRef.current) {
+      // A drag that ends where it started keeps the stored preference, which may
+      // be taller than the window-capped height the drag started from.
+      if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
+        // React skips the write when the rendered height did not change, so put
+        // back the preference as the current window caps it.
+        const renderedHeight = clampDrawerHeight(preferredDrawerHeightRef.current);
+        drawerHeightRef.current = renderedHeight;
+        resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
         return;
       }
+      setDrawerHeight(drawerHeightRef.current);
       syncHeight(drawerHeightRef.current);
       setResizeEpoch((value) => value + 1);
     },
-    [syncHeight],
+    [setDrawerHeight, syncHeight],
   );
 
   useEffect(() => {
@@ -1446,33 +1480,33 @@ export default function ThreadTerminalDrawer({
     }
 
     const onWindowResize = () => {
-      const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
-      const changed = clampedHeight !== drawerHeightRef.current;
-      if (changed) {
-        setDrawerHeightFromWindowResize(clampedHeight);
-        drawerHeightRef.current = clampedHeight;
+      // React only renders the stored preference, so clamp a live drag height here.
+      const resizeState = resizeStateRef.current;
+      const liveHeight = clampDrawerHeight(drawerHeightRef.current);
+      if (resizeState && liveHeight !== drawerHeightRef.current) {
+        drawerHeightRef.current = liveHeight;
+        resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
       }
-      if (!resizeStateRef.current) {
-        syncHeight(clampedHeight);
-      }
+      setWindowMaxDrawerHeight(maxDrawerHeight());
       setResizeEpoch((value) => value + 1);
     };
     window.addEventListener("resize", onWindowResize);
     return () => {
       window.removeEventListener("resize", onWindowResize);
     };
-  }, [syncHeight, visible]);
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) {
       return;
     }
+    setWindowMaxDrawerHeight(maxDrawerHeight());
     setResizeEpoch((value) => value + 1);
   }, [visible]);
 
   useEffect(() => {
     return () => {
-      syncHeight(drawerHeightRef.current);
+      syncHeight(preferredDrawerHeightRef.current);
     };
   }, [syncHeight]);
 
@@ -1494,6 +1528,7 @@ export default function ThreadTerminalDrawer({
             onPointerMove={handleResizePointerMove}
             onPointerUp={handleResizePointerEnd}
             onPointerCancel={handleResizePointerEnd}
+            onLostPointerCapture={handleResizePointerEnd}
           />
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
@@ -1530,6 +1565,7 @@ export default function ThreadTerminalDrawer({
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerEnd}
           onPointerCancel={handleResizePointerEnd}
+          onLostPointerCapture={handleResizePointerEnd}
         />
       ) : null}
 

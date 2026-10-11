@@ -15,7 +15,7 @@ describe("parseTurnDiffFilesFromNumstat", () => {
     ]);
   });
 
-  it("uses destination paths for renames and copies", () => {
+  it("preserves both paths for renames and copies", () => {
     const numstat = [
       "0\t0\t",
       "src/old.ts",
@@ -29,8 +29,8 @@ describe("parseTurnDiffFilesFromNumstat", () => {
 
     expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
       { path: "other.ts", additions: 1, deletions: 0 },
-      { path: "src/copied.ts", additions: 2, deletions: 1 },
-      { path: "src/new.ts", additions: 0, deletions: 0 },
+      { path: "src/copied.ts", previousPath: "src/source.ts", additions: 2, deletions: 1 },
+      { path: "src/new.ts", previousPath: "src/old.ts", additions: 0, deletions: 0 },
     ]);
   });
 
@@ -46,7 +46,9 @@ describe("parseTurnDiffFilesFromNumstat", () => {
     const path = " café\tline\r\nname.txt ";
     const numstat = `3\t2\t\0old\tname\n.txt\0${path}\0`;
 
-    expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([{ path, additions: 3, deletions: 2 }]);
+    expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
+      { path, previousPath: "old\tname\n.txt", additions: 3, deletions: 2 },
+    ]);
     expect(parseTurnDiffFilesFromNumstat(`1\t0\t${path}\0`)).toEqual([
       { path, additions: 1, deletions: 0 },
     ]);

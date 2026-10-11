@@ -1,9 +1,14 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
+import {
+  assistantCitationLabel,
+  collectAssistantCitations,
+} from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
-import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
+import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
 import {
   commandDisplayText,
   commandProgramName,
@@ -347,10 +352,6 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
-export function shouldPreserveAssistantLineBreaks(text: string): boolean {
-  return /^★ Insight(?:\s|─)/mu.test(text);
-}
-
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
@@ -540,6 +541,8 @@ type MessagesTimelineRowContent =
       groupId: string;
       expanded: boolean;
       active: boolean;
+      /** Latest reasoning in the live group, shown above the status line. */
+      thought?: WorkLogEntry;
     }
   | {
       kind: "working";
@@ -750,7 +753,52 @@ interface SupersededAttemptFold {
 }
 
 /**
- * Groups only provider output owned by an explicitly superseded V2 attempt.
+ * Final replies of superseded attempts that finished before the steer replaced
+ * them. A steer stamps the attempt's completedAt when it is dispatched, and the
+ * provider closes a reply it cut off only after that, so a reply whose item
+ * completed earlier was whole. Item status alone cannot tell: an interrupted
+ * stream also closes as `completed`. The reply must be the attempt's last
+ * output; trailing tool or reasoning work means the attempt was still going.
+ */
+function completeSupersededReplyEntryIds(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): ReadonlySet<string> {
+  const lastOutputByAttemptId = new Map<RunAttemptId, TimelineEntry>();
+  for (const entry of timelineEntries) {
+    if (
+      entry.attempt?.status !== "superseded" ||
+      (entry.kind === "message" && entry.message.role === "user") ||
+      (entry.kind === "work" &&
+        (entry.entry.itemType === "system_notice" || entry.entry.itemType === "notification")) ||
+      (entry.kind !== "message" && entry.kind !== "work")
+    ) {
+      continue;
+    }
+    lastOutputByAttemptId.set(entry.attempt.id, entry);
+  }
+  const replyEntryIds = new Set<string>();
+  for (const entry of lastOutputByAttemptId.values()) {
+    const supersededAt = entry.attempt?.completedAt ?? null;
+    const item = entry.kind === "message" ? entry.projectedItem?.item : undefined;
+    if (
+      entry.kind === "message" &&
+      !entry.message.streaming &&
+      item?.type === "assistant_message" &&
+      item.status === "completed" &&
+      item.completedAt !== null &&
+      supersededAt !== null &&
+      DateTime.isLessThan(item.completedAt, supersededAt)
+    ) {
+      replyEntryIds.add(entry.id);
+    }
+  }
+  return replyEntryIds;
+}
+
+/**
+ * Groups only provider output owned by an explicitly superseded V2 attempt
+ * that the steer cut off. An attempt that had already finished its reply is
+ * left in the timeline like any other turn output.
  * User messages remain visible because they are inputs to the logical run,
  * including the steer message that started the replacement attempt.
  */
@@ -758,11 +806,18 @@ function deriveSupersededAttemptFolds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   unfoldedRunIds: ReadonlySet<RunId>,
   liveSubagentEntryIds: ReadonlySet<string>,
+  completeReplyEntryIds: ReadonlySet<string>,
 ): ReadonlyMap<string, SupersededAttemptFold> {
+  const completeAttemptIds = new Set(
+    timelineEntries.flatMap((entry) =>
+      entry.attempt !== undefined && completeReplyEntryIds.has(entry.id) ? [entry.attempt.id] : [],
+    ),
+  );
   const entriesByAttemptId = new Map<RunAttemptId, TimelineEntry[]>();
   for (const entry of timelineEntries) {
     if (
       entry.attempt?.status !== "superseded" ||
+      completeAttemptIds.has(entry.attempt.id) ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
       // A published page stays visible, as it does when its turn folds.
@@ -964,6 +1019,8 @@ function deriveTurnFolds(input: {
   /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
+  /** Finished replies a steer superseded; they answer their prompt, so they stay out. */
+  completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   for (const entry of input.timelineEntries) {
@@ -1080,7 +1137,8 @@ function deriveTurnFolds(input: {
       // launching run and stay visible after the surrounding work folds.
       if (
         timelineEntryIsPersistentResourceCard(entry) ||
-        input.liveSubagentEntryIds.has(entry.id)
+        input.liveSubagentEntryIds.has(entry.id) ||
+        input.completeSupersededReplyEntryIds.has(entry.id)
       ) {
         continue;
       }
@@ -1292,6 +1350,36 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
+  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+}
+
+/** The turn folds the timeline would draw, before applying expansion state. */
+function deriveTimelineTurnFolds(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+) {
+  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
+    timelineEntries,
+    unsettledRunId,
+    isWorking: input.isWorking,
+  });
+  return deriveTurnFolds({
+    timelineEntries,
+    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
+    latestRun: input.latestRun ?? null,
+    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
+    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+    completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
+  });
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
@@ -1313,9 +1401,7 @@ export function deriveMessagesTimelineRows(input: {
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = withoutSubagentDelegationRows(
-    settleSupersededReasoning(input.timelineEntries),
-  );
+  const timelineEntries = timelineRowEntries(input.timelineEntries);
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
@@ -1336,10 +1422,12 @@ export function deriveMessagesTimelineRows(input: {
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
+  const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
     timelineEntries,
     failedRunIds,
     liveSubagentEntryIds,
+    completeSupersededReplyIds,
   );
   const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
     timelineEntries: timelineEntries,
@@ -1354,6 +1442,7 @@ export function deriveMessagesTimelineRows(input: {
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive,
     liveSubagentEntryIds,
+    completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1434,6 +1523,9 @@ export function deriveMessagesTimelineRows(input: {
     latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
     workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry);
 
+  const latestThoughtEntry = visibleActiveToolEntries.findLast(
+    (entry) => entry.entry.itemType === "reasoning" && (entry.entry.detail?.trim() ?? "") !== "",
+  );
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
     activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
@@ -1450,6 +1542,7 @@ export function deriveMessagesTimelineRows(input: {
             groupId,
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
             active: latestToolKeepsActivityLive,
+            ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
         })()
       : null;
@@ -1979,6 +2072,35 @@ export interface MessagesTimelineRowsProjection {
   readonly rows: MessagesTimelineRow[];
 }
 
+/**
+ * The turn fold that holds an entry, keyed as `expandedRunIds` expects. Runless
+ * (imported V1) turns fold under a synthetic key, so the entry's own run id is
+ * not enough to open them.
+ */
+export function timelineEntryTurnFoldRunId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+  entryId: string,
+): RunId | null {
+  return timelineTurnFoldRunIdsByEntryId(input).get(entryId) ?? null;
+}
+
+/** Every folded entry's fold key, computed once for callers that check many entries. */
+export function timelineTurnFoldRunIdsByEntryId(
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+  >,
+): ReadonlyMap<string, RunId> {
+  const byEntryId = new Map<string, RunId>();
+  for (const fold of deriveTimelineTurnFolds(input).values()) {
+    for (const entryId of fold.hiddenEntryIds) byEntryId.set(entryId, fold.runId);
+  }
+  return byEntryId;
+}
+
 function sameCheckpointSummaries(
   previous: MessagesTimelineRowsInput["turnDiffSummaries"],
   next: MessagesTimelineRowsInput["turnDiffSummaries"],
@@ -2219,4 +2341,31 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
+}
+
+const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
+const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;
+const MARKDOWN_LINK = /!?\[([^\]\n]*)\]\((?:<[^>\n]*>|[^\s)]*)\)/g;
+
+function visibleUserMessageText(text: string): string {
+  const linkLabels = (segment: string) => segment.replace(MARKDOWN_LINK, "$1");
+  let visible = "";
+  let cursor = 0;
+  for (const match of collectAssistantCitations(text)) {
+    visible += linkLabels(text.slice(cursor, match.start)) + assistantCitationLabel(match.citation);
+    cursor = match.end;
+  }
+  return visible + linkLabels(text.slice(cursor));
+}
+
+export function shouldCollapseUserMessage(text: string): boolean {
+  const visible = visibleUserMessageText(text);
+  if (visible.trim().length === 0) {
+    return false;
+  }
+
+  return (
+    visible.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
+    visible.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
+  );
 }

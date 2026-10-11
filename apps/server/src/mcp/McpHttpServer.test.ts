@@ -17,8 +17,14 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/http";
+import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import {
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServerResponse,
+} from "effect/http";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerConfig from "../config.ts";
@@ -228,14 +234,14 @@ it.effect.each([
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
+it.effect("tells the agent how to recover when no preview host can run the snapshot", () =>
   Effect.gen(function* () {
     const snapshot = yield* callSnapshot({});
 
     expect(snapshot.isError).toBe(true);
     const [text] = snapshot.content;
     expect(text?.type === "text" ? text.text : "").toContain(
-      "use a headless browser from the shell",
+      "Retry preview_status, then call preview_open",
     );
     expect(snapshot.structuredContent).toMatchObject({
       error: { _tag: "PreviewAutomationNoAvailableHostError" },
@@ -244,7 +250,7 @@ it.effect("tells the agent how to fall back when no desktop app can run the snap
 );
 
 it.effect.each([
-  { mode: "default", input: {}, images: true },
+  { mode: "default", input: {}, images: false },
   { mode: "explicit image", input: { includeImage: true }, images: true },
   { mode: "text only", input: { includeImage: false }, images: false },
 ])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images }) =>
@@ -351,12 +357,7 @@ it.effect.each([
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(nextDefault.content.map((content) => content.type)).toEqual([
-        "text",
-        "text",
-        "text",
-        "image",
-      ]);
+      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "text"]);
       expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
@@ -416,11 +417,12 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const path = yield* Path.Path;
       const inputs = yield* serveSnapshots("mcp-save-client", snapshotResult);
 
-      const snapshot = yield* callSnapshot({ save: true });
+      const snapshot = yield* callSnapshot({ save: true, includeImage: true });
 
       expect(snapshot.isError).toBe(false);
       // The browser never receives the server-only `save` flag.
       expect(inputs).toEqual([{}]);
+      expect(snapshot.content.map((content) => content.type)).toContain("image");
       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
       const screenshotPath = structured.screenshotPath;
       expect(typeof screenshotPath).toBe("string");
@@ -436,7 +438,7 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
 
       // A save without the image skips the page dump.
-      const pathOnly = yield* callSnapshot({ save: true, includeImage: false });
+      const pathOnly = yield* callSnapshot({ save: true });
       const saved = pathOnly.structuredContent as { readonly screenshotPath: string };
       expect(saved).toEqual({ url: snapshotResult.url, screenshotPath: expect.any(String) });
       expect(Buffer.from(yield* fileSystem.readFile(saved.screenshotPath)).toString()).toBe("png");
@@ -750,17 +752,38 @@ it.effect("sheds log entries before locators when every list is full", () =>
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const layerServer = McpServer.layerHttp({
-        name: "MCP termination test",
-        version: "1.0.0",
-        path: "/mcp",
-        protocols: [McpProtocol.v2025_06_18],
-      });
+      const token = "providerTokenWithoutDots";
+      const scope: McpInvocationContext.McpInvocationScope = {
+        environmentId,
+        requestNamespace: "provider-session",
+        thread: {
+          threadId: ThreadId.make("thread-provider"),
+          providerSessionId: "provider-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const layerServer = McpHttpServer.layerMcpTransport.pipe(
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (presented) =>
+              Effect.succeed(
+                presented === token
+                  ? (scope as McpInvocationContext.McpThreadInvocationScope)
+                  : undefined,
+              ),
+          }),
+        ),
+      );
       yield* HttpRouter.serve(layerServer, {
         disableListenLog: true,
         disableLogger: true,
       }).pipe(Layer.build);
-      const httpClient = yield* HttpClient.HttpClient;
+      const httpClient = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+      );
 
       const initializeResponse = yield* httpClient.post("/mcp", {
         headers: { accept: "application/json, text/event-stream" },
@@ -851,8 +874,8 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(statusTool?.tool.annotations?.destructiveHint).toBe(false);
 
       const snapshotTool = server.tools.find(({ tool }) => tool.name === "preview_snapshot");
-      expect(snapshotTool?.tool.annotations?.readOnlyHint).toBe(true);
-      expect(snapshotTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(snapshotTool?.tool.annotations?.readOnlyHint).toBe(false);
+      expect(snapshotTool?.tool.annotations?.idempotentHint).toBe(false);
       expect(snapshotTool?.tool.annotations?.openWorldHint).toBe(true);
 
       const clickTool = server.tools.find(({ tool }) => tool.name === "preview_click");
@@ -891,7 +914,10 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(malformed._tag).toBe("InvalidParams");
 
       const snapshot = yield* server
-        .callTool({ name: "preview_snapshot", arguments: { tabId: alternateTabId } })
+        .callTool({
+          name: "preview_snapshot",
+          arguments: { tabId: alternateTabId, includeImage: true },
+        })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),

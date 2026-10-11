@@ -325,6 +325,21 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("only the local primary bootstrap claims the prepared shell environment", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+        assert.equal(primary.bootstrap.shellEnvironmentPrepared, true);
+        // A WSL server runs on its own Linux user environment and must hydrate it.
+        assert.isUndefined(wsl.bootstrap.shellEnvironmentPrepared);
+      }),
+    ),
+  );
+
   it.effect("resolveWsl reuses the primary's bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {

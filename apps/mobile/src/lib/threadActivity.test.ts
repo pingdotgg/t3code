@@ -85,6 +85,24 @@ it("shows only the structured path in expanded mobile read details", () => {
   expect(withoutPath?.canExpand).toBe(false);
 });
 
+it("expands a T3 Code notice to the prompt the agent got", () => {
+  const item = {
+    ...base("restart-notice", "2026-06-20T00:00:03.000Z", 2),
+    type: "notification",
+    source: { kind: "system" },
+    outcome: "updated",
+    summary: "T3 Code restarted and resumed this turn",
+    detail: "Continue where you left off.",
+  } as OrchestrationV2TurnItem;
+  const [activity] = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+
+  expect(activity?.summary).toBe("T3 Code restarted and resumed this turn");
+  expect(activity?.canExpand).toBe(true);
+  expect(activity?.getFullDetail()).toBe("Continue where you left off.");
+});
+
 it("labels file searches with the adapter title and its search target", () => {
   const item: OrchestrationV2TurnItem = {
     ...base("file-search", "2026-06-20T00:00:03.000Z", 2),
@@ -317,7 +335,7 @@ describe("buildThreadFeed", () => {
     expect(messageEntry).toBeDefined();
     expect(resolveUserMessagePresentation(messageEntry!.message)).toMatchObject({
       text: "Run checks",
-      isAutomation: true,
+      attribution: "automation",
     });
   });
 
@@ -2011,6 +2029,29 @@ const multiSelectQuestion = {
 } as const;
 
 describe("pending user input answers", () => {
+  it("preserves exact editor text, including a deliberately cleared answer", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    expect(
+      buildPendingUserInputAnswers([question], {
+        runtime: { customAnswer: question.initialAnswer },
+      }),
+    ).toEqual({ runtime: question.initialAnswer });
+    expect(
+      buildPendingUserInputAnswers([question], {
+        runtime: { customAnswer: "  Edited message\n\n" },
+      }),
+    ).toEqual({ runtime: "  Edited message\n\n" });
+    expect(buildPendingUserInputAnswers([question], { runtime: { customAnswer: "" } })).toEqual({
+      runtime: "",
+    });
+    expect(buildPendingUserInputAnswers([question], { runtime: { customAnswer: " \n" } })).toEqual({
+      runtime: " \n",
+    });
+    expect(setPendingUserInputCustomAnswer(question, { selectedOptionValues: ["Go"] }, "")).toEqual(
+      { customAnswer: "" },
+    );
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(
@@ -2279,7 +2320,8 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
     );
     if (text) {
       expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
-        summary: "First paragraph. Second paragraph.",
+        summary: "Thinking",
+        thought: "First paragraph.",
         live: true,
       });
     } else {
@@ -2292,6 +2334,32 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
     }
   },
 );
+
+it("keeps the latest thought under the live tool status", () => {
+  const at = "2026-06-20T00:00:02.000Z";
+  const thought: OrchestrationV2TurnItem = {
+    ...base("found-thought", at, 1),
+    type: "reasoning",
+    status: "completed",
+    streaming: false,
+    text: "Found the cause: no commits yet. Checking the UI next.",
+  };
+  const tool = { ...command(at), status: "running" as const, completedAt: null };
+  const rows = deriveThreadFeedPresentation(
+    buildThreadFeed([projected(userMessage(), 0), projected(thought, 1), projected(tool, 2)]),
+    { runId, status: "running", startedAt: at, completedAt: null },
+    new Set(),
+    new Set(),
+    at,
+  );
+  expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
+    thought: "Found the cause: no commits yet.",
+    live: true,
+  });
+  expect(rows.find((row) => row.type === "work-toggle")).not.toMatchObject({
+    summary: "Thinking",
+  });
+});
 
 it("stops stranded thinking after a steer and follows the next thought or tool", () => {
   const at = "2026-06-20T00:00:02.000Z";
@@ -2316,7 +2384,8 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
       at,
     );
   expect(rows([first]).find((row) => row.type === "work-toggle")).toMatchObject({
-    summary: "first-thought",
+    summary: "Thinking",
+    thought: "first-thought",
     live: true,
     shimmer: true,
   });
@@ -2340,9 +2409,11 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   ]) {
     const live = rows(items).filter((row) => row.type === "work-toggle" && row.shimmer);
     expect(live).toHaveLength(1);
-    expect(live[0]).toMatchObject({
-      summary: items.at(-1)!.type === "reasoning" ? "next-thought" : "Running vp",
-    });
+    expect(live[0]).toMatchObject(
+      items.at(-1)!.type === "reasoning"
+        ? { summary: "Thinking", thought: "next-thought" }
+        : { summary: "Running vp" },
+    );
   }
   expect(first.status).toBe("running");
 });

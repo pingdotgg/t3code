@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import {
   EventId,
@@ -31,7 +32,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -147,7 +149,7 @@ function makeSummary(
   overrides: Partial<PullRequestSummary> = {},
 ): PullRequestSummary {
   return {
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     projectId: input.projectId,
     repository: input.repository,
     number: input.number,
@@ -221,6 +223,9 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
       subscribeStateChanges: Effect.succeed(Stream.fromQueue(stateChanges)),
+    }),
+    Layer.mock(GitManager.GitManager)({
+      subscribePullRequestStateChanges: Effect.succeed(Stream.empty),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       // Mirrors the store's filter: active threads that have at least one link.
@@ -1005,7 +1010,7 @@ describe("PullRequestSyncReactor", () => {
             Effect.gen(function* () {
               if (input.host === "github.com" && (yield* Clock.currentTimeMillis) < retryAt) {
                 const paused = new PullRequestProviderError({
-                  provider: "github",
+                  provider: SourceControlProviderKind.make("github"),
                   operation: "getChangeRequestSummary",
                   reason: "rate-limited",
                   detail: "paused",
@@ -1075,7 +1080,7 @@ describe("PullRequestSyncReactor", () => {
                 operation: "stack",
                 detail: "paused",
                 cause: new PullRequestProviderError({
-                  provider: "github",
+                  provider: SourceControlProviderKind.make("github"),
                   operation: "getChangeRequestStack",
                   reason: "rate-limited",
                   detail: "paused",

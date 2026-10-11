@@ -339,7 +339,7 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
-  const primaryBranchDiffPreview = useEnvironmentQuery(
+  const branchDiffPreview = useEnvironmentQuery(
     canReadFiles && selectedRunId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
@@ -351,26 +351,6 @@ export default function DiffPanel({
         })
       : null,
   );
-  const shouldRetryBranchDiffAtEnvironmentCwd =
-    selectedRunId === null &&
-    primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
-    serverConfig?.cwd !== undefined &&
-    serverConfig.cwd !== activeCwd;
-  const fallbackBranchDiffPreview = useEnvironmentQuery(
-    canReadFiles && shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
-      ? reviewEnvironment.diffPreview({
-          environmentId: activeThread.environmentId,
-          input: {
-            cwd: serverConfig.cwd,
-            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
-            ignoreWhitespace: diffIgnoreWhitespace,
-          },
-        })
-      : null,
-  );
-  const branchDiffPreview = shouldRetryBranchDiffAtEnvironmentCwd
-    ? fallbackBranchDiffPreview
-    : primaryBranchDiffPreview;
   const canRefreshGitDiff =
     isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
@@ -692,6 +672,18 @@ export default function DiffPanel({
       } else {
         next.add(fileKey);
       }
+      return { scopeKey: collapseScopeKey, fileKeys: next };
+    });
+  }, []);
+  // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
+  const unfoldDiffFile = useCallback((fileKey: string) => {
+    const { collapseScopeKey, defaultCollapsedDiffFileKeys } = collapseDefaultsRef.current;
+    setCollapsedDiffFiles((current) => {
+      const fileKeys =
+        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
+      if (!fileKeys.has(fileKey)) return current;
+      const next = new Set(fileKeys);
+      next.delete(fileKey);
       return { scopeKey: collapseScopeKey, fileKeys: next };
     });
   }, []);
@@ -1197,6 +1189,7 @@ export default function DiffPanel({
                           },
                         }
                       : {})}
+                    onRevealSearchMatch={unfoldDiffFile}
                     renderHeaderPrefix={(fileDiff, fileKey) => {
                       const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
                       return (

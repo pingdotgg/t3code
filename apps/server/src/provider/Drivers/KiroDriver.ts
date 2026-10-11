@@ -1,36 +1,35 @@
 import { KiroSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import type * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "@t3tools/provider-core/server/snapshotSettings";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import {
   type KiroAdapterV2DriverEnv,
   makeKiroAdapterV2Driver,
 } from "../../orchestration-v2/Adapters/KiroAdapterV2.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
 import {
   buildInitialKiroProviderSnapshot,
   checkKiroProviderStatus,
   kiroDefaultModelId,
 } from "../KiroProvider.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import {
-  haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
-  type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
@@ -41,7 +40,7 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   packageName: null,
 });
 
-const unsupportedTextGeneration: TextGeneration["Service"] = (() => {
+const unsupportedTextGeneration: ProviderTextGeneration = (() => {
   const unsupported = (operation: string) =>
     Effect.fail(
       new TextGenerationError({
@@ -59,9 +58,8 @@ const unsupportedTextGeneration: TextGeneration["Service"] = (() => {
 
 export type KiroDriverEnv =
   | KiroAdapterV2DriverEnv
-  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | ServerSettings.ServerSettingsService;
+  | ProviderHost.ProviderHost;
 
 export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -74,10 +72,9 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const processEnv = mergeProviderInstanceEnvironment(
+      const processEnv = yield* mergeProviderInstanceEnvironment(
         environment,
-        yield* HostProcessEnvironment,
+        yield* HostProcess.Environment,
       );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -91,7 +88,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,

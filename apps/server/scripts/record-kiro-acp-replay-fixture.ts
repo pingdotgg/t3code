@@ -14,37 +14,34 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { KiroSettings, type ProviderReplayEntry } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
-import * as ServerConfig from "../src/config.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
   KIRO_PROVIDER,
   makeKiroAdapterV2,
 } from "../src/orchestration-v2/Adapters/KiroAdapterV2.ts";
-import { ACP_PROTOCOL } from "../src/orchestration-v2/Adapters/AcpAdapterV2.ts";
-import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../src/orchestration-v2/ProviderAdapter.ts";
+import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../src/orchestration-v2/ProviderAdapterRegistry.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
-import { makeReplayServerConfig } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeKiroAcpRuntime } from "../src/provider/acp/KiroAcpSupport.ts";
-import { buildRuntimeInstructions } from "../src/provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -456,17 +453,11 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
   const tee = makeWireTee();
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const environment = yield* HostProcessEnvironment;
-      const adapter = makeKiroAdapterV2({
+      const environment = yield* HostProcess.Environment;
+      const adapter = yield* makeKiroAdapterV2({
         instanceId: variant.modelSelection.instanceId,
         settings: KIRO_RECORDING_SETTINGS,
         environment,
-        childProcessSpawner,
-        crypto: yield* Crypto.Crypto,
-        fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
         selfInvocation: yield* resolveSelfInvocation(),
         // Production's runtime factory, with the protocol logger teeing raw lines.
         makeRuntime: ({ runtimePolicy: _runtimePolicy, processEnvironment, ...input }) =>
@@ -475,7 +466,6 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
             protocolLogging: tee.attachRuntime(),
             settings: KIRO_RECORDING_SETTINGS,
             environment: { ...environment, ...processEnvironment },
-            childProcessSpawner,
           }),
       });
       // The scenario runs on the replay TestClock so its clock steps order
@@ -488,7 +478,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
           ...adapter,
           openSession: (input) =>
             adapter.openSession(input).pipe(
-              Effect.map((session): ProviderAdapterV2SessionRuntime => ({
+              Effect.map((session): ProviderAdapter.ProviderAdapterV2SessionRuntime => ({
                 ...session,
                 startTurn: (turnInput) => onWallClock(session.startTurn(turnInput)),
                 steerTurn: (turnInput) => onWallClock(session.steerTurn(turnInput)),
@@ -504,10 +494,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.effect(
-          ServerConfig.ServerConfig,
-          makeReplayServerConfig(`kiro-record-${fixtureName}`),
-        ).pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
       ),

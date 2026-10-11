@@ -9,8 +9,8 @@
  *
  * Historically this Layer composed four per-kind Live Layers
  * (`CodexProviderLive`, `ClaudeProviderLive`, …) that each exposed a
- * `ServerProviderShape`. Those Lives were deleted during the driver /
- * instance refactor — every driver now carries its `snapshot: ServerProviderShape`
+ * `ManagedServerProvider`. Those Lives were deleted during the driver /
+ * instance refactor — every driver now carries its `snapshot: ManagedServerProvider`
  * bundled onto the `ProviderInstance` the registry produces.
  *
  * Each configured instance (including multi-instance setups like
@@ -62,11 +62,14 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import type { ProviderInstance, ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
+import type {
+  ProviderInstance,
+  ProviderWorkspaceSnapshot,
+} from "@t3tools/provider-core/server/driver";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
 
 export type ProviderMaintenanceActionKind = "update";
@@ -257,7 +260,13 @@ const mergeProviderModels = (
   // Custom rows are derived from settings and every snapshot carries the full
   // current list, so a custom model missing from `nextModels` was removed by
   // the user and must not be resurrected from the previous snapshot.
-  const retainablePreviousModels = previousModels.filter((model) => !model.isCustom);
+  // A model the installed CLI is too old to run was offered by the pending
+  // snapshot, before the version was known; retaining it would make it
+  // selectable again.
+  const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const retainablePreviousModels = previousModels.filter(
+    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+  );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
     return retainablePreviousModels;

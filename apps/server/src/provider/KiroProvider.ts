@@ -26,7 +26,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
   spawnAndCollect,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 
 const KIRO_DRIVER_KIND = ProviderDriverKind.make("kiro");
 const KIRO_PRESENTATION = {

@@ -119,7 +119,7 @@ vi.mock("../settings/CodexSetupSection", () => ({
   AddManagedCodexAccountDialog: () => null,
 }));
 vi.mock("../settings/providerDriverMeta", () => ({
-  getDriverOption: (driver: string) => ({ label: driver }),
+  providerClients: { get: (driver: string) => ({ label: driver }) },
 }));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Setup required" }),
@@ -431,7 +431,7 @@ describe("welcome agent terminal setup", () => {
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
     await click("Continue");
-    expect(text(renderer!.root)).toContain("Choose your projects");
+    expect(text(renderer!.root)).toContain("Import your projects");
   });
 
   it("settles accepted pretyping locally after revocation without closing the PTY", async () => {

@@ -14,6 +14,11 @@ const THREAD_DETAILS_PANEL_SPLIT_GROUP_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_H
 
 export const THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS = "gap-2.5 px-2.5 text-left";
 
+// Center capitals with icons. Only clip horizontally so truncated labels retain
+// accents and descenders outside the trimmed text box.
+export const THREAD_DETAILS_PANEL_LABEL_CLASS =
+  "[text-box:trim-both_cap_alphabetic] overflow-x-clip overflow-y-visible";
+
 const THREAD_DETAILS_PANEL_CONTROL_CLASS = `h-8 min-w-0 rounded-lg border-transparent ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-[13px] font-medium text-foreground/80`;
 
 export const THREAD_DETAILS_PANEL_ROW_CLASS = `${THREAD_DETAILS_PANEL_CONTROL_CLASS} w-full justify-start ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;

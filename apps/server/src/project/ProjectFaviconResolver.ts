@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
-// Resolution probes 21 well-known paths plus 7 source files, so a miss
+// Resolution probes 23 well-known paths plus 7 source files, so a miss
 // costs ~30 filesystem probes. AssetAccess resolves on every project-favicon
 // asset URL, and a project's icon does not move, so the answer is cached.
 const FAVICON_CACHE_CAPACITY = 512;
@@ -69,6 +69,8 @@ const FAVICON_CANDIDATES = [
   "assets/logo.svg",
   "assets/logo.png",
   ".idea/icon.svg",
+  "Resources/AppIcon.icns",
+  "AppIcon.icns",
 ] as const;
 
 // Files that may contain a <link rel="icon"> or icon metadata declaration.

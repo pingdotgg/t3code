@@ -64,11 +64,14 @@ another link to share.
 
 ### Reach one machine several ways
 
-A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
-T3 Connect. To add one, choose **Add route** in the machine's route list, or
-next to it in the T3 Connect list. Pairing the same machine again over another
-address also adds a route instead of a second machine. A new route is placed by
-speed, in that order, and you can reorder routes at any time.
+A machine can have more than one route: LAN, Tailscale, another VPN, a public
+URL, SSH, or T3 Connect. Tailscale shares its `100.64.0.0/10` address range with
+other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
+unless the machine confirms it is on Tailscale. To add a route, choose **Add
+route** in the machine's route list, or next to it in the T3 Connect list.
+Pairing the same machine again over another address also adds a route instead
+of a second machine. A new route is placed by speed, in that order, and you can
+reorder routes at any time.
 
 While connected through T3 Connect or a paired address, T3 Code also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
@@ -90,6 +93,13 @@ On web and desktop, select the route count under the machine's name in
 or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
+
+Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
+in the mobile route details, to see what your current connection can do on that
+environment. For a remote environment, this is in its route details. Permissions
+shown there apply only to the route marked **In use**; other routes are not
+checked. Direct pairing and T3 Connect have separate sessions and may grant
+different permissions.
 
 ### Balance new threads across machines
 

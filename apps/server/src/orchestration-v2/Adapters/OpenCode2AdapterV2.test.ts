@@ -38,16 +38,15 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 import { describe } from "vite-plus/test";
 
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
-import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
-import { OPENCODE_2_STILL_STOPPING, t3McpServerName } from "./OpenCode2AdapterV2.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import {
+  OPENCODE_2_STILL_STOPPING,
+  OPENCODE_PROVIDER,
+  t3McpServerName,
+} from "@t3tools/provider-opencode/testing";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -80,8 +79,11 @@ const mcpRules = [
   { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+/** The thread's title, which the recorded session already carries. */
+const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
+  title: TITLE,
   permissions: t3Rules,
   projectID: "global",
   model: { id: "big-pickle", providerID: "opencode", variant: "default" },
@@ -227,7 +229,7 @@ const turnInput = (
   modelSelection: ModelSelection = bigPickle,
   runtimeMode: "full-access" | "approval-required" = "full-access",
 ) => ({
-  appThread: {} as OrchestrationV2AppThread,
+  appThread: { title: TITLE } as OrchestrationV2AppThread,
   threadId,
   runId: RunId.make("run:opencode2-adapter"),
   runOrdinal: 1,
@@ -344,21 +346,27 @@ const resumed = (
     return { runtime, thread };
   });
 
-const requestOf = (runtime: ProviderAdapterV2SessionRuntime) =>
+const requestOf = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
   runtime.events.pipe(
     Stream.filter(
-      (event): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
-        event.type === "runtime_request.updated",
+      (
+        event,
+      ): event is Extract<
+        ProviderAdapter.ProviderAdapterV2Event,
+        { type: "runtime_request.updated" }
+      > => event.type === "runtime_request.updated",
     ),
     Stream.map((event) => event.runtimeRequest),
     Stream.runHead,
     Effect.map(Option.getOrUndefined),
   );
 
-const terminalOf = (runtime: ProviderAdapterV2SessionRuntime) =>
+const terminalOf = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
   runtime.events.pipe(
     Stream.filter(
-      (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+      (
+        event,
+      ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
         event.type === "turn.terminal",
     ),
     Stream.runHead,
@@ -398,7 +406,7 @@ const history = {
   cursor: {},
 };
 
-describe("OpenCode2 adapter", () => {
+it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -425,6 +433,66 @@ describe("OpenCode2 adapter", () => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("creates the session with the thread's title, so OpenCode generates none", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+        ...opening,
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions: t3Rules,
+          title: "Check whether 391 is prime",
+        }),
+        replyData("session.create", sessionInfo({ title: "Check whether 391 is prime" })),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const thread = yield* runtime.ensureThread({
+        threadId,
+        title: "  Check whether 391 is prime ",
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        appThread: { title: "Check whether 391 is prime" } as OrchestrationV2AppThread,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("renames the session before the first turn after the thread was renamed", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.update", { sessionID: SESSION, title: "Prime factors of 391" }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Renamed once: the next turn under the same title sends no update.
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const renamed = {
+        ...turnInput(thread),
+        appThread: { title: "Prime factors of 391" } as OrchestrationV2AppThread,
+      };
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(renamed);
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...renamed,
+        runId: RunId.make("run:opencode2-adapter:2"),
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+      });
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
     }).pipe(Effect.scoped),
   );
 
@@ -626,6 +694,7 @@ describe("OpenCode2 adapter", () => {
     ...turnInput(thread),
     appThread: {
       id: threadId,
+      title: TITLE,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2AppThread,
   });
@@ -634,7 +703,7 @@ describe("OpenCode2 adapter", () => {
    * The single reader of the runtime's events: resolves `attached` once the
    * running background child has its thread, then returns the turn's terminal.
    */
-  const watchBackgroundTurn = (runtime: ProviderAdapterV2SessionRuntime) =>
+  const watchBackgroundTurn = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
     Effect.gen(function* () {
       const attached = yield* Deferred.make<void>();
       const terminal = yield* runtime.events.pipe(
@@ -644,7 +713,9 @@ describe("OpenCode2 adapter", () => {
             : Effect.void,
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.runHead,
@@ -764,7 +835,9 @@ describe("OpenCode2 adapter", () => {
             : Effect.void,
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.runHead,
@@ -806,7 +879,9 @@ describe("OpenCode2 adapter", () => {
       const firstEnded = yield* Deferred.make<void>();
       const ended = yield* runtime.events.pipe(
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
@@ -875,6 +950,199 @@ describe("OpenCode2 adapter", () => {
       // The follow-up execution OpenCode will start for the report is still to come.
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  /** A `subagent` call's result while its subagent runs on (`session.tool.success` is at version 2). */
+  const returnedRunning = (id: string): ProviderReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      type: "sdk.event",
+      event: {
+        id: `evt_toolsuccess_${id}`,
+        created: 1,
+        type: "session.tool.success",
+        data: {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id,
+          content: [{ type: "text", text: "The subagent is working in the background." }],
+          metadata: { sessionID: CHILD, status: "running" },
+          executed: true,
+        },
+        durable: { aggregateID: SESSION, seq: 1, version: 2 },
+      },
+    },
+  });
+  /** The model calls the subagent again by its session; the tool returns while it runs on. */
+  const callAgain = (input: Record<string, unknown>): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+    return [
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Again", prompt: "also this", sessionID: CHILD, ...input },
+        executed: false,
+      }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: CHILD, status: "running" },
+      }),
+      // A session called again gets the thread's rules.
+      out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+      reply("session.update", null),
+      returnedRunning(tool.id),
+    ];
+  };
+  const childReport = (inboxID: string, text: string) =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      sessionID: SESSION,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+          description: "Sleep",
+          metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
+        },
+        delivery: "steer",
+      },
+    });
+  /** The subagent rows by title, the thread's background roster and the child's turns, as emitted. */
+  const watchCalls = (
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    thread: OrchestrationV2ProviderThread,
+  ) =>
+    Effect.gen(function* () {
+      const calls = new Map<string, { status: string; result: string | null }>();
+      const childTurns = new Map<string, string>();
+      const callsAtChildTurnStart = new Map<
+        string,
+        Record<string, { status: string; result: string | null }>
+      >();
+      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      let wake = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "subagent.updated" && event.subagent.title !== null) {
+              calls.set(event.subagent.title, {
+                status: event.subagent.status,
+                result: event.subagent.result,
+              });
+            }
+            if (event.type === "provider_thread.updated" && event.providerThread.id === thread.id) {
+              state.roster = event.providerThread.pendingBackgroundTasks;
+            }
+            const id =
+              event.type === "provider_turn.updated"
+                ? event.providerTurn.nativeTurnRef?.nativeId
+                : undefined;
+            if (
+              event.type === "provider_turn.updated" &&
+              id?.startsWith(`${CHILD}:turn:`) === true
+            ) {
+              if (!childTurns.has(id)) {
+                callsAtChildTurnStart.set(id, Object.fromEntries(calls));
+              }
+              childTurns.set(id, event.providerTurn.status);
+            }
+            yield* Deferred.succeed(wake, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const until = (check: () => boolean): Effect.Effect<void> =>
+        Effect.suspend(() => {
+          if (check()) return Effect.void;
+          return Effect.gen(function* () {
+            wake = yield* Deferred.make<void>();
+            if (check()) return;
+            yield* Deferred.await(wake);
+            yield* until(check);
+          });
+        });
+      return { calls, callsAtChildTurnStart, childTurns, state, until };
+    });
+  const launchedAndRunning = [
+    ...backgroundLaunch(CHILD),
+    returnedRunning("call-background"),
+    event("session.execution.started", { sessionID: CHILD }),
+  ];
+
+  it.effect("settles every call that joined a running subagent with its one report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // OpenCode steers the running subagent and joins its run: one report answers both calls.
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Again")?.status === "completed" &&
+          watch.calls.get("Sleep")?.status === "completed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(Object.fromEntries(watch.calls), {
+        Sleep: { status: "completed", result: "CHILD_OK" },
+        Again: { status: "completed", result: "CHILD_OK" },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a foreground call that joined a background run for that run's report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // Without `background`, the call joins the run in the background all the same.
+        ...callAgain({}),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Again")?.status === "completed" &&
+          watch.calls.get("Sleep")?.status === "completed" &&
+          watch.state.roster?.length === 0,
+      );
+      // Not settled empty when the turn that made it ended.
+      assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "CHILD_OK" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a call to a finished subagent for its own run's report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        // Called again after it ended but before its report: the call starts a new run.
+        ...callAgain({ background: true }),
+        childReport("msg_report_1", "FIRST_OK"),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "SECOND_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      // The new run's turn starts after the first report was handled.
+      yield* watch.until(() => watch.childTurns.has(`${CHILD}:turn:2`));
+      assert.deepEqual(watch.callsAtChildTurnStart.get(`${CHILD}:turn:2`), {
+        Sleep: { status: "completed", result: "FIRST_OK" },
+        Again: { status: "running", result: null },
+      });
+      yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
+      assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
     }).pipe(Effect.scoped),
   );
 
@@ -1107,7 +1375,7 @@ describe("OpenCode2 adapter", () => {
     event("session.execution.succeeded", { sessionID: SESSION }),
   ];
   /** The runtime's events, with the background subagent's statuses and the middle session's turns. */
-  const watchNested = (runtime: ProviderAdapterV2SessionRuntime) =>
+  const watchNested = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
     Effect.gen(function* () {
       const deep: Array<string> = [];
       const middleTurns = new Map<string, string>();
@@ -1322,7 +1590,7 @@ describe("OpenCode2 adapter", () => {
     attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
   });
   const stopFirstTurn = (
-    runtime: ProviderAdapterV2SessionRuntime,
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
   ) =>
     Effect.gen(function* () {
@@ -1333,10 +1601,12 @@ describe("OpenCode2 adapter", () => {
       yield* TestClock.adjust("11 seconds");
       yield* Fiber.join(interrupt);
     });
-  const terminals = (runtime: ProviderAdapterV2SessionRuntime, count: number) =>
+  const terminals = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime, count: number) =>
     runtime.events.pipe(
       Stream.filter(
-        (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+        (
+          event,
+        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
           event.type === "turn.terminal",
       ),
       Stream.take(count),
@@ -2110,7 +2380,9 @@ describe("OpenCode2 adapter", () => {
           }),
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
@@ -2328,7 +2600,7 @@ describe("OpenCode2 adapter", () => {
     replyData("session.form.list", forms),
   ];
 
-  const turnItems = (collected: ReadonlyArray<ProviderAdapterV2Event>) =>
+  const turnItems = (collected: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     collected.flatMap((event) =>
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
@@ -2469,29 +2741,6 @@ describe("OpenCode2 adapter", () => {
       assert.include(texts, "HELLO WORLD");
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
     }).pipe(Effect.scoped),
-  );
-
-  it.live("returns the server it reconnected to once the session closes", () =>
-    Effect.gen(function* () {
-      // A spawned server stops after it has no borrowers for a while, so a
-      // session must not keep holding the connection it reconnected with.
-      const borrowers = { current: 0 };
-      yield* Effect.gen(function* () {
-        yield* openCode2ReplayRuntime(
-          [
-            ...opening,
-            { type: "runtime_exit", status: "success" },
-            out("event.subscribe"),
-            event("server.connected", {}),
-          ],
-          { borrowers },
-        );
-        // Reconnected: the dropped connection is returned and the new one is held.
-        yield* Effect.sleep("200 millis");
-        assert.equal(borrowers.current, 1);
-      }).pipe(Effect.scoped);
-      assert.equal(borrowers.current, 0);
-    }),
   );
 
   it.effect(
@@ -2682,7 +2931,8 @@ describe("OpenCode2 adapter", () => {
     "registers T3's MCP server for the thread alone and removes it when the thread unloads",
     () =>
       Effect.gen(function* () {
-        McpProviderSession.setMcpProviderSession({
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
           environmentId: EnvironmentId.make("environment:opencode2-adapter"),
           threadId,
           providerSessionId: "mcp:opencode2-adapter",
@@ -2691,9 +2941,7 @@ describe("OpenCode2 adapter", () => {
           authorizationHeader: "Bearer thread-credential",
           browserToolsAvailable: false,
         });
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-        );
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const server = "t3-code-thread_opencode2-adapter";
         const { runtime, thread } = yield* resumed([
           // Registered for the session's directory under the thread's own name;
@@ -2729,7 +2977,8 @@ describe("OpenCode2 adapter", () => {
         "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
       );
       const server = "t3-code-aa73fa1e03099934";
-      McpProviderSession.setMcpProviderSession({
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment:opencode2-adapter"),
         threadId: child,
         providerSessionId: "mcp:opencode2-adapter",
@@ -2738,9 +2987,7 @@ describe("OpenCode2 adapter", () => {
         authorizationHeader: "Bearer thread-credential",
         browserToolsAvailable: false,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(child)),
-      );
+      yield* Effect.addFinalizer(() => mcpSessions.clear(child));
       const runtime = yield* openCode2ReplayRuntimeWithInstructions([
         ...opening,
         out("session.get", { sessionID: SESSION }),
@@ -3040,7 +3287,7 @@ describe("OpenCode2 adapter", () => {
     Effect.gen(function* () {
       const kept = "msg_t3_turn_run-attempt:kept:1";
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         out("message.list", "<any>"),
         reply("message.list", {
@@ -3724,7 +3971,7 @@ describe("OpenCode2 adapter", () => {
    */
   const continued = (after: ReadonlyArray<ProviderReplayEntry>) =>
     Effect.gen(function* () {
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -3864,7 +4111,7 @@ describe("OpenCode2 adapter", () => {
     Effect.gen(function* () {
       const reportText = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
       const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -3977,6 +4224,31 @@ describe("OpenCode2 adapter", () => {
   );
 });
 
+describe("OpenCode2 adapter server connection", () => {
+  it.live("returns the server it reconnected to once the session closes", () =>
+    Effect.gen(function* () {
+      // A spawned server stops after it has no borrowers for a while, so a
+      // session must not keep holding the connection it reconnected with.
+      const borrowers = { current: 0 };
+      yield* Effect.gen(function* () {
+        yield* openCode2ReplayRuntime(
+          [
+            ...opening,
+            { type: "runtime_exit", status: "success" },
+            out("event.subscribe"),
+            event("server.connected", {}),
+          ],
+          { borrowers },
+        );
+        // Reconnected: the dropped connection is returned and the new one is held.
+        yield* Effect.sleep("200 millis");
+        assert.equal(borrowers.current, 1);
+      }).pipe(Effect.scoped);
+      assert.equal(borrowers.current, 0);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+});
+
 /** The provider turn the adapter derives for `turnInput`'s attempt. */
 const providerTurnId = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -3986,7 +4258,7 @@ const providerTurnId = Effect.gen(function* () {
   });
 }).pipe(Effect.provide(IdAllocator.layer));
 
-describe("OpenCode reported model variants", () => {
+it.layer(McpProviderSessions.layer)("OpenCode reported model variants", (it) => {
   it.effect(
     "updates reported variants from selected-model and step events without duplicate updates",
     () =>
