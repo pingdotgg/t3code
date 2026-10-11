@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 
 const refreshProviders = vi.hoisted(() => vi.fn());
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
@@ -203,6 +204,33 @@ describe("mobile slash menu position", () => {
 
   it("keeps a path literal", async () => {
     expect(await itemLabelsFor("Use /tmp/review.sh")).toEqual([]);
+  });
+
+  it("offers a second skill on the same line", async () => {
+    expect(await itemLabelsFor("$first /rev")).toEqual(["skill:review"]);
+  });
+
+  it("completes a second skill with the caret inside its slash token", () => {
+    const draftMessage = "$first /review";
+    const trigger = detectComposerTrigger(draftMessage, "$first /rev".length);
+    const skill = provider.skills[0];
+    if (!trigger) throw new Error("Expected a slash trigger");
+    if (!skill) throw new Error("Expected the review skill");
+
+    expect(
+      resolveComposerCommandSelection({
+        draftMessage,
+        trigger,
+        item: {
+          id: "skill:review",
+          type: "skill",
+          label: "skill:review",
+          description: "",
+          skill,
+        },
+        allowInteractionMode: false,
+      }),
+    ).toEqual({ text: "$first $review ", cursor: 15, interactionMode: null });
   });
 });
 

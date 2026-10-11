@@ -272,7 +272,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       kind: "slash-command",
       query: token.slice(1),
       rangeStart: tokenStart,
-      rangeEnd: cursor,
+      rangeEnd: tokenEnd,
     };
   }
   const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
