@@ -1,6 +1,7 @@
 // The bridge relays opaque JSON-RPC lines verbatim; schema-decoding foreign
 // payloads here would reject traffic it must pass through untouched.
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
+import * as NodeFSP from "node:fs/promises";
 import * as NodeReadline from "node:readline";
 
 import * as Cause from "effect/Cause";
@@ -308,6 +309,25 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
 }
 
 /**
+ * The endpoint and `Authorization` header the T3 server handed this process.
+ * The header is read from the private file named by
+ * `T3_ACP_MCP_AUTHORIZATION_FILE`, so the credential itself never sits in the
+ * environment of the agent or anything it spawns.
+ */
+export async function readAcpMcpCredentials(
+  env: NodeJS.ProcessEnv,
+): Promise<{ readonly endpoint: string; readonly authorization: string } | undefined> {
+  const endpoint = env.T3_ACP_MCP_ENDPOINT;
+  const authorizationFile = env.T3_ACP_MCP_AUTHORIZATION_FILE;
+  if (endpoint === undefined || authorizationFile === undefined) return undefined;
+  const authorization = await NodeFSP.readFile(authorizationFile, "utf8").then(
+    (contents) => contents.trim(),
+    () => "",
+  );
+  return authorization.length === 0 ? undefined : { endpoint, authorization };
+}
+
+/**
  * Argv runner for `t3 acp-mcp-bridge` and `t3 acp-mcp-call`, shared by the
  * fast-path dispatch in bin.ts and the full CLI's command handlers. Kept free
  * of heavy imports: these commands run on the ACP first-message critical path.
@@ -316,13 +336,15 @@ export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
   args: ReadonlyArray<string>,
 ): Promise<void> {
-  const endpoint = process.env.T3_ACP_MCP_ENDPOINT;
-  const authorization = process.env.T3_ACP_MCP_AUTHORIZATION;
-  if (endpoint === undefined || authorization === undefined) {
-    process.stderr.write(`${command} requires T3_ACP_MCP_ENDPOINT and T3_ACP_MCP_AUTHORIZATION.\n`);
+  const credentials = await readAcpMcpCredentials(process.env);
+  if (credentials === undefined) {
+    process.stderr.write(
+      `${command} requires T3_ACP_MCP_ENDPOINT and a readable T3_ACP_MCP_AUTHORIZATION_FILE.\n`,
+    );
     process.exitCode = 2;
     return;
   }
+  const { endpoint, authorization } = credentials;
   if (command === "acp-mcp-bridge") {
     await Effect.runPromise(
       runAcpMcpStdioBridge({

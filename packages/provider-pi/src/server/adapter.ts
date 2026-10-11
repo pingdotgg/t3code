@@ -60,6 +60,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -67,6 +68,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { makeMcpCredentialFiles } from "@t3tools/provider-core/server/mcpSession";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -540,10 +542,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       if (!resolvedLaunchArgs.ok) {
         return yield* protocolError(resolvedLaunchArgs.message);
       }
+      // The file lives as long as this session; Pi gets only its path.
+      const mcp =
+        mcpSession === undefined
+          ? undefined
+          : {
+              endpoint: mcpSession.endpoint,
+              authorizationFile: yield* provideCacheFs(
+                makeMcpCredentialFiles().pipe(
+                  Effect.flatMap((files) =>
+                    files.write(input.threadId, mcpSession.authorizationHeader),
+                  ),
+                  Scope.provide(scope),
+                ),
+              ),
+            };
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
         environment: options.environment,
-        mcpSession,
+        mcp,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
@@ -3169,7 +3186,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const forkLaunch = buildPiRpcLaunch({
               launchArgs: resolvedLaunchArgs.args,
               environment: options.environment,
-              mcpSession: undefined,
+              mcp: undefined,
               extensionPath: undefined,
               disableExtensions: true,
               disableTools: true,

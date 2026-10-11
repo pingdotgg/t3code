@@ -13,7 +13,7 @@ import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/serve
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
-export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
+export const T3_MCP_AUTHORIZATION_FILE_ENV = "T3_MCP_AUTHORIZATION_FILE";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 
@@ -30,7 +30,7 @@ import * as NodePath from "node:path";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
-const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
+const AUTHORIZATION_FILE_ENV = ${JSON.stringify(T3_MCP_AUTHORIZATION_FILE_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
@@ -340,11 +340,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   const endpoint = env(URL_ENV);
-  const token = env(TOKEN_ENV);
+  // T3 passes only the path: the credential stays out of the environment that
+  // every command Pi runs inherits.
+  const authorizationFile = env(AUTHORIZATION_FILE_ENV);
+  const token =
+    authorizationFile === undefined
+      ? undefined
+      : (await NodeFSP.readFile(authorizationFile, "utf8").catch(() => "")).trim() || undefined;
   if (endpoint === undefined || token === undefined) {
     pi.on("session_start", async (_event, ctx) => {
       ctx.ui.notify(
-        "t3-code MCP unavailable: T3_MCP_URL or T3_MCP_BEARER_TOKEN is missing.",
+        "t3-code MCP unavailable: T3_MCP_URL or T3_MCP_AUTHORIZATION_FILE is missing or unreadable.",
         "warning",
       );
     });

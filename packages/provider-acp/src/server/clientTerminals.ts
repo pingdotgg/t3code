@@ -12,6 +12,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
 
+import { withoutRawMcpCredentials } from "@t3tools/provider-core/server/mcpSession";
+
 /**
  * Client-side implementation of the ACP `terminal` capability.
  *
@@ -231,12 +233,13 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-          const environment =
+          const environment = withoutRawMcpCredentials(
             options.environment === undefined &&
-            sessionEnvironment === undefined &&
-            (request.env?.length ?? 0) === 0
+              sessionEnvironment === undefined &&
+              (request.env?.length ?? 0) === 0
               ? undefined
-              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment },
+          );
           // Each terminal owns a scope so the spawned process is reliably reaped:
           // closing the scope kills a still-running command and frees the handle.
           const terminalScope = yield* Scope.make();
