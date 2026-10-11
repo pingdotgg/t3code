@@ -41,6 +41,7 @@ describe("buildThreadActionMenuItems", () => {
             "unpin",
             "unsettle",
             "unsnooze",
+            "snooze",
             "rename",
             "regenerate-title",
             "auto-settle",
