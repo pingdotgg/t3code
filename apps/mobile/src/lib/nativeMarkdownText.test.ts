@@ -69,19 +69,27 @@ describe("nativeMarkdownTextRuns", () => {
       { start: 9, end: 10, text: "![Screenshot](t3-context://v1/image/screenshot)" },
     ]);
   });
-  it("links a path-shaped code span without changing the same path in prose", () => {
+  it.each([
+    { path: "/tmp/frame.png", label: "frame.png", icon: "image" },
+    { path: "src/main.ts:49-74", label: "main.ts:49-74", icon: "typescript" },
+  ])("links $path in code without changing the same path in prose", ({ path, label, icon }) => {
+    const runs = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [
+        { type: "text", content: `${path} ` },
+        { type: "code_inline", content: path },
+      ],
+    });
+    expect(runs).toEqual([{ text: `${path} ` }, { text: label, href: path, fileIcon: icon }]);
     expect(
-      nativeMarkdownTextRuns({
-        type: "paragraph",
-        children: [
-          { type: "text", content: "/tmp/frame.png " },
-          { type: "code_inline", content: "/tmp/frame.png" },
-        ],
-      }),
-    ).toEqual([
-      { text: "/tmp/frame.png " },
-      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
-    ]);
+      nativeMarkdownContextCopyRanges(
+        runs.map((run) => ({
+          run,
+          text: run.fileIcon ? "\uFFFC" : run.text,
+          inlineImageLength: 0,
+        })),
+      ),
+    ).toEqual([{ start: path.length + 1, end: path.length + 2, text: `[${label}](<${path}>)` }]);
   });
 
   it("keeps a thread link's href so a press can open the thread", () => {
