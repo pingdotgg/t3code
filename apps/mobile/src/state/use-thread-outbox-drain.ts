@@ -811,7 +811,7 @@ export function useThreadOutboxDrain(): void {
       );
       if (!serverConfig) return false;
       const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
-      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection)) {
+      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
         return restoreQueuedMessage(
           queuedMessage,
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
@@ -893,7 +893,7 @@ export function useThreadOutboxDrain(): void {
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
       if (!currentConfig) return false;
-      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection)) {
+      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
         return restoreQueuedMessage(
           persistedMessage,
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
@@ -990,7 +990,7 @@ export function useThreadOutboxDrain(): void {
         },
         serverConfig.providers,
       );
-      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection)) {
+      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
         return restoreQueuedMessage(
           queuedMessage,
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
@@ -1035,7 +1035,7 @@ export function useThreadOutboxDrain(): void {
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
       if (!currentConfig) return false;
-      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection)) {
+      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
         return restoreQueuedMessage(
           persistedMessage,
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",

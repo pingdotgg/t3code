@@ -1236,6 +1236,7 @@ export function NewTaskDraftScreen(props: {
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
+        selectedProject.id,
       ) ?? flow.selectedModel;
     const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
@@ -1252,7 +1253,11 @@ export function NewTaskDraftScreen(props: {
     }
     if (
       environmentConnected &&
-      isModelSelectionUnavailable(selectedEnvironmentServerConfig, modelSelection)
+      isModelSelectionUnavailable(
+        selectedEnvironmentServerConfig,
+        modelSelection,
+        selectedProject.id,
+      )
     ) {
       Alert.alert(
         "Antigravity model unavailable",
