@@ -1,4 +1,4 @@
-import type { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
@@ -13,7 +13,7 @@ export function questionAttachmentDraftPrefix(
 export function questionAttachmentDraftId(
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  requestId: ApprovalRequestId,
+  requestId: string,
   questionId: string,
 ): DraftId {
   return DraftId.make(
@@ -24,6 +24,16 @@ export function questionAttachmentDraftId(
 export const useQuestionAttachmentPreparation = create<{ counts: Record<string, number> }>(() => ({
   counts: {},
 }));
+
+/** Count both staged files and in-flight preparation against the shared question limit. */
+export function countQuestionAttachments(keys: ReadonlyArray<DraftId>): number {
+  const store = useComposerDraftStore.getState();
+  const { counts } = useQuestionAttachmentPreparation.getState();
+  return keys.reduce((total, key) => {
+    const draft = store.getComposerDraft(key);
+    return total + (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + (counts[key] ?? 0);
+  }, 0);
+}
 
 export function changeQuestionAttachmentPreparation(key: DraftId, delta: number): void {
   useQuestionAttachmentPreparation.setState((state) =>

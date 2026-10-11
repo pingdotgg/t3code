@@ -4,11 +4,11 @@ import { Cause, Context, Effect, Fiber, Option, Stream } from "effect"
 // oxlint-disable-next-line @typescript-eslint/no-unused-vars
 import { NodeInspectSymbol } from "effect/Inspectable"
 import * as Layer from "effect/Layer"
-import * as RpcClient from "effect/unstable/rpc/RpcClient"
-import type { RpcClientError } from "effect/unstable/rpc/RpcClientError"
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup"
-import * as RpcServer from "effect/unstable/rpc/RpcServer"
-import * as RpcTest from "effect/unstable/rpc/RpcTest"
+import * as RpcClient from "effect/rpc/RpcClient"
+import type { RpcClientError } from "effect/rpc/RpcClientError"
+import type * as RpcGroup from "effect/rpc/RpcGroup"
+import * as RpcServer from "effect/rpc/RpcServer"
+import * as RpcTest from "effect/rpc/RpcTest"
 import { AuthClient, AuthLayer, TimingLayer, User, UserRpcs, UsersLayer } from "./rpc-schemas.ts"
 
 export class UsersClient extends Context.Service<
@@ -65,7 +65,7 @@ export const e2eSuite = <E>(
       Effect.gen(function*() {
         const client = yield* UsersClient
         const users: Array<User> = []
-        yield* client.StreamUsers({ id: "1" }).pipe(
+        const fiber = yield* client.StreamUsers({ id: "1" }).pipe(
           Stream.take(5),
           Stream.runForEach((user) =>
             Effect.sync(() => {
@@ -75,7 +75,7 @@ export const e2eSuite = <E>(
           Effect.forkChild
         )
 
-        yield* Effect.sleep(2000)
+        yield* Fiber.join(fiber)
         assert.lengthOf(users, 5)
 
         // test interrupts

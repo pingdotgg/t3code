@@ -9,15 +9,9 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 
-const AlertDialogCreateHandle = AlertDialogPrimitive.createHandle;
-
 const AlertDialog = AlertDialogPrimitive.Root;
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
-
-function AlertDialogTrigger(props: AlertDialogPrimitive.Trigger.Props) {
-  return <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />;
-}
 
 function AlertDialogBackdrop({ className, ...props }: AlertDialogPrimitive.Backdrop.Props) {
   return (
@@ -76,7 +70,10 @@ function AlertDialogPopup({
 function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2 p-6 text-center max-sm:pb-4 sm:text-left", className)}
+      className={cn(
+        "flex min-h-0 flex-col gap-2 p-6 text-center max-sm:pb-4 sm:text-left",
+        className,
+      )}
       data-slot="alert-dialog-header"
       {...props}
     />
@@ -107,7 +104,7 @@ function AlertDialogFooter({
 function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn("font-heading font-semibold text-xl leading-none", className)}
+      className={cn("wrap-anywhere shrink-0 font-semibold text-xl leading-none", className)}
       data-slot="alert-dialog-title"
       {...props}
     />
@@ -117,7 +114,13 @@ function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Pr
 function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.Description.Props) {
   return (
     <AlertDialogPrimitive.Description
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn(
+        // A long description (say, the arguments of a tool call awaiting
+        // approval) scrolls in place instead of pushing the actions out of
+        // the popup, which the viewport already caps.
+        "wrap-anywhere max-h-[min(24rem,60dvh)] min-h-0 overflow-y-auto overscroll-contain text-muted-foreground text-sm select-text",
+        className,
+      )}
       data-slot="alert-dialog-description"
       {...props}
     />
@@ -129,12 +132,10 @@ function AlertDialogClose(props: AlertDialogPrimitive.Close.Props) {
 }
 
 export {
-  AlertDialogCreateHandle,
   AlertDialog,
   AlertDialogPortal,
   AlertDialogBackdrop,
   AlertDialogBackdrop as AlertDialogOverlay,
-  AlertDialogTrigger,
   AlertDialogPopup,
   AlertDialogPopup as AlertDialogContent,
   AlertDialogHeader,

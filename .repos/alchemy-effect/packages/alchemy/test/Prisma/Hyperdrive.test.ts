@@ -7,15 +7,13 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import PrismaHyperdriveWorker from "./fixtures/hyperdrive-worker.ts";
 
 const wantsLive = process.env.ALCHEMY_RUN_LIVE_PRISMA_TESTS === "true";
 const hasLiveCredentials =
-  !!process.env.PRISMA_SERVICE_TOKEN?.trim() ||
-  !!process.env.PRISMA_API_TOKEN?.trim() ||
   process.env.ALCHEMY_RUN_LIVE_PRISMA_WITH_PROFILE === "true";
 const runLive = wantsLive && hasLiveCredentials;
 
@@ -86,5 +84,16 @@ test.skipIf(!runLive)(
       expect.arrayContaining([{ id: 1, name: "anvil" }]),
     );
   }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:prisma",
+      "provider:prisma:connection",
+      "provider:prisma:project",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );

@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   listGitTags,
@@ -62,6 +62,23 @@ it.effect("accepts legacy nightly tags when selecting the previous nightly", () 
     ]);
 
     assert.equal(previous, "nightly-v1.2.0-nightly.20260620.1");
+  }),
+);
+
+it.effect("keeps preview tags in their own series", () =>
+  Effect.gen(function* () {
+    const previous = yield* resolvePreviousReleaseTag("preview", "v1.2.0-preview.20260620.2", [
+      "v1.2.0-nightly.20260620.3",
+      "v1.2.0-preview.20260620.1",
+      "v1.1.9",
+    ]);
+    assert.equal(previous, "v1.2.0-preview.20260620.1");
+
+    const stable = yield* resolvePreviousReleaseTag("stable", "v1.2.0", [
+      "v1.1.9",
+      "v1.2.0-preview.20260620.1",
+    ]);
+    assert.equal(stable, "v1.1.9");
   }),
 );
 

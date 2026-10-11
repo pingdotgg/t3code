@@ -27,6 +27,24 @@ describe("highlightSourceFile", () => {
     );
   });
 
+  it("keeps colors for a block comment that spans highlight batches", async () => {
+    // Long enough that the comment body crosses at least one batch boundary.
+    const body = Array.from({ length: 400 }, (_, index) => `const insideComment${index} = 1;`);
+    const highlighted = await highlightSourceFile({
+      path: "example.ts",
+      contents: ["/*", ...body, "*/", "const after = 2;"].join("\n"),
+      theme: "dark",
+    });
+
+    const commentColors = new Set(
+      highlighted.slice(1, -2).flatMap((line) => line.map((token) => token.color)),
+    );
+    expect(commentColors.size).toBe(1);
+    expect(highlighted.at(-1)?.map((token) => token.color)).not.toEqual(
+      highlighted[1]?.map((token) => token.color),
+    );
+  });
+
   it("falls back to plain tokens for very long lines", async () => {
     const longLine = `const value = "${"a".repeat(1_100)}";`;
 
@@ -110,6 +128,31 @@ describe("highlightReviewSelectedLines", () => {
 });
 
 describe("highlightCodeSnippet", () => {
+  it.each(["light", "dark"] as const)(
+    "preserves diff-prefixed TSX review snippets in %s mode",
+    async (theme) => {
+      const lines = [
+        "- onClick={() => submitOrder(cart)}",
+        "+ onClick={handleSubmit}",
+        "+ disabled={isSubmitting}",
+      ];
+      const highlighted = await highlightCodeSnippet({
+        code: lines.join("\n"),
+        language: "tsx",
+        theme,
+      });
+      expect(highlighted.map((line) => line.map((token) => token.content).join(""))).toEqual(lines);
+      expect(
+        new Set(
+          highlighted
+            .flat()
+            .map((token) => token.color)
+            .filter(Boolean),
+        ).size,
+      ).toBeGreaterThan(1);
+    },
+  );
+
   it("resolves language aliases and returns syntax-colored tokens", async () => {
     const source = "const answer: number = 42;";
     const highlighted = await highlightCodeSnippet({

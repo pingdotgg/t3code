@@ -1,11 +1,48 @@
-import type {
-  AuditLogEventTypeInfoResultItem,
-  AuditLogResponse,
-  AuditLogsResponseEdgesItemNode,
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import {
+  Railway,
+  type AuditLog as RailwayAuditLog,
+  type AuditLogFilterInput,
 } from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
 import * as Effect from "effect/Effect";
 import { resolveWorkspaceId } from "./Environment.ts";
+
+const auditLogFields = <E>(row: Query<RailwayAuditLog, E>) => ({
+  id: row.id,
+  eventType: row.eventType,
+  createdAt: row.createdAt,
+  workspaceId: row.workspaceId,
+  projectId: row.projectId,
+  environmentId: row.environmentId,
+  payload: row.payload,
+  context: row.context,
+});
+type AuditLogRow = UnwrapPlan<ReturnType<typeof auditLogFields>>;
+
+const readAuditLogs = Query.fn(
+  (args: {
+    workspaceId: string;
+    first: number;
+    sort?: "asc" | "desc";
+    filter?: AuditLogFilterInput;
+  }) => Railway.auditLogs(args).pipe(Query.map(auditLogFields)),
+);
+
+const readAuditLog = Query.fn((id: string, workspaceId: string) =>
+  auditLogFields(Railway.auditLog({ id, workspaceId })),
+);
+
+const readAuditLogEventTypes = Query.fn(() =>
+  Railway.auditLogEventTypeInfo().pipe(
+    Query.map((info) => ({
+      description: info.description,
+      eventType: info.eventType,
+    })),
+  ),
+);
+type AuditLogEventTypeInfoResultItem = UnwrapPlan<
+  ReturnType<typeof readAuditLogEventTypes>
+>[number];
 
 /**
  * Project identity for {@link listAuditLogs}. Accepts a `Railway.Project`
@@ -86,8 +123,6 @@ export interface AuditLogEntry {
 
 export type AuditLogEventType = AuditLogEventTypeInfoResultItem;
 
-type AuditLogRow = AuditLogResponse | AuditLogsResponseEdgesItemNode;
-
 const toEntry = (row: AuditLogRow): AuditLogEntry => ({
   id: row.id,
   eventType: row.eventType,
@@ -157,6 +192,7 @@ const workspaceOf = (workspaceId: string | undefined) =>
  * ```
  *
  * @resource
+ * @product Workspace
  */
 export const AuditLog = Effect.fn(function* (options?: ListAuditLogsOptions) {
   const workspaceId = yield* workspaceOf(options?.workspaceId);
@@ -184,22 +220,14 @@ export const AuditLog = Effect.fn(function* (options?: ListAuditLogsOptions) {
         }
       : undefined;
 
-  const page = yield* railway
-    .auditLogs({
-      workspaceId,
-      first,
-      ...(options?.sort !== undefined ? { sort: options.sort } : {}),
-      ...(filter !== undefined ? { filter } : {}),
-    })
-    .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed({
-          edges: [] as { node: AuditLogsResponseEdgesItemNode }[],
-        }),
-      ),
-    );
+  const rows = yield* readAuditLogs({
+    workspaceId,
+    first,
+    ...(options?.sort !== undefined ? { sort: options.sort } : {}),
+    ...(filter !== undefined ? { filter } : {}),
+  });
 
-  return (page.edges ?? []).map((edge) => toEntry(edge.node));
+  return rows.map(toEntry);
 });
 
 /** Alias of {@link AuditLog}. */
@@ -219,10 +247,7 @@ export const getAuditLog = Effect.fn(function* (options: {
   workspaceId?: string;
 }) {
   const workspaceId = yield* workspaceOf(options.workspaceId);
-  const row = yield* railway.auditLog({
-    id: options.id,
-    workspaceId,
-  });
+  const row = yield* readAuditLog(options.id, workspaceId);
   return toEntry(row);
 });
 
@@ -235,6 +260,6 @@ export const getAuditLog = Effect.fn(function* (options: {
  * ```
  */
 export const listAuditLogEventTypes = Effect.fn(function* () {
-  const types = yield* railway.auditLogEventTypeInfo({});
+  const types = yield* readAuditLogEventTypes();
   return types ?? [];
 });

@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  canOperate: true,
   documentUri: "file:///documents",
   createAssetUrl: vi.fn(),
   createUploadUrl: Symbol("create-upload-url"),
@@ -32,7 +33,7 @@ vi.mock("../state/atom-registry", () => ({
 }));
 
 // The real read lease and cleanup are covered by the composer ownership suite.
-vi.mock("../state/use-composer-drafts", () => ({
+vi.mock("./composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: () => () => {},
 }));
 
@@ -48,6 +49,7 @@ vi.mock("../state/attachments", () => ({
 }));
 
 vi.mock("../state/session", () => ({
+  readEnvironmentScope: () => mocks.canOperate,
   environmentSession: {
     preparedConnectionValueAtom: () => mocks.preparedConnection,
   },
@@ -131,6 +133,16 @@ const file = {
   fileUri: "file:///documents/report.pdf",
 } as const satisfies DraftComposerAttachment;
 
+/** A picture chosen through the document picker: typed `file`, with no usable mime. */
+const documentPickedImage = {
+  id: "file-2",
+  type: "file",
+  name: "photo.png",
+  mimeType: "application/octet-stream",
+  sizeBytes: 3,
+  fileUri: "file:///documents/photo.png",
+} as const satisfies DraftComposerAttachment;
+
 describe("validateDraftFileAttachments", () => {
   it("allows legacy image-only sends without server config", () => {
     expect(validateDraftFileAttachments({ attachments: [image], serverConfig: null })).toBeNull();
@@ -184,6 +196,7 @@ function removeCallsFor(attachmentId: string): number {
 
 describe("prepareTurnAttachments", () => {
   beforeEach(() => {
+    mocks.canOperate = true;
     mocks.documentUri = "file:///documents";
     mocks.createAssetUrl.mockReset();
     mocks.createAssetUrl.mockImplementation((target: unknown) => target);
@@ -210,6 +223,80 @@ describe("prepareTurnAttachments", () => {
         : { _tag: "Success", value: undefined },
     );
     mocks.upload.mockResolvedValue({ status: 204, body: "", headers: {} });
+  });
+
+  it("does not mint or transfer attachments without task operation access", async () => {
+    mocks.canOperate = false;
+    await expect(
+      prepareTurnAttachments({
+        environmentId,
+        attachments: [fileBackedImage],
+        supportsImageUploads: true,
+      }),
+    ).rejects.toThrow("cannot upload attachments");
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("rechecks access after a signed URL is minted before sending any bytes", async () => {
+    mocks.runAtomCommand.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return {
+        _tag: "Success",
+        value: {
+          attachmentId: MINTED_ID,
+          relativeUrl: "/api/attachments/upload/signed",
+          expiresAt: 1,
+        },
+      };
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        prepareTurnAttachments({
+          environmentId,
+          attachments: [fileBackedImage],
+          supportsImageUploads: true,
+        }),
+      ).rejects.toThrow("cannot upload attachments");
+      expect(mocks.upload).not.toHaveBeenCalled();
+      expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not replace an expired upload when access was revoked during verification", async () => {
+    mocks.executeAtomQuery.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } };
+    });
+    await expect(
+      prepareTurnAttachments({
+        environmentId,
+        attachments: [
+          {
+            ...fileBackedImage,
+            uploadedAttachmentId: MINTED_ID,
+            uploadEnvironmentId: environmentId,
+          },
+        ],
+        supportsImageUploads: true,
+      }),
+    ).rejects.toThrow("cannot upload attachments");
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("rechecks deletion permission before retrying a failed cleanup", async () => {
+    mocks.runAtomCommand.mockImplementationOnce(async () => {
+      mocks.canOperate = false;
+      return { _tag: "Failure", error: new Error("Retry cleanup") };
+    });
+    await expect(releasePendingAttachmentUploads(environmentId, [MINTED_ID])).rejects.toThrow(
+      "cannot delete pending attachments",
+    );
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
   });
 
   it("keeps existing image attachments on the legacy wire path", async () => {
@@ -325,8 +412,39 @@ describe("prepareTurnAttachments", () => {
     ]);
   });
 
+  it("sends a document-picked picture with the mime it was uploaded under", async () => {
+    // The upload normalises `application/octet-stream` to `image/png`; the message reference
+    // has to agree, or `ChatImageAttachment` rejects the turn and nothing sends.
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [documentPickedImage],
+    });
+
+    expect(mocks.upload).toHaveBeenCalledWith(
+      "file:///documents/photo.png",
+      "https://environment.example/api/attachments/upload/signed",
+      expect.objectContaining({ headers: { "Content-Type": "image/png" } }),
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments[0]).toEqual({
+      type: "image",
+      id: MINTED_ID,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+  });
+
   it("uploads generic file bytes directly and keeps mixed attachment order", async () => {
-    const prepared = await prepareTurnAttachments({ environmentId, attachments: [file, image] });
+    const pastedFile = {
+      ...file,
+      source: { _tag: "pasted-text" as const },
+    };
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [pastedFile, image],
+    });
 
     expect(mocks.upload).toHaveBeenCalledWith(
       "file:///documents/report.pdf",
@@ -345,11 +463,12 @@ describe("prepareTurnAttachments", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
+      source: { _tag: "pasted-text" },
     });
     expect(prepared.attachments[1]?.type).toBe("image");
     expect(prepared.pendingAttachmentIds).toEqual([MINTED_ID]);
     expect(prepared.draftAttachments[0]).toEqual({
-      ...file,
+      ...pastedFile,
       uploadedAttachmentId: MINTED_ID,
       uploadEnvironmentId: environmentId,
     });
@@ -427,6 +546,33 @@ describe("prepareTurnAttachments", () => {
         uploadEnvironmentId: environmentId,
       },
       image,
+    ]);
+  });
+
+  it("keeps the uploaded id when a document-picked picture uploads as an image", () => {
+    // The draft stays `type: "file"` while the upload is promoted to `"image"`. Comparing the
+    // two types drops the id, so a later send re-uploads the bytes and the draft chip points at
+    // a local id nobody can resolve.
+    expect(
+      withUploadedMobileAttachmentReferences({
+        environmentId,
+        attachments: [documentPickedImage],
+        uploadedAttachments: [
+          {
+            type: "image",
+            id: "pending-promoted-png",
+            name: documentPickedImage.name,
+            mimeType: "image/png",
+            sizeBytes: documentPickedImage.sizeBytes,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        ...documentPickedImage,
+        uploadedAttachmentId: "pending-promoted-png",
+        uploadEnvironmentId: environmentId,
+      },
     ]);
   });
 

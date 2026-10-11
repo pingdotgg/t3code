@@ -1,4 +1,4 @@
-import { createHighlighterCore, type HighlighterCore } from "@shikijs/core";
+import { createHighlighterCore, type GrammarState, type HighlighterCore } from "@shikijs/core";
 import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
 import bashLanguage from "@shikijs/langs/bash";
 import javascriptLanguage from "@shikijs/langs/javascript";
@@ -15,13 +15,12 @@ import * as Schema from "effect/Schema";
 import {
   resolveReviewHighlighterEngine,
   resolveReviewHighlighterEnginePreference,
-  type ReviewHighlighterEngine,
 } from "./reviewHighlighterEngine";
+import { createIncrementalSnippet } from "./incrementalSnippet";
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import { applyDiffRangesToTokens, computeWordAltDiffRanges } from "./reviewWordDiffs";
 
 export type ReviewDiffTheme = "light" | "dark";
-export type { ReviewHighlighterEngine };
 
 export class ReviewHighlighterEngineInitializationError extends Schema.TaggedError<ReviewHighlighterEngineInitializationError>()(
   "ReviewHighlighterEngineInitializationError",
@@ -36,12 +35,9 @@ export class ReviewHighlighterEngineInitializationError extends Schema.TaggedErr
   }
 }
 
-export interface ReviewHighlightedToken {
-  content: string;
-  readonly color: string | null;
-  readonly fontStyle: number | null;
-  readonly diffHighlight?: boolean;
-}
+import type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
+
+export type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
 
 const SHIKI_THEME_NAME_BY_SCHEME = {
   light: "github-light-default",
@@ -54,7 +50,12 @@ const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePrefe
   REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
 );
 const REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD = 8;
-const REVIEW_HIGHLIGHT_CHUNK_SIZE = 200;
+// Bounds each tokenizing call by characters, not lines, so long-line files
+// still yield to touches and renders between short batches.
+const REVIEW_HIGHLIGHT_CHUNK_CHARACTERS = 2_000;
+// A yield waits for the next frame, so batches run back to back until about one
+// frame of work has passed instead of yielding after every batch.
+const REVIEW_HIGHLIGHT_YIELD_AFTER_MS = 16;
 const REVIEW_TOKENIZE_MAX_LINE_LENGTH = 1_000;
 const REVIEW_INITIAL_LANGUAGE_MODULES = [
   bashLanguage,
@@ -180,7 +181,6 @@ const languageAliases: Record<string, string> = {
   txt: "text",
 };
 let highlighterPromise: Promise<HighlighterCore> | null = null;
-let activeHighlighterEnginePromise: Promise<ReviewHighlighterEngine> | null = null;
 
 type LoadedLanguageModule = {
   default: Parameters<HighlighterCore["loadLanguage"]>[0];
@@ -253,10 +253,7 @@ async function getHighlighter(): Promise<HighlighterCore> {
               engine: nativeEngineModule.createNativeEngine(),
             });
             logReviewHighlighterDiagnostic("using native engine");
-            return {
-              highlighter,
-              engine: "native" as const,
-            };
+            return highlighter;
           }
         } catch (error) {
           nativeInitializationError = new ReviewHighlighterEngineInitializationError({
@@ -307,53 +304,16 @@ async function getHighlighter(): Promise<HighlighterCore> {
       logReviewHighlighterDiagnostic("using javascript engine", {
         resolvedEngine: engine,
       });
-      return {
-        highlighter,
-        engine,
-      };
+      return highlighter;
     })();
 
-    highlighterPromise = configuredHighlighterPromise
-      .then((result) => result.highlighter)
-      .catch((error) => {
-        highlighterPromise = null;
-        activeHighlighterEnginePromise = null;
-        throw error;
-      });
-    activeHighlighterEnginePromise = configuredHighlighterPromise
-      .then((result) => result.engine)
-      .catch((error) => {
-        activeHighlighterEnginePromise = null;
-        throw error;
-      });
+    highlighterPromise = configuredHighlighterPromise.catch((error) => {
+      highlighterPromise = null;
+      throw error;
+    });
   }
 
   return highlighterPromise;
-}
-
-export async function getActiveReviewHighlighterEngine(): Promise<ReviewHighlighterEngine> {
-  await getHighlighter();
-  return activeHighlighterEnginePromise ?? Promise.resolve("javascript");
-}
-
-export async function prepareReviewHighlighter(): Promise<void> {
-  await getHighlighter();
-}
-
-export async function prepareReviewHighlighterLanguages(
-  languages: ReadonlyArray<string>,
-): Promise<void> {
-  const highlighter = await getHighlighter();
-  await Promise.all(
-    languages.map(async (language) => {
-      const candidate = resolveLanguageAlias(language);
-      if (candidate === "text" || !(candidate in languageImports)) {
-        return;
-      }
-
-      await loadSingleLanguage(highlighter, candidate);
-    }),
-  );
 }
 
 function resolveLanguageAlias(language: string): string {
@@ -453,16 +413,23 @@ async function resolveLanguageFromPath(
   return candidate;
 }
 
+type RawHighlightedLine = ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>;
+const normalizedLines = new WeakMap<RawHighlightedLine, ReadonlyArray<ReviewHighlightedToken>>();
+
 function normalizeHighlightedLines(
-  tokenLines: ReadonlyArray<ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>>,
+  tokenLines: ReadonlyArray<RawHighlightedLine>,
 ): ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>> {
-  return tokenLines.map((line) =>
-    line.map((token) => ({
+  return tokenLines.map((line) => {
+    const cached = normalizedLines.get(line);
+    if (cached) return cached;
+    const normalized = line.map((token) => ({
       content: token.content,
       color: token.color ?? null,
       fontStyle: token.fontStyle ?? null,
-    })),
-  );
+    }));
+    normalizedLines.set(line, normalized);
+    return normalized;
+  });
 }
 
 function applyWordAltDiffHighlightsToSelectedLines(input: {
@@ -551,58 +518,111 @@ async function highlightLines(
   const highlighter = await getHighlighter();
   const sourceLines = code.split("\n");
   const highlightedLines: Array<ReadonlyArray<ReviewHighlightedToken>> = [];
-  const shortLineBatch: string[] = [];
+  // Batches resume from the previous batch's grammar state, so a comment or
+  // template string that spans a batch boundary keeps its colors.
+  let grammarState: GrammarState | undefined;
+  let start = 0;
+  let sliceStartedAt = performance.now();
 
-  const flushShortLineBatch = async (): Promise<void> => {
-    if (shortLineBatch.length === 0) {
-      return;
-    }
-
-    const tokenLines = highlighter.codeToTokensBase(shortLineBatch.join("\n"), {
-      lang: language,
-      theme,
-    });
-    highlightedLines.push(...normalizeHighlightedLines(tokenLines));
-    shortLineBatch.length = 0;
-  };
-
-  for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
-    const line = sourceLines[lineIndex] ?? "";
-
-    if (line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH) {
-      await flushShortLineBatch();
-      highlightedLines.push([{ content: line, color: null, fontStyle: null }]);
+  while (start < sourceLines.length) {
+    // A skipped line leaves its ending state unknown; resume from a fresh state.
+    if (sourceLines[start]!.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH) {
+      highlightedLines.push([{ content: sourceLines[start]!, color: null, fontStyle: null }]);
+      grammarState = undefined;
+      start += 1;
     } else {
-      shortLineBatch.push(line);
-    }
+      let end = start;
+      let characters = 0;
+      while (end < sourceLines.length) {
+        const length = sourceLines[end]!.length;
+        if (
+          length > REVIEW_TOKENIZE_MAX_LINE_LENGTH ||
+          (end > start && characters + length + 1 > REVIEW_HIGHLIGHT_CHUNK_CHARACTERS)
+        ) {
+          break;
+        }
+        characters += length + (end > start ? 1 : 0);
+        end += 1;
+      }
 
-    if (shortLineBatch.length >= REVIEW_HIGHLIGHT_CHUNK_SIZE) {
-      await flushShortLineBatch();
+      const tokenLines = highlighter.codeToTokensBase(sourceLines.slice(start, end).join("\n"), {
+        lang: language,
+        theme,
+        grammarState,
+      });
+      grammarState = highlighter.getLastGrammarState(tokenLines);
+      highlightedLines.push(...normalizeHighlightedLines(tokenLines));
+      start = end;
     }
 
     if (
       sourceLines.length > REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD &&
-      lineIndex + 1 < sourceLines.length &&
-      (shortLineBatch.length === 0 || line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH)
+      start < sourceLines.length &&
+      performance.now() - sliceStartedAt >= REVIEW_HIGHLIGHT_YIELD_AFTER_MS
     ) {
       await waitForNextFrame();
+      sliceStartedAt = performance.now();
     }
   }
-
-  await flushShortLineBatch();
 
   return highlightedLines;
 }
 
+const snippetSessions = new WeakMap<
+  object,
+  { language: string; theme: string; highlight: ReturnType<typeof createIncrementalSnippet> }
+>();
+
 export async function highlightCodeSnippet(input: {
+  readonly session?: object;
   readonly code: string;
   readonly language?: string | null;
   readonly theme: ReviewDiffTheme;
 }): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   const languageHint = input.language?.trim() || "text";
   const language = await resolveLanguageFromPath(`snippet.${languageHint}`, languageHint);
-  return highlightLines(input.code, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+  const theme = SHIKI_THEME_NAME_BY_SCHEME[input.theme];
+  // Bound retained text and preserve the existing plain-text/long-line fallback.
+  if (
+    !input.session ||
+    language === "text" ||
+    input.code.length === 0 ||
+    input.code.length > 100_000 ||
+    input.code.includes("\r") ||
+    input.code.split("\n").some((line) => line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH)
+  ) {
+    if (input.session) snippetSessions.delete(input.session);
+    return highlightLines(input.code, language, theme);
+  }
+  const highlighter = await getHighlighter();
+  let session = snippetSessions.get(input.session);
+  if (!session || session.language !== language || session.theme !== theme) {
+    session = {
+      language,
+      theme,
+      highlight: createIncrementalSnippet(highlighter, language, theme),
+    };
+    snippetSessions.set(input.session, session);
+  }
+  return normalizeHighlightedLines(await session.highlight(input.code));
 }
+
+highlightCodeSnippet.read = (input: Parameters<typeof highlightCodeSnippet>[0]) => {
+  if (!input.session || !input.code || input.code.length > 100_000 || input.code.includes("\r"))
+    return undefined;
+  const session = snippetSessions.get(input.session);
+  const hint = input.language?.trim() || "text";
+  const language = resolveLoadedLanguageFromPath(`snippet.${hint}`, hint);
+  if (
+    !session ||
+    session.language !== language ||
+    session.theme !== SHIKI_THEME_NAME_BY_SCHEME[input.theme] ||
+    input.code.split("\n").some((line) => line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH)
+  )
+    return undefined;
+  const tokens = session.highlight.read(input.code);
+  return tokens ? normalizeHighlightedLines(tokens) : undefined;
+};
 
 export async function highlightSourceFile(input: {
   readonly path: string;

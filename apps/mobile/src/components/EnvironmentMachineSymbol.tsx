@@ -1,9 +1,7 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import type { SFSymbol } from "expo-symbols";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
-import { SymbolView } from "./AppSymbol";
-
-const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
+export const ENVIRONMENT_MACHINE_SYMBOLS = {
   server: "server.rack",
   cloud: "cloud",
   linux: "terminal",
@@ -11,7 +9,7 @@ const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
   laptop: "laptopcomputer",
   "mac-mini": "macmini",
   "mac-studio": "macstudio",
-};
+} as const satisfies Record<EnvironmentMachineKind, AppSymbolName>;
 
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
@@ -32,7 +30,7 @@ export function EnvironmentMachineSymbol(props: {
   return (
     <SymbolView
       accessibilityLabel={ENVIRONMENT_MACHINE_KIND_LABELS[props.kind]}
-      name={SYMBOL_BY_KIND[props.kind]}
+      name={ENVIRONMENT_MACHINE_SYMBOLS[props.kind]}
       size={props.size}
       tintColorClassName={props.tintColorClassName}
       type="monochrome"

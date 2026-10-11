@@ -1,4 +1,8 @@
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type DeviceServiceState,
+} from "@t3tools/contracts";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -13,6 +17,16 @@ const { listBrowserImportSources } = vi.hoisted(() => ({
   listBrowserImportSources: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render, children }: { render: ReactNode; children: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
+  TooltipPopup: () => null,
+}));
 vi.mock("../preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources },
 }));
@@ -20,11 +34,14 @@ vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),
   usePrimaryEnvironment: () => null,
+  // Settings rows resolve the primary grant before rendering server controls.
+  usePrimaryEnvironmentId: () => null,
 }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "Connect to an environment",
-  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   useClientSettingsHydrated: () => true,
   usePrimarySettingsAvailable: () => true,
   usePrimarySettings: () => DEFAULT_UNIFIED_SETTINGS,
@@ -34,8 +51,24 @@ vi.mock("./settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
 }));
+// The scoped agent-access rows need the settings layout's scope provider;
+// this test covers the device-local browser sections only.
+vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
+vi.mock("./SettingsScopeContext", () => ({
+  useSettingsScope: () => ({
+    scope: { kind: "all", environmentIds: [] },
+    search: {},
+    environment: null,
+    environments: [],
+    target: null,
+    connectedEnvironments: [],
+    targets: [],
+  }),
+  useOptionalSettingsScope: () => null,
+}));
 
 import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
+import { platformSetupStatus } from "../device/DeviceSetup";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -73,5 +106,61 @@ describe("Integrations browser discovery", () => {
     await act(() => renderer?.unmount());
     await openSettings();
     expect(listBrowserImportSources).not.toHaveBeenCalled();
+  });
+
+  it("places device settings directly after browser settings", async () => {
+    await openSettings();
+    const sections = renderer!.root
+      .findAll((node) => node.type === "section")
+      .map((node) => node.props.id)
+      .filter(Boolean);
+    expect(sections.indexOf("devices")).toBeGreaterThan(sections.indexOf("browser"));
+  });
+});
+
+const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({
+  hosts: [
+    {
+      id: "local",
+      kind: "local",
+      label: "This machine",
+      hubInstalled: false,
+      agentDeviceInstalled: false,
+      platforms: [
+        { platform: "ios", available: true },
+        { platform: "android", available: true },
+      ],
+    },
+  ],
+  hostStatus: "ready",
+  hostStatuses: {},
+  devices: [],
+  sessions: [],
+  onboardingCompleted: false,
+  agentAccessEnabled: false,
+  hubBasePath: "/api/device-hub",
+  revision: 0,
+  ...overrides,
+});
+
+describe("device setup guidance", () => {
+  it("directs users to install an iOS runtime and create an Android virtual device", () => {
+    expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
+    expect(platformSetupStatus(deviceState(), "android").message).toContain("Device Manager");
+  });
+
+  it("preserves a specific missing-tool explanation from the server", () => {
+    const state = deviceState({
+      hosts: [
+        {
+          ...deviceState().hosts[0]!,
+          platforms: [
+            { platform: "ios", available: true },
+            { platform: "android", available: false, reason: "Android Emulator is missing." },
+          ],
+        },
+      ],
+    });
+    expect(platformSetupStatus(state, "android").message).toBe("Android Emulator is missing.");
   });
 });

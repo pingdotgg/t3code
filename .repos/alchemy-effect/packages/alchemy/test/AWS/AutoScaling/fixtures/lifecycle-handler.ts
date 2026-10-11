@@ -9,11 +9,12 @@ import {
 import { amazonLinux2023 } from "@/AWS/EC2";
 import * as Output from "@/Output";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { getAutoScalingTestSubnetId } from "../TestNetwork.ts";
 
 export const lifecycleFleetAsgName = "alchemy-test-lifecycle-e2e-asg";
@@ -62,6 +63,9 @@ export default LifecycleTestFunction.make(
   {
     main: import.meta.url,
     functionUrl: true,
+    // /complete-bogus makes a live Auto Scaling call; a cold start plus SDK
+    // round-trip can exceed Lambda's 3s default and surface as a 502.
+    timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {
     const { group } = yield* LifecycleFleet;

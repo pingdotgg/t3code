@@ -5,16 +5,16 @@
  * Named so `matchesAlchemyPhysicalName` still lists it (service `list()`
  * walks owned projects) and `pnpm nuke` can reclaim it.
  */
-import { CredentialsFromEnv } from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { GraphQLLive, Railway } from "@distilled.cloud/railway";
+import { RailwayAuth } from "@/Railway/AuthProvider.ts";
+import { fromAuthProvider } from "@/Railway/Credentials.ts";
 import { resolveWorkspace } from "@/Railway/Environment.ts";
 import { Environment } from "@/Railway/ProjectEnvironment.ts";
 import { createProject, type Project } from "@/Railway/Project.ts";
-import { RailwayRetryPolicy } from "@/Railway/RetryPolicy.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { SUITE_PROJECT_NAME } from "./suiteProjectName.ts";
 
 export { SUITE_PROJECT_NAME } from "./suiteProjectName.ts";
@@ -43,20 +43,48 @@ const toProject = (
   url: `https://railway.com/project/${project.id}`,
 });
 
+const workspaceProjects = (workspaceId: string) =>
+  Query.items(
+    Railway.projects({ workspaceId, first: 50, includeDeleted: false }).pipe(
+      Query.map((project) => ({
+        id: project.id,
+        name: project.name,
+        workspaceId: project.workspaceId,
+        primaryEnvironmentId: project.primaryEnvironmentId,
+        baseEnvironmentId: project.baseEnvironmentId,
+        deletedAt: project.deletedAt,
+      })),
+    ),
+  );
+
+const readProject = Query.fn((id: string) => {
+  const project = Railway.project({ id });
+  return {
+    id: project.id,
+    name: project.name,
+    workspaceId: project.workspaceId,
+    primaryEnvironmentId: project.primaryEnvironmentId,
+    baseEnvironmentId: project.baseEnvironmentId,
+  };
+});
+
+const projectEnvironments = (projectId: string) =>
+  Query.items(
+    Railway.environments({ projectId, first: 5 }).pipe(
+      Query.map((env) => ({ id: env.id, deletedAt: env.deletedAt })),
+    ),
+  );
+
 const findByName = (workspaceId: string) =>
-  railway.projects
-    .items({ workspaceId, first: 50, includeDeleted: false })
-    .pipe(
-      Stream.filter(
-        (project) =>
-          project.deletedAt == null && project.name === SUITE_PROJECT_NAME,
-      ),
-      Stream.take(1),
-      Stream.runHead,
-      Effect.map((option) =>
-        option._tag === "Some" ? option.value : undefined,
-      ),
-    );
+  workspaceProjects(workspaceId).pipe(
+    Stream.filter(
+      (project) =>
+        project.deletedAt == null && project.name === SUITE_PROJECT_NAME,
+    ),
+    Stream.take(1),
+    Stream.runHead,
+    Effect.map((option) => (option._tag === "Some" ? option.value : undefined)),
+  );
 
 const acquire = Effect.gen(function* () {
   const workspace = yield* resolveWorkspace();
@@ -65,19 +93,17 @@ const acquire = Effect.gen(function* () {
     Effect.gen(function* () {
       let attrs = toProject(project, workspace.id);
       if (attrs.environmentId.length === 0) {
-        const fresh = yield* railway.project({ id: attrs.projectId });
+        const fresh = yield* readProject(attrs.projectId);
         attrs = toProject(fresh, workspace.id);
       }
       if (attrs.environmentId.length > 0) {
         return attrs;
       }
-      const env = yield* railway.environments
-        .items({ projectId: attrs.projectId, first: 5 })
-        .pipe(
-          Stream.filter((item) => item.deletedAt == null),
-          Stream.take(1),
-          Stream.runHead,
-        );
+      const env = yield* projectEnvironments(attrs.projectId).pipe(
+        Stream.filter((item) => item.deletedAt == null),
+        Stream.take(1),
+        Stream.runHead,
+      );
       return env._tag === "Some"
         ? { ...attrs, environmentId: env.value.id }
         : attrs;
@@ -103,13 +129,9 @@ const acquire = Effect.gen(function* () {
   );
 }).pipe(
   Effect.provide(
-    // The retry policy matters here: every Railway test file's beforeAll
-    // resolves the suite project at once, and that burst alone can trip
-    // Railway's rate limit — the SDK default gives up after ~20s.
     Layer.mergeAll(
-      RailwayRetryPolicy,
-      CredentialsFromEnv,
-      FetchHttpClient.layer,
+      GraphQLLive,
+      fromAuthProvider().pipe(Layer.provide(RailwayAuth)),
     ),
   ),
 );
@@ -118,7 +140,7 @@ const acquire = Effect.gen(function* () {
  * Process-cached create-or-get. Yield it inside a test or pass the
  * Effect as `project:` (resource-valued props accept Effects).
  */
-export const suiteProject: Effect.Effect<Project> = Effect.runSync(
+export const suiteProject = Effect.runSync(
   Effect.cached(
     acquire.pipe(
       Effect.map((attrs) => attrs as unknown as Project),

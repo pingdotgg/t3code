@@ -1,13 +1,14 @@
 import type {
   EnvironmentId,
   PreviewOpenInput,
+  PreviewRuntime,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import {
   browserDefaultOpenProfileId,
@@ -15,6 +16,7 @@ import {
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -28,6 +30,8 @@ interface OpenPreviewSessionInput<E> {
   viewport?: PreviewViewportSetting;
   /** Overrides the configured default profile. */
   profileId?: string;
+  /** Overrides where the tab runs, such as when moving a tab between browsers. */
+  runtime?: PreviewRuntime;
 }
 
 export async function openPreviewSession<E>(
@@ -41,6 +45,7 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
@@ -48,6 +53,7 @@ export async function openPreviewSession<E>(
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });
   if (result._tag === "Failure") {

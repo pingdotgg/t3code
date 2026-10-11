@@ -72,145 +72,156 @@ const setBaseline = (zoneId: string, enabled: boolean) =>
 // read-only `list` test below always runs.
 const destructive = !!process.env.CLOUDFLARE_TEST_UNIVERSAL_SSL;
 
-describe.sequential("UniversalSsl", () => {
-  test.provider.skipIf(!destructive)(
-    "disables Universal SSL and restores the original value on destroy",
-    (stack) =>
+describe.sequential(
+  "UniversalSsl",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ssl",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider.skipIf(!destructive)(
+      "disables Universal SSL and restores the original value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Known baseline: Universal SSL defaults to enabled.
+          yield* setBaseline(zoneId, true);
+
+          const setting = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
+                zoneId,
+                enabled: false,
+              });
+            }),
+          );
+
+          expect(setting.zoneId).toEqual(zoneId);
+          expect(setting.enabled).toEqual(false);
+          // The pre-management value was captured for restore-on-destroy.
+          expect(setting.initialEnabled).toEqual(true);
+
+          const live = yield* getUniversal(zoneId);
+          expect(live.enabled).toEqual(false);
+
+          yield* stack.destroy();
+
+          // Destroy restored the value the setting had before we managed it.
+          const restored = yield* getUniversal(zoneId);
+          expect(restored.enabled).toEqual(true);
+        }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
+
+    test.provider.skipIf(!destructive)(
+      "updates enabled in place and keeps the captured initial value",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* setBaseline(zoneId, true);
+
+          const initial = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
+                zoneId,
+                enabled: false,
+              });
+            }),
+          );
+
+          expect(initial.enabled).toEqual(false);
+          expect(initial.initialEnabled).toEqual(true);
+
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
+                zoneId,
+                enabled: true,
+              });
+            }),
+          );
+
+          // Same singleton patched in place; the original value survives the
+          // update so destroy still restores the pre-management state.
+          expect(updated.enabled).toEqual(true);
+          expect(updated.initialEnabled).toEqual(true);
+
+          const live = yield* getUniversal(zoneId);
+          expect(live.enabled).toEqual(true);
+
+          yield* stack.destroy();
+
+          const restored = yield* getUniversal(zoneId);
+          expect(restored.enabled).toEqual(true);
+        }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
+
+    test.provider.skipIf(!destructive)(
+      "destroy restores a disabled baseline when managing from a disabled zone",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          // Pre-management state is disabled — the capture-and-restore must
+          // bring the zone back to disabled, not to Cloudflare's default.
+          yield* setBaseline(zoneId, false);
+
+          const setting = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
+                zoneId,
+                enabled: true,
+              });
+            }),
+          );
+
+          expect(setting.enabled).toEqual(true);
+          expect(setting.initialEnabled).toEqual(false);
+
+          const live = yield* getUniversal(zoneId);
+          expect(live.enabled).toEqual(true);
+
+          yield* stack.destroy();
+
+          const restored = yield* getUniversal(zoneId);
+          expect(restored.enabled).toEqual(false);
+
+          // Leave the zone in its default state for other suites.
+          yield* setBaseline(zoneId, true);
+        }).pipe(logLevel),
+      { timeout: 180_000 },
+    );
+
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for this per-zone setting, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider("list enumerates the setting across all zones", (stack) =>
       Effect.gen(function* () {
         const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        // Known baseline: Universal SSL defaults to enabled.
-        yield* setBaseline(zoneId, true);
-
-        const setting = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
-              zoneId,
-              enabled: false,
-            });
-          }),
+        const provider = yield* Provider.findProvider(
+          Cloudflare.Ssl.UniversalSsl,
         );
+        const all = yield* provider.list();
 
-        expect(setting.zoneId).toEqual(zoneId);
-        expect(setting.enabled).toEqual(false);
-        // The pre-management value was captured for restore-on-destroy.
-        expect(setting.initialEnabled).toEqual(true);
+        expect(all.length).toBeGreaterThan(0);
+        expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
 
-        const live = yield* getUniversal(zoneId);
-        expect(live.enabled).toEqual(false);
-
+        // `stack` is unused here (the singleton always exists on every zone),
+        // but keep the destroy bookend so the harness state stays clean.
         yield* stack.destroy();
-
-        // Destroy restored the value the setting had before we managed it.
-        const restored = yield* getUniversal(zoneId);
-        expect(restored.enabled).toEqual(true);
       }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
-
-  test.provider.skipIf(!destructive)(
-    "updates enabled in place and keeps the captured initial value",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* setBaseline(zoneId, true);
-
-        const initial = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
-              zoneId,
-              enabled: false,
-            });
-          }),
-        );
-
-        expect(initial.enabled).toEqual(false);
-        expect(initial.initialEnabled).toEqual(true);
-
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
-              zoneId,
-              enabled: true,
-            });
-          }),
-        );
-
-        // Same singleton patched in place; the original value survives the
-        // update so destroy still restores the pre-management state.
-        expect(updated.enabled).toEqual(true);
-        expect(updated.initialEnabled).toEqual(true);
-
-        const live = yield* getUniversal(zoneId);
-        expect(live.enabled).toEqual(true);
-
-        yield* stack.destroy();
-
-        const restored = yield* getUniversal(zoneId);
-        expect(restored.enabled).toEqual(true);
-      }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
-
-  test.provider.skipIf(!destructive)(
-    "destroy restores a disabled baseline when managing from a disabled zone",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        // Pre-management state is disabled — the capture-and-restore must
-        // bring the zone back to disabled, not to Cloudflare's default.
-        yield* setBaseline(zoneId, false);
-
-        const setting = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
-              zoneId,
-              enabled: true,
-            });
-          }),
-        );
-
-        expect(setting.enabled).toEqual(true);
-        expect(setting.initialEnabled).toEqual(false);
-
-        const live = yield* getUniversal(zoneId);
-        expect(live.enabled).toEqual(true);
-
-        yield* stack.destroy();
-
-        const restored = yield* getUniversal(zoneId);
-        expect(restored.enabled).toEqual(false);
-
-        // Leave the zone in its default state for other suites.
-        yield* setBaseline(zoneId, true);
-      }).pipe(logLevel),
-    { timeout: 180_000 },
-  );
-
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for this per-zone setting, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider("list enumerates the setting across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
-
-      const provider = yield* Provider.findProvider(
-        Cloudflare.Ssl.UniversalSsl,
-      );
-      const all = yield* provider.list();
-
-      expect(all.length).toBeGreaterThan(0);
-      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
-
-      // `stack` is unused here (the singleton always exists on every zone),
-      // but keep the destroy bookend so the harness state stays clean.
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+    );
+  },
+);

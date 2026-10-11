@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or verify.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -7,12 +8,12 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 
-import { RelayConfiguration } from "../Config.ts";
-import { FcmClient, layer } from "./FcmClient.ts";
+import * as RelayConfiguration from "../Config.ts";
+import * as FcmClient from "./FcmClient.ts";
 
 import * as WebCrypto from "../WebCrypto.ts";
 import * as FcmAssertionSigner from "./FcmAssertionSigner.ts";
@@ -47,7 +48,7 @@ const config = {
   cloudMintPublicKey: "unused",
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
-} satisfies RelayConfiguration["Service"];
+} satisfies RelayConfiguration.RelayConfiguration["Service"];
 const input = {
   token: "device-token",
   packageName: "com.t3tools.t3code.dev",
@@ -55,7 +56,7 @@ const input = {
   alert: false,
 };
 
-function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: Response[]) {
+function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: Response[]) {
   const http = HttpClient.make((request) => {
     requests.push(request);
     const response = responses.shift();
@@ -63,7 +64,7 @@ function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: R
       ? Effect.succeed(HttpClientResponse.fromWeb(request, response))
       : Effect.die("unexpected request");
   });
-  return layer.pipe(
+  return FcmClient.layer.pipe(
     Layer.provide(
       FcmAssertionSigner.layer.pipe(
         Layer.provide(Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle })),
@@ -71,7 +72,7 @@ function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: R
     ),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayConfiguration, config),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
         Layer.succeed(HttpClient.HttpClient, http),
       ),
     ),
@@ -106,7 +107,7 @@ describe("FCM delivery", () => {
         return Effect.succeed(response);
       });
       yield* Effect.gen(function* () {
-        const client = yield* FcmClient;
+        const client = yield* FcmClient.FcmClient;
         const delivery = yield* client.send(input).pipe(Effect.flip, Effect.forkChild);
         yield* Deferred.await(started);
         yield* TestClock.adjust("10 seconds");
@@ -119,7 +120,7 @@ describe("FCM delivery", () => {
         expect(yield* client.send(input)).toEqual({ unregistered: false });
       }).pipe(
         Effect.provide(
-          layer.pipe(
+          FcmClient.layer.pipe(
             Layer.provide(
               FcmAssertionSigner.layer.pipe(
                 Layer.provide(
@@ -127,7 +128,7 @@ describe("FCM delivery", () => {
                 ),
               ),
             ),
-            Layer.provide(Layer.succeed(RelayConfiguration, config)),
+            Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
             Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
           ),
         ),
@@ -173,7 +174,7 @@ describe("FCM delivery", () => {
     () => {
       const requests: HttpClientRequest.HttpClientRequest[] = [];
       return Effect.gen(function* () {
-        const client = yield* FcmClient;
+        const client = yield* FcmClient.FcmClient;
         yield* client.send(input);
         yield* client.send({ ...input, alert: true });
         expect(requests.map((request) => request.url)).toEqual([
@@ -198,7 +199,7 @@ describe("FCM delivery", () => {
         });
       }).pipe(
         Effect.provide(
-          testLayer(requests, [
+          layerTest(requests, [
             Response.json({ access_token: "access-token" }),
             Response.json({ name: "one" }),
             Response.json({ name: "two" }),
@@ -211,7 +212,7 @@ describe("FCM delivery", () => {
   it.effect("invalidates authorization after 401 and recognizes unregistered device tokens", () => {
     const requests: HttpClientRequest.HttpClientRequest[] = [];
     return Effect.gen(function* () {
-      const client = yield* FcmClient;
+      const client = yield* FcmClient.FcmClient;
       const first = yield* client.send(input).pipe(Effect.flip);
       expect(first.status).toBe(401);
       expect(yield* client.send(input)).toEqual({ unregistered: true });
@@ -219,7 +220,7 @@ describe("FCM delivery", () => {
       expect(requests[3]!.headers.authorization).toBe("Bearer fresh-token");
     }).pipe(
       Effect.provide(
-        testLayer(requests, [
+        layerTest(requests, [
           Response.json({ access_token: "old-token" }),
           Response.json({}, { status: 401 }),
           Response.json({ access_token: "fresh-token" }),
@@ -243,12 +244,12 @@ describe("FCM delivery", () => {
   it.effect("rejects oversized data before contacting Firebase", () => {
     const requests: HttpClientRequest.HttpClientRequest[] = [];
     return Effect.gen(function* () {
-      const client = yield* FcmClient;
+      const client = yield* FcmClient.FcmClient;
       const error = yield* client
         .send({ ...input, data: { body: "漢".repeat(1500) } })
         .pipe(Effect.flip);
       expect(error.operation).toBe("send");
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(testLayer(requests, [])));
+    }).pipe(Effect.provide(layerTest(requests, [])));
   });
 });

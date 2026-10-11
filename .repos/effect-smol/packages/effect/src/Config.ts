@@ -40,7 +40,7 @@ const TypeId = "~effect/Config"
  * ```ts import.meta.vitest
  * import { Config } from "effect"
  *
- * Config.isConfig(Config.string("HOST")) // => true
+ * Config.isConfig(Config.String("HOST")) // => true
  * Config.isConfig("not a config") // => false
  * ```
  *
@@ -110,33 +110,14 @@ export interface Config<out T> extends Effect.Effect<T, ConfigError> {
   readonly parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<T, ConfigError>
 }
 
-// Config composition needs to distinguish an absent recipe from a hard failure
-// before the public Effect error channel is finalized. `hasInput` records
-// provider evidence separately from the value, because successful values such
-// as `undefined` and values supplied by defaults are not evidence of input.
-// Hard failures carry the same evidence so recovery cannot erase it.
-interface Resolved<out T> {
-  readonly _tag: "Resolved"
-  readonly value: T
-  readonly hasInput: boolean
-}
-
-interface Absent {
-  readonly _tag: "Absent"
-  readonly error: ConfigError
-}
-
-type Resolution<T> = Resolved<T> | Absent
-
-interface EvaluationFailure {
-  readonly error: ConfigError
-  readonly hasInput: boolean
-}
+// Result failure represents recoverable absence; Effect failure represents an
+// invalid value or a source error. Keep them separate until parsing completes.
+type Resolution<T> = Result.Result<T, ConfigError>
 
 type Evaluator<T> = (
   provider: ConfigProvider.ConfigProvider,
   pathPrefix: Path
-) => Effect.Effect<Resolution<T>, EvaluationFailure>
+) => Effect.Effect<Resolution<T>, ConfigError>
 
 interface ConfigImpl<out T> extends Config<T> {
   readonly evaluator: Evaluator<T>
@@ -163,12 +144,7 @@ function make<T>(
   const self = Object.create(Proto)
   self.evaluator = evaluator
   self.parse = (provider: ConfigProvider.ConfigProvider) =>
-    evaluator(provider, []).pipe(
-      Effect.mapErrorEager((failure) => failure.error),
-      Effect.flatMapEager((resolution) =>
-        resolution._tag === "Resolved" ? Effect.succeed(resolution.value) : Effect.fail(resolution.error)
-      )
-    )
+    Effect.flatMapEager(evaluator(provider, []), Effect.fromResult)
   return self
 }
 
@@ -176,52 +152,7 @@ const evaluateAt = <T>(
   self: Config<T>,
   provider: ConfigProvider.ConfigProvider,
   pathPrefix: Path
-): Effect.Effect<Resolution<T>, EvaluationFailure> => (self as ConfigImpl<T>).evaluator(provider, pathPrefix)
-
-const resolved = <T>(value: T, hasInput: boolean): Resolution<T> => ({
-  _tag: "Resolved",
-  value,
-  hasInput
-})
-
-const absent = (error: ConfigError): Absent => ({
-  _tag: "Absent",
-  error
-})
-
-const evaluationFailure = (error: ConfigError, hasInput: boolean): EvaluationFailure => ({
-  error,
-  hasInput
-})
-
-const isSourceError = (u: unknown): u is ConfigProvider.SourceError => Predicate.isTagged(u, "SourceError")
-
-const catchSourceError = <A, E, R>(
-  self: Effect.Effect<A, E, R>,
-  hasInput: boolean
-): Effect.Effect<A, E | EvaluationFailure, R> =>
-  self.pipe(
-    Effect.catchDefect((defect) =>
-      isSourceError(defect)
-        ? Effect.fail(evaluationFailure(new ConfigError(defect), hasInput))
-        : Effect.die(defect)
-    )
-  )
-
-const preserveInputEvidence = <T>(
-  self: Effect.Effect<Resolution<T>, EvaluationFailure>,
-  hasInput: boolean
-): Effect.Effect<Resolution<T>, EvaluationFailure> => {
-  if (!hasInput) return self
-  return self.pipe(
-    Effect.mapErrorEager((failure) => evaluationFailure(failure.error, true)),
-    Effect.flatMapEager((resolution) =>
-      resolution._tag === "Resolved"
-        ? Effect.succeed(resolved(resolution.value, true))
-        : Effect.fail(evaluationFailure(resolution.error, true))
-    )
-  )
-}
+): Effect.Effect<Resolution<T>, ConfigError> => (self as ConfigImpl<T>).evaluator(provider, pathPrefix)
 
 /**
  * Transforms the parsed value of a config with a pure function.
@@ -236,7 +167,7 @@ const preserveInputEvidence = <T>(
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const upper = Config.string("name").pipe(
+ * const upper = Config.String("name").pipe(
  *   Config.map((s) => s.toUpperCase())
  * )
  *
@@ -244,7 +175,7 @@ const preserveInputEvidence = <T>(
  * Effect.runSync(upper.parse(provider)) // => "ALICE"
  * ```
  *
- * @see {@link mapOrFail} – when the transformation can fail
+ * @see {@link mapEffect} – when the transformation can fail
  *
  * @category mapping
  * @since 2.0.0
@@ -253,11 +184,81 @@ export const map: {
   <A, B>(f: (a: A) => B): (self: Config<A>) => Config<B>
   <A, B>(self: Config<A>, f: (a: A) => B): Config<B>
 } = dual(2, <A, B>(self: Config<A>, f: (a: A) => B): Config<B> => {
+  return make((provider, pathPrefix) => Effect.map(evaluateAt(self, provider, pathPrefix), Result.map(f)))
+})
+
+/**
+ * Lets you sequence multiple configs that depend on each other or branch to
+ * multiple different configs depending on the parent.
+ *
+ * **When to use**
+ *
+ * Use when you want to maintain 2 sets of env vars with different names, and switch
+ * between whole sets based on a single dedicated env var. Or when you want to
+ * provide a variety of environment variable names (`PORT`, `BACKEND_PORT`,
+ * `API_PORT`) in order of preference for a specific configuration option, such
+ * as the listening port.
+ *
+ * **Example** (fallback configs and branching)
+ *
+ * ```ts import.meta.vitest
+ * import { Config, Option } from "effect"
+ *
+ * const EnvVar = (name: string) =>
+ *   Config.Literals([
+ *     ...["prod", "production", "PROD", "PRODUCTION"] as const,
+ *     ...["dev", "development", "DEV", "DEVELOPMENT"] as const
+ *   ], name)
+ *
+ * const withAbsenceFallback = <A, B>(fallback: Config.Config<A>) => (self: Config.Config<B>): Config.Config<A | B> =>
+ *   Config.flatMap(
+ *     Config.option(self),
+ *     Option.match({
+ *       onNone: () => fallback,
+ *       onSome: Config.succeed<A | B>
+ *     })
+ *   )
+ *
+ * // const ENV: Config.Config<"dev" | "prod">
+ * const ENV = EnvVar("ENV").pipe(
+ *   withAbsenceFallback(EnvVar("NODE_ENV")),
+ *   Config.map((fuzzyEnv) =>
+ *     fuzzyEnv.toLowerCase().startsWith("dev") ? "dev" : "prod"),
+ *   Config.withDefault('dev')
+ * )
+ *
+ * // const hostConfig: Config.Config<string>
+ * const hostConfig = ENV.pipe(
+ *   Config.flatMap((env) =>
+ *     env === "dev"
+ *       // dev is very forgiving
+ *       ? Config.NonEmptyString("DEV_HOST").pipe(
+ *         Config.orElse(() => Config.NonEmptyString("HOST")),
+ *         Config.orElse(() => Config.succeed("localhost"))
+ *       )
+ *       // prod is much stricter
+ *       : Config.NonEmptyString("PROD_HOST").pipe(
+ *         withAbsenceFallback(Config.NonEmptyString("HOST"))
+ *       )
+ *   )
+ * )
+ * ```
+ *
+ * @category mapping
+ * @since 4.0.0
+ */
+export const flatMap: {
+  <A, B>(f: (a: A) => Config<B>): (self: Config<A>) => Config<B>
+  <A, B>(self: Config<A>, f: (a: A) => Config<B>): Config<B>
+} = dual(2, <A, B>(self: Config<A>, f: (a: A) => Config<B>): Config<B> => {
   return make((provider, pathPrefix) =>
-    Effect.map(evaluateAt(self, provider, pathPrefix), (resolution) =>
-      resolution._tag === "Resolved"
-        ? resolved(f(resolution.value), resolution.hasInput)
-        : resolution)
+    Effect.flatMap(
+      evaluateAt(self, provider, pathPrefix),
+      Result.match({
+        onSuccess: (success) => evaluateAt(f(success), provider, pathPrefix),
+        onFailure: (error) => Effect.succeed(Result.fail(error))
+      })
+    )
   )
 })
 
@@ -274,8 +275,8 @@ export const map: {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const trimmed = Config.string("name").pipe(
- *   Config.mapOrFail((s) => Effect.succeed(s.trim()))
+ * const trimmed = Config.String("name").pipe(
+ *   Config.mapEffect((s) => Effect.succeed(s.trim()))
  * )
  * const provider = ConfigProvider.fromUnknown({ name: " Alice " })
  * Effect.runSync(trimmed.parse(provider)) // => "Alice"
@@ -286,18 +287,18 @@ export const map: {
  * @category mapping
  * @since 2.0.0
  */
-export const mapOrFail: {
+export const mapEffect: {
   <A, B>(f: (a: A) => Effect.Effect<B, ConfigError>): (self: Config<A>) => Config<B>
   <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B>
 } = dual(2, <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B> => {
   return make((provider, pathPrefix) =>
-    Effect.flatMap(evaluateAt(self, provider, pathPrefix), (resolution) =>
-      resolution._tag === "Resolved"
-        ? f(resolution.value).pipe(
-          Effect.mapEager((value) => resolved(value, resolution.hasInput)),
-          Effect.mapErrorEager((error) => evaluationFailure(error, resolution.hasInput))
-        )
-        : Effect.succeed(resolution))
+    Effect.flatMap(
+      evaluateAt(self, provider, pathPrefix),
+      (resolution): Effect.Effect<Resolution<B>, ConfigError> =>
+        Result.isSuccess(resolution)
+          ? Effect.mapEager(f(resolution.success), Result.succeed)
+          : Effect.succeed(Result.fail(resolution.failure))
+    )
   )
 })
 
@@ -317,21 +318,24 @@ export const mapOrFail: {
  *
  * **Gotchas**
  *
- * Recovery preserves whether the primary config read provider input. When the
- * recovered config is composed with {@link all}, invalid input in the primary
- * branch still makes the enclosing group partially supplied, so an outer
- * {@link withDefault} or {@link option} does not replace the whole group.
+ * The fallback's result replaces the original failure. If the fallback is
+ * absent, an outer {@link withDefault} or {@link option} can recover it. If the
+ * fallback fails, only its error propagates.
  *
- * **Example** (Falling back to a literal)
+ * **Example** (Trying another port before using a default)
  *
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const hostConfig = Config.string("HOST").pipe(
- *   Config.orElse(() => Config.succeed("localhost"))
+ * const port = Config.Int("PORT").pipe(
+ *   Config.orElse(() => Config.Int("BACKUP_PORT")),
+ *   Config.withDefault(3000)
  * )
- * const provider = ConfigProvider.fromUnknown({})
- * Effect.runSync(hostConfig.parse(provider)) // => "localhost"
+ * const provider = ConfigProvider.fromUnknown({ PORT: "invalid", BACKUP_PORT: "8080" })
+ * await Effect.runPromise(port.parse(provider)) // => 8080
+ *
+ * const missingBackup = ConfigProvider.fromUnknown({ PORT: "invalid" })
+ * await Effect.runPromise(port.parse(missingBackup)) // => 3000
  * ```
  *
  * @see {@link withDefault} – fallback only on semantic absence
@@ -345,14 +349,10 @@ export const orElse: {
 } = dual(2, <A, A2>(self: Config<A>, that: (error: ConfigError) => Config<A2>): Config<A | A2> => {
   return make<A | A2>((provider, pathPrefix) =>
     Effect.matchEffect(evaluateAt(self, provider, pathPrefix), {
-      onFailure: (failure) =>
-        preserveInputEvidence(
-          evaluateAt(that(failure.error), provider, pathPrefix),
-          failure.hasInput
-        ),
-      onSuccess: (resolution): Effect.Effect<Resolution<A | A2>, EvaluationFailure> =>
-        resolution._tag === "Absent"
-          ? evaluateAt(that(resolution.error), provider, pathPrefix)
+      onFailure: (error) => evaluateAt(that(error), provider, pathPrefix),
+      onSuccess: (resolution): Effect.Effect<Resolution<A | A2>, ConfigError> =>
+        Result.isFailure(resolution)
+          ? evaluateAt(that(resolution.failure), provider, pathPrefix)
           : Effect.succeed(resolution)
     })
   )
@@ -370,28 +370,31 @@ export const orElse: {
  * Accepts a tuple (preserves positions), an iterable, or a record of configs.
  * Returns a config whose parsed value mirrors the input shape.
  *
- * A combined config is absent when at least one child cannot resolve and none
- * of the other children read provider input. This lets {@link withDefault} and
- * {@link option} handle a wholly absent group. Once any child reads input, a
- * missing sibling makes the group incomplete and parsing fails. Values supplied
- * by child defaults do not count as provider input.
+ * A combined config is absent when any child is absent and no child fails.
+ * Validation and source errors propagate even when another child is absent.
+ * An outer {@link withDefault} replaces the entire absent group, while
+ * {@link option} returns `None`. Apply defaults to individual children to
+ * preserve the values of other children.
  *
- * Unlike a `Schema.Struct` passed to {@link schema}, `all` only considers input
- * read by its children. An explicitly present but empty parent container does
- * not by itself make the group present.
+ * Unlike a `Schema.Struct` passed to {@link schema}, `all` combines independent
+ * lookups. A struct validates an existing object and fails when required fields
+ * are missing; `all` can recover missing children through a group default.
  *
- * **Example** (Combining configs as a struct)
+ * **Example** (Defaulting an incomplete config group)
  *
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
- *   host: Config.string("host"),
- *   port: Config.number("port")
- * })
+ *   host: Config.String("host"),
+ *   port: Config.Number("port")
+ * }).pipe(Config.withDefault({ host: "localhost", port: 5432 }))
  *
- * const provider = ConfigProvider.fromUnknown({ host: "localhost", port: 5432 })
- * Effect.runSync(dbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
+ * const provider = ConfigProvider.fromUnknown({ host: "db.internal", port: 6000 })
+ * await Effect.runPromise(dbConfig.parse(provider)) // => { host: "db.internal", port: 6000 }
+ *
+ * const missingPort = ConfigProvider.fromUnknown({ host: "db.internal" })
+ * await Effect.runPromise(dbConfig.parse(missingPort)) // => { host: "localhost", port: 5432 }
  * ```
  *
  * @category combinators
@@ -409,92 +412,26 @@ export function all<const Arg extends Iterable<Config<any>> | Record<string, Con
       }
     : never
 > {
-  const configs: Array<Config<any>> | Record<string, Config<any>> = Array.isArray(arg)
+  const configs: Array<Config<any>> | Record<string, Config<any>> = globalThis.Array.isArray(arg)
     ? arg
     : Symbol.iterator in arg
     ? [...arg as any]
     : arg
-  if (Array.isArray(configs)) {
-    return make((provider, pathPrefix) =>
-      Effect.flatMapEager(
-        Effect.all(configs.map((config) => Effect.result(evaluateAt(config, provider, pathPrefix)))),
-        resolveArray
+  return make<any>((provider, pathPrefix) =>
+    globalThis.Array.isArray(configs)
+      ? Effect.mapEager(
+        Effect.all(configs.map((config) => evaluateAt(config, provider, pathPrefix))),
+        Result.all
       )
-    ) as any
-  } else {
-    return make((provider, pathPrefix) =>
-      Effect.flatMapEager(
-        Effect.all(Rec.map(configs, (config) => Effect.result(evaluateAt(config, provider, pathPrefix)))),
-        resolveRecord
+      : Effect.mapEager(
+        Effect.all(Rec.map(configs, (config) => evaluateAt(config, provider, pathPrefix))),
+        Result.all
       )
-    ) as any
-  }
-}
-
-const resolveArray = (
-  results: ReadonlyArray<Result.Result<Resolution<any>, EvaluationFailure>>
-): Effect.Effect<Resolution<Array<any>>, EvaluationFailure> => {
-  const values: Array<any> = []
-  let firstFailure: EvaluationFailure | undefined
-  let firstAbsent: Absent | undefined
-  let hasInput = false
-  for (const result of results) {
-    if (Result.isFailure(result)) {
-      firstFailure ??= result.failure
-      hasInput = hasInput || result.failure.hasInput
-      continue
-    }
-    const resolution = result.success
-    if (resolution._tag === "Absent") {
-      firstAbsent ??= resolution
-    } else {
-      values.push(resolution.value)
-      hasInput = hasInput || resolution.hasInput
-    }
-  }
-  if (firstFailure !== undefined) {
-    return Effect.fail(evaluationFailure(firstFailure.error, hasInput))
-  }
-  if (firstAbsent !== undefined) {
-    return hasInput ? Effect.fail(evaluationFailure(firstAbsent.error, true)) : Effect.succeed(firstAbsent)
-  }
-  return Effect.succeed(resolved(values, hasInput))
-}
-
-const resolveRecord = (
-  results: Record<string, Result.Result<Resolution<any>, EvaluationFailure>>
-): Effect.Effect<Resolution<Record<string, any>>, EvaluationFailure> => {
-  const values: Record<string, any> = {}
-  let firstFailure: EvaluationFailure | undefined
-  let firstAbsent: Absent | undefined
-  let hasInput = false
-  for (const key in results) {
-    const result = results[key]
-    if (Result.isFailure(result)) {
-      firstFailure ??= result.failure
-      hasInput = hasInput || result.failure.hasInput
-      continue
-    }
-    const resolution = result.success
-    if (resolution._tag === "Absent") {
-      firstAbsent ??= resolution
-    } else {
-      InternalRecord.assignProperty(values, key, resolution.value)
-      hasInput = hasInput || resolution.hasInput
-    }
-  }
-  if (firstFailure !== undefined) {
-    return Effect.fail(evaluationFailure(firstFailure.error, hasInput))
-  }
-  if (firstAbsent !== undefined) {
-    return hasInput ? Effect.fail(evaluationFailure(firstAbsent.error, true)) : Effect.succeed(firstAbsent)
-  }
-  return Effect.succeed(resolved(values, hasInput))
+  ) as any
 }
 
 /**
- * Provides a fallback value when the config cannot resolve because none of its
- * relevant input is present.
+ * Provides a fallback value when the config is absent.
  *
  * **When to use**
  *
@@ -502,9 +439,12 @@ const resolveRecord = (
  *
  * **Gotchas**
  *
- * Validation errors and partially supplied groups still propagate. A schema
- * that successfully decodes absent input also keeps its decoded value instead
- * of using the default. Schema configs first represent a missing or
+ * Validation and source errors still propagate. For an {@link all} group, any
+ * absent child causes the default to replace the entire group unless another
+ * child fails. Apply defaults to individual children to preserve other values.
+ *
+ * A schema that successfully decodes absent input keeps its decoded value
+ * instead of using the default. Schema configs first represent a missing or
  * incompatible provider shape as `undefined`; the default is used only when
  * the schema rejects that value and no relevant input was found.
  *
@@ -513,7 +453,7 @@ const resolveRecord = (
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const port = Config.number("port").pipe(Config.withDefault(3000))
+ * const port = Config.Number("port").pipe(Config.withDefault(3000))
  *
  * const provider = ConfigProvider.fromUnknown({})
  * Effect.runSync(port.parse(provider)) // => 3000
@@ -532,14 +472,14 @@ export const withDefault: {
   return make<A | A2>((provider, pathPrefix) =>
     Effect.mapEager(
       evaluateAt(self, provider, pathPrefix),
-      (resolution) => resolution._tag === "Absent" ? resolved(defaultValue, false) : resolution
+      (resolution) => Result.isFailure(resolution) ? Result.succeed(defaultValue) : resolution
     )
   )
 })
 
 /**
  * Makes a config optional: returns `Some(value)` on success and `None` when the
- * config cannot resolve because none of its relevant input is present.
+ * config is absent.
  *
  * **When to use**
  *
@@ -547,8 +487,9 @@ export const withDefault: {
  *
  * **Gotchas**
  *
- * Validation errors and partially supplied groups still propagate. Successful
- * values are always wrapped in `Some`, including `undefined` when the schema
+ * Validation and source errors still propagate. For an {@link all} group, any
+ * absent child produces `None` unless another child fails. Successful values
+ * are always wrapped in `Some`, including `undefined` when the schema
  * explicitly accepts it. Schema configs first represent a missing or
  * incompatible provider shape as `undefined`; `None` is returned only when the
  * schema rejects that value and no relevant input was found.
@@ -558,7 +499,7 @@ export const withDefault: {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect, Option } from "effect"
  *
- * const maybePort = Config.option(Config.number("port"))
+ * const maybePort = Config.option(Config.Number("port"))
  *
  * const provider = ConfigProvider.fromUnknown({})
  * Effect.runSync(maybePort.parse(provider)) // => Option.none()
@@ -641,7 +582,7 @@ type IsPlainObject<A> = [A] extends [Record<string, any>]
  * const makeConfig = (config: Config.Wrap<Options>): Config.Config<Options> =>
  *   Config.unwrap(config)
  *
- * const config = makeConfig({ key: Config.string("key") })
+ * const config = makeConfig({ key: Config.String("key") })
  * const provider = ConfigProvider.fromUnknown({ key: "value" })
  * Effect.runSync(config.parse(provider)) // => { key: "value" }
  * ```
@@ -667,6 +608,8 @@ interface ConfigCursor {
   readonly toString: () => string
 }
 
+const isSourceError = (u: unknown): u is ConfigProvider.SourceError => Predicate.isTagged(u, "SourceError")
+
 const cursorToString = (): string => "<configuration>"
 
 const loadCursor: (
@@ -681,8 +624,6 @@ const loadCursor: (
 const loadChildCursor = (cursor: ConfigCursor, segment: string | number): Effect.Effect<ConfigCursor> =>
   loadCursor(cursor.provider, [...cursor.path, segment])
 
-const getScalar = (node: ConfigProvider.Node | undefined): string | undefined => node?.value
-
 const decodeFromCursor = (
   ast: SchemaAST.AST,
   decode: (cursor: ConfigCursor) => Effect.Effect<unknown, SchemaIssue.Issue>
@@ -691,7 +632,7 @@ const decodeFromCursor = (
     SchemaAST.unknown,
     ast,
     new SchemaTransformation.Transformation(
-      SchemaGetter.transformOrFail((input: unknown) => decode(input as ConfigCursor)),
+      SchemaGetter.transformEffect((input: unknown) => decode(input as ConfigCursor)),
       SchemaGetter.passthrough()
     )
   )
@@ -723,7 +664,7 @@ const hasProviderInput = (
     case "Suspend":
       return hasProviderInput(ast.thunk(), node)
     default:
-      return getScalar(node) !== undefined
+      return node?.value !== undefined
   }
 }
 
@@ -774,9 +715,8 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
         for (const member of ast.types) {
           recur(member)
         }
-        return isScalarInput(ast)
-          ? decodeFromCursor(ast, (cursor) => Effect.succeed(getScalar(cursor.node)))
-          : ast.recur(recur)
+        if (!isScalarInput(ast)) return ast.recur(recur)
+        break
       case "Suspend": {
         const target = ast.thunk()
         // Force new branches so opaque encodings fail when the Config is constructed.
@@ -786,9 +726,8 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
       case "Declaration":
       case "Any":
         throw new globalThis.Error("Config.schema does not support opaque StringTree encodings", { cause: ast })
-      default:
-        return decodeFromCursor(ast, (cursor) => Effect.succeed(getScalar(cursor.node)))
     }
+    return decodeFromCursor(ast, (cursor) => Effect.succeed(cursor.node?.value))
   })
   return recur(root)
 })
@@ -807,7 +746,7 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
  * {@link nested} calls. Pass a single string for a flat key or an array for
  * nested paths.
  *
- * Convenience constructors such as `string`, `number`, and `boolean` delegate
+ * Convenience constructors such as `String`, `Number`, and `Boolean` delegate
  * to this API.
  *
  * The codec is converted to its canonical `StringTree` form. Its encoded shape
@@ -834,9 +773,9 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
  * also be accepted.
  *
  * `Schema.Struct` and {@link all} describe different lookup models. An
- * explicitly present empty object is relevant input for a struct and required
- * fields are validated. The same empty parent container does not make an
- * `all` group present when all of its child configs are absent.
+ * existing object, even an empty one, is validated as a whole by a struct;
+ * missing required fields cause a validation failure. An `all` group combines
+ * independent lookups and is absent if any child is absent and none fail.
  *
  * The canonical `StringTree` encoding must expose a concrete scalar, object,
  * array, or union shape. Opaque encodings such as `Schema.Any`,
@@ -868,7 +807,7 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
  * Effect.runSync(DbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
  * ```
  *
- * @see {@link string} / {@link number} / {@link boolean} – shortcuts for
+ * @see {@link String} / {@link Number} / {@link Boolean} – shortcuts for
  *   single-value configs
  *
  * @category schemas
@@ -883,194 +822,39 @@ export function schema<T>(codec: Schema.ConstraintCodec<T, unknown>, path?: stri
   const localPath = typeof path === "string" ? [path] : path ?? []
   return make((provider, pathPrefix) => {
     const fullPath = [...pathPrefix, ...localPath]
-    return catchSourceError(loadCursor(provider, fullPath), false).pipe(
-      Effect.flatMapEager((cursor) => {
-        const hasInput = hasProviderInput(encodedAst, cursor.node)
-        return catchSourceError(
-          decodeCursor(cursor).pipe(
-            Effect.mapEager((value) => resolved(value, hasInput)),
-            Effect.catchEager((issue) => {
-              const error = new ConfigError(
-                new Schema.SchemaError(fullPath.length > 0 ? new SchemaIssue.Pointer(fullPath, issue) : issue)
-              )
-              return hasInput
-                ? Effect.fail(evaluationFailure(error, true))
-                : Effect.succeed(absent(error))
-            })
-          ),
-          hasInput
+    return loadCursor(provider, fullPath).pipe(
+      Effect.flatMapEager((cursor) =>
+        decodeCursor(cursor).pipe(
+          Effect.mapEager(Result.succeed),
+          Effect.catchEager((issue) => {
+            const error = new ConfigError(
+              new Schema.SchemaError(fullPath.length > 0 ? new SchemaIssue.Pointer(fullPath, issue) : issue)
+            )
+            return hasProviderInput(encodedAst, cursor.node)
+              ? Effect.fail(error)
+              : Effect.succeed(Result.fail(error))
+          })
         )
-      })
+      ),
+      Effect.catchDefect((defect) => isSourceError(defect) ? Effect.fail(new ConfigError(defect)) : Effect.die(defect))
     )
   })
 }
 
-/** @internal */
-export const TrueValues = Schema.Literals(["true", "yes", "on", "1", "y"])
+const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))
 
-/** @internal */
-export const FalseValues = Schema.Literals(["false", "no", "off", "0", "n"])
+const LogLevelSchema = Schema.Literals(LogLevel_.values)
 
-/**
- * Schema for boolean values encoded as strings.
- *
- * **When to use**
- *
- * Use when you need the reusable boolean schema value for `Config.schema` with
- * custom paths.
- *
- * **Details**
- *
- * Accepted string values: `true`, `false`, `yes`, `no`, `on`, `off`, `1`,
- * `0`, `y`, `n` (case-sensitive).
- *
- * @see {@link boolean} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Boolean = Schema.Literals([...TrueValues.literals, ...FalseValues.literals]).pipe(
-  Schema.decodeTo(
-    Schema.Boolean,
-    SchemaTransformation.transform({
-      decode: (value) => value === "true" || value === "yes" || value === "on" || value === "1" || value === "y",
-      encode: (value) => value ? "true" : "false"
-    })
-  )
-)
+interface ArrayOptions {
+  readonly separator?: string | undefined
+}
 
-/**
- * Schema for port numbers (integers in 1–65535).
- *
- * **When to use**
- *
- * Use when you need the reusable port schema value for `Config.schema` with
- * custom paths.
- *
- * @see {@link port} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Port = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))
-
-/**
- * Schema for `LogLevel` string literals.
- *
- * **When to use**
- *
- * Use when you need the reusable log-level schema value for `Config.schema`
- * with custom paths.
- *
- * **Details**
- *
- * Accepted values: `"All"`, `"Fatal"`, `"Error"`, `"Warn"`, `"Info"`,
- * `"Debug"`, `"Trace"`, `"None"`.
- *
- * @see {@link logLevel} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const LogLevel = Schema.Literals(LogLevel_.values)
-
-/**
- * Schema for key-value record types that can also be parsed from
- * a flat comma-separated string.
- *
- * **When to use**
- *
- * Use when reading key-value maps from a single env var (e.g. OpenTelemetry
- *   resource attributes).
- *
- * **Details**
- *
- * Accepts either a JSON-like record from the provider or a flat string like
- * `"key1=val1,key2=val2"`. The `separator` (default `","`) and
- * `keyValueSeparator` (default `"="`) can be customized.
- *
- * **Example** (Parsing a comma-separated record)
- *
- * ```ts import.meta.vitest
- * import { Config, ConfigProvider, Effect, Schema } from "effect"
- *
- * const schema = Config.Record(Schema.String, Schema.String)
- * const config = Config.schema(schema, "OTEL_RESOURCE_ATTRIBUTES")
- *
- * const provider = ConfigProvider.fromEnv({
- *   env: {
- *     OTEL_RESOURCE_ATTRIBUTES:
- *       "service.name=my-service,service.version=1.0.0,custom.attribute=value"
- *   }
- * })
- *
- * const result = Effect.runSync(config.parse(provider))
- * result["service.name"] // => "my-service"
- * result["service.version"] // => "1.0.0"
- * result["custom.attribute"] // => "value"
- * ```
- *
- * @see {@link Array} for separated or structural array input
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Record = <K extends Schema.Record.Key, V extends Schema.Constraint>(key: K, value: V, options?: {
+interface RecordOptions {
   readonly separator?: string | undefined
   readonly keyValueSeparator?: string | undefined
-}) => {
-  const record = Schema.Record(key, value)
-  const split = SchemaTransformation.splitKeyValue(options)
-  const recordString = Schema.String.pipe(
-    Schema.decodeTo(Schema.toCodecStringTree(record), {
-      decode: split.decode,
-      encode: SchemaGetter.passthrough<Record<string, string>, Schema.StringTree>({ strict: false }).compose(
-        split.encode
-      )
-    })
-  )
-
-  return Schema.Union([record, recordString])
 }
 
-const ArrayConfig = <V extends Schema.Constraint>(value: V, options?: {
-  readonly separator?: string | undefined
-}) => {
-  const array = Schema.Array(value)
-  const separator = options?.separator ?? ","
-  const arrayString = Schema.String.pipe(
-    Schema.decodeTo(Schema.toCodecStringTree(array), {
-      decode: SchemaGetter.split(options),
-      encode: SchemaGetter.passthrough<ReadonlyArray<string>, Schema.StringTree>({ strict: false }).compose(
-        SchemaGetter.transform((input) => input.join(separator))
-      )
-    })
-  )
-
-  return Schema.Union([arrayString, array])
-}
-
-export {
-  /**
-   * Schema for array types that can also be parsed from a flat separated string.
-   *
-   * **When to use**
-   *
-   * Use when reading array values from a single env var, such as comma-separated
-   * exporter names.
-   *
-   * **Details**
-   *
-   * Accepts either a JSON-like array from the provider or a flat string like
-   * `"a,b,c"`. The `separator` defaults to `","` and can be customized.
-   *
-   * @see {@link Record} for separated or structural record input
-   *
-   * @category schemas
-   * @since 4.0.0
-   */
-  ArrayConfig as Array
-}
+const isPath = (u: unknown): u is string | Path => Predicate.isString(u) || globalThis.Array.isArray(u)
 
 // -----------------------------------------------------------------------------
 // constructors
@@ -1087,8 +871,8 @@ export {
  * @category constructors
  * @since 2.0.0
  */
-export function fail(err: SourceError | Schema.SchemaError) {
-  return make(() => Effect.fail(evaluationFailure(new ConfigError(err), false)))
+export function fail(err: SourceError | Schema.SchemaError): Config<never> {
+  return make(() => Effect.fail(new ConfigError(err)))
 }
 
 /**
@@ -1105,7 +889,7 @@ export function fail(err: SourceError | Schema.SchemaError) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("HOST").pipe(
+ * const host = Config.String("HOST").pipe(
  *   Config.orElse(() => Config.succeed("localhost"))
  * )
  * const provider = ConfigProvider.fromUnknown({})
@@ -1116,7 +900,7 @@ export function fail(err: SourceError | Schema.SchemaError) {
  * @since 2.0.0
  */
 export function succeed<T>(value: T) {
-  return make(() => Effect.succeed(resolved(value, false)))
+  return make(() => Effect.succeed(Result.succeed(value)))
 }
 
 /**
@@ -1135,19 +919,19 @@ export function succeed<T>(value: T) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("HOST")
+ * const host = Config.String("HOST")
  *
  * const provider = ConfigProvider.fromUnknown({ HOST: "localhost" })
  * Effect.runSync(host.parse(provider)) // => "localhost"
  * ```
  *
- * @see {@link nonEmptyString} – rejects empty strings
+ * @see {@link NonEmptyString} – rejects empty strings
  * @see {@link schema} – for more complex types
  *
  * @category constructors
  * @since 2.0.0
  */
-export function string(name?: string) {
+export function String(name?: string) {
   return schema(Schema.String, name)
 }
 
@@ -1163,12 +947,12 @@ export function string(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.NonEmptyString, name)`.
  *
- * @see {@link string} for allowing empty strings
+ * @see {@link String} for allowing empty strings
  *
  * @category constructors
  * @since 3.7.0
  */
-export function nonEmptyString(name?: string) {
+export function NonEmptyString(name?: string) {
   return schema(Schema.NonEmptyString, name)
 }
 
@@ -1184,13 +968,13 @@ export function nonEmptyString(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Number, name)`.
  *
- * @see {@link finite} for rejecting `NaN` and `Infinity`
- * @see {@link int} for accepting only integers
+ * @see {@link Finite} for rejecting `NaN` and `Infinity`
+ * @see {@link Int} for accepting only integers
  *
  * @category constructors
  * @since 2.0.0
  */
-export function number(name?: string) {
+export function Number(name?: string) {
   return schema(Schema.Number, name)
 }
 
@@ -1205,13 +989,13 @@ export function number(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Finite, name)`.
  *
- * @see {@link number} for accepting `NaN` and `Infinity`
- * @see {@link int} for accepting only integers
+ * @see {@link Number} for accepting `NaN` and `Infinity`
+ * @see {@link Int} for accepting only integers
  *
  * @category constructors
  * @since 4.0.0
  */
-export function finite(name?: string) {
+export function Finite(name?: string) {
   return schema(Schema.Finite, name)
 }
 
@@ -1226,13 +1010,13 @@ export function finite(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Int, name)`.
  *
- * @see {@link number} for accepting any number
- * @see {@link port} for accepting only integers in `1` through `65535`
+ * @see {@link Number} for accepting any number
+ * @see {@link Port} for accepting only integers in `1` through `65535`
  *
  * @category constructors
  * @since 4.0.0
  */
-export function int(name?: string) {
+export function Int(name?: string) {
   return schema(Schema.Int, name)
 }
 
@@ -1252,16 +1036,16 @@ export function int(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const env = Config.literal("production", "ENV")
+ * const env = Config.Literal("production", "ENV")
  * const provider = ConfigProvider.fromUnknown({ ENV: "production" })
  * Effect.runSync(env.parse(provider)) // => "production"
  * ```
  *
- * @see {@link literals} – accepts multiple literal values
+ * @see {@link Literals} – accepts multiple literal values
  * @category constructors
  * @since 2.0.0
  */
-export function literal<L extends SchemaAST.LiteralValue>(literal: L, name?: string) {
+export function Literal<L extends SchemaAST.LiteralValue>(literal: L, name?: string) {
   return schema(Schema.Literal(literal), name)
 }
 
@@ -1281,18 +1065,155 @@ export function literal<L extends SchemaAST.LiteralValue>(literal: L, name?: str
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const env = Config.literals(["development", "production"], "ENV")
+ * const env = Config.Literals(["development", "production"], "ENV")
  * const provider = ConfigProvider.fromUnknown({ ENV: "development" })
  * Effect.runSync(env.parse(provider)) // => "development"
  * ```
  *
- * @see {@link literal} for accepting one specific literal value
+ * @see {@link Literal} for accepting one specific literal value
  *
  * @category constructors
  * @since 4.0.0
  */
-export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(literals: L, name?: string) {
+export function Literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(literals: L, name?: string) {
   return schema(Schema.Literals(literals), name)
+}
+
+/**
+ * Creates a config for array values that may also be read from a separated string.
+ *
+ * **When to use**
+ *
+ * Use when you need to read either structural array input or a flat value such as
+ * `"otlp,console"` from an environment variable.
+ *
+ * **Details**
+ *
+ * Pass a string or `ConfigProvider.Path` as the second argument to set the lookup
+ * path. When no path is needed, pass the options object directly. The `separator`
+ * defaults to `","`.
+ *
+ * **Example** (Reading a comma-separated array)
+ *
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Schema } from "effect"
+ *
+ * const config = Config.Array(Schema.String, "EXPORTERS")
+ * const provider = ConfigProvider.fromEnv({ env: { EXPORTERS: "otlp,console" } })
+ *
+ * Effect.runSync(config.parse(provider)) // => ["otlp", "console"]
+ * ```
+ *
+ * @see {@link Record} for key-value input from structural records or separated strings.
+ * @category constructors
+ * @since 4.0.0
+ */
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  options?: ArrayOptions
+): Config<ReadonlyArray<V["Type"]>>
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  path: string | Path,
+  options?: ArrayOptions
+): Config<ReadonlyArray<V["Type"]>>
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  pathOrOptions?: string | Path | ArrayOptions,
+  options?: ArrayOptions
+) {
+  const hasPath = isPath(pathOrOptions)
+  const resolvedOptions = hasPath ? options : pathOrOptions
+  const array = Schema.Array(value)
+  const separator = resolvedOptions?.separator ?? ","
+  const arrayString = Schema.String.pipe(
+    Schema.decodeTo(Schema.toCodecStringTree(array), {
+      decode: SchemaGetter.split(resolvedOptions),
+      encode: SchemaGetter.compose(
+        SchemaGetter.passthrough<ReadonlyArray<string>, Schema.StringTree>({ strict: false }),
+        SchemaGetter.transform((input) => input.join(separator))
+      )
+    })
+  )
+  return schema(Schema.Union([arrayString, array]), hasPath ? pathOrOptions : undefined)
+}
+
+/**
+ * Creates a config for record values that may also be read from a separated key-value string.
+ *
+ * **When to use**
+ *
+ * Use when you need to read either structural record input or a flat value such as
+ * `"service.name=my-service,service.version=1.0.0"` from an environment variable.
+ *
+ * **Details**
+ *
+ * Pass a string or `ConfigProvider.Path` as the third argument to set the lookup
+ * path. When no path is needed, pass the options object directly. The `separator`
+ * defaults to `","` and `keyValueSeparator` defaults to `"="`.
+ *
+ * **Example** (Reading a comma-separated record)
+ *
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Schema } from "effect"
+ *
+ * const config = Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES")
+ * const provider = ConfigProvider.fromEnv({
+ *   env: {
+ *     OTEL_RESOURCE_ATTRIBUTES:
+ *       "service.name=my-service,service.version=1.0.0,custom.attribute=value"
+ *   }
+ * })
+ *
+ * const result = Effect.runSync(config.parse(provider))
+ * result["service.name"] // => "my-service"
+ * result["service.version"] // => "1.0.0"
+ * result["custom.attribute"] // => "value"
+ * ```
+ *
+ * @see {@link Array} for array input from structural arrays or separated strings.
+ * @category constructors
+ * @since 4.0.0
+ */
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  options?: RecordOptions
+): Config<Schema.Record.Type<K, V>>
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  path: string | Path,
+  options?: RecordOptions
+): Config<Schema.Record.Type<K, V>>
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  pathOrOptions?: string | Path | RecordOptions,
+  options?: RecordOptions
+) {
+  const hasPath = isPath(pathOrOptions)
+  const record = Schema.Record(key, value)
+  const split = SchemaTransformation.splitKeyValue(hasPath ? options : pathOrOptions)
+  const recordString = Schema.String.pipe(
+    Schema.decodeTo(Schema.toCodecStringTree(record), {
+      decode: split.decode,
+      encode: SchemaGetter.compose(
+        SchemaGetter.passthrough<Record<string, string>, Schema.StringTree>({ strict: false }),
+        split.encode
+      )
+    })
+  )
+  return schema(Schema.Union([record, recordString]), hasPath ? pathOrOptions : undefined)
 }
 
 /**
@@ -1305,8 +1226,6 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.Boolean, name)`.
- *
  * Accepted values: `true`, `false`, `yes`, `no`, `on`, `off`, `1`, `0`,
  * `y`, `n`.
  *
@@ -1315,7 +1234,7 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.boolean("FEATURE_FLAG")
+ * const program = Config.Boolean("FEATURE_FLAG")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1328,13 +1247,11 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  * ) // => true
  * ```
  *
- * @see {@link Boolean} for the underlying boolean codec
- *
  * @category constructors
  * @since 2.0.0
  */
-export function boolean(name?: string) {
-  return schema(Boolean, name)
+export function Boolean(name?: string) {
+  return schema(Schema.BooleanLiterals, name)
 }
 
 /**
@@ -1357,7 +1274,7 @@ export function boolean(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Duration, Effect } from "effect"
  *
- * const program = Config.duration("DURATION").pipe(Effect.map(Duration.toMillis))
+ * const program = Config.Duration("DURATION").pipe(Effect.map(Duration.toMillis))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1375,8 +1292,23 @@ export function boolean(name?: string) {
  * @category constructors
  * @since 2.5.0
  */
-export function duration(name?: string) {
+export function Duration(name?: string) {
   return schema(Schema.DurationFromString, name)
+}
+
+/**
+ * Creates a config for an exact, human-readable byte-size value.
+ *
+ * **Details**
+ *
+ * Decimal symbols such as `kB` use powers of 1,000, while binary symbols such
+ * as `KiB` use powers of 1,024.
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export function ByteSize(name?: string) {
+  return schema(Schema.ByteSize, name)
 }
 
 /**
@@ -1388,14 +1320,14 @@ export function duration(name?: string) {
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.Port, name)`.
+ * Accepts integers from `1` through `65535`.
  *
  * **Example** (Reading a port)
  *
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.port("PORT")
+ * const program = Config.Port("PORT")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1408,14 +1340,13 @@ export function duration(name?: string) {
  * ) // => 8080
  * ```
  *
- * @see {@link int} for integer config values outside the port range
- * @see {@link Port} for the underlying port codec
+ * @see {@link Int} for integer config values outside the port range
  *
  * @category constructors
  * @since 3.16.0
  */
-export function port(name?: string) {
-  return schema(Port, name)
+export function Port(name?: string) {
+  return schema(PortSchema, name)
 }
 
 /**
@@ -1427,8 +1358,6 @@ export function port(name?: string) {
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.LogLevel, name)`.
- *
  * Accepted values: `"All"`, `"Fatal"`, `"Error"`, `"Warn"`, `"Info"`,
  * `"Debug"`, `"Trace"`, `"None"`.
  *
@@ -1437,7 +1366,7 @@ export function port(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.logLevel("LOG_LEVEL")
+ * const program = Config.LogLevel("LOG_LEVEL")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1450,13 +1379,11 @@ export function port(name?: string) {
  * ) // => "Info"
  * ```
  *
- * @see {@link LogLevel} for the underlying log-level codec
- *
  * @category constructors
  * @since 2.0.0
  */
-export function logLevel(name?: string) {
-  return schema(LogLevel, name)
+export function LogLevel(name?: string) {
+  return schema(LogLevelSchema, name)
 }
 
 /**
@@ -1477,7 +1404,7 @@ export function logLevel(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.redacted("API_KEY").pipe(Effect.map(String))
+ * const program = Config.Redacted("API_KEY").pipe(Effect.map(String))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1490,12 +1417,12 @@ export function logLevel(name?: string) {
  * ) // => "<redacted>"
  * ```
  *
- * @see {@link string} for non-secret string settings
+ * @see {@link String} for non-secret string settings
  *
  * @category constructors
  * @since 2.0.0
  */
-export function redacted(name?: string) {
+export function Redacted(name?: string) {
   return schema(Schema.Redacted(Schema.String), name)
 }
 
@@ -1519,7 +1446,7 @@ export function redacted(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.url("URL").pipe(Effect.map((url) => url.href))
+ * const program = Config.URL("URL").pipe(Effect.map((url) => url.href))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1537,7 +1464,7 @@ export function redacted(name?: string) {
  * @category constructors
  * @since 3.11.0
  */
-export function url(name?: string) {
+export function URL(name?: string) {
   return schema(Schema.URL, name)
 }
 
@@ -1561,7 +1488,7 @@ export function url(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const createdAt = Config.date("CREATED_AT")
+ * const createdAt = Config.Date("CREATED_AT")
  *
  * const provider = ConfigProvider.fromUnknown({ CREATED_AT: "2024-01-15" })
  * Effect.runSync(createdAt.parse(provider)).toISOString() // => "2024-01-15T00:00:00.000Z"
@@ -1570,7 +1497,7 @@ export function url(name?: string) {
  * @category constructors
  * @since 2.0.0
  */
-export function date(name?: string) {
+export function Date(name?: string) {
   return schema(Schema.Date, name)
 }
 
@@ -1596,8 +1523,8 @@ export function date(name?: string) {
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
- *   host: Config.string("host"),
- *   port: Config.number("port")
+ *   host: Config.String("host"),
+ *   port: Config.Number("port")
  * }).pipe(Config.nested("database"))
  *
  * const provider = ConfigProvider.fromUnknown({
@@ -1611,7 +1538,7 @@ export function date(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("host").pipe(Config.nested("database"))
+ * const host = Config.String("host").pipe(Config.nested("database"))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: { database_host: "localhost" }

@@ -14,16 +14,16 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
-const ProjectLayer = WorkspaceFileSystem.layer.pipe(
+const layerProject = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
 );
 
-const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(ProjectLayer),
+const layerTest = Layer.empty.pipe(
+  Layer.provideMerge(layerProject),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
@@ -56,7 +56,96 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
-it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
+it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
+  describe("getMetadata", () => {
+    it.effect("expands home-relative paths on the server", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, "file", "hello");
+        expect(
+          (yield* service
+            .getMetadata({ paths: ["~/file"] })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home))).entries,
+        ).toEqual([{ kind: "file", byteLength: 5 }]);
+      }),
+    );
+
+    it.effect(
+      "reports actual kinds for extensionless files, dotfiles, and dotted directories",
+      () =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "custom-name", "hello");
+          yield* writeTextFile(cwd, ".npmrc", "registry=test");
+          yield* fs.makeDirectory(path.join(cwd, "folder.ts"));
+          const file = path.join(cwd, "custom-name");
+          const result = yield* service.getMetadata({
+            paths: [
+              file,
+              path.join(cwd, ".npmrc"),
+              path.join(cwd, "folder.ts"),
+              file,
+              path.join(cwd, "missing"),
+              "relative-path",
+            ],
+          });
+          expect(result.entries).toEqual([
+            { kind: "file", byteLength: 5 },
+            { kind: "file", byteLength: 13 },
+            { kind: "directory" },
+            { kind: "file", byteLength: 5 },
+            null,
+            null,
+          ]);
+        }),
+    );
+
+    it.effect("detects an extensionless script and image without returning their contents", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const script = "#!/usr/bin/env python3\nprint('hello')\n";
+        yield* writeTextFile(cwd, "run", script);
+        const image = path.join(cwd, "image");
+        yield* fs.writeFile(
+          image,
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        );
+        expect(
+          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image] })).entries,
+        ).toEqual([
+          { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
+          { kind: "file", byteLength: 8, mimeType: "image/png" },
+        ]);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("follows file and directory symlinks", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "target", "text");
+        yield* fs.makeDirectory(path.join(cwd, "directory"));
+        const fileLink = path.join(cwd, "file-link");
+        const directoryLink = path.join(cwd, "directory-link");
+        yield* fs.symlink(path.join(cwd, "target"), fileLink);
+        yield* fs.symlink(path.join(cwd, "directory"), directoryLink);
+        expect((yield* service.getMetadata({ paths: [fileLink, directoryLink] })).entries).toEqual([
+          { kind: "file", byteLength: 4 },
+          { kind: "directory" },
+        ]);
+      }),
+    );
+  });
+
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -102,7 +191,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Needs mkfifo; Windows has no FIFOs to reject.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
         Effect.gen(function* () {
@@ -125,6 +214,9 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             .pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+          expect((yield* workspaceFileSystem.getMetadata({ paths: [fifoPath] })).entries).toEqual([
+            { kind: "other" },
+          ]);
         }),
     );
 

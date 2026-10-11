@@ -6,10 +6,10 @@ import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
+import { ChildProcess } from "effect/process"
 import * as Stream from "effect/Stream"
 import * as TestClock from "effect/testing/TestClock"
-import { ChildProcess } from "effect/unstable/process"
-import * as ChildProcessSpawnerTest from "../../../effect/test/unstable/process/ChildProcessSpawnerTest.ts"
+import * as ChildProcessSpawnerTest from "../../../effect/test/process/ChildProcessSpawnerTest.ts"
 
 const platformError = (method: string, path: string, cause: unknown) =>
   PlatformError.systemError({

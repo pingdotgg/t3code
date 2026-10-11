@@ -83,8 +83,8 @@ export type McpPortal = Resource<
  *
  * The product surface is in beta and requires the AI Controls
  * entitlement; accounts without it receive the typed `Forbidden` error
- * on all writes. Attaching servers to the portal is managed out of band
- * (a future `Cloudflare.Access.McpServer` resource).
+ * on all writes. Register upstream endpoints with {@link McpServer}.
+ * Attaching registered servers to this portal is managed outside Alchemy.
  * ### Creating an MCP portal
  * **Example:** Minimal portal
  * ```typescript

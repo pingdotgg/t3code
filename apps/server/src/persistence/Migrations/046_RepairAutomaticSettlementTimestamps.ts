@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Server auto-settlement used to stamp settledAt with the sweep time instead
 // of the thread's last activity. Repair the projection only: the engine and

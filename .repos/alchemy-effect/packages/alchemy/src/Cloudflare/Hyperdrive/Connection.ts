@@ -2,6 +2,7 @@ import * as hyperdrive from "@distilled.cloud/cloudflare/hyperdrive";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
@@ -10,6 +11,7 @@ import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { isResourceOfType, Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { localAccountId } from "../LocalAccount.ts";
 import { generateLocalId } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
 
@@ -142,7 +144,7 @@ export type Connection = Resource<
  *     port: 5432,
  *     database: "app",
  *     user: "app",
- *     password: yield* Config.redacted("DB_PASSWORD"),
+ *     password: yield* Config.Redacted("DB_PASSWORD"),
  *   },
  * });
  * ```
@@ -274,16 +276,15 @@ export const ProviderLive = () =>
       // to update; otherwise we createConfig and fall back to "find by
       // name then update" if Cloudflare reports the name is already in
       // use (race or a cold-start adoption).
-      const synced = output?.hyperdriveId
-        ? yield* hyperdrive.updateConfig({
-            accountId: output.accountId,
-            hyperdriveId: output.hyperdriveId,
-            name: output.name,
-            ...requestBody,
-          })
-        : yield* hyperdrive
-            .createConfig({ accountId, name, ...requestBody })
-            .pipe(
+      const synced = yield* (
+        output?.hyperdriveId
+          ? hyperdrive.updateConfig({
+              accountId: output.accountId,
+              hyperdriveId: output.hyperdriveId,
+              name: output.name,
+              ...requestBody,
+            })
+          : hyperdrive.createConfig({ accountId, name, ...requestBody }).pipe(
               Effect.catchTag("InvalidHyperdriveConfig", (originalError) =>
                 Effect.gen(function* () {
                   const match = yield* findByName(name);
@@ -298,7 +299,14 @@ export const ProviderLive = () =>
                   });
                 }),
               ),
-            );
+            )
+      ).pipe(
+        Effect.retry({
+          while: (error) => error._tag === "HyperdriveOriginUnavailable",
+          schedule: Schedule.spaced("2 seconds"),
+          times: 10,
+        }),
+      );
 
       return {
         hyperdriveId: synced.id,
@@ -331,7 +339,7 @@ export const ProviderLocal = () =>
   Provider.succeed(Connection, {
     stables: ["accountId"],
     diff: Effect.fn(function* ({ news, output }) {
-      const { accountId } = yield* yield* CloudflareEnvironment;
+      const accountId = yield* localAccountId;
       if (!output?.hyperdriveId) return { action: "update" } as const;
       if (!isResolved(news)) return undefined;
       if (output.accountId !== accountId) {
@@ -345,7 +353,7 @@ export const ProviderLocal = () =>
       return output ?? undefined;
     }),
     reconcile: Effect.fn(function* ({ id, news, output }) {
-      const { accountId } = yield* yield* CloudflareEnvironment;
+      const accountId = yield* localAccountId;
       return {
         hyperdriveId: output?.hyperdriveId ?? generateLocalId(),
         name: yield* createConfigName(id, news.name),

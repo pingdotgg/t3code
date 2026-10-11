@@ -5,6 +5,7 @@ import {
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
+  formatContextWindowCost,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
   shouldReserveContextWindowMeter,
@@ -172,6 +173,19 @@ describe("shouldOfferResumeCompaction", () => {
     ).toBe(false);
   });
 
+  it("uses the reported prompt cache TTL instead of the fallback", () => {
+    const offer = (updatedAt: string) =>
+      shouldOfferResumeCompaction({
+        provider: "claudeAgent",
+        usedTokens: 200_000,
+        updatedAt,
+        promptCacheTtlMs: 5 * 60_000,
+        now,
+      });
+    expect(offer("2026-08-24T11:55:00.000Z")).toBe(true);
+    expect(offer("2026-08-24T11:56:00.000Z")).toBe(false);
+  });
+
   it("does not show Claude's resume prompt for another provider", () => {
     expect(
       shouldOfferResumeCompaction({
@@ -284,5 +298,12 @@ describe("shouldReserveContextWindowMeter", () => {
     expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, meterEnabled: false })).toBe(
       false,
     );
+  });
+});
+
+describe("formatContextWindowCost", () => {
+  it("keeps ordinary and sub-cent ACP costs readable", () => {
+    expect(formatContextWindowCost({ amount: 0.42, currency: "USD" })).toBe("USD 0.42");
+    expect(formatContextWindowCost({ amount: 0.0042, currency: "USD" })).toBe("USD 0.0042");
   });
 });

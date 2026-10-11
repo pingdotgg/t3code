@@ -13,7 +13,7 @@ const imports = ({ builder = false, client = false, effect = false, httpClient =
   const httpApiImports = ["HttpApi", builder ? "HttpApiBuilder" : undefined, client ? "HttpApiClient" : undefined,
     "HttpApiEndpoint", "HttpApiGroup"].filter((name) => name !== undefined).join(", ")
   return `import { ${effectImports} } from "effect"
-${httpClient ? `import { HttpClient } from "effect/unstable/http"\n` : ""}import { ${httpApiImports} } from "effect/unstable/httpapi"`
+${httpClient ? `import { HttpClient } from "effect/http"\n` : ""}import { ${httpApiImports} } from "effect/http-api"`
 }
 
 const warmup = `Schema.String

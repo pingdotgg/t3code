@@ -1,13 +1,13 @@
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -38,9 +38,9 @@ function darwinAvailableMemory(output: string): number | null {
   return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
 }
 
-export const make = Effect.fn("makeHostResources")(function* () {
+const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const sample = Effect.fn("HostResources.sample")(function* () {
@@ -60,7 +60,7 @@ export const make = Effect.fn("makeHostResources")(function* () {
     if (platform === "linux") {
       const meminfo = yield* fs
         .readFileString("/proc/meminfo")
-        .pipe(Effect.catch(() => Effect.succeed("")));
+        .pipe(Effect.orElseSucceed(() => ""));
       const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
       if (available) availableMemoryBytes = Number(available) * 1024;
     } else if (platform === "darwin") {
@@ -68,7 +68,7 @@ export const make = Effect.fn("makeHostResources")(function* () {
         .string(ChildProcess.make("/usr/bin/vm_stat", [], { stdin: "ignore", stderr: "ignore" }))
         .pipe(
           Effect.timeout("1 second"),
-          Effect.catch(() => Effect.succeed("")),
+          Effect.orElseSucceed(() => ""),
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }

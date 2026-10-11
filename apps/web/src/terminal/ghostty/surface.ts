@@ -16,6 +16,7 @@ import {
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
+import { observeResize } from "../../lib/observeResize";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -395,6 +396,15 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
+/**
+ * Middle-click paste is an X11/Wayland convention. macOS and Windows have no
+ * primary selection and use the button for autoscroll, so only desktops that
+ * expect the gesture get it.
+ */
+function isMiddleClickPastePlatform(): boolean {
+  return /linux|bsd/i.test(navigator.platform);
+}
+
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
   return (
     event.inputType === "" ||
@@ -538,6 +548,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
+  readonly canActivateLink?: (text: string) => boolean;
   /**
    * A right-click the running application did not claim through mouse
    * reporting. The host owns the menu, so it also owns preventing the browser
@@ -565,7 +576,7 @@ export class GhosttyTerminalSurface {
   private fontSize: number;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
-  private readonly resizeObserver: ResizeObserver;
+  private readonly stopObservingResize: () => void;
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
   private frame = 0;
@@ -656,12 +667,11 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.resizeObserver = new ResizeObserver(() => this.fit());
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
-    this.resizeObserver.observe(mount);
+    this.stopObservingResize = observeResize(mount, () => this.fit());
   }
 
   static async create(
@@ -784,6 +794,12 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
+  /** Re-evaluate link feedback after the host's available actions change. */
+  refreshLinkActivation(): void {
+    if (this.disposed) return;
+    this.refreshHoveredLink();
+  }
+
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
     const fontSize = terminalFontSize(font.size);
@@ -845,6 +861,12 @@ export class GhosttyTerminalSurface {
     }
     this.applyFontMetrics();
   };
+
+  /** Replay the measured grid after the host becomes ready to resize its PTY. */
+  resendSize(): void {
+    this.resizeNotified = false;
+    this.fit();
+  }
 
   fit(): boolean {
     if (this.disposed || !this.visible) return false;
@@ -938,12 +960,41 @@ export class GhosttyTerminalSurface {
     if (encoded.length > 0) this.options.onData(encoded);
   }
 
+  /**
+   * Middle-click pastes the terminal's own selection, which is the only
+   * primary-selection-like buffer a browser can read. It goes through
+   * pasteFromClipboard so it joins the same paste race as every other path.
+   * With nothing selected here there is no buffer to paste, and CLIPBOARD is
+   * deliberately not substituted: middle-click must never emit text the user
+   * only ever copied.
+   */
+  private pasteTerminalSelection(): void {
+    const selection = this.getSelection();
+    if (selection.length === 0) return;
+    void this.pasteFromClipboard(() => Promise.resolve(selection));
+  }
+
   hasSelection(): boolean {
     return this.core.selectionText().length > 0;
   }
 
   getSelection(): string {
     return this.core.selectionText();
+  }
+
+  /** Select the active screen's entire history, including rows outside the viewport. */
+  selectAll(): void {
+    this.clearPrimedCopy();
+    const range = this.core.selectAll();
+    this.selectionAnchorScreen = range?.start ?? null;
+    this.selectionEndScreen = range?.end ?? null;
+    this.selectionEnd = range ? this.core.screenPointToViewport(range.end.x, range.end.y) : null;
+    this.selectionMode = "cell";
+    this.selectionBase = null;
+    this.setSelectionAutoscroll(0);
+    this.options.onSelectionChange();
+    this.forceFullRender = true;
+    this.requestRender();
   }
 
   getSelectionPosition(): GhosttySelectionPosition | null {
@@ -962,7 +1013,15 @@ export class GhosttyTerminalSurface {
     const position = this.getSelectionPosition();
     if (!position) return null;
     const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
-    if (!viewportEnd) return null;
+    if (
+      !viewportEnd ||
+      viewportEnd.x < 0 ||
+      viewportEnd.x >= this.cols ||
+      viewportEnd.y < 0 ||
+      viewportEnd.y >= this.rows
+    ) {
+      return null;
+    }
     const bounds = this.canvas.getBoundingClientRect();
     return {
       right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
@@ -999,7 +1058,7 @@ export class GhosttyTerminalSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.resizeObserver.disconnect();
+    this.stopObservingResize();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
@@ -1037,6 +1096,55 @@ export class GhosttyTerminalSurface {
     if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
       this.suppressedKeyCodes.add(event.code);
       return;
+    }
+    // IME candidates belong to the textarea, even if the key also resembles
+    // a local shortcut. Safari signals the initial composition with code 229.
+    if (isTerminalCompositionKey(event, this.composing)) {
+      this.suppressedKeyCodes.add(event.code);
+      return;
+    }
+    const mac = isMacPlatform(navigator.platform);
+    const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    const selectAllShortcut =
+      event.key.toLowerCase() === "a" &&
+      primaryModifier &&
+      !event.altKey &&
+      (mac ? !event.shiftKey : event.shiftKey);
+    if (selectAllShortcut) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.suppressedKeyCodes.add(event.code);
+      this.selectAll();
+      return;
+    }
+    // Shift+PageUp/Down pages history; Ctrl+Shift+Home/End (Cmd on macOS)
+    // jumps to its edges. Full-screen applications retain these keys.
+    const pageHistory =
+      event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (event.key === "PageUp" || event.key === "PageDown");
+    const jumpHistory =
+      event.shiftKey &&
+      !event.altKey &&
+      primaryModifier &&
+      (event.key === "Home" || event.key === "End");
+    if ((pageHistory || jumpHistory) && !this.core.isAlternateScreen()) {
+      const state = this.readScrollbarState();
+      if (state !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.suppressedKeyCodes.add(event.code);
+        const delta =
+          event.key === "Home"
+            ? -state.offset
+            : event.key === "End"
+              ? state.total - state.len - state.offset
+              : Math.max(1, state.len) * (event.key === "PageUp" ? -1 : 1);
+        this.scrollViewport(delta);
+        return;
+      }
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
@@ -1114,12 +1222,6 @@ export class GhosttyTerminalSurface {
           },
         );
       }
-      return;
-    }
-    // keyCode 229 is Safari's only signal that this keydown opens an IME
-    // composition; encoding it would double the committed text. Do not blank
-    // the textarea first: onInput leaves the in-progress candidate there.
-    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
     this.clearPrimedCopy();
@@ -1270,6 +1372,12 @@ export class GhosttyTerminalSurface {
       this.mouseReportingButton = button;
       this.sendMouse("press", button, event);
       this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      // Left uncancelled on purpose: cancelling pointerdown drops the
+      // compatibility mousedown, which is what activates a split pane.
+      this.pasteTerminalSelection();
       return;
     }
     if (event.button !== 0) return;
@@ -1515,6 +1623,10 @@ export class GhosttyTerminalSurface {
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
     }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      event.preventDefault();
+      return;
+    }
     if (event.button !== 0) return;
     if (!this.selectionMoved && this.selectionMode === "cell") {
       this.clearSelection();
@@ -1551,8 +1663,21 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0) event.preventDefault();
+    // Cancelling the middle button here stops autoscroll while still letting
+    // the event bubble to the drawer handler that activates a split pane.
+    if (event.button === 0 || (event.button === 1 && isMiddleClickPastePlatform())) {
+      event.preventDefault();
+    }
     this.focus();
+  };
+
+  /**
+   * Chromium pastes PRIMARY into the focused editable on a middle mouseup, and
+   * the hidden textarea is focused, so leaving the default alive would deliver
+   * a second paste through onPaste on top of the one onPointerDown sent.
+   */
+  private readonly onMouseUp = (event: MouseEvent) => {
+    if (event.button === 1 && isMiddleClickPastePlatform()) event.preventDefault();
   };
 
   private readonly onContextMenu = (event: MouseEvent) => {
@@ -1644,6 +1769,7 @@ export class GhosttyTerminalSurface {
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("mousedown", this.onMouseDown);
+    this.canvas.addEventListener("mouseup", this.onMouseUp);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
@@ -1669,6 +1795,7 @@ export class GhosttyTerminalSurface {
     this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
@@ -1878,6 +2005,11 @@ export class GhosttyTerminalSurface {
   }
 
   private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+    const link = this.findLinkAt(clientX, clientY);
+    return link && this.options.canActivateLink?.(link.text) !== false ? link : null;
+  }
+
+  private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
     if (!this.snapshot) return null;
     const cell = terminalGridCellAt({
       bounds: this.canvas.getBoundingClientRect(),

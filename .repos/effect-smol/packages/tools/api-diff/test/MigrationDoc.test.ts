@@ -143,6 +143,50 @@ describe("migration document", () => {
     assert(!document.includes("**After**"))
   })
 
+  it.each([
+    { name: "plain", example: "const value = 1", fence: "```" },
+    { name: "empty", example: "", fence: "```" },
+    { name: "single backticks", example: "const value = `text`", fence: "```" },
+    { name: "double backticks", example: "// ``literal``", fence: "```" },
+    { name: "triple backticks", example: "/*\n```text\nliteral\n```\n*/", fence: "````" },
+    { name: "four backticks", example: "/*\n````text\nliteral\n````\n*/", fence: "`````" },
+    { name: "longest run last", example: "const value = `text`\n/*\n```\n`````\n*/", fence: "``````" },
+    { name: "whitespace", example: "\n  const value = 1  \n\n", fence: "```" },
+    { name: "many backtick runs", example: "// ` ".repeat(400_000), fence: "```" }
+  ])("preserves example framing: $name", ({ example, fence }) => {
+    const document = renderMigrationDocument(
+      diff,
+      new Map([...annotations, ["effect/Zeta#changed", {
+        replacement: "Zeta.changed()",
+        note: "Call the zero-argument form.",
+        example
+      }]]),
+      "## Import Map\n"
+    )
+
+    assert.strictEqual(document.split("**Example**\n\n")[1], `${fence}ts\n${example}\n${fence}\n`)
+    assert.deepStrictEqual(markdownSafetyIssues(document), [])
+  })
+
+  it.each([
+    { name: "compact", example: undefined },
+    { name: "detailed", example: "Zeta.changed()" }
+  ])("renders replacements with many backtick runs in $name entries", ({ example }) => {
+    const replacement = "// ` ".repeat(400_000)
+    const document = renderMigrationDocument(
+      diff,
+      new Map([...annotations, ["effect/Zeta#changed", {
+        replacement,
+        note: "Use the replacement.",
+        example
+      }]]),
+      "## Import Map\n"
+    )
+
+    assert(document.includes("``" + replacement + "``"))
+    assert.deepStrictEqual(markdownSafetyIssues(document), [])
+  })
+
   it("escapes annotation prose while preserving inline code and fenced examples", () => {
     const document = renderMigrationDocument(
       diff,
@@ -237,6 +281,54 @@ describe("migration document", () => {
     assert.strictEqual(
       extractImportMapSections(document),
       "## Import Map\n\neffect/Legacy -> effect/Current\n"
+    )
+  })
+
+  it.each(["LF", "CRLF", "mixed"])("preserves %s import-map replacement guidance", (ending) => {
+    const moduleDiff: ApiDiff = {
+      ...diff,
+      changes: [
+        change({ classification: "module-removed", delta: { from: "effect/Legacy", to: [] } }),
+        change({
+          classification: "api-removed",
+          baseApiId: "effect/Legacy#unchanged#value",
+          before: "declare const unchanged: string"
+        }),
+        change({
+          classification: "api-added",
+          headApiId: "effect/Current#unchanged#value",
+          after: "declare const unchanged: string"
+        })
+      ]
+    }
+    const eol = ending === "LF" ? "\n" : "\r\n"
+    const authored = [
+      "## Import Map",
+      "",
+      "```text",
+      "effect/Legacy -> effect/Other",
+      "effect/Legacy -> effect/Current (barrel: effect)",
+      "effect/Legacy -> effect/Current",
+      "```",
+      "",
+      "## No Counterpart Imports",
+      "",
+      "None."
+    ].join(eol)
+    const section = ending === "mixed" ? authored.replace("## Import Map\r\n", "## Import Map\n") : authored
+    const importMap = extractImportMapSections(
+      `# Existing reference${eol}${section}${eol}${eol}## Removed Modules${eol}Old guidance.`
+    )
+    const moduleAnnotations = new Map<string, MigrationAnnotation>()
+    const document = renderMigrationDocument(moduleDiff, moduleAnnotations, importMap)
+
+    assert.strictEqual(importMap, `${section}\n`)
+    assert.strictEqual(extractImportMapSections(document), importMap)
+    assert(document.includes("## Removed Modules\n\n- `effect/Legacy` -> `effect/Other`, `effect/Current`\n"))
+    assert(!document.includes("Legacy.unchanged"))
+    assert.strictEqual(
+      renderMissingAnnotations(moduleDiff, moduleAnnotations, importMap),
+      "All migration APIs and removed modules have guidance.\n"
     )
   })
 

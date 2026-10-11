@@ -13,9 +13,16 @@ type EditorDefinition = {
   /**
    * URL scheme for editors that support VS Code's remote deep links
    * (`<scheme>://vscode-remote/ssh-remote+<host><path>`). Only set for VS Code
-   * and forks that ship the Remote-SSH machinery.
+   * and forks that ship the Remote-SSH machinery, plus Zed, which uses its own
+   * `zed://ssh/<host><path>` shape.
    */
   readonly remoteScheme?: string;
+  /**
+   * JetBrains product code (`IU`, `PY`, ...). JetBrains IDEs open remote
+   * projects through the Toolbox App's `jetbrains://gateway/ssh/...` link,
+   * which uses the code to choose the IDE backend.
+   */
+  readonly jetbrainsProductCode?: string;
 };
 
 export const EDITORS = [
@@ -23,6 +30,8 @@ export const EDITORS = [
     id: "cursor",
     label: "Cursor",
     commands: ["cursor"],
+    // File and workspace opens must target the IDE even when the Agents Window is active.
+    baseArgs: ["--classic"],
     launchStyle: "goto",
     remoteScheme: "cursor",
   },
@@ -49,20 +58,105 @@ export const EDITORS = [
     launchStyle: "goto",
     remoteScheme: "vscodium",
   },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
-  { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
-  { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
-  { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
-  { id: "clion", label: "CLion", commands: ["clion"], launchStyle: "line-column" },
-  { id: "datagrip", label: "DataGrip", commands: ["datagrip"], launchStyle: "line-column" },
-  { id: "dataspell", label: "DataSpell", commands: ["dataspell"], launchStyle: "line-column" },
-  { id: "goland", label: "GoLand", commands: ["goland"], launchStyle: "line-column" },
-  { id: "phpstorm", label: "PhpStorm", commands: ["phpstorm"], launchStyle: "line-column" },
-  { id: "pycharm", label: "PyCharm", commands: ["pycharm"], launchStyle: "line-column" },
-  { id: "rider", label: "Rider", commands: ["rider"], launchStyle: "line-column" },
-  { id: "rubymine", label: "RubyMine", commands: ["rubymine"], launchStyle: "line-column" },
-  { id: "rustrover", label: "RustRover", commands: ["rustrover"], launchStyle: "line-column" },
-  { id: "webstorm", label: "WebStorm", commands: ["webstorm"], launchStyle: "line-column" },
+  {
+    id: "zed",
+    label: "Zed",
+    commands: ["zed", "zeditor"],
+    launchStyle: "direct-path",
+    remoteScheme: "zed",
+  },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    // `agy` is the standalone Antigravity CLI, not the IDE. The IDE bundle
+    // ships `antigravity-ide`, so it comes first for install-folder lookups.
+    commands: ["antigravity-ide", "agy-ide"],
+    launchStyle: "goto",
+  },
+  {
+    id: "idea",
+    label: "IntelliJ IDEA",
+    commands: ["idea"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "IU",
+  },
+  {
+    id: "aqua",
+    label: "Aqua",
+    commands: ["aqua"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "QA",
+  },
+  {
+    id: "clion",
+    label: "CLion",
+    commands: ["clion"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "CL",
+  },
+  {
+    id: "datagrip",
+    label: "DataGrip",
+    commands: ["datagrip"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "DB",
+  },
+  {
+    id: "dataspell",
+    label: "DataSpell",
+    commands: ["dataspell"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "DS",
+  },
+  {
+    id: "goland",
+    label: "GoLand",
+    commands: ["goland"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "GO",
+  },
+  {
+    id: "phpstorm",
+    label: "PhpStorm",
+    commands: ["phpstorm"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "PS",
+  },
+  {
+    id: "pycharm",
+    label: "PyCharm",
+    commands: ["pycharm"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "PY",
+  },
+  {
+    id: "rider",
+    label: "Rider",
+    commands: ["rider"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "RD",
+  },
+  {
+    id: "rubymine",
+    label: "RubyMine",
+    commands: ["rubymine"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "RM",
+  },
+  {
+    id: "rustrover",
+    label: "RustRover",
+    commands: ["rustrover"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "RR",
+  },
+  {
+    id: "webstorm",
+    label: "WebStorm",
+    commands: ["webstorm"],
+    launchStyle: "line-column",
+    jetbrainsProductCode: "WS",
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
@@ -82,9 +176,10 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
-const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
+const remoteSchemeOf = (editor: EditorDefinition): string | undefined =>
+  editor.remoteScheme ?? (editor.jetbrainsProductCode === undefined ? undefined : "jetbrains");
 
-/** Editors that can open a remote workspace via `vscode-remote` deep links. */
+/** Editors that can open a remote workspace via an SSH deep link. */
 export const REMOTE_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = EDITORS.flatMap((editor) =>
   remoteSchemeOf(editor) !== undefined ? [editor.id] : [],
 );
@@ -95,9 +190,11 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 };
 
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
- * opens `absolutePath` on `host` in the local editor over SSH. Returns
- * undefined for editors without remote deep-link support.
+ * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
+ * takes `zed://ssh/<host><path>`, JetBrains IDEs a Toolbox App
+ * `jetbrains://gateway/ssh/environment?...` link) that opens `absolutePath` on
+ * `host` in the local editor over SSH. Returns undefined for editors without
+ * remote deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
@@ -108,11 +205,33 @@ export const buildRemoteOpenUrl = (input: {
   if (scheme === undefined) {
     return undefined;
   }
+  const editor = EDITORS.find((candidate) => candidate.id === input.editor);
+  if (editor !== undefined && "jetbrainsProductCode" in editor) {
+    // Like the VS Code link, no user or port: the SSH config entry for `host`
+    // supplies them. A bare product code lets Toolbox pick the backend build.
+    const params = new URLSearchParams({
+      h: input.host,
+      launchIde: "true",
+      ideHint: editor.jetbrainsProductCode,
+      projectHint: input.absolutePath.replaceAll("\\", "/"),
+    });
+    return `${scheme}://gateway/ssh/environment?${params.toString()}`;
+  }
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  const encodedHost = encodeURIComponent(input.host);
+  if (input.editor === "zed") {
+    // Zed's remote server resolves a rooted path on the system drive, so a
+    // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
+    // drives are untested and kept as is rather than silently remapped, and a
+    // POSIX path that happens to start with `/C:` is left alone.
+    const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
+    const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
+    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+  }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
 };
 
 /**
@@ -164,6 +283,18 @@ export class ExternalLauncherCommandNotFoundError extends Schema.TaggedError<Ext
   }
 }
 
+/** The target path cannot reach the editor intact, so it was not started. */
+export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<ExternalLauncherUnsupportedTargetError>()(
+  "ExternalLauncherUnsupportedTargetError",
+  {
+    editor: EditorId,
+  },
+) {
+  override get message(): string {
+    return `${this.editor} cannot open a path containing line breaks or double quotes`;
+  }
+}
+
 const ExternalLauncherSpawnFields = {
   command: Schema.String,
   args: Schema.Array(Schema.String),
@@ -199,6 +330,7 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
+  ExternalLauncherUnsupportedTargetError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
 ]);

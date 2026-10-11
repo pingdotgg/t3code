@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Context, Effect, Exit, Layer, Option, Queue, Schema, Stream } from "effect"
-import { TestClock } from "effect/testing"
+import { Cause, Context, Deferred, Effect, Exit, Layer, Option, Queue, Schema, Stream } from "effect"
 import {
   ClusterError,
   ClusterSchema,
@@ -9,6 +8,7 @@ import {
   EntityId,
   EntityType,
   Envelope,
+  HttpRunner,
   Message,
   MessageStorage,
   type Reply,
@@ -21,12 +21,13 @@ import {
   Sharding,
   ShardingConfig,
   Snowflake
-} from "effect/unstable/cluster"
-import { Headers } from "effect/unstable/http"
-import { Rpc, RpcClient, type RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError"
-import type { FromClientEncoded, FromServerEncoded } from "effect/unstable/rpc/RpcMessage"
-import { Socket } from "effect/unstable/socket"
+} from "effect/cluster"
+import { Headers, HttpClient, HttpClientResponse } from "effect/http"
+import { Rpc, RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
+import { RpcClientError } from "effect/rpc/RpcClientError"
+import type { FromClientEncoded, FromServerEncoded } from "effect/rpc/RpcMessage"
+import { Socket } from "effect/socket"
+import { TestClock } from "effect/testing"
 
 // An entity whose replies cannot be serialized: the handlers return
 // non-integers for a `Schema.Int` success schema, so `Reply.serialize` fails
@@ -85,6 +86,71 @@ const RunnerServerHandlers = RunnerServer.layerHandlers.pipe(
   Layer.provideMerge(MessageStorage.layerMemory),
   Layer.provide(TestShardingConfig)
 )
+
+describe.concurrent("HttpRunner", () => {
+  const address = RunnerAddress.make("localhost", 8080)
+  const Rpcs = RpcGroup.make(Rpc.make("Ping", { success: Schema.String }))
+
+  it.effect("preserves a leading slash in HTTP client paths", () => {
+    let requestUrl: string | undefined
+    const httpClient = HttpClient.make((request) => {
+      requestUrl = request.url
+      return Effect.succeed(HttpClientResponse.fromWeb(
+        request,
+        new Response("[{\"_tag\":\"Exit\",\"requestId\":\"0\",\"exit\":{\"_tag\":\"Success\",\"value\":\"pong\"}}]")
+      ))
+    })
+    return Effect.gen(function*() {
+      const runnerProtocol = yield* Runners.RpcClientProtocol
+      const protocol = yield* runnerProtocol.make(address)
+      const client = yield* RpcClient.make(Rpcs, {
+        generateRequestId: () => RpcMessage.RequestId("0")
+      }).pipe(Effect.provideService(RpcClient.Protocol, protocol))
+
+      yield* client.Ping()
+
+      assert.strictEqual(requestUrl, "http://localhost:8080/runner/")
+    }).pipe(
+      Effect.provide(HttpRunner.layerClientProtocolHttp({ path: "/runner" })),
+      Effect.provide(RpcSerialization.layerJson),
+      Effect.provideService(HttpClient.HttpClient, httpClient)
+    )
+  })
+
+  it.effect("preserves a leading slash in WebSocket client paths", () =>
+    Effect.gen(function*() {
+      const connected = yield* Deferred.make<void>()
+      let socketUrl: string | undefined
+      const constructor: Socket.WebSocketConstructor["Service"] = (url) => {
+        socketUrl = url
+        return {
+          readyState: 1,
+          addEventListener() {},
+          removeEventListener() {},
+          close() {},
+          send() {}
+        }
+      }
+
+      yield* Effect.gen(function*() {
+        const runnerProtocol = yield* Runners.RpcClientProtocol
+        const protocol = yield* runnerProtocol.make(address)
+        yield* protocol.run(0, () => Effect.void).pipe(Effect.forkScoped)
+        yield* Deferred.await(connected)
+
+        assert.strictEqual(socketUrl, "ws://localhost:8080/runner")
+      }).pipe(
+        Effect.provide(HttpRunner.layerClientProtocolWebsocket({ path: "/runner" })),
+        Effect.provide(RpcSerialization.layerJson),
+        Effect.provideService(Socket.WebSocketConstructor, constructor),
+        Effect.provideService(RpcClient.ConnectionHooks, {
+          onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
+          onDisconnect: Effect.void
+        }),
+        Effect.scoped
+      )
+    }))
+})
 
 describe.concurrent("RunnerServer", () => {
   const makeRequest = (options: {

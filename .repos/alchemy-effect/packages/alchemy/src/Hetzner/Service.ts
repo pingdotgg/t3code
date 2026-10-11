@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -148,6 +148,7 @@ export type ServiceRuntimeContext = HetznerHostRuntimeContext;
  * ```
  *
  * @resource
+ * @product Service
  */
 export const Service: Platform<
   Service,
@@ -263,7 +264,7 @@ export const ServiceProvider = () =>
             output.serverId ??
             (olds !== undefined ? serverIdOf(olds.server) : undefined);
           if (serverId === undefined) return undefined;
-          const live = yield* Services.servers.getServer({ id: serverId }).pipe(
+          const live = yield* Hetzner.servers.getServer({ id: serverId }).pipe(
             Effect.map(({ server }) => server),
             Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
           );

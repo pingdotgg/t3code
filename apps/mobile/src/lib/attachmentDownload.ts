@@ -151,7 +151,55 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
       }
     },
   };
-  return { file, preview };
+  return {
+    file,
+    preview,
+    retainAfterHandoff: () => {
+      shared = true;
+    },
+  };
+}
+
+/** A readable reason for a viewer refusing a file; native rejections carry stack text. */
+export function nativeViewerErrorMessage(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return /ActivityNotFound|cannot be previewed/i.test(text)
+    ? "No app on this device can show this format. Save or share it to open it elsewhere."
+    : "The file could not be opened. Check the connection and try again.";
+}
+
+/** Open an Android document in a viewer, retaining the cache while another app reads it. */
+export async function openAttachmentInViewer(input: {
+  readonly uri: string;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+}): Promise<void> {
+  const { File } = await import("expo-file-system");
+  const { requireNativeModule } = await import("expo");
+  if (input.signal.aborted) return;
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    if (/^(file|content):/.test(input.uri)) {
+      await new File(input.uri).copy(cached.file);
+    } else {
+      await File.downloadFileAsync(input.uri, cached.file, { signal: input.signal });
+    }
+    if (input.signal.aborted) return;
+    const endHandoff = beginForegroundHandoff();
+    try {
+      await requireNativeModule<{ openFile(uri: string, mimeType: string): Promise<void> }>(
+        "T3NativeControls",
+      ).openFile(
+        cached.file.uri,
+        input.attachment.mimeType.split(";", 1)[0]?.trim() || "application/octet-stream",
+      );
+      cached.retainAfterHandoff();
+    } finally {
+      endHandoff();
+    }
+  } finally {
+    cached.preview.dispose();
+  }
 }
 
 /** The caller owns this cached file until disposal, unless it has been shared with another app. */
@@ -222,6 +270,29 @@ export async function shareLocalAttachment(input: {
     if (!input.signal.aborted) {
       await cached.preview.share(input.signal, input.sourceIdentifier);
     }
+  } finally {
+    cached.preview.dispose();
+  }
+}
+
+/**
+ * Shares bytes made on this device (an MCP App's download) through the same
+ * cache and share sheet. False when the share sheet could not be shown.
+ */
+export async function shareGeneratedAttachment(input: {
+  readonly bytes: Uint8Array;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+}): Promise<boolean> {
+  // An unavailable share sheet is a refusal for the caller, not a failure.
+  const sharing = await availableSharing(input.signal).catch(() => null);
+  if (sharing === null) return false;
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    if (input.signal.aborted) return false;
+    cached.file.write(input.bytes);
+    await cached.preview.share(input.signal);
+    return true;
   } finally {
     cached.preview.dispose();
   }

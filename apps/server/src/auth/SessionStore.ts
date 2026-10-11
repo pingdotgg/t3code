@@ -1,11 +1,13 @@
 import {
   AuthSessionId,
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
   type ClientSurface,
+  RuntimeMode,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -24,6 +26,11 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import {
+  REUSABLE_DEV_SESSION_EXPIRES_AT,
+  REUSABLE_DEV_SESSION_PREFIX,
+  resolveReusableDevAuth,
+} from "./ReusableDevAuth.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
@@ -52,6 +59,8 @@ export interface VerifiedSession {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
+  /** The most an MCP client approved through OAuth may hand to the threads it drives. */
+  readonly runtimeModeCeiling?: RuntimeMode;
 }
 
 export type SessionCredentialChange =
@@ -368,11 +377,14 @@ export class SessionStore extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      readonly runtimeModeCeiling?: RuntimeMode;
       /**
        * Atomically revoke active sessions with the same subject and method
        * before storing this session.
        */
       readonly replaceActiveForSubjectAndMethod?: boolean;
+      /** Replace only this session, of the same method, in the issuance transaction. */
+      readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -395,6 +407,9 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    readonly awaitInvalidation: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, SessionCredentialVerificationError>;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
@@ -418,13 +433,14 @@ const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
 const SessionClaims = Schema.Struct({
-  v: Schema.Literal(1),
+  v: Schema.Literals([1, 2]),
   kind: Schema.Literal("session"),
   sid: AuthSessionId,
   sub: Schema.String,
   scopes: AuthEnvironmentScopes,
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
   jkt: Schema.optionalKey(Schema.String),
+  rtc: Schema.optionalKey(RuntimeMode),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -492,6 +508,31 @@ export const make = Effect.gen(function* () {
   } as const;
   const cookieName = resolveSessionCookieName(cookieInput);
   const legacyCookieName = resolveLegacySessionCookieName(cookieInput);
+  const devAuth = resolveReusableDevAuth(serverConfig);
+  if (devAuth) {
+    yield* authSessions
+      .createIfAbsent({
+        sessionId: devAuth.sessionId,
+        subject: "reusable-dev-token",
+        scopes: AuthAdministrativeScopes,
+        method: "browser-session-cookie",
+        client: {
+          label: "Reusable dev token",
+          ipAddress: null,
+          userAgent: null,
+          deviceType: "unknown",
+          os: null,
+          browser: null,
+        },
+        issuedAt: yield* DateTime.now,
+        expiresAt: REUSABLE_DEV_SESSION_EXPIRES_AT,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialIssueError({ sessionId: devAuth.sessionId, cause }),
+        ),
+      );
+  }
 
   const emitUpsert = (clientSession: AuthClientSession) =>
     PubSub.publish(changesPubSub, {
@@ -635,6 +676,7 @@ export const make = Effect.gen(function* () {
         scopes: input?.scopes ?? AuthStandardClientScopes,
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
+        ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -672,8 +714,14 @@ export const make = Effect.gen(function* () {
         expiresAt,
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
-        input?.replaceActiveForSubjectAndMethod
-          ? authSessions.createReplacingActive({ session: sessionRecord, revokedAt: issuedAt })
+        input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
+          ? authSessions.createReplacingActive({
+              session: sessionRecord,
+              revokedAt: issuedAt,
+              ...(input.replaceSessionId !== undefined
+                ? { replaceSessionId: input.replaceSessionId }
+                : {}),
+            })
           : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
       ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
       if (replacedSessionIds.length > 0) {
@@ -717,6 +765,42 @@ export const make = Effect.gen(function* () {
 
   const verify: SessionStore["Service"]["verify"] = Effect.fn("SessionStore.verify")(
     function* (token) {
+      if (devAuth?.matches(token)) {
+        const row = yield* authSessions
+          .getById({ sessionId: devAuth.sessionId })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new SessionCredentialVerificationError({ sessionId: devAuth.sessionId, cause }),
+            ),
+          );
+        if (Option.isNone(row)) {
+          return yield* new UnknownSessionTokenError({ sessionId: devAuth.sessionId });
+        }
+        if (row.value.revokedAt !== null) {
+          return yield* new SessionTokenRevokedError({
+            sessionId: devAuth.sessionId,
+            revokedAt: row.value.revokedAt,
+          });
+        }
+        const observedAt = yield* DateTime.now;
+        if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+          return yield* new SessionTokenExpiredError({
+            sessionId: devAuth.sessionId,
+            expiresAt: row.value.expiresAt,
+            observedAt,
+          });
+        }
+        return {
+          sessionId: row.value.sessionId,
+          token,
+          method: row.value.method,
+          client: toClientMetadata(row.value.client),
+          expiresAt: row.value.expiresAt,
+          subject: row.value.subject,
+          scopes: row.value.scopes,
+        } satisfies VerifiedSession;
+      }
       const [encodedPayload, signature] = token.split(".");
       if (!encodedPayload || !signature) {
         return yield* new MalformedSessionTokenError({});
@@ -773,6 +857,7 @@ export const make = Effect.gen(function* () {
         subject: claims.sub,
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -829,6 +914,9 @@ export const make = Effect.gen(function* () {
     const claims = yield* decodeWebSocketClaims(base64UrlDecodeUtf8(encodedPayload)).pipe(
       Effect.mapError((cause) => new InvalidWebSocketTokenPayloadError({ cause })),
     );
+    if (claims.sid.startsWith(REUSABLE_DEV_SESSION_PREFIX) && claims.sid !== devAuth?.sessionId) {
+      return yield* new UnknownWebSocketSessionError({ sessionId: claims.sid });
+    }
 
     const observedAt = yield* DateTime.now;
     const expiresAt = DateTime.make(claims.exp);
@@ -962,6 +1050,35 @@ export const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const awaitInvalidation = Effect.fn(function* (sessionId: AuthSessionId) {
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Subscribe before reading: revocation can race with the WebSocket upgrade.
+        const subscription = yield* PubSub.subscribe(changesPubSub);
+        const row = yield* authSessions
+          .getById({ sessionId })
+          .pipe(
+            Effect.mapError(
+              (cause) => new SessionCredentialVerificationError({ sessionId, cause }),
+            ),
+          );
+        if (Option.isNone(row) || row.value.revokedAt !== null) return;
+        const now = yield* DateTime.now;
+        const remaining = row.value.expiresAt.epochMilliseconds - now.epochMilliseconds;
+        if (remaining <= 0) return;
+        yield* Effect.raceFirst(
+          Stream.fromSubscription(subscription).pipe(
+            Stream.filter(
+              (change) => change.type === "clientRemoved" && change.sessionId === sessionId,
+            ),
+            Stream.runHead,
+          ),
+          Effect.sleep(Duration.millis(remaining)),
+        );
+      }),
+    );
+  });
+
   return SessionStore.of({
     cookieName,
     legacyCookieName,
@@ -970,6 +1087,7 @@ export const make = Effect.gen(function* () {
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,
+    awaitInvalidation,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

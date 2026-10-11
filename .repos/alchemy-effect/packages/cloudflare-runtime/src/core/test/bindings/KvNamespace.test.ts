@@ -17,8 +17,8 @@
  *   `setOptions`; restart persistence is covered by "persists on file-system".
  * - "migrates database to new location": migrates pre-Durable-Object Miniflare
  *   storage; this runtime has no legacy format.
- * - "sticky blobs never deleted": supports Miniflare's "stacked storage" for
- *   `vitest-pool-workers`, which this runtime doesn't implement.
+ * - "sticky blobs never deleted": supports Miniflare's "stacked storage",
+ *   which this runtime doesn't implement.
  */
 import assert from "node:assert";
 import { Blob } from "node:buffer";
@@ -29,7 +29,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as KvNamespace from "../../bindings/kv-namespace/index.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";

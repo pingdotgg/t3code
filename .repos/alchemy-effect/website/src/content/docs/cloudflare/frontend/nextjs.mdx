@@ -13,8 +13,8 @@ export const devDeps = "@alchemy.run/frontend-frameworks @opennextjs/cloudflare"
 app as a Cloudflare Worker. It runs `next build` through the OpenNext
 pipeline (`@opennextjs/cloudflare`), bundles the resulting server
 into a self-contained Worker, and deploys client assets plus
-prerendered pages as Worker static assets. There is no adapter to
-configure and no Wrangler file.
+prerendered pages as Worker static assets. No OpenNext config or
+Wrangler file is required.
 
 App Router and Pages Router both work — server components, API
 routes, middleware, server actions, dynamic segments, streaming SSR,
@@ -42,26 +42,10 @@ They are only used at build time, so dev dependencies are enough:
   </TabItem>
 </Tabs>
 
-## Configure OpenNext
-
-Your `next.config.*` is loaded and honored as-is — the build runs a
-real `next build`, and Alchemy never rewrites the file. OpenNext
-needs one config file next to it — the static-assets incremental
-cache is the zero-infrastructure default, where prerendered ISR
-pages serve their build-time payloads:
-
-```typescript
-// open-next.config.ts
-import { defineCloudflareConfig } from "@opennextjs/cloudflare";
-import staticAssetsIncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/static-assets-incremental-cache";
-
-export default defineCloudflareConfig({
-  incrementalCache: staticAssetsIncrementalCache,
-});
-```
-
-For revalidation that actually writes, see
-[Writable ISR](#writable-isr) below.
+Alchemy leaves native `next.config.*` and Tailwind configuration unchanged.
+No Alchemy plugin is required. OpenNext configuration is optional; without it,
+the default cache serves prerendered pages from static assets. Use
+[Writable ISR](#writable-isr) for revalidation.
 
 ## Declare the Website
 
@@ -80,6 +64,36 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 `WebsiteEnv` is the typed shape of the Worker's bindings, derived
 from the class — you'll import it into your Next.js code in
 [Read bindings in server code](#read-bindings-in-server-code).
+
+## Optional native OpenNext configuration
+
+The resource declaration is the same in both cases:
+
+```typescript
+export const Website = Cloudflare.Website.Nextjs("Website");
+```
+
+- **Without `open-next.config.ts`:** Alchemy generates a temporary config with
+  read-only static-assets caching, or matching KV adapters when `isr` is set.
+  You do not need to create a config file.
+- **With `open-next.config.ts`:** Alchemy automatically loads the file from
+  `rootDir` (the working directory by default) through OpenNext's native compiler.
+  It never rewrites the file. Imports and callbacks are preserved, and you can
+  use the full native `OpenNextConfig` shape within Cloudflare's adapter
+  constraints. This does not make AWS-specific runtime features available on Workers.
+
+For example, an optional native config retaining read-only static-assets caching:
+
+```typescript
+// open-next.config.ts
+import { defineCloudflareConfig, type OpenNextConfig } from "@opennextjs/cloudflare";
+import staticAssetsIncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/static-assets-incremental-cache";
+
+export default {
+  ...defineCloudflareConfig({ incrementalCache: staticAssetsIncrementalCache }),
+  buildCommand: "pnpm exec next build",
+} satisfies OpenNextConfig;
+```
 
 ## Add it to the Stack
 
@@ -125,13 +139,13 @@ secrets:
 export const Website = Cloudflare.Website.Nextjs("Website", {
 +  env: {
 +    UPLOADS: Uploads,
-+    API_KEY: Config.redacted("API_KEY"),
++    API_KEY: Config.Redacted("API_KEY"),
 +  },
 });
 ```
 
 `Uploads` is a description, not a deploy — Alchemy provisions the
-real bucket because the Website binds it. `Config.redacted` reads
+real bucket because the Website binds it. `Config.Redacted` reads
 `API_KEY` from your environment at deploy time and binds it as a
 Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
 
@@ -177,22 +191,6 @@ Switch the incremental cache to KV and revalidation actually writes:
 `revalidate` windows regenerate pages in the background through a
 Durable Object queue hosted on the same Worker.
 
-```typescript
-// open-next.config.ts
-import { defineCloudflareConfig } from "@opennextjs/cloudflare";
-import kvIncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/kv-incremental-cache";
-import doQueue from "@opennextjs/cloudflare/overrides/queue/do-queue";
-import kvNextTagCache from "@opennextjs/cloudflare/overrides/tag-cache/kv-next-tag-cache";
-
-export default defineCloudflareConfig({
-  incrementalCache: kvIncrementalCache,
-  queue: doQueue,
-  tagCache: kvNextTagCache,
-});
-```
-
-Bind the pieces — the `WORKER_SELF_REFERENCE` self service binding
-OpenNext uses to re-render pages is wired automatically:
 
 ```typescript
 // alchemy.run.ts
@@ -200,18 +198,50 @@ export const IncCache = Cloudflare.KV.Namespace("NextIncCache");
 export const TagCache = Cloudflare.KV.Namespace("NextTagCache");
 
 export const Website = Cloudflare.Website.Nextjs("Website", {
-  env: {
-    NEXT_INC_CACHE_KV: IncCache,
-    NEXT_TAG_CACHE_KV: TagCache,
-    NEXT_CACHE_DO_QUEUE: Cloudflare.DurableObject("NEXT_CACHE_DO_QUEUE", {
-      className: "DOQueueHandler",
-    }),
-  },
+  isr: { incrementalCache: IncCache, tagCache: TagCache },
 });
 ```
 
-`DOQueueHandler` ships inside the OpenNext worker bundle — the
-binding declaration is all it takes.
+Alchemy binds the cache namespaces, revalidation queue, and Worker
+self-reference. Without a native config, it also selects the matching adapters.
+If you supply `open-next.config.ts`, select `kv-incremental-cache`,
+`kv-next-tag-cache`, and `do-queue` there to match these bindings: `isr` does
+not override the file's adapter choices. The static-assets example above is
+read-only, not a writable-ISR configuration.
+
+The KV cache fills on demand; build-time cache entries are not uploaded to KV.
+Pages using writable ISR must be able to regenerate with runtime credentials
+and data sources.
+
+## Build options
+
+```typescript
+export const Website = Cloudflare.Website.Nextjs("Website", {
+  openNext: { buildCommand: "pnpm exec next build", minify: true },
+});
+```
+
+An explicit `openNext.buildCommand` overrides the native config's
+`buildCommand`. If neither sets a command, the default is `npx next build`.
+`openNext.minify` and `openNext.debug` remain resource-level build controls.
+
+## Rebuild scope
+
+Unchanged inputs skip the OpenNext build. By default, project files outside
+build outputs and `node_modules`, plus the nearest package-manager lockfile,
+participate in the content hash.
+
+The native `open-next.config.ts` itself is always hashed, even when `memo`
+narrows the scope. When narrowing `memo.include`, include any helpers imported
+by the config too, for example `config/**`:
+
+```typescript
+export const Website = Cloudflare.Website.Nextjs("Website", {
+  memo: {
+    include: ["app/**", "public/**", "package.json", "next.config.mjs", "config/**"],
+  },
+});
+```
 
 ## Local dev
 

@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -12,9 +13,12 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  ThreadId,
   ToolActivityNativeAppReference,
+  TurnItemId,
 } from "@t3tools/contracts";
 import {
+  audioMimeTypeFromExtension,
   hostPreviewMimeTypeFromExtension,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
@@ -26,11 +30,16 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
-import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
+import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
+import {
+  isProjectFaviconPath,
+  PROJECT_FAVICON_FALLBACK_MARKER,
+} from "@t3tools/shared/projectFavicon";
+import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -46,10 +55,14 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -57,15 +70,18 @@ const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
+// Clients draw project icons from a 96px thumbnail at most.
+const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
-// Extensions a document viewer may request inline. The extension comes from
+// Extensions a document viewer or audio player may request inline. The extension comes from
 // the attachment id the server assigned, never from the client's mime type.
-const INLINE_DOCUMENT_EXTENSIONS = new Set(["pdf", "html", "htm"]);
-const INLINE_DOCUMENT_MIME_TYPES: Record<string, string> = {
+const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   html: "text/html",
   htm: "text/html",
 };
+const inlinePreviewMimeTypeForExtension = (extension: string) =>
+  INLINE_PREVIEW_MIME_TYPES[extension] ?? audioMimeTypeFromExtension(`.${extension}`) ?? undefined;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -133,6 +149,22 @@ const AssetClaimsSchema = Schema.Union([
     app: ToolActivityNativeAppReference,
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("tool-output-image"),
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    index: Schema.Number,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("github-media"),
+    /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
+    url: Schema.String,
+    cwd: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -140,14 +172,28 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = {
-  readonly kind: "file";
-  readonly path: string;
-  readonly download?: boolean;
-  readonly fileName?: string;
-  readonly mimeType?: string;
-  readonly file?: OpenMediaFile;
-};
+export type ResolvedAsset =
+  | {
+      readonly kind: "file";
+      readonly path: string;
+      readonly download?: boolean;
+      readonly fileName?: string;
+      readonly mimeType?: string;
+      readonly file?: OpenMediaFile;
+    }
+  | {
+      readonly kind: "bytes";
+      readonly bytes: Uint8Array;
+      readonly mimeType: string;
+    }
+  | {
+      readonly kind: "github-media";
+      readonly url: string;
+      readonly cwd: string;
+      /** When the signed URL that granted this stops working, which bounds how long a client
+          may keep the bytes it fetched with it. */
+      readonly expiresAt: number;
+    };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -169,12 +215,50 @@ const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
     }),
   );
+
+/**
+ * Decodes one image a tool returned inline; null when the stored item has no
+ * such image, or it is larger than a provider turn accepts.
+ */
+const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly index: number;
+}) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const item = yield* orchestrator.getTurnItem(input);
+  const image =
+    item?.type === "dynamic_tool" ? toolOutputImages(item.output)[input.index] : undefined;
+  return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
+    ? null
+    : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
+});
+
+/** Serves an `.icns` favicon as its embedded PNG, since browsers cannot draw it. */
+const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(function* (
+  filePath: string,
+) {
+  if (!filePath.toLowerCase().endsWith(".icns")) {
+    return { kind: "file", path: filePath } satisfies ResolvedAsset;
+  }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const bytes = yield* fileSystem.readFile(filePath).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to read project icon image.", { filePath, cause }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+  const png = bytes ? extractIcnsPng(bytes, PROJECT_FAVICON_ICNS_MIN_SIZE) : null;
+  return png
+    ? ({ kind: "bytes", bytes: png, mimeType: "image/png" } satisfies ResolvedAsset)
+    : null;
+});
 
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
@@ -192,9 +276,9 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths.resolveRelativePathWithinRoot(input).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
-        WorkspacePathOutsideRootError: () => Effect.succeed(Option.none()),
+        WorkspacePathOutsideRootError: () => Effect.succeedNone,
       }),
     );
     if (Option.isNone(resolved)) return null;
@@ -257,10 +341,149 @@ const readImageDimensionsFromHeader = (filePath: string) =>
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
+  function* (input: {
+    readonly requestedPath: string;
+    readonly resource: AssetResource;
+    readonly expiresAt: number;
+  }) {
+    const path = yield* Path.Path;
+    const canonicalFile = yield* resolveCanonicalFile(input.requestedPath).pipe(
+      Effect.mapError(
+        (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+      ),
+    );
+    if (!canonicalFile) {
+      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+    }
+    if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+      return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+    }
+    const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
+    const opened = yield* openMediaFile(canonicalFile).pipe(
+      Effect.flatMap((file) =>
+        file === null
+          ? Effect.succeed(null)
+          : Effect.map(
+              wantsDimensions
+                ? readImageDimensionsFromOpenFile(canonicalFile, file)
+                : Effect.succeed(null),
+              (dimensions) => ({
+                identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+                dimensions,
+              }),
+            ),
+      ),
+      Effect.scoped,
+      Effect.mapError(
+        (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+      ),
+    );
+    if (!opened) {
+      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+    }
+    return {
+      claims: {
+        version: 1 as const,
+        kind: "media-file-exact" as const,
+        filePath: canonicalFile,
+        ...opened.identity,
+        expiresAt: input.expiresAt,
+      },
+      fileName: path.basename(canonicalFile),
+      imageDimensions: opened.dimensions,
+    };
+  },
+);
+
+const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileAsset")(
+  function* (input: {
+    readonly workspaceRoot: string;
+    readonly requestedPath: string;
+    readonly resource: AssetResource;
+    readonly expiresAt: number;
+  }) {
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+    const relativePath = path.isAbsolute(input.requestedPath)
+      ? path.relative(input.workspaceRoot, input.requestedPath)
+      : input.requestedPath;
+    const resolved = yield* workspacePaths
+      .resolveRelativePathWithinRoot({ workspaceRoot: input.workspaceRoot, relativePath })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetWorkspacePathValidationError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+    if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
+      return yield* new AssetPreviewTypeValidationError({
+        resource: input.resource,
+      });
+    }
+    const canonicalFile = yield* resolveCanonicalWorkspaceFile({
+      workspaceRoot: input.workspaceRoot,
+      relativePath: resolved.relativePath,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AssetWorkspaceAssetInspectionError({
+            resource: input.resource,
+            cause,
+          }),
+      ),
+    );
+    if (!canonicalFile) {
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+      });
+    }
+    const canonicalWorkspaceRoot = yield* fileSystem.realPath(input.workspaceRoot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AssetWorkspaceResolutionError({
+            resource: input.resource,
+            cause,
+          }),
+      ),
+    );
+    const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
+      path.extname(resolved.relativePath).toLowerCase(),
+    )
+      ? yield* readImageDimensionsFromHeader(canonicalFile)
+      : null;
+    return {
+      claims: isWorkspaceImagePreviewPath(resolved.relativePath)
+        ? {
+            version: 1 as const,
+            kind: "workspace-file-exact" as const,
+            workspaceRoot: canonicalWorkspaceRoot,
+            relativePath: resolved.relativePath,
+            expiresAt: input.expiresAt,
+          }
+        : {
+            version: 1 as const,
+            kind: "workspace-file" as const,
+            workspaceRoot: canonicalWorkspaceRoot,
+            baseRelativePath: path.dirname(resolved.relativePath),
+            expiresAt: input.expiresAt,
+          },
+      fileName: path.basename(resolved.relativePath),
+      imageDimensions,
+    };
+  },
+);
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
+  /** The project's clone has not landed, so its icon is reported missing without a lookup. */
+  readonly projectCheckoutPending?: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -273,7 +496,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "media-file": {
-      let requestedPath = input.resource.path;
+      let requestedPath = expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory);
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
@@ -288,52 +511,14 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
       }
-      const canonicalFile = yield* resolveCanonicalFile(requestedPath).pipe(
-        Effect.mapError(
-          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
-        ),
-      );
-      if (!canonicalFile) {
-        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
-      }
-      if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
-        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
-      }
-      const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(
-        path.extname(canonicalFile).toLowerCase(),
-      );
-      const opened = yield* openMediaFile(canonicalFile).pipe(
-        Effect.flatMap((file) =>
-          file === null
-            ? Effect.succeed(null)
-            : Effect.map(
-                wantsDimensions
-                  ? readImageDimensionsFromOpenFile(canonicalFile, file)
-                  : Effect.succeed(null),
-                (dimensions) => ({
-                  identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
-                  dimensions,
-                }),
-              ),
-        ),
-        Effect.scoped,
-        Effect.mapError(
-          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
-        ),
-      );
-      if (!opened) {
-        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
-      }
-      const identity = opened.identity;
-      imageDimensions = opened.dimensions;
-      claims = {
-        version: 1,
-        kind: "media-file-exact",
-        filePath: canonicalFile,
-        ...identity,
+      const finalized = yield* finalizeAbsoluteMediaFileAsset({
+        requestedPath,
+        resource: input.resource,
         expiresAt,
-      };
-      fileName = path.basename(canonicalFile);
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
       break;
     }
     case "workspace-file": {
@@ -351,70 +536,51 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      const relativePath = path.isAbsolute(input.resource.path)
-        ? path.relative(workspaceRoot, input.resource.path)
-        : input.resource.path;
-      const resolved = yield* workspacePaths
-        .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AssetWorkspacePathValidationError({
-                resource: input.resource,
-                cause,
-              }),
-          ),
-        );
-      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
-        return yield* new AssetPreviewTypeValidationError({
-          resource: input.resource,
-        });
-      }
-      const canonicalFile = yield* resolveCanonicalWorkspaceFile({
+      const finalized = yield* finalizeWorkspaceFileAsset({
         workspaceRoot,
-        relativePath: resolved.relativePath,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AssetWorkspaceAssetInspectionError({
-              resource: input.resource,
-              cause,
-            }),
-        ),
-      );
-      if (!canonicalFile) {
-        return yield* new AssetWorkspaceAssetNotFoundError({
+        requestedPath: input.resource.path,
+        resource: input.resource,
+        expiresAt,
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
+      break;
+    }
+    case "draft-workspace-file": {
+      // The draft names its workspace root in the resource itself; an explicit
+      // root only overrides it.
+      const draftWorkspaceRoot = input.workspaceRoot ?? input.resource.cwd;
+      if (path.isAbsolute(input.resource.path)) {
+        // An absolute draft path serves exactly like an absolute media path.
+        const finalized = yield* finalizeAbsoluteMediaFileAsset({
+          requestedPath: input.resource.path,
           resource: input.resource,
+          expiresAt,
         });
+        claims = finalized.claims;
+        fileName = finalized.fileName;
+        imageDimensions = finalized.imageDimensions;
+        break;
       }
-      const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
+      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(draftWorkspaceRoot).pipe(
         Effect.mapError(
           (cause) =>
-            new AssetWorkspaceResolutionError({
+            new AssetWorkspaceRootNormalizationError({
               resource: input.resource,
               cause,
             }),
         ),
       );
-      if (HEADER_IMAGE_EXTENSIONS.has(path.extname(resolved.relativePath).toLowerCase())) {
-        imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
-      }
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
-        ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
-            version: 1,
-            kind: "workspace-file",
-            workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
-            expiresAt,
-          };
-      fileName = path.basename(resolved.relativePath);
+      const finalized = yield* finalizeWorkspaceFileAsset({
+        workspaceRoot,
+        requestedPath: input.resource.path,
+        resource: input.resource,
+        expiresAt,
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
       break;
     }
     case "attachment": {
@@ -430,17 +596,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       // Generic files carry their extension inside the attachment id (that
       // shape resolves the on-disk path); images do not. Videos and images
-      // render inline. Other generic files download, unless a document viewer
-      // asked for inline and the stored extension is one a browser can show.
+      // render inline. Other generic files download unless a viewer requests
+      // a supported document or audio format inline.
       const extension = parseAttachmentFileExtension(input.resource.attachmentId);
       const isGenericFile = extension !== null;
       const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
       const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
-      const inlineDocumentMimeType =
-        input.resource.disposition === "inline" &&
-        extension !== null &&
-        INLINE_DOCUMENT_EXTENSIONS.has(extension)
-          ? INLINE_DOCUMENT_MIME_TYPES[extension]
+      const inlinePreviewMimeType =
+        input.resource.disposition === "inline" && extension !== null
+          ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       if (!isGenericFile) {
         imageDimensions = yield* readImageDimensionsFromHeader(attachmentPath);
@@ -449,12 +613,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlineDocumentMimeType === undefined
+        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
           ? { download: true }
           : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
-        ...(inlineDocumentMimeType !== undefined
-          ? { mimeType: inlineDocumentMimeType }
+        ...(inlinePreviewMimeType !== undefined
+          ? { mimeType: inlinePreviewMimeType }
           : input.resource.mimeType !== undefined
             ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
             : {}),
@@ -474,17 +638,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-      const faviconPath = yield* faviconResolver
-        .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AssetProjectFaviconResolutionError({
-                resource: input.resource,
-                cause,
-              }),
-          ),
-        );
+      // A lookup in a half-cloned checkout would cache a miss that outlives the clone.
+      const faviconPath = input.projectCheckoutPending
+        ? null
+        : yield* faviconResolver
+            .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetProjectFaviconResolutionError({
+                    resource: input.resource,
+                    cause,
+                  }),
+              ),
+            );
       const isExternalOverride =
         faviconPath !== null &&
         input.projectFaviconPath !== undefined &&
@@ -493,7 +660,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const relativePath =
         faviconPath && !isExternalOverride ? path.relative(workspaceRoot, faviconPath) : null;
       const sourceFaviconPath = isExternalOverride ? faviconPath : relativePath;
-      if (sourceFaviconPath && !isWorkspaceImagePreviewPath(sourceFaviconPath)) {
+      if (sourceFaviconPath && !isProjectFaviconPath(sourceFaviconPath)) {
         return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
       sourcePath = sourceFaviconPath ?? undefined;
@@ -552,7 +719,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           ),
         );
         const revision = yield* crypto.digest("SHA-256", faviconBytes).pipe(
-          Effect.map(Encoding.encodeHex),
+          Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
               new AssetProjectFaviconInspectionError({
@@ -567,6 +734,28 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       break;
     }
+    case "tool-output-image": {
+      const image = yield* readToolOutputImage(input.resource).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (image === null) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      claims = {
+        version: 1,
+        kind: "tool-output-image",
+        threadId: input.resource.threadId,
+        itemId: input.resource.itemId,
+        index: input.resource.index,
+        expiresAt,
+      };
+      // The allowed types are all `image/<extension>`.
+      fileName = `image-${input.resource.index + 1}.${image.mimeType.slice("image/".length)}`;
+      imageDimensions = readImageDimensions(image.bytes);
+      break;
+    }
     case "native-app-icon": {
       claims = {
         version: 1,
@@ -575,6 +764,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         expiresAt,
       };
       fileName = "native-app-icon.png";
+      break;
+    }
+    case "github-media": {
+      const fetchUrl = githubMediaFetchUrl(input.resource.url);
+      if (fetchUrl === null) {
+        return yield* new AssetGitHubMediaUrlValidationError({});
+      }
+      claims = {
+        version: 1,
+        kind: "github-media",
+        url: fetchUrl,
+        cwd: input.resource.cwd,
+        expiresAt,
+      };
+      fileName = githubMediaFileName(fetchUrl);
       break;
     }
   }
@@ -659,7 +863,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-    return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+    return faviconPath ? yield* projectFaviconAsset(faviconPath) : null;
   }
 
   if (claims.kind === "project-favicon-external") {
@@ -672,9 +876,30 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => null),
     );
-    return faviconPath === claims.filePath
-      ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
-      : null;
+    return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
+  }
+
+  if (claims.kind === "github-media") {
+    return {
+      kind: "github-media",
+      url: claims.url,
+      cwd: claims.cwd,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "tool-output-image") {
+    const image = yield* readToolOutputImage(claims).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to read tool output image.", {
+          threadId: claims.threadId,
+          itemId: claims.itemId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
   }
 
   if (claims.kind === "native-app-icon") {

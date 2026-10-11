@@ -25,6 +25,8 @@ export {
 export type MakeOptions<ROut = any> = Core.MakeOptions<ROut>;
 export type ScratchStack = Core.ScratchStack;
 export type TestEffect<A, R = never> = Core.TestEffect<A, R>;
+export const defaultStage = Core.defaultStage;
+export const resolveStage = Core.resolveStage;
 
 export interface TestApi {
   test: TestFn;
@@ -32,13 +34,10 @@ export interface TestApi {
   beforeEach: BeforeEachFn;
   afterAll: AfterAllFn;
   afterEach: AfterEachFn;
-  deploy: <A>(
-    stack: TestEffect<CompiledStack<A>, Stage | AlchemyContext>,
-    options?: { stage?: string },
-  ) => ReturnType<typeof Core.deploy<A>>;
+  deploy: Core.Deploy;
   destroy: (
     stack: TestEffect<CompiledStack, Stage | AlchemyContext>,
-    options?: { stage?: string },
+    options?: { stage?: string; include?: never; exclude?: never },
   ) => ReturnType<typeof Core.destroy>;
 }
 
@@ -248,8 +247,7 @@ export const make = <ROut = any>(options: MakeOptions<ROut>): TestApi => {
     beforeEach,
     afterAll,
     afterEach,
-    deploy: (stack, callOpts) =>
-      Core.deploy(options, stack, { ...callOpts, scope: sharedScope }),
+    deploy: Core.makeDeploy(options, sharedScope),
     destroy: (stack, callOpts) =>
       Core.destroy(options, stack, { ...callOpts, scope: sharedScope }).pipe(
         Effect.ensuring(closeScope),

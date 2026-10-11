@@ -1,0 +1,121 @@
+---
+title: Hasher
+description: Every object a push sends is inflated and hashed before a ref moves. That is CPU, and where it runs is a Layer, in the Worker, in dynamically loaded Workers, or on Lambda.
+---
+
+A push arrives as a pack. Before any ref moves, every object in it is
+inflated, hashed, and checked against the objects the repository
+already has. `Git.Hasher` is where that work runs:
+
+```typescript
+Layer.provide(Git.HasherInline)
+```
+
+The Worker receiving the push never holds it whole:
+
+1. The first 1 MiB is read for the ref commands, and
+   [Auth](/git/blocks/auth) rules on them before any pack byte is
+   inspected.
+2. The body streams through in 8 MiB parts. Each part is cut into
+   4 MiB chunks for the hasher as it lands and is parked in the
+   [blob store](/git/blocks/blob-store) as a multipart upload.
+3. Hashed objects reach the repository's Durable Object as batches of
+   rows over RPC: coordinates into the parked pack for large objects,
+   inline bytes for small ones.
+4. The Durable Object checks connectivity over the staged rows,
+   updates the commit graph, moves the refs in one transaction, and
+   schedules compaction.
+
+The pack never enters the Durable Object. Its memory, CPU, and egress
+are untouched by push size, and its share of a push is SQL.
+
+The Worker retains a 16 MiB window of the body for objects that span
+parts, so peak memory is that window plus the parts in flight,
+whatever the push size. Pushes share a 64 MiB budget per isolate, and
+one that does not fit waits for an earlier one to drain.
+
+An object that straddles two chunks is hashed from its own header the
+moment its first chunk settles, so a 10 MB blob spanning three parts
+does not wait for the last one. Deltas whose base is in another chunk
+are resolved as a second round of hasher jobs, and the resolved blobs
+are written out as a pack of their own so a fetch never re-resolves
+them.
+
+Where a chunk is hashed is the only thing the Layers below disagree
+on.
+
+## In the Worker
+
+`HasherInline` hashes chunks on the thread that received them. It costs nothing
+extra, needs nothing else deployed, and is the right answer for the
+kilobyte pushes that make up almost all of a repository's life.
+
+## In dynamically loaded Workers
+
+```typescript
+import * as GitHasher from "alchemy/Git/Hasher";
+
+Layer.provide(GitHasher.HasherWorkerLoader())
+```
+
+Four Workers, loaded on demand from a module bundled into your Worker,
+each in its own isolate with its own 128 MB, hash four chunks at once.
+Nothing leaves Cloudflare and nothing needs credentials. The runtime
+allows four loaded Workers per request, so a push wider than that is
+hashed in waves.
+
+```typescript
+GitHasher.HasherWorkerLoader({ concurrency: 2 })
+```
+
+## On Lambda
+
+```typescript
+import * as AWS from "alchemy/AWS";
+import * as GitHasher from "alchemy/Git/Hasher";
+
+Layer.provide(GitHasher.HasherLambda(GitHasher.HasherFunction)),
+Layer.provide(AWS.Lambda.InvokeFunctionHttp),
+```
+
+One Lambda invocation per chunk, all of them at once, each on a 3 GB
+function. `HasherFunction` is an Effect-native Lambda the package
+declares. Your Worker binds it cross-cloud: Alchemy creates an IAM user
+and a least-privilege role for the Worker, binds the key onto it, and
+signs each invoke with credentials assumed at runtime. The stack that
+deploys this carries both provider sets.
+
+If a chunk cannot be hashed there, because of a throttle or a cold
+start that runs out of time, the Worker hashes it inline. A push never
+fails because its hasher did.
+
+## Choosing
+
+One client, the same edge. A 40 MiB delta-heavy pack of 15.6k
+objects, a 44 MiB pack of whole blobs, and GitHub on a fresh
+repository for scale:
+
+| Layer | Parallelism | Memory per hasher | Leaves Cloudflare | Extra cost | 40 MiB deltas | 44 MiB blobs |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HasherInline` | none | the Worker's | no | none | 9.9–13.5 s | 8.8 s |
+| `HasherWorkerLoader` | 4 isolates | 128 MB | no | none | 5.9–7.2 s | 4.8–6.4 s |
+| `HasherLambda` | one Lambda per chunk | 3 GB | yes | Lambda time, egress | 6.8–7.9 s | 6.3–6.7 s |
+| GitHub | | | | | 3.3 s | 4.6 s |
+
+Incremental pushes take 0.2–0.4 s on every Layer, against 1.2 s on
+GitHub. The choice only matters for pushes of tens of megabytes.
+
+Start with `HasherInline`. Move to `HasherWorkerLoader` when large
+pushes matter and you want to stay on one cloud. Reach for
+`HasherLambda` when a push is wider than four chunks and you already
+run AWS. [Scaling](/git/recipes/scaling) walks a large push through
+the swap.
+
+## Your own
+
+The contract is three operations over bytes: scan a chunk and return
+its entries, resolve a batch of deltas against their bases, and hash
+the bounds of an entry that straddles two chunks. `Git.HasherSelf` is
+the smallest implementation to read. It fans out through the Worker's
+own service binding, which on Cloudflare runs on the caller's thread
+and buys nothing, but it is the shape a hasher on another host takes.

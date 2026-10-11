@@ -2,11 +2,11 @@
 
 > Alchemy Effect is an Infrastructure-as-Effects (IaE) framework that combines cloud infrastructure and application logic into a single, type-safe program powered by [Effect](https://effect.website). Resources are declared as Effects; bindings wire IAM, env vars, and typed SDKs in one call; deploys and runtime share the same code.
 
-This file is a navigation index for the documentation site at https://alchemy.run. Guide and concept pages are listed below with their URL and a one-line summary, so an agent can pick the right page in one hop. The per-resource API reference is indexed separately in [llms-full.txt](https://alchemy.run/llms-full.txt).
+This file is a navigation index for the documentation site at https://alchemy.run. Guide and concept pages are listed below with their URL and a one-line summary, so an agent can pick the right page in one hop. The service-level API reference is indexed separately in [llms-full.txt](https://alchemy.run/llms-full.txt).
 
 ## Start here
 
-- [What is Alchemy?](https://alchemy.run/what-is-alchemy) — Alchemy is an Infrastructure-as-Effects framework that combines cloud infrastructure and application logic into a single type-safe program powered by Effect.
+- [What is Alchemy?](https://alchemy.run/what-is-alchemy) — Alchemy is Infrastructure as Code built in pure Effect, with Infrastructure as Effects on top. Declare your cloud resources and the code that runs on them in one type-safe TypeScript program, and deploy it with one command.
 - [Getting started](https://alchemy.run/getting-started) — Install Alchemy and create your first Stack in under two minutes.
 - [Migrating from v1](https://alchemy.run/migrating-from-v1) — Migrate your Alchemy v1 (async/await) project to Alchemy v2.
 
@@ -18,14 +18,13 @@ Every command runs through your package manager: bun alchemy <command>. Command 
 - [deploy](https://alchemy.run/cli/deploy) — Compute a plan, ask for approval, and create/update/delete resources to match the desired state.
 - [plan](https://alchemy.run/cli/plan) — Preview what would change without applying anything. Equivalent to alchemy deploy --dry-run.
 - [destroy](https://alchemy.run/cli/destroy) — Delete every resource in a stack — plan all existing resources for deletion, ask for approval, and remove them in dependency order.
+- [drift](https://alchemy.run/cli/drift) — Detect infrastructure drift by re-observing the cloud, and optionally repair it back to the last deployed state.
 - [nuke](https://alchemy.run/cli/nuke) — Enumerate and delete every live resource across the stack's providers.
 - [Adopting Resources](https://alchemy.run/cli/adopting-resources) — How alchemy takes ownership of pre-existing cloud resources — recovery by default, --adopt for foreign resources, and the programmatic AdoptPolicy.
 - [dev](https://alchemy.run/cli/dev) — Run your stack in development mode with hot reloading — resources deploy to the cloud while Workers run in the local dev runtime.
-- [tail](https://alchemy.run/cli/tail) — Stream live logs from deployed resources in real time, interleaved and color-coded by resource.
-- [logs](https://alchemy.run/cli/logs) — Fetch historical logs from deployed resources — a batch of past entries, merged and sorted by timestamp.
-- [login](https://alchemy.run/cli/login) — Configure and log in to each cloud provider used by your stack.
-- [profile](https://alchemy.run/cli/profile) — Inspect or clear credentials stored in ~/.alchemy/profiles.json.
-- [state](https://alchemy.run/cli/state) — Inspect and manage the state store — list stacks, stages, and resources, print persisted state, and clear entries.
+- [logs](https://alchemy.run/cli/logs) — Fetch or tail logs from deployed resources, merged and color-coded by resource.
+- [profile](https://alchemy.run/cli/profile) — Create, refresh, rename, edit, inspect, or delete Alchemy authentication profiles.
+- [state](https://alchemy.run/cli/state) — Browse, read, and delete entries in the state store.
 - [Inspecting State](https://alchemy.run/cli/inspecting-state) — See what alchemy thinks is deployed, debug a bad diff, and recover from bad state.
 - [aws](https://alchemy.run/cli/aws) — AWS provider commands — bootstrap the per-account assets bucket that Lambda deployments rely on.
 - [cloudflare](https://alchemy.run/cli/cloudflare) — Cloudflare provider commands — bootstrap the state-store worker, mint API tokens, and inspect state-store logs.
@@ -39,23 +38,22 @@ The noun graph and its semantics: Stacks of Resources and Actions, data flow via
 - [Actions](https://alchemy.run/infrastructure-as-code/action) — A node in the dependency graph that runs an Effect during apply when its inputs change.
 - [Inputs & Outputs](https://alchemy.run/infrastructure-as-code/outputs) — Output<T> is alchemy's lazy reference type — the lazy values that flow between resources, get composed with .pipe, mapped, interpolated, and resolved during deploy.
 - [References](https://alchemy.run/infrastructure-as-code/references) — Read an already-deployed Resource or Stack at plan time — Resource.ref by Logical ID with optional stack/stage props, or import a Stack tag and depend on its outputs.
-- [Resource lifecycle](https://alchemy.run/infrastructure-as-code/resource-lifecycle) — How alchemy plans, applies, replaces, and destroys resources — and how to think about idempotency and recovery.
+- [Resource Lifecycle](https://alchemy.run/infrastructure-as-code/resource-lifecycle) — How alchemy plans, applies, replaces, and destroys resources — and how to think about idempotency and recovery.
 - [Providers](https://alchemy.run/infrastructure-as-code/provider) — Providers implement the lifecycle operations for a resource type — reconcile, delete, diff, read, and more.
 - [Custom Provider](https://alchemy.run/infrastructure-as-code/custom-provider) — Add support for a new cloud or third-party API by declaring a Resource type and implementing its lifecycle as an Effect Layer.
 
 ## Infrastructure as Effects
 
-How app code and infrastructure compose: Functions & Servers, Bindings, the init/runtime Phases, and Layers.
+How app code and infrastructure compose: Runtime, Bindings, the Construction and Runtime Phases, and Layers.
 
-- [Infrastructure as Effects](https://alchemy.run/infrastructure-as-effects) — One Effect program models both your runtime code and the infrastructure it runs on — Functions carry code, Bindings wire resources into them, Phases split deploy from runtime, Layers package it all behind typed services.
-- [Functions & Servers](https://alchemy.run/infrastructure-as-effects/functions-and-servers) — Workers, Lambda Functions, and Containers ship runtime code along with their infrastructure — declared with the Effectful Constructor pattern, bind what you need, return what you expose.
+- [Runtime](https://alchemy.run/infrastructure-as-effects/runtime) — A Runtime is a Resource that carries the code it runs — a Worker, Lambda Function, Container, or Server declared with the Effectful Constructor pattern. Bind what you need, return what you expose.
 - [Bindings](https://alchemy.run/infrastructure-as-effects/binding) — A Binding connects a Resource to a Worker or Lambda. One line declares the capability and generates the permissions, the configuration, and a typed client.
+- [Layers](https://alchemy.run/infrastructure-as-effects/layers) — A Layer defines a service contract with swappable implementations. In Alchemy, a Layer can encapsulate Resources and Bindings, so shared services carry their own infrastructure and permissions.
 - [Event Sources](https://alchemy.run/infrastructure-as-effects/event-sources) — An event source is a binding that runs your Function when something happens on a resource — one call wires the event-source mapping, the permissions, and a typed handler.
 - [Sinks](https://alchemy.run/infrastructure-as-effects/sinks) — A Sink is the write-side dual of an Event Source — a Binding that exposes a resource as an Effect Sink, batching writes into the batch API with least-privilege IAM.
-- [Phases](https://alchemy.run/infrastructure-as-effects/phases) — Alchemy programs run in two phases — plantime/init drives the deploy, runtime handles requests. Knowing which is which is the key to writing Workers and Lambda Functions.
-- [Layers](https://alchemy.run/infrastructure-as-effects/layers) — A Layer defines a service contract with swappable implementations. In Alchemy, a Layer can encapsulate Resources and Bindings, so shared services carry their own infrastructure and permissions.
+- [Phases](https://alchemy.run/infrastructure-as-effects/phases) — Alchemy programs run in two phases — Construction drives the deploy, Runtime handles requests. Knowing which is which is the key to writing Workers and Lambda Functions.
 - [Circular Bindings](https://alchemy.run/infrastructure-as-effects/circular-bindings) — How to model two services that reference each other (Worker A ↔ Worker B, Lambda ↔ Lambda) using tagged classes and Layers.
-- [Custom Runtime](https://alchemy.run/infrastructure-as-effects/custom-runtime) — Implement your own Function/Server resource on the Platform type — a Provider that provisions the compute and bundles the runtime Effect.
+- [Custom Runtime](https://alchemy.run/infrastructure-as-effects/custom-runtime) — Implement your own Runtime resource on the Platform type — a Provider that provisions the compute and bundles the runtime Effect.
 
 ## APIs
 
@@ -70,11 +68,11 @@ Typed calls between Functions and Servers: schemaless RPC for internal communica
 
 Stages, credential profiles, auth providers, secrets and config, local development, and CI.
 
-- [Stages](https://alchemy.run/environments/stages) — Stages are isolated instances of a Stack — dev_sam, staging, prod, pr-42 — each with their own state and physical names.
-- [Profiles](https://alchemy.run/environments/profiles) — Profiles store cloud credentials per environment in ~/.alchemy/profiles.json — switch between work and personal accounts, or between staging and prod credentials.
+- [Stages](https://alchemy.run/environments/stages) — Stages are isolated instances of a Stack — live_sam, dev_sam, staging, prod, pr-42 — each with their own state and physical names.
+- [Profiles](https://alchemy.run/environments/profiles) — Use profiles to select cloud accounts and credentials for each environment.
 - [Auth Providers](https://alchemy.run/environments/auth-providers) — An Auth Provider produces the credentials for a cloud's API calls — resolved lazily as Effects, so tokens and role sessions can refresh instead of pinning one static key.
-- [Custom Auth Provider](https://alchemy.run/environments/custom-auth-provider) — Plug a third-party API into alchemy login — a lazy credentials service backed by an AuthProvider that resolves keys from a Profile, env vars, or a refreshable session.
-- [Secrets & Config](https://alchemy.run/environments/secrets) — Use effect/Config to read env vars at init time and have Alchemy automatically bind them onto the deploy target.
+- [Custom Auth Provider](https://alchemy.run/environments/custom-auth-provider) — Add profile and CI credentials for a third-party API with a generated AuthProvider.
+- [Secrets & Config](https://alchemy.run/environments/secrets) — Use effect/Config to read env vars at Construction time and have Alchemy automatically bind them onto the deploy target.
 - [Local development](https://alchemy.run/environments/local-development) — How alchemy dev provides hot reloading, local execution, and local emulation with per-resource opt-in to real cloud services.
 - [CI](https://alchemy.run/environments/ci) — Set up CI/CD pipelines for alchemy projects with GitHub Actions, automated deployments, and PR previews — with provider credentials managed as code.
 
@@ -94,7 +92,7 @@ Scaling the codebase: file conventions for one stack, monorepos for many — sin
 
 Tests run against real clouds: the model, the end-to-end walkthrough, provider-lifecycle testing, and the harness reference.
 
-- [Testing](https://alchemy.run/testing) — How Alchemy tests work — real clouds, one Stack deploy per suite, isolated stages, deploy → assert → destroy.
+- [Testing](https://alchemy.run/testing) — How Alchemy tests work — real clouds by default, local emulators on demand, one Stack deploy per suite, isolated stages, deploy → assert → destroy.
 - [Testing a Stack](https://alchemy.run/testing/testing-a-stack) — Deploy your real Stack once per suite, drive it over HTTP, tear it down.
 - [Testing Providers](https://alchemy.run/testing/testing-providers) — Exercise a provider's create, update, replace, and delete paths with test.provider and a scratch in-memory stack.
 - [Test harness](https://alchemy.run/testing/test-harness) — Reference for alchemy/Test — every helper, hook, and option exposed by Test.make for Bun and Vitest.
@@ -119,6 +117,7 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 
 ## Cloudflare — Compute
 
+- [Worker Previews](https://alchemy.run/cloudflare/compute/previews) — Deploy a branch or pull request as a first-class Preview of another Worker — its own URL, bindings, and isolated Durable Object state, without touching production traffic.
 - [Accept WebSockets](https://alchemy.run/cloudflare/compute/hibernatable-websockets) — Accept WebSocket connections in a Durable Object, broadcast between peers, and survive Cloudflare's hibernation.
 - [Bind to another Worker's Durable Object](https://alchemy.run/cloudflare/compute/cross-worker-durable-object) — Share a Durable Object across multiple Workers — one Worker hosts the runtime, others bind to it by scriptName for a typed RPC stub — and move the host later with the data intact.
 - [Add a Workflow](https://alchemy.run/cloudflare/compute/add-a-workflow) — Orchestrate durable, multi-step work with Cloudflare Workflows — automatic retries, replayable steps, and at-least-once delivery.
@@ -132,12 +131,12 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 - [Durable Objects](https://alchemy.run/cloudflare/compute/durable-objects) — Durable Objects are globally-unique stateful instances with transactional storage — define one as an Effect, persist state per key, expose typed RPC methods, and stream values back to the caller.
 - [Gradual deployments](https://alchemy.run/cloudflare/compute/gradual-deployments) — Roll out Worker deploys incrementally — upload preview versions, canary a percentage of live traffic, ramp to 100%, pin users to a version during the rollout, and verify which version served each request.
 - [Python Workers](https://alchemy.run/cloudflare/compute/python-workers) — Deploy Cloudflare Python Workers by pointing main at a .py file — alchemy uploads the modules, vendors pyproject.toml dependencies with uv, and serves them locally through workerd's built-in Pyodide.
-- [Workers](https://alchemy.run/cloudflare/compute/workers) — Cloudflare Workers are the compute runtime of every alchemy app — define infrastructure and runtime behavior in one Effect program, bind resources with full type safety, and call other Workers over schemaless RPC.
+- [Workers](https://alchemy.run/cloudflare/compute/workers) — Cloudflare Workers are the compute Runtime of every Alchemy app — declare the Worker and its handler in one file, bind resources with full type safety, and call other Workers over schemaless RPC.
 - [Workflows](https://alchemy.run/cloudflare/compute/workflows) — Cloudflare Workflows run durable multi-step jobs — define a typed workflow class, checkpoint steps with task and sleep, trigger instances from a Worker, and poll status until completion.
 
 ## Cloudflare — Frontend
 
-- [Frontend frameworks](https://alchemy.run/cloudflare/frontend/frontends) — Deploy Vite, Astro, Next.js, Nuxt, SvelteKit, Waku, or any static build to Cloudflare Workers with first-class Website resources.
+- [Frontend frameworks](https://alchemy.run/cloudflare/frontend/frontends) — Deploy Vite, Astro, Next.js, vinext, Nuxt, SvelteKit, Waku, or any static build to Cloudflare Workers with first-class Website resources.
 - [Vite](https://alchemy.run/cloudflare/frontend/vite) — Deploy any pure-Vite app to Cloudflare Workers with a single resource.
 - [Static sites](https://alchemy.run/cloudflare/frontend/static-site) — Deploy any build command's output directory as Cloudflare Worker static assets with Cloudflare.Website.StaticSite — custom edge Workers, framework-native local dev, and memoized rebuilds.
 - [Add a React SPA](https://alchemy.run/cloudflare/frontend/vite-spa) — Ship a React single-page app from the same Stack as your Worker — built with Vite and deployed to Cloudflare in one command.
@@ -149,10 +148,11 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 - [SolidStart](https://alchemy.run/cloudflare/frontend/solidstart) — Deploy SolidStart to Cloudflare with Cloudflare.Website.Vite — plus the hand-rolled SolidJS SSR variant for full control over the server entry.
 - [Astro](https://alchemy.run/cloudflare/frontend/astro) — Deploy an Astro site to Cloudflare Workers with Cloudflare.Website.Astro — SSR in the Worker, prerendered pages as static assets, sessions backed by an auto-provisioned KV namespace.
 - [Next.js](https://alchemy.run/cloudflare/frontend/nextjs) — Deploy a Next.js app to Cloudflare Workers with Cloudflare.Website.Nextjs — the OpenNext pipeline, writable ISR, and wrangler-free local dev.
+- [Vinext](https://alchemy.run/cloudflare/frontend/vinext) — Deploy vinext to Cloudflare Workers with the shared Website API, native local development, and KV-backed caching.
 - [Nuxt](https://alchemy.run/cloudflare/frontend/nuxt) — Deploy a Nuxt app to Cloudflare Workers with Cloudflare.Website.Nuxt — nitro's cloudflare_module preset, native nuxt.config.ts loading, and wrangler-free local dev.
 - [SvelteKit](https://alchemy.run/cloudflare/frontend/sveltekit) — Deploy a SvelteKit app to Cloudflare Workers with Cloudflare.Website.SvelteKit — a wrangler-free in-memory adapter, real bindings on platform.env, and full-HMR local dev.
 - [Waku](https://alchemy.run/cloudflare/frontend/waku) — Deploy a Waku app to Cloudflare Workers with Cloudflare.Website.Waku — RSC server in the Worker, SSG pages as static assets, and a custom-entry seam for Durable Objects.
-- [Octane](https://alchemy.run/cloudflare/frontend/octane) — Deploy an OctaneJS fullstack app to Cloudflare Workers with Cloudflare.Website.Octane — your own vite build, Octane's Cloudflare adapter, wrangler-free.
+- [Octane](https://alchemy.run/cloudflare/frontend/octane) — Deploy an OctaneJS fullstack app to Cloudflare Workers with Cloudflare.Website.Octane — native Octane and Vite configuration, no hosting adapter or Wrangler file required.
 
 ## Cloudflare — APIs
 
@@ -163,13 +163,15 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 ## Cloudflare — Data
 
 - [Store Git Repos with Artifacts](https://alchemy.run/cloudflare/data/artifacts) — Use Cloudflare Artifacts to create Git repos at runtime and hand out clone tokens, all from a tiny Worker.
-- [Add Drizzle ORM](https://alchemy.run/cloudflare/data/drizzle) — Replace raw pg with Drizzle's effect-postgres integration, manage your schema as a resource, and have alchemy generate and apply migrations on every deploy — on Neon or PlanetScale.
+- [Add Drizzle ORM](https://alchemy.run/cloudflare/data/drizzle) — Deploy a Cloudflare Worker with Drizzle queries, Hyperdrive connections, and reviewed, committed migrations on Neon or PlanetScale.
 - [Branch from a shared database](https://alchemy.run/cloudflare/data/branch-from-shared-database) — Have ephemeral PR-preview stages reference a long-lived Neon or PlanetScale database from a staging stage instead of provisioning their own — fast previews, cheap branches, no extra clusters.
 - [D1](https://alchemy.run/cloudflare/data/d1) — Cloudflare D1 is serverless SQLite — create a database, apply migrations on deploy, and query it from a Worker through a typed binding.
-- [Drizzle on D1](https://alchemy.run/cloudflare/data/d1-drizzle) — Manage your Drizzle schema as a resource, apply migrations to D1 on every deploy, and query from a Worker with the effect-d1 driver or the raw @effect/sql-d1 client.
+- [Drizzle on D1](https://alchemy.run/cloudflare/data/d1-drizzle) — Deploy committed SQLite migrations to D1 and query the database from a Worker with Drizzle.
 - [Hyperdrive](https://alchemy.run/cloudflare/data/hyperdrive) — Cloudflare Hyperdrive pools connections to your external Postgres or MySQL database at the edge — provision a database (Neon or PlanetScale), front it with Hyperdrive, and bind the connection into your Worker.
 - [KV](https://alchemy.run/cloudflare/data/kv) — Cloudflare Workers KV is edge key-value storage — create a namespace, bind it into a Worker with read/write-scoped bindings, and get/put values with metadata.
+- [Prisma ORM with Postgres](https://alchemy.run/cloudflare/data/prisma) — Deploy Prisma ORM v8 on Cloudflare Workers with Neon Postgres, Hyperdrive, controlled migrations, and Effect-native queries.
 - [R2](https://alchemy.run/cloudflare/data/r2) — Cloudflare R2 is object storage — create a bucket, bind it into a Worker with read/write-scoped bindings, and stream objects in and out.
+- [R2 presigned URLs](https://alchemy.run/cloudflare/data/r2-presigned-urls) — Mint presigned R2 URLs so browsers upload and download objects directly, with the same code in alchemy dev and in production, from Effect-native or async Workers.
 - [Shared database across stages](https://alchemy.run/cloudflare/data/shared-database) — Have ephemeral PR-preview stages reference a long-lived Neon or PlanetScale database from a staging stage instead of provisioning their own — fast previews, copy-on-write branches, no extra clusters.
 
 ## Cloudflare — Messaging & events
@@ -181,6 +183,7 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 ## Cloudflare — Email
 
 - [Send & receive email](https://alchemy.run/cloudflare/email/send-and-receive) — Enable Email Routing on a zone, verify destination addresses, forward inbound mail with rules and a catch-all, and send email from a Worker with the send_email binding.
+- [Receive email in a Worker](https://alchemy.run/cloudflare/email/email-worker) — Receive inbound mail in a Cloudflare Worker with Cloudflare.email({ zone }).subscribe(...) — auto-creates routing and forwarding rules.
 - [Email](https://alchemy.run/cloudflare/email) — Cloudflare Email Routing turns a zone into a mail endpoint — enable routing, verify destinations, forward with rules and a catch-all, hand mail to a Worker, and send from Workers with the send_email binding.
 
 ## Cloudflare — AI
@@ -201,6 +204,7 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 
 ## Cloudflare — Observability
 
+- [Native Workers tracing](https://alchemy.run/cloudflare/observability/workers-tracing) — Mirror Effect spans into Cloudflare Workers Observability with Cloudflare.Telemetry() — the same Layer shape as Axiom.Telemetry, with Cloudflare owning sampling and export.
 - [Ship Worker telemetry to Axiom](https://alchemy.run/cloudflare/observability/axiom-observability) — Declare Axiom datasets, a least-privilege ingest token, and monitors in the same Stack as the Worker that emits the telemetry — or let Cloudflare push Workers Logs to Axiom natively.
 - [Analytics Engine](https://alchemy.run/cloudflare/observability/analytics-engine) — Write time-series data points from a Worker with Workers Analytics Engine — declare a dataset, bind it with WriteDataset, and query it later over Cloudflare's SQL API.
 
@@ -210,12 +214,61 @@ A linear five-part walkthrough from zero to a tested, locally-developed, CI-depl
 - [Expose private origins with Tunnel](https://alchemy.run/cloudflare/networking/tunnel) — Connect a private origin to Cloudflare's edge with a Tunnel, declare its ingress rules as a Configuration resource, and point DNS at it with a proxied CNAME.
 - [Domains & DNS](https://alchemy.run/cloudflare/networking/domains) — Manage Cloudflare zones, DNS records, DNSSEC, and zone settings as resources — and safely adopt the domains you already have.
 
+## Prisma — start here
+
+- [Prisma](https://alchemy.run/prisma) — Prisma Postgres and Prisma Compute — projects, databases, connections, and deployed apps as Stack resources, with a zero-config local database in dev.
+- [Setup](https://alchemy.run/prisma/setup) — Connect alchemy to Prisma — account, service tokens, and profiles.
+
+## Prisma — tutorial
+
+A four-part walkthrough: a Project, an Effect-native Compute API, Postgres, and a Vite frontend.
+
+- [Part 1: Your First Project](https://alchemy.run/prisma/tutorial/part-1) — Install Alchemy, configure Prisma credentials, and deploy your first Project.
+- [Part 2: An HTTP API](https://alchemy.run/prisma/tutorial/part-2) — Deploy an Effect-native Prisma Compute service and add an HTTP health endpoint.
+- [Part 3: Query Postgres](https://alchemy.run/prisma/tutorial/part-3) — Create Prisma Postgres, bind its connection to Compute, and query it with Effect SQL.
+- [Part 4: A Vite Frontend](https://alchemy.run/prisma/tutorial/part-4) — Connect a Vite frontend to your Prisma API, develop locally, and destroy the tutorial resources.
+
+## Prisma — Compute
+
+- [Apps](https://alchemy.run/prisma/compute/apps) — Prisma Compute apps as Stack resources — framework builds or Effect-native services, env wiring, custom domains, and a local dev command.
+- [Deployments](https://alchemy.run/prisma/compute/deployments) — The fail-closed Compute deployment lifecycle — health-checked promotion, rollback recovery, old-generation cleanup, and env-only redeploys.
+
+## Prisma — Data
+
+- [Branches](https://alchemy.run/prisma/data/branches) — Prisma branches group databases under git-style names — preview branches per stage, default-branch promotion, and database attachment.
+- [Buckets](https://alchemy.run/prisma/data/buckets) — Prisma Buckets provision S3-compatible object storage inside a project, and Bucket access keys mint the S3 credentials — access key, one-time secret, endpoint, and the provider-side bucket name.
+- [Connections](https://alchemy.run/prisma/data/connections) — Prisma Connections materialize database credentials — a conventional databaseUrl, direct and pooled connection strings, parsed origins for Hyperdrive, and the Connect runtime binding.
+- [Drizzle Postgres on Prisma Compute](https://alchemy.run/prisma/data/drizzle-postgres) — Use Alchemy's Prisma hosting provider to run a Drizzle API against Prisma Postgres.
+- [Postgres](https://alchemy.run/prisma/data/postgres) — Prisma Postgres as Stack resources — projects, databases, branch attachment, and a zero-config local database under alchemy dev.
+
+## Prisma — Frontend
+
+- [Websites](https://alchemy.run/prisma/frontend/websites) — Deploy Vite, Astro, Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Prisma Compute.
+- [Vite](https://alchemy.run/prisma/frontend/vite) — Deploy a Vite SPA to Prisma Compute with Prisma.Website.Vite — static files served on Bun and Vite's native dev server locally.
+- [Static sites](https://alchemy.run/prisma/frontend/static-site) — Deploy any static build to Prisma Compute with Prisma.Website.StaticSite — a shell command, output directory, and Bun static-file server.
+- [React Router](https://alchemy.run/prisma/frontend/react-router) — Deploy React Router v7 framework apps to Prisma Compute with Prisma.Website.ReactRouter — SSR on Bun and native Vite dev locally.
+- [Foldkit](https://alchemy.run/prisma/frontend/foldkit) — Deploy Foldkit to Prisma Compute with Prisma.Website.Foldkit — a Vite SPA served on Bun, deep-link fallback, and native HMR locally.
+- [TanStack Start](https://alchemy.run/prisma/frontend/tanstack-start) — Deploy TanStack Start to Prisma Compute with Prisma.Website.TanStackStart — React or Solid SSR on Bun, with native Vite dev locally.
+- [Next.js](https://alchemy.run/prisma/frontend/nextjs) — Deploy Next.js to Prisma Compute with Prisma.Website.Nextjs — a normal Next server on Bun, not OpenNext, and next dev locally.
+- [Vinext](https://alchemy.run/prisma/frontend/vinext) — Deploy vinext to Prisma Compute with the shared Website API, native local development, and traced runtime dependencies.
+- [Nuxt](https://alchemy.run/prisma/frontend/nuxt) — Deploy Nuxt to Prisma Compute with Prisma.Website.Nuxt — Nitro's Node target running on Bun and Nuxt's own dev server locally.
+- [Vocs](https://alchemy.run/prisma/frontend/vocs) — Deploy Vocs documentation to Prisma Compute with Prisma.Website.Vocs — static assets and Waku RSC on Bun, with Vocs dev locally.
+- [SolidStart](https://alchemy.run/prisma/frontend/solidstart) — Deploy SolidStart to Prisma Compute with Prisma.Website.SolidStart — Nitro's Node target on Bun and SolidStart's native Vite dev server locally.
+- [Astro](https://alchemy.run/prisma/frontend/astro) — Deploy Astro SSR or a fully static site to Prisma Compute with Prisma.Website.Astro, running on Bun with native Astro dev locally.
+- [SvelteKit](https://alchemy.run/prisma/frontend/sveltekit) — Deploy SvelteKit to Prisma Compute with Prisma.Website.SvelteKit — SSR and prerendered assets on Bun, with native Vite dev locally.
+- [Waku](https://alchemy.run/prisma/frontend/waku) — Deploy Waku to Prisma Compute with Prisma.Website.Waku — React Server Components and static pages on Bun, with Waku's native dev server locally.
+- [Octane](https://alchemy.run/prisma/frontend/octane) — Deploy OctaneJS to Prisma Compute with Prisma.Website.Octane — the Node target on Bun, SSR plus client assets, and native Vite dev locally.
+
+## Prisma — Guides
+
+- [Connect from Cloudflare Workers](https://alchemy.run/prisma/guides/cloudflare-workers) — Two ways to reach Prisma Postgres from a Worker — the Connect binding for credentials, or Hyperdrive in front of the direct origin for edge-pooled SQL.
+
 ## AWS — start here
 
 The AWS hub: overview (runtimes + resources + recipes), setup (credentials, profiles, region), and the Lambda vs ECS vs EKS vs EC2 decision page.
 
 - [AWS](https://alchemy.run/aws) — Build AWS applications with Alchemy — a runtime (usually Lambda) plus typed resources, wired together by bindings that mint least-privilege IAM policies.
-- [Setup](https://alchemy.run/aws/setup) — Install Alchemy and connect it to your AWS account — SSO, environment variables, or stored access keys.
+- [Setup](https://alchemy.run/aws/setup) — Connect Alchemy to AWS with SSO, stored access keys, or CI environment credentials.
 - [Choosing a runtime](https://alchemy.run/aws/compute/choosing-a-runtime) — Lambda vs ECS vs EKS vs EC2 for Alchemy apps — cold starts, cost shape, packaging, and how much of each Alchemy currently covers.
 
 ## AWS — tutorial
@@ -240,7 +293,7 @@ A linear five-part walkthrough from zero to a tested, CI-deployed AWS project. E
 
 ## AWS — Frontend
 
-- [Websites](https://alchemy.run/aws/frontend/websites) — Deploy Vite, Astro, Next.js, Nuxt, React Router, SvelteKit, TanStack Start, Waku, Octane, or any static build to AWS with first-class Website resources.
+- [Websites](https://alchemy.run/aws/frontend/websites) — Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SvelteKit, TanStack Start, Waku, Octane, or any static build to AWS with first-class Website resources.
 - [Vite](https://alchemy.run/aws/frontend/vite) — Deploy a plain Vite app to AWS with AWS.Website.Vite — the vite build output on S3 behind CloudFront, SPA fallback at the edge, and Vite's own dev server under alchemy dev.
 - [Foldkit](https://alchemy.run/aws/frontend/foldkit) — Deploy a Foldkit app to AWS with AWS.Website.Foldkit — the client build on S3 + CloudFront, SPA deep links by default, and Foldkit's own Vite dev server under alchemy dev.
 - [Static sites](https://alchemy.run/aws/frontend/static-site) — Ship a static site to S3 + CloudFront with AWS.Website.StaticSite — build-step support, Router composition, and cache invalidation on deploy.
@@ -249,6 +302,7 @@ A linear five-part walkthrough from zero to a tested, CI-deployed AWS project. E
 - [React Router](https://alchemy.run/aws/frontend/react-router) — Deploy React Router v7 (framework mode) to AWS with AWS.Website.ReactRouter — SSR on a streaming Lambda Function URL, client assets on S3 + CloudFront, and React Router's own Vite dev server under alchemy dev.
 - [TanStack Start](https://alchemy.run/aws/frontend/tanstack-start) — Deploy TanStack Start (React or Solid) to AWS with AWS.Website.TanStackStart — SSR on a streaming Lambda Function URL, client assets on S3 + CloudFront, and TanStack Start's own Vite dev server under alchemy dev.
 - [Next.js](https://alchemy.run/aws/frontend/nextjs) — Deploy a Next.js app to AWS with AWS.Website.Nextjs — the OpenNext serverless topology with streaming SSR, image optimization, and ISR wiring, plus next dev under alchemy dev.
+- [Vinext](https://alchemy.run/aws/frontend/vinext) — Deploy vinext to AWS with the shared Website API, native local development, and a platform-specific data cache.
 - [Nuxt](https://alchemy.run/aws/frontend/nuxt) — Deploy a Nuxt app to AWS with AWS.Website.Nuxt — nitro's aws-lambda preset on a streaming Lambda Function URL, S3 assets behind CloudFront, and Nuxt's own dev server under alchemy dev.
 - [SolidStart](https://alchemy.run/aws/frontend/solidstart) — Deploy a SolidStart app to AWS with AWS.Website.SolidStart — nitro's aws-lambda preset on a streaming Lambda Function URL, S3 assets behind CloudFront, and SolidStart's own Vite dev server under alchemy dev.
 - [Astro](https://alchemy.run/aws/frontend/astro) — Deploy an Astro app to AWS with AWS.Website.Astro — SSR on a streaming Lambda Function URL, static output on S3 + CloudFront, and Astro's own dev server under alchemy dev.
@@ -266,6 +320,8 @@ A linear five-part walkthrough from zero to a tested, CI-deployed AWS project. E
 
 ## AWS — Data
 
+- [Drizzle + Aurora DSQL](https://alchemy.run/aws/data/drizzle-dsql) — Drizzle on Lambda with Aurora DSQL, a non-admin database role, verified TLS, and an explicit DSQL migration boundary.
+- [Drizzle + Aurora PostgreSQL](https://alchemy.run/aws/data/drizzle-aurora) — Drizzle on Lambda with private Aurora PostgreSQL, IAM authentication, verified TLS, and reviewed SQL migrations.
 - [DynamoDB](https://alchemy.run/aws/data/dynamodb) — Add a DynamoDB Table, bind GetItem and PutItem to your Lambda, and serve a typed key/value HTTP API backed by DynamoDB.
 - [RDS & Aurora](https://alchemy.run/aws/data/rds) — Stand up an Aurora cluster in one call with the Aurora helper, connect from Lambda over the Connect binding with pg, or skip connections entirely with the Data API.
 - [S3](https://alchemy.run/aws/data/s3) — Add an S3 Bucket to your Stack, bind PutObject and GetObject as runtime capabilities, and let Alchemy mint the IAM policy for you.
@@ -297,6 +353,104 @@ A linear five-part walkthrough from zero to a tested, CI-deployed AWS project. E
 - [Custom domains with Route53 + ACM](https://alchemy.run/aws/networking/custom-domains) — Serve your site or API from your own domain — DNS-validated ACM certificates, Route 53 alias records, and the domain prop on Website resources.
 - [VPC & networking](https://alchemy.run/aws/networking) — The Network helper for a production-shaped VPC in one call, and the full set of EC2 networking primitives — VPCs, subnets, gateways, routes, security groups, and endpoints — for explicit control.
 
+## Fly — start here
+
+The Fly hub: overview (Apps, Machines, Services, Sprites) and setup (org, API token, profile).
+
+- [Fly](https://alchemy.run/fly) — Deploy Effect programs to Fly.io as Apps, Machines, Services, and Sprites.
+- [Setup](https://alchemy.run/fly/setup) — Create a Fly org, generate an API token, and store it in a profile.
+
+## Fly — SQL
+
+- [Postgres](https://alchemy.run/fly/data/postgres) — A billed Managed Postgres cluster. Bind Fly.ConnectPostgres and query with Drizzle or SQL.
+- [Drizzle Postgres on Fly](https://alchemy.run/fly/data/drizzle-postgres) — Connect a Fly Service to Managed Postgres and deploy reviewed Drizzle migrations.
+
+## Fly — Frontend
+
+- [Websites](https://alchemy.run/fly/frontend/websites) — Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Fly with first-class Website resources.
+- [Vite](https://alchemy.run/fly/frontend/vite) — Deploy a Vite SPA to Fly with Fly.Website.Vite — static assets on a Node Machine, fly.dev (or your domain) over HTTPS, and Vite's own dev server under alchemy dev.
+- [Static sites](https://alchemy.run/fly/frontend/static-site) — Deploy a static site to Fly with Fly.Website.StaticSite — a build command, a Node static-file server on a Machine, and https://{app}.fly.dev (or your hostname) on deploy.
+- [React Router](https://alchemy.run/fly/frontend/react-router) — Deploy React Router v7 (framework mode) to Fly with Fly.Website.ReactRouter — SSR on a Machine, client assets baked into the image, and React Router's own Vite dev server under alchemy dev.
+- [Foldkit](https://alchemy.run/fly/frontend/foldkit) — Deploy a Foldkit app to Fly with Fly.Website.Foldkit — a client-only Vite SPA on a Node static-file Service, fly.dev over shared IPv4, and Vite's own dev server under alchemy dev.
+- [TanStack Start](https://alchemy.run/fly/frontend/tanstack-start) — Deploy TanStack Start (React or Solid) to Fly with Fly.Website.TanStackStart — SSR on a Machine, client assets baked into the image, and TanStack Start's own Vite dev server under alchemy dev.
+- [Next.js](https://alchemy.run/fly/frontend/nextjs) — Deploy a Next.js app to Fly with Fly.Website.Nextjs — next build plus a Node next({ dev: false }) Machine, and next dev under alchemy dev.
+- [Vinext](https://alchemy.run/fly/frontend/vinext) — Deploy vinext to Fly with the shared Website API, native local development, and a platform-specific data cache.
+- [Nuxt](https://alchemy.run/fly/frontend/nuxt) — Deploy a Nuxt app to Fly with Fly.Website.Nuxt — nitro's node preset on a Machine, assets baked into the image, and Nuxt's own dev server under alchemy dev.
+- [Vocs](https://alchemy.run/fly/frontend/vocs) — Deploy a Vocs docs site to Fly with Fly.Website.Vocs — prerendered HTML on a Node static-file server, extensionless routes, and Vocs' own dev server under alchemy dev.
+- [SolidStart](https://alchemy.run/fly/frontend/solidstart) — Deploy a SolidStart app to Fly with Fly.Website.SolidStart — nitro's node preset on a Machine, prerendered pages baked into the image, and SolidStart's own Vite dev server under alchemy dev.
+- [Astro](https://alchemy.run/fly/frontend/astro) — Deploy an Astro app to Fly with Fly.Website.Astro — Node SSR on a Machine, static output as a file server, and Astro's own dev server under alchemy dev.
+- [SvelteKit](https://alchemy.run/fly/frontend/sveltekit) — Deploy a SvelteKit app to Fly with Fly.Website.SvelteKit — kit SSR on a Machine, prerendered assets baked into the image, and Kit's own dev server under alchemy dev.
+- [Waku](https://alchemy.run/fly/frontend/waku) — Deploy a Waku app to Fly with Fly.Website.Waku — RSC server on a Machine, SSG pages baked into the image, and Waku's own dev server under alchemy dev.
+- [Octane](https://alchemy.run/fly/frontend/octane) — Deploy an OctaneJS app to Fly with Fly.Website.Octane — SSR on a Machine, client assets baked into the image, and Octane's own Vite dev server under alchemy dev.
+
+## Hetzner — start here
+
+The Hetzner hub: overview (Servers and Services) and setup (project, API token, profile).
+
+- [Hetzner](https://alchemy.run/hetzner) — Build applications on Hetzner Cloud with Alchemy — Servers running your Effect programs as Services, plus volumes, networks, firewalls, load balancers, and DNS, all in one typed program.
+- [Setup](https://alchemy.run/hetzner/setup) — Install Alchemy and connect it to Hetzner Cloud — create a project, generate an API token, and store it in a profile.
+
+## Hetzner — SQL
+
+- [Drizzle Postgres on Hetzner](https://alchemy.run/hetzner/data/drizzle-postgres) — Run a Drizzle API on a Hetzner Server with external Neon Postgres and reviewed SQL migrations.
+
+## Hetzner — Frontend
+
+- [Websites](https://alchemy.run/hetzner/frontend/websites) — Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Hetzner with first-class Website resources.
+- [Vite](https://alchemy.run/hetzner/frontend/vite) — Deploy a Vite SPA to Hetzner with Hetzner.Website.Vite — static assets as a systemd unit on a Server, http://{ipv4}:3000, and Vite's own dev server under alchemy dev.
+- [Static sites](https://alchemy.run/hetzner/frontend/static-site) — Deploy a static site to Hetzner with Hetzner.Website.StaticSite — a build command, a systemd unit on a Server, and http://{ipv4}:3000 (or your hostname) on deploy.
+- [React Router](https://alchemy.run/hetzner/frontend/react-router) — Deploy React Router v7 (framework mode) to Hetzner with Hetzner.Website.ReactRouter — SSR as a systemd unit on port 3000, client assets baked into the unit, and React Router's own Vite dev server under alchemy dev.
+- [Foldkit](https://alchemy.run/hetzner/frontend/foldkit) — Deploy a Foldkit app to Hetzner with Hetzner.Website.Foldkit — a client-only Vite SPA as a systemd unit on a Cloud Server, and Vite's own dev server under alchemy dev.
+- [TanStack Start](https://alchemy.run/hetzner/frontend/tanstack-start) — Deploy TanStack Start (React or Solid) to Hetzner with Hetzner.Website.TanStackStart — SSR as a systemd unit on port 3000, client assets baked into the unit, and TanStack Start's own Vite dev server under alchemy dev.
+- [Next.js](https://alchemy.run/hetzner/frontend/nextjs) — Deploy a Next.js app to Hetzner with Hetzner.Website.Nextjs — next build plus a Node next({ dev: false }) systemd unit, and next dev under alchemy dev.
+- [Vinext](https://alchemy.run/hetzner/frontend/vinext) — Deploy vinext to Hetzner with the shared Website API, native local development, and a platform-specific data cache.
+- [Nuxt](https://alchemy.run/hetzner/frontend/nuxt) — Deploy a Nuxt app to Hetzner with Hetzner.Website.Nuxt — nitro's node preset as a systemd unit on port 3000, and Nuxt's own dev server under alchemy dev.
+- [Vocs](https://alchemy.run/hetzner/frontend/vocs) — Deploy a Vocs docs site to Hetzner with Hetzner.Website.Vocs — prerendered HTML on a systemd unit, extensionless routes, and Vocs' own dev server under alchemy dev.
+- [SolidStart](https://alchemy.run/hetzner/frontend/solidstart) — Deploy a SolidStart app to Hetzner with Hetzner.Website.SolidStart — nitro's node preset as a systemd unit on port 3000, prerendered pages baked into the unit, and SolidStart's own Vite dev server under alchemy dev.
+- [Astro](https://alchemy.run/hetzner/frontend/astro) — Deploy an Astro app to Hetzner with Hetzner.Website.Astro — Node SSR as a systemd unit on a Server, static output as a file server, and Astro's own dev server under alchemy dev.
+- [SvelteKit](https://alchemy.run/hetzner/frontend/sveltekit) — Deploy a SvelteKit app to Hetzner with Hetzner.Website.SvelteKit — kit SSR as a systemd unit on port 3000, prerendered assets baked into the unit, and Kit's own dev server under alchemy dev.
+- [Waku](https://alchemy.run/hetzner/frontend/waku) — Deploy a Waku app to Hetzner with Hetzner.Website.Waku — RSC server as a systemd unit on port 3000, SSG pages baked into the unit, and Waku's own dev server under alchemy dev.
+- [Octane](https://alchemy.run/hetzner/frontend/octane) — Deploy an OctaneJS app to Hetzner with Hetzner.Website.Octane — SSR as a systemd unit on port 3000, client assets baked into the unit, and Octane's own Vite dev server under alchemy dev.
+
+## Railway — start here
+
+The Railway hub: overview (Projects, Services, databases) and setup (workspace, API token, profile).
+
+- [Railway](https://alchemy.run/railway) — Deploy Effect programs to Railway as Projects, Services, databases, Volumes, and Buckets.
+- [Setup](https://alchemy.run/railway/setup) — Create a Railway workspace, generate an account API token, and store it in a profile.
+
+## Railway — SQL
+
+- [Postgres](https://alchemy.run/railway/data/postgres) — Official SSL Postgres in a Project. Bind Railway.ConnectPostgres and query with Drizzle or SQL.
+- [MySQL](https://alchemy.run/railway/data/mysql) — Official MySQL in a Project. Bind Railway.ConnectMySQL and query with Drizzle or SQL.
+- [Drizzle Postgres on Railway](https://alchemy.run/railway/data/drizzle-postgres) — Query Railway Postgres from an Effect-native Service and apply reviewed Drizzle migrations separately.
+- [Drizzle MySQL on Railway](https://alchemy.run/railway/data/drizzle-mysql) — Connect an Effect-native Railway Service to MySQL and deploy committed Drizzle migrations.
+
+## Prisma — SQL
+
+- [Postgres](https://alchemy.run/prisma/data/postgres) — Prisma Postgres as Stack resources — projects, databases, branch attachment, and a zero-config local database under alchemy dev.
+- [Branches](https://alchemy.run/prisma/data/branches) — Prisma branches group databases under git-style names — preview branches per stage, default-branch promotion, and database attachment.
+- [Connections](https://alchemy.run/prisma/data/connections) — Prisma Connections materialize database credentials — a conventional databaseUrl, direct and pooled connection strings, parsed origins for Hyperdrive, and the Connect runtime binding.
+- [Drizzle Postgres on Prisma Compute](https://alchemy.run/prisma/data/drizzle-postgres) — Use Alchemy's Prisma hosting provider to run a Drizzle API against Prisma Postgres.
+
+## Railway — Frontend
+
+- [Websites](https://alchemy.run/railway/frontend/websites) — Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Railway with first-class Website resources.
+- [Vite](https://alchemy.run/railway/frontend/vite) — Deploy a Vite SPA to Railway with Railway.Website.Vite — static assets on a container Service, a *.up.railway.app URL (or your domain), and Vite's own dev server under alchemy dev.
+- [Static sites](https://alchemy.run/railway/frontend/static-site) — Deploy a static site to Railway with Railway.Website.StaticSite — a build command, a container Service.
+- [React Router](https://alchemy.run/railway/frontend/react-router) — Deploy React Router v7 (framework mode) to Railway with Railway.Website.ReactRouter — SSR on a container Service, client assets in the image, and React Router's own Vite dev server under alchemy dev.
+- [Foldkit](https://alchemy.run/railway/frontend/foldkit) — Deploy a Foldkit app to Railway with Railway.Website.Foldkit — a client-only Vite SPA on a container Service, and Vite's own dev server under alchemy dev.
+- [TanStack Start](https://alchemy.run/railway/frontend/tanstack-start) — Deploy TanStack Start (React or Solid) to Railway with Railway.Website.TanStackStart — SSR on a container Service, client assets in the image, and TanStack Start's own Vite dev server under alchemy dev.
+- [Next.js](https://alchemy.run/railway/frontend/nextjs) — Deploy a Next.js app to Railway with Railway.Website.Nextjs — next build plus a Node next({ dev: false }) container, and next dev under alchemy dev.
+- [Vinext](https://alchemy.run/railway/frontend/vinext) — Deploy vinext to Railway with the shared Website API, native local development, and a platform-specific data cache.
+- [Nuxt](https://alchemy.run/railway/frontend/nuxt) — Deploy a Nuxt app to Railway with Railway.Website.Nuxt — nitro's node preset on a Service, and Nuxt's own dev server under alchemy dev.
+- [Vocs](https://alchemy.run/railway/frontend/vocs) — Deploy a Vocs docs site to Railway with Railway.Website.Vocs — prerendered HTML on a Railway Service, extensionless routes, and Vocs' own dev server under alchemy dev.
+- [SolidStart](https://alchemy.run/railway/frontend/solidstart) — Deploy a SolidStart app to Railway with Railway.Website.SolidStart — nitro's node preset on a container Service, prerendered pages in the image, and SolidStart's own Vite dev server under alchemy dev.
+- [Astro](https://alchemy.run/railway/frontend/astro) — Deploy an Astro app to Railway with Railway.Website.Astro — Node SSR on a Service container, static output as a file server, and Astro's own dev server under alchemy dev.
+- [SvelteKit](https://alchemy.run/railway/frontend/sveltekit) — Deploy a SvelteKit app to Railway with Railway.Website.SvelteKit — kit SSR plus prerendered assets on one Service, and Kit's own dev server under alchemy dev.
+- [Waku](https://alchemy.run/railway/frontend/waku) — Deploy a Waku app to Railway with Railway.Website.Waku — RSC server on a container Service, SSG pages in the image, and Waku's own dev server under alchemy dev.
+- [Octane](https://alchemy.run/railway/frontend/octane) — Deploy an OctaneJS app to Railway with Railway.Website.Octane — SSR plus client assets on one Service, and Octane's own Vite dev server under alchemy dev.
+
 ## PlanetScale
 
 Serverless MySQL & Postgres as Stack resources. Composes with Cloudflare Hyperdrive and Drizzle — those guides are listed under Cloudflare.
@@ -309,19 +463,30 @@ Serverless MySQL & Postgres as Stack resources. Composes with Cloudflare Hyperdr
 - [Credentials](https://alchemy.run/planetscale/data/credentials) — PlanetScale credentials as Stack resources — Postgres roles, the default role and forceReset, MySQL passwords, TTLs, CIDR allowlists, and direct vs pooled connection origins.
 - [Backups & restores](https://alchemy.run/planetscale/data/backups) — Restore a PlanetScale backup into a fresh branch with backupId, or seed a new branch from the last successful backup with seedData.
 - [Preview branches per PR](https://alchemy.run/planetscale/guides/preview-branches) — Give every pull request its own PlanetScale branch — a long-lived database owned by a staging stage, referenced by ephemeral PR stages that fork, migrate, and tear down a branch each.
-- [Drizzle ORM with PlanetScale](https://alchemy.run/planetscale/guides/drizzle) — Manage your PlanetScale schema in TypeScript with Drizzle — migrations generated on deploy (Postgres) or checked in (MySQL), applied through the branch's migrations prop, connected via role and password origins.
+- [Drizzle ORM with PlanetScale](https://alchemy.run/planetscale/guides/drizzle) — Configure PlanetScale Postgres or MySQL branches, committed Drizzle migrations, and role or password connections.
 
 ## Neon
 
-Serverless Postgres with copy-on-write branching as Stack resources. Composes with Cloudflare Hyperdrive; branch-per-PR guides are listed under Cloudflare.
+Neon backend resources: Postgres branches, Functions, private object storage, managed Auth, Data API, AI Gateway and Website adapters. The upload tutorial combines native and Effect handlers with authenticated browser uploads.
 
-- [Neon](https://alchemy.run/neon) — Serverless Postgres with copy-on-write branching — projects and branches as Stack resources, with built-in SQL migrations.
-- [Setup](https://alchemy.run/neon/setup) — Connect alchemy to Neon — account, credentials, and profiles.
+- [Neon](https://alchemy.run/neon) — Declare Neon Postgres, Functions, storage, Auth, AI Gateway and websites together in an Alchemy Stack.
+- [Setup](https://alchemy.run/neon/setup) — Prepare Neon credentials, service access, regions, and external dependencies before deploying with Alchemy.
+- [Organization governance](https://alchemy.run/neon/governance) — Manage existing Neon organization access, billing alerts, and private-network associations with explicit ownership and restoration.
+- [AI Gateway setup](https://alchemy.run/neon/guides/ai-gateway) — Buy Neon AI Gateway credits and use a model from an Effect Function.
+- [Production Auth](https://alchemy.run/neon/guides/production-auth) — Configure trusted origins, SMTP, OAuth callbacks, and verification before launching Managed Better Auth.
+- [Private networking](https://alchemy.run/neon/guides/private-networking) — Prepare AWS PrivateLink endpoints, register them with Neon, enable private DNS, and verify database access.
+- [Custom domains](https://alchemy.run/neon/guides/custom-domains) — Register a Function hostname, configure DNS and CAA, verify HTTPS, and retire the domain safely.
+- [State and recovery](https://alchemy.run/neon/guides/state-recovery) — Preserve Neon ownership and reveal-once secrets, recover interrupted deployments, and clean up without discarding state.
+- [Build an upload journal](https://alchemy.run/neon/tutorial) — Sign in, upload private files, process real storage events, and view Postgres-backed status with Neon and Alchemy.
+- [Create the upload backend](https://alchemy.run/neon/tutorial/backend) — Add a Neon project, a migrated branch, private storage, and managed authentication.
+- [Protect and process uploads](https://alchemy.run/neon/tutorial/functions) — Verify JWTs, sign private uploads, and record real bucket events in Postgres.
+- [Connect the browser](https://alchemy.run/neon/tutorial/frontend) — Use managed signup and sessions to upload and download private files from Vite.
+- [Fork a preview and clean up](https://alchemy.run/neon/tutorial/previews) — Keep preview writes isolated from the parent, verify inheritance, and destroy only owned resources.
 - [Branching](https://alchemy.run/neon/data/branching) — Neon branches are copy-on-write forks of a parent branch — create them per stage or preview, pin them to a point in time, copy schema only, and let them expire on their own.
 - [Connections](https://alchemy.run/neon/data/connections) — Every Neon project and branch exposes direct and pooled connection URIs plus pre-parsed origin outputs — feed the direct origin to Hyperdrive and the pooled one to everything else.
 - [Migrations](https://alchemy.run/neon/data/migrations) — Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in Alchemy's __alchemy_migrations table.
 - [Preview branches per PR](https://alchemy.run/neon/guides/preview-branches) — Keep one long-lived Neon project in a staging stage and fork a copy-on-write branch per PR stage — isolated preview databases in seconds, destroyed with the stage.
-- [Drizzle ORM with Neon](https://alchemy.run/neon/guides/drizzle) — Manage your Drizzle schema as a resource — alchemy regenerates migration SQL on deploy and Neon applies it transactionally on the project or branch.
+- [Drizzle ORM with Neon](https://alchemy.run/neon/guides/drizzle) — Configure Neon projects, branches, committed Drizzle migrations, and direct or pooled connections.
 
 ## Axiom
 
@@ -344,6 +509,43 @@ Repos, secrets, variables, and repository event sources as Stack resources; the 
 - [Actions secrets & variables](https://alchemy.run/github/actions-config) — Manage GitHub Actions secrets and variables as Stack resources — encrypted secrets, plain-text variables, bulk helpers, and CI credentials provisioned as code.
 - [Webhooks & events](https://alchemy.run/github/events) — Provision GitHub repository webhooks as resources, or subscribe a Cloudflare Worker to repository events with typed payloads and verified deliveries.
 
+## Git
+
+A git server you build in one file, use like any remote, and reshape one block at a time: setup, a four-part tutorial (build it, repositories and tokens, your own rules, your app on the same domain), the REST and GitHub-compatible planes, the building blocks with their implementations, and recipes with the scaling model and measurements.
+
+- [Git](https://alchemy.run/git) — A pluggable, embeddable, self-hostable git server on Cloudflare Workers, Durable Objects, and R2. Smart HTTP for any client, a typed REST plane with pull requests, and a GitHub-compatible API.
+- [Getting Started](https://alchemy.run/git/getting-started) — A complete quickstart for a Git host protected by a shared credential. Deploy it to Cloudflare, push a repository, and clone it back.
+- [Part 1: Push your first repository](https://alchemy.run/git/tutorial/part-1) — Deploy a Git host, push a commit, and clone it back. Add storage and hashing one layer at a time.
+- [Part 2: Control access](https://alchemy.run/git/tutorial/part-2) — Protect the existing Git host with one shared credential, then verify both accepted and rejected requests.
+- [Part 3: Publish a repository](https://alchemy.run/git/tutorial/part-3) — Allow anonymous clones of public repositories while preserving authenticated writes.
+- [Part 4: Give users their own credentials](https://alchemy.run/git/tutorial/part-4) — Replace the shared credential with Better Auth accounts and individual Git API keys.
+- [Cloning & pushing](https://alchemy.run/git/clone-and-push) — Standard git clients over smart HTTP. What the wire supports, where credentials go, and what to do when something hangs.
+- [Repositories](https://alchemy.run/git/repositories) — Create, fork, import, and manage repositories over the typed REST plane.
+- [Pull requests](https://alchemy.run/git/pull-requests) — Server-side merge base, tree diffs, and fast-forward or three-way merges, computed inside the repository.
+- [GitHub API compatibility](https://alchemy.run/git/github-api) — Point the gh CLI and Octokit at your host with the /api/v3 facade.
+- [Overview](https://alchemy.run/git/blocks) — One layer graph, provided once, builds the Worker and every Durable Object behind it. Each line is a decision with implementations you choose or write.
+- [HTTP routes](https://alchemy.run/git/blocks/server) — Compose Git route layers beside your application's Effect HTTP API, with your middleware and server.
+- [Repository](https://alchemy.run/git/blocks/repositories) — One Durable Object per repository, behind the Git.RepoStore service. Provide it, call it from your own routes, compose operations through Git.Engine, or implement its shape over another store.
+- [Registry](https://alchemy.run/git/blocks/registry) — The registry resolves owner/name to a repository and serves listings. Keep it in a Durable Object or move it to a D1 database.
+- [Blob Store](https://alchemy.run/git/blocks/blob-store) — Bulk, immutable, content-addressed bytes. R2 by default, S3 when data has to live in AWS, or any store that can do ranged reads and multipart writes.
+- [Hasher](https://alchemy.run/git/blocks/hasher) — Every object a push sends is inflated and hashed before a ref moves. That is CPU, and where it runs is a Layer, in the Worker, in dynamically loaded Workers, or on Lambda.
+- [Authentication and authorization](https://alchemy.run/git/blocks/auth) — Use native Effect HTTP middleware and ordinary application effects to authorize Git operations.
+- [Overview](https://alchemy.run/git/recipes) — Requirements pick lines. One table from what you need to the line that changes, the stack shape for one cloud or two, and complete files to copy.
+- [Scaling](https://alchemy.run/git/recipes/scaling) — Reads scale like a CDN and writes scale like git. The shape, the per-repository limits, the measured numbers, and a worked example of pushing something large and swapping the hasher.
+- [All on Cloudflare](https://alchemy.run/git/recipes/cloudflare) — A git host on one Cloudflare account. One Worker, one bucket, two Durable Object namespaces, and dynamically loaded Workers hashing large pushes.
+- [Bytes in S3, hashing on Lambda](https://alchemy.run/git/recipes/cloudflare-aws) — Compute on Cloudflare, bytes in S3, and large pushes hashed one Lambda per chunk. One stack carries both provider sets, and Alchemy mints the cross-cloud identity.
+- [Bring your own store](https://alchemy.run/git/recipes/your-own-store) — Bytes have to live somewhere that is neither R2 nor S3. Implement the five operations of Git.BlobStore and provide it in place of the shipped Layers.
+
+## Stripe
+
+Products, prices, coupons, customers, payment links, and webhooks as Stack resources. HTTP bindings run inside a Worker or Lambda.
+
+- [Stripe](https://alchemy.run/stripe) — Sell subscriptions and onboard merchants from a Cloudflare Worker — catalog, Checkout, the Billing Portal, Connect, and webhooks declared next to the code that uses them.
+- [Setup](https://alchemy.run/stripe/setup) — Connect alchemy to Stripe — secret key, profiles, CI, and how Worker bindings get their credentials.
+- [Sell a subscription](https://alchemy.run/stripe/guides/subscriptions) — The full SaaS billing loop on one Cloudflare Worker — hosted Checkout, the Billing Portal, and webhooks that keep an entitlement record your app gates on.
+- [Onboard merchants with Connect](https://alchemy.run/stripe/guides/connect) — Build a Connect platform on a Cloudflare Worker — create Express accounts, send merchants through hosted onboarding, and learn from account.updated when they can take payments.
+- [React to Stripe events](https://alchemy.run/stripe/guides/webhooks) — consumeEvents provisions the webhook endpoint and runs one Effect per delivery. When to use it, which events to listen for, and how to manage the endpoint yourself.
+
 ## Docker
 
 Local and CI Docker as Stack resources — images, containers, networks, and volumes driven through the active Docker CLI context; cloud container runtimes (Cloudflare Containers, ECS) consume the pushed image refs from their own hubs.
@@ -353,18 +555,48 @@ Local and CI Docker as Stack resources — images, containers, networks, and vol
 - [Local services: Postgres with containers, networks, and volumes](https://alchemy.run/docker/local-services) — Run a local Postgres for development as alchemy resources — a pinned image, a named network and volume, a Redacted password, and a healthchecked container that converges on every deploy.
 - [Build & push images](https://alchemy.run/docker/build-and-push) — Build a container image from a Dockerfile, push it to a registry, and hand the resulting image reference to Cloudflare Containers or AWS ECS.
 
+## Kubernetes
+
+Cluster-agnostic Kubernetes workloads — Deployments, Jobs and CronJobs (as images or Effect programs), raw manifests, and Helm charts — on a local cluster or any cluster reachable through a kubeconfig, token, client certificate, or exec plugin.
+
+- [Kubernetes](https://alchemy.run/kubernetes) — Run containers and Effect programs on any Kubernetes cluster with Alchemy. Declare Deployments, Jobs, raw manifests, and Helm charts in the same typed program as the rest of your infrastructure. No YAML, no kubectl apply.
+- [Setup](https://alchemy.run/kubernetes/setup) — Install Alchemy and connect it to a Kubernetes cluster, whether a local cluster on your machine, any cluster in your kubeconfig, or an explicit connection for CI. Then add a registry for images built from your code.
+- [Part 1: Your First Deployment](https://alchemy.run/kubernetes/tutorial/part-1) — Create a Stack, start a Kubernetes cluster on your machine with Kubernetes.LocalCluster, deploy a replicated HTTP service with Kubernetes.Deployment, and reach it with kubectl.
+- [Part 2: Namespaces & Configuration](https://alchemy.run/kubernetes/tutorial/part-2) — Create a Namespace with Kubernetes.Manifest, move the Deployment into it, and configure the app with environment variables and resource limits.
+- [Part 3: Effect Jobs](https://alchemy.run/kubernetes/tutorial/part-3) — Write a smoke test as an Effect program, run it as a Kubernetes Job that Alchemy builds and pushes for you, watch it re-run when the program changes, and schedule it as a CronJob.
+- [Part 4: Install a Helm Chart](https://alchemy.run/kubernetes/tutorial/part-4) — Install metrics-server from its Helm chart with Kubernetes.HelmChart, pass chart values, and check pod metrics with kubectl top.
+- [Part 5: Deploy to Your Own Cluster](https://alchemy.run/kubernetes/tutorial/part-5) — Point the tutorial stack at a hosted Kubernetes cluster such as GKE, AKS, EKS, k3s, or anything in your kubeconfig. Keep the local cluster for development with stages, and clean up.
+- [Connecting to clusters](https://alchemy.run/kubernetes/clusters/connecting) — Point Kubernetes resources at any cluster with Kubernetes.KubeConfig, a raw Kubernetes.Connection (bearer token, client certificate, or exec plugin), or a cluster resource such as Kubernetes.LocalCluster.
+- [Container registries](https://alchemy.run/kubernetes/clusters/registries) — Give a Kubernetes connection a registry so Deployments and Jobs built from Effect programs or Dockerfiles are pushed where the cluster's nodes can pull them, such as GHCR, Docker Hub, Artifact Registry, ACR, or a registry of your own.
+- [Local clusters](https://alchemy.run/kubernetes/clusters/local) — Run a Kubernetes cluster on your machine with Kubernetes.LocalCluster. It is a kind cluster in Docker with an image registry wired into its nodes, so Effect programs and Dockerfiles deploy the same way they do on a hosted cluster.
+- [Amazon EKS](https://alchemy.run/kubernetes/clusters/eks) — Run Alchemy's Kubernetes resources on Amazon EKS. Find the guide for creating clusters, ECR images, Pod Identity, and load balancers.
+- [Cluster adapters](https://alchemy.run/kubernetes/clusters/cluster-adapters) — The extension point between Alchemy's cluster-agnostic Kubernetes resources and the platform a cluster runs on. Covers authentication, image registries, workload identity, load balancer defaults, and how to write your own.
+- [Deployments](https://alchemy.run/kubernetes/workloads/deployments) — Run a replicated server on any Kubernetes cluster with Kubernetes.Deployment. Covers names, namespaces, Service types and URLs, replicas, resources, labels, the pod template escape hatch, and Effect servers.
+- [Jobs & CronJobs](https://alchemy.run/kubernetes/workloads/jobs) — Run work to completion with Kubernetes.Job, as a container image or as an Effect program, and on a schedule as a CronJob. Covers how Job names, re-runs, retries, and cleanup work.
+- [Container images](https://alchemy.run/kubernetes/workloads/images) — Choose where a Deployment or Job's container image comes from and where built images are pushed. Sources are a registry reference, your own Dockerfile, or a bundled Effect program.
+- [Configuration & bindings](https://alchemy.run/kubernetes/workloads/bindings) — Pass configuration into Kubernetes workloads with env and Outputs, understand the variables Alchemy sets, keep secrets out of plain text, and use bindings.
+- [How objects are managed](https://alchemy.run/kubernetes/workloads/object-lifecycle) — How Alchemy applies, orders, prunes, and deletes Kubernetes objects, including server-side apply and field ownership, drift, replacement, unreachable clusters, and adoption.
+- [Manifests](https://alchemy.run/kubernetes/objects/manifests) — Apply any single Kubernetes object with Kubernetes.Manifest, including Namespaces, ConfigMaps, Secrets, StatefulSets, Ingresses, CRDs and custom resources, and order objects with Output references.
+- [Helm charts](https://alchemy.run/kubernetes/objects/helm-charts) — Install Helm charts with Kubernetes.HelmChart. Covers repository, OCI, and local charts, values, release names, namespaces, CRDs, hooks, and how Alchemy owns the rendered objects instead of a Helm release.
+
 ## SQL
 
-One home for SQL in alchemy — low-level effect-sql clients (alchemy/SQL), Drizzle ORM, the migrationsDir contract, and the per-execution connection lifecycle; Worker runtime wiring lives under Cloudflare → Data.
+Database comparison, Effect SQL, Drizzle, Prisma ORM v8 (Postgres-only), committed migrations, and connection lifecycle. Deployment walkthroughs live with their runtime providers.
 
-- [SQL](https://alchemy.run/sql) — One home for SQL in alchemy — low-level effect-sql clients, Drizzle ORM, schema migrations in the deploy graph, and the per-execution connection lifecycle.
+- [SQL](https://alchemy.run/sql) — Choose a database, connect with Effect SQL, Drizzle, or Prisma ORM, and deploy committed migrations.
+- [Databases](https://alchemy.run/sql/databases) — Compare database engines, connection paths, and deployment guides across Alchemy's SQL providers.
 - [Postgres](https://alchemy.run/sql/effect-sql/postgres) — SQL.Postgres turns a connection string into an @effect/sql-pg client — tagged-template queries with typed errors, one pool per execution.
+- [MySQL](https://alchemy.run/sql/effect-sql/mysql) — SQL.MySQL turns a connection string into an @effect/sql-mysql2 client — portable tagged-template queries with typed errors and one pool per execution.
 - [D1](https://alchemy.run/sql/effect-sql/d1) — SQL.D1 wraps a bound D1 database in an @effect/sql-d1 client — tagged-template queries with typed errors over the native binding.
-- [Migrations](https://alchemy.run/sql/effect-sql/migrations) — Commit a directory of ordered .sql files and point a database resource's migrations prop at it — pending files apply as part of every deploy, tracked in one Alchemy-owned table.
-- [Connection lifecycle](https://alchemy.run/sql/effect-sql/lifecycle) — SQL clients build lazily on first query, memoize per execution, and tear down when the event settles — why, and what that means on workerd and Lambda.
-- [Postgres](https://alchemy.run/sql/drizzle/postgres) — Drizzle on Postgres — declare the schema, generate and apply migrations on deploy, and query with Drizzle.Postgres.
-- [D1](https://alchemy.run/sql/drizzle/d1) — Drizzle on Cloudflare D1 — declare the schema, generate and apply migrations on deploy, and query from a Worker with Drizzle.D1.
-- [Migrations](https://alchemy.run/sql/drizzle/migrations) — Drizzle.Schema runs drizzle-kit generate as part of deploy — unambiguous schema changes regenerate automatically, ambiguous ones stop and ask you.
+- [Migrations](https://alchemy.run/sql/effect-sql/migrations) — Commit ordered SQL files and apply them on database deploy or Durable Object activation, tracked in one Alchemy-owned table.
+- [Connection lifecycle](https://alchemy.run/sql/effect-sql/lifecycle) — SQL and Drizzle clients build lazily, reuse a client within the current execution scope, and release resources when that scope closes.
+- [Postgres](https://alchemy.run/sql/drizzle/postgres) — Provider-neutral Postgres schemas, Effect-native Drizzle queries, and connections for Workers, Lambda, and servers.
+- [MySQL](https://alchemy.run/sql/drizzle/mysql) — Provider-neutral MySQL schemas, Effect-native Drizzle queries, and connection configuration.
+- [D1](https://alchemy.run/sql/drizzle/d1) — SQLite schemas and Effect-native Drizzle queries over a Cloudflare D1 binding.
+- [Migrations](https://alchemy.run/sql/drizzle/migrations) — Generate migrations when your schema changes, review and commit the SQL and snapshots, then deploy from Git.
+- [Postgres](https://alchemy.run/sql/prisma/postgres) — Connect Prisma ORM v8 to Postgres and run Effect-native queries, streams, prepared statements, and transactions independently of your cloud provider.
+- [Contracts](https://alchemy.run/sql/prisma/contracts) — Author Prisma ORM v8 contracts in Prisma Schema Language or TypeScript, generate optional Effect bindings and row schemas, and connect them to migrations.
+- [Migrations](https://alchemy.run/sql/prisma/migrations) — How Prisma.Contract and Prisma.Migrate run Prisma's contract emission, migration planning, and graph-ordered apply inside alchemy deploy.
 
 ## Command
 
@@ -376,6 +608,6 @@ Cloud-agnostic local process primitives — memoized builds, one-off commands, a
 
 ## API reference
 
-Per-resource API reference, generated from JSDoc on the source `.ts` files via `bun generate:api-reference`. Each page documents the resource's input properties (with types, defaults, and constraints), output attributes, and Quick Reference / Examples sections derived from `@section` / `@example` JSDoc tags.
+Service-level API reference, generated from JSDoc on the source `.ts` files via `bun scripts/generate-api-reference.ts`. Each page groups resources and capabilities by service, with a heading per resource and examples extracted from source JSDoc.
 
-The per-resource pages are indexed in [llms-full.txt](https://alchemy.run/llms-full.txt), which repeats this entire file plus one link per resource. Warning: it is large (~879 KB) — only fetch it when you need to locate a specific resource's reference page.
+The service-level pages are indexed in [llms-full.txt](https://alchemy.run/llms-full.txt), which repeats this entire file plus one link per service. Warning: it is large (~137 KB) — only fetch it when you need to locate a specific resource's reference page.

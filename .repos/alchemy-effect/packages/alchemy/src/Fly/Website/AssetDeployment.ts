@@ -8,8 +8,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import { createHash } from "node:crypto";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -281,14 +281,17 @@ export const AssetDeploymentProvider = () =>
         );
         return output;
       }),
-      delete: Effect.fn(function* ({ olds, output }) {
-        if (!(olds.purge ?? true)) return;
-        const scope = yield* scopeOf(olds.bucket);
-        const observed = yield* listObserved(scope, output.prefix);
-        yield* Effect.all(
-          [...observed.keys()].map((key) => deleteObject(scope, key)),
-          { concurrency: s3Concurrency },
-        );
-      }),
+      delete: Effect.fn(
+        function* ({ olds, output }) {
+          if (!(olds.purge ?? true)) return;
+          const scope = yield* scopeOf(olds.bucket);
+          const observed = yield* listObserved(scope, output.prefix);
+          yield* Effect.all(
+            [...observed.keys()].map((key) => deleteObject(scope, key)),
+            { concurrency: s3Concurrency },
+          );
+        },
+        Effect.catchTag("NoSuchBucket", () => Effect.void),
+      ),
     }),
   );

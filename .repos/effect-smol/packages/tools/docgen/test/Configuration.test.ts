@@ -3,6 +3,9 @@ import * as Configuration from "@effect/docgen/Configuration"
 import * as Domain from "@effect/docgen/Domain"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
+import * as ByteSize from "effect/ByteSize"
+import * as CliOutput from "effect/cli/CliOutput"
+import * as Command from "effect/cli/Command"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -12,8 +15,6 @@ import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as Result from "effect/Result"
 import * as Stdio from "effect/Stdio"
-import * as CliOutput from "effect/unstable/cli/CliOutput"
-import * as Command from "effect/unstable/cli/Command"
 
 type DocgenJson = typeof Configuration.ConfigurationSchema.Type
 
@@ -31,7 +32,7 @@ const fileInfo: FileSystem.File.Info = {
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.zero,
   blksize: Option.none(),
   blocks: Option.none()
 }

@@ -345,7 +345,7 @@ const getDefine = (
     "process.env.NODE_ENV": JSON.stringify(nodeEnv),
     "global.process.env.NODE_ENV": JSON.stringify(nodeEnv),
     "globalThis.process.env.NODE_ENV": JSON.stringify(nodeEnv),
-    ...(hasNodejsCompat(options.compatibilityFlags)
+    ...(hasNodejsCompat(options.compatibilityFlags, options.compatibilityDate)
       ? {}
       : {
           "process.env": "{}",

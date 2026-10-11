@@ -1,8 +1,8 @@
 ---
 title: Effect Service Conventions
-model: gpt-5-6-sol
-effort: medium
-input: full_diff
+model: gpt-6-sol
+effort: max
+input: incremental
 tools:
   - browse_code
   - modify_pr
@@ -12,20 +12,17 @@ include:
   - "infra/**/*.ts"
 exclude:
   - "**/*.test.ts"
-labels:
-  - vouch:trusted
-  - macroscope-review
 requires:
   - Check
 maxBudgetPerRun: 5
 maxBudgetPerPR: 25
-conclusion: failure
+conclusion: neutral
 showToolCalls: true
 ---
 
 # Effect service review
 
-Review changed TypeScript for the conventions below. They apply when a pull request creates, moves, refactors, or consumes an Effect service. Review only the lines the PR changed; older code in the same file that predates these conventions is not a finding. Do not demand repository-wide cleanup.
+Review changed TypeScript for the conventions below. They apply when a pull request creates, moves, refactors, or consumes an Effect service, or adds server behavior. Authors read the same rules in `docs/internals/effect-services.md`; keep the two in step. Review only the lines the PR changed; older code in the same file that predates these conventions is not a finding. Do not demand repository-wide cleanup.
 
 ## Imports and module namespaces
 
@@ -34,11 +31,16 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Named imports stay correct for whole packages such as `@t3tools/contracts` and for modules used only for a pure helper, error, schema, config value, or type. Do not request `import type * as Contracts`.
 - When a barrel exposes a whole service module, prefer `export * as TokenStore from "./tokenStore.ts"` over individually renamed `make` and `layer` exports.
 
+## Placement
+
+- Flag new or broadened feature logic in a transport handler: a WebSocket RPC handler in `apps/server/src/ws.ts`, an HTTP route handler, or an MCP tool handler. A handler decodes input, calls one service method, and maps the service's errors to the transport's error. Filesystem, Git, process, or persistence work, folder naming, multi-step command dispatch, retries, or rollback inside a handler belongs in a service method; ask for it to move to the domain's existing service, or a new one when none owns the domain. Existing inline handlers are legacy; flag only changed lines.
+- Flag a new exported free function that does a server capability's effectful work (filesystem, Git, processes, persisted state) and is called from a handler, when it should be a service method. Plain functions for pure work (formatting, naming, parsing) are fine.
+
 ## Service definition
 
 - One canonical module per service in this order: imports, error and schema declarations, the `Context.Service` tag with its interface inline, `make`, then `layer`.
 - Define the interface inline in `Context.Service`. Do not add a standalone `FooShape` interface; refer to the inferred type as `Foo["Service"]`.
-- Export a real `make` when the module owns construction. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
+- Define a real `make` when the module owns construction, and export it only when another module imports it; knip fails CI on an unused export, so do not ask for an export nothing uses. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
 - Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
 - When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
 

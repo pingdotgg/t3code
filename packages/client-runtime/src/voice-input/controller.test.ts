@@ -298,11 +298,21 @@ describe("VoiceInputController", () => {
   });
 
   it.each(["cancel", "dispose", "ownerChanged"] as const)(
-    "holds the session after %s until non-abortable transcription settles",
+    "queues the next recording after %s until transcription and audio cleanup settle",
     async (action) => {
       const transcription = deferred<string>();
       const transcriptionEntered = deferred<AbortSignal>();
+      const audioRelease = deferred<void>();
+      const audioReleaseEntered = deferred<void>();
+      const releaseRecording = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error("busy"))
+        .mockImplementationOnce(() => {
+          audioReleaseEntered.resolve(undefined);
+          return audioRelease.promise;
+        });
       const harness = createHarness({
+        releaseRecording,
         getTranscriber: () => ({
           prepare: async () =>
             preparedTranscription((_uri, { signal }) => {
@@ -321,20 +331,31 @@ describe("VoiceInputController", () => {
       harness.controller[action]();
       expect(signal.aborted).toBe(true);
 
-      const next = createHarness();
-      await next.controller.start();
-      expect(next.controller.currentState.error).toContain("already active");
+      const prepare = vi.fn(async () => preparedTranscription());
+      const next = createHarness({ getTranscriber: () => ({ prepare }) });
+      const nextStart = next.controller.start();
+      expect(next.controller.currentState).toEqual({
+        phase: "preparing",
+        error: null,
+        errorAction: null,
+      });
+      expect(prepare).not.toHaveBeenCalled();
       expect(next.recorder.record).not.toHaveBeenCalled();
 
       transcription.resolve("late text");
+      await audioReleaseEntered.promise;
+      expect(prepare).not.toHaveBeenCalled();
+      expect(next.recorder.prepareToRecordAsync).not.toHaveBeenCalled();
+      audioRelease.resolve(undefined);
       await stopping;
+      await nextStart;
 
       expect(harness.commits).toEqual([]);
       expect(harness.deleted).toEqual(["file:///voice.m4a"]);
       expect(harness.controller.currentState.phase).toBe("idle");
 
-      await next.controller.start();
       expect(next.controller.currentState.phase).toBe("recording");
+      expect(prepare).toHaveBeenCalledTimes(1);
       await next.controller.interruptRecording();
     },
   );
@@ -431,7 +452,7 @@ describe("VoiceInputController", () => {
     expect(harness.controller.currentState.error).toContain("draft changed");
   });
 
-  it("keeps the app-wide session locked until canceled preparation settles", async () => {
+  it("queues the next recording until canceled preparation settles", async () => {
     const preparation = deferred<PreparedVoiceTranscription>();
     const preparationEntered = deferred<AbortSignal>();
     const first = createHarness({
@@ -447,19 +468,103 @@ describe("VoiceInputController", () => {
     first.controller.cancel();
     expect(signal.aborted).toBe(true);
 
-    const blocked = createHarness();
-    await blocked.controller.start();
-    expect(blocked.controller.currentState.error).toContain("already active");
+    const next = createHarness();
+    const nextStart = next.controller.start();
+    expect(next.controller.currentState.phase).toBe("preparing");
+    expect(next.recorder.prepareToRecordAsync).not.toHaveBeenCalled();
 
     preparation.resolve(preparedTranscription());
     await firstStart;
     expect(first.recorder.record).not.toHaveBeenCalled();
-    blocked.controller.cancel();
+    await nextStart;
+    expect(next.controller.currentState.phase).toBe("recording");
+    await next.controller.interruptRecording();
+  });
 
+  it("still rejects a second start while the first recording is active", async () => {
+    const first = createHarness();
+    await first.controller.start();
+    const next = createHarness();
+    await next.controller.start();
+    expect(next.controller.currentState.error).toContain("already active");
+    expect(next.recorder.record).not.toHaveBeenCalled();
+    await first.controller.interruptRecording();
+  });
+
+  it("does not start a canceled waiter or let it release another recording", async () => {
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const preparationEntered = deferred<void>();
+    const first = createHarness({
+      getTranscriber: () => ({
+        prepare: () => {
+          preparationEntered.resolve(undefined);
+          return preparation.promise;
+        },
+      }),
+    });
+    const firstStart = first.controller.start();
+    await preparationEntered.promise;
+    first.controller.dispose();
+
+    const next = createHarness();
+    const canceledStart = next.controller.start();
+    next.controller.cancel();
+    const nextStart = next.controller.start();
+    preparation.resolve(preparedTranscription());
+    await Promise.all([firstStart, canceledStart, nextStart]);
+
+    expect(next.recorder.record).toHaveBeenCalledTimes(1);
+    expect(next.deleted).toEqual([]);
+    const blocked = createHarness();
+    await blocked.controller.start();
+    expect(blocked.controller.currentState.error).toContain("already active");
+    await next.controller.interruptRecording();
+  });
+
+  it("releases an abandoned recording even if its native recorder was already disposed", async () => {
+    const harness = createHarness();
+    await harness.controller.start();
+    harness.recorder.stop.mockRejectedValueOnce(new Error("recorder released"));
+    Object.defineProperty(harness.recorder, "uri", {
+      get() {
+        throw new Error("recorder released");
+      },
+    });
+
+    await expect(harness.controller.interruptRecording()).resolves.toBeUndefined();
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
     const next = createHarness();
     await next.controller.start();
     expect(next.controller.currentState.phase).toBe("recording");
     await next.controller.interruptRecording();
+  });
+
+  it("keeps the new abort controller when restarting the same composer after cancellation", async () => {
+    const transcription = deferred<string>();
+    const transcriptionEntered = deferred<void>();
+    const prepare = vi
+      .fn<VoiceTranscriber["prepare"]>()
+      .mockResolvedValueOnce(
+        preparedTranscription(() => {
+          transcriptionEntered.resolve(undefined);
+          return transcription.promise;
+        }),
+      )
+      .mockResolvedValue(preparedTranscription());
+    const harness = createHarness({ getTranscriber: () => ({ prepare }) });
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    await transcriptionEntered.promise;
+    harness.controller.cancel();
+    const restarting = harness.controller.start();
+    transcription.resolve("late text");
+    await Promise.all([stopping, restarting]);
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    expect(harness.controller.currentState.phase).toBe("idle");
   });
 
   it("does not start the microphone for an owner that changed during preparation", async () => {

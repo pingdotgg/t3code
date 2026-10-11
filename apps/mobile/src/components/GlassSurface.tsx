@@ -1,20 +1,18 @@
-import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import { useContext, type ReactNode, type Ref, type RefObject } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   Platform,
-  StyleSheet,
-  useColorScheme,
   View,
   type ColorValue,
+  type ViewInstance,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
-import { GlassBlurTargetContext } from "../lib/glassBlurTarget";
-import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { GlassBackdrop } from "./GlassBackdrop";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
 const ThemedGlassView = withUniwind(GlassView, {
@@ -23,7 +21,7 @@ const ThemedGlassView = withUniwind(GlassView, {
 });
 
 interface GlassSurfaceProps extends ViewProps {
-  readonly ref?: Ref<View>;
+  readonly ref?: Ref<ViewInstance>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
@@ -31,7 +29,6 @@ interface GlassSurfaceProps extends ViewProps {
   readonly chrome?: "default" | "none";
   /** Base color for the frosted tint, or solid fill when blur is unavailable. */
   readonly fallbackColor?: ColorValue;
-  readonly blurTarget?: RefObject<View | null>;
   /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }
@@ -44,38 +41,23 @@ export function GlassSurface({
   tintColor,
   tintColorClassName,
   fallbackColor,
-  blurTarget,
   fallbackClassName,
   className,
   style,
   ...props
 }: GlassSurfaceProps) {
-  const isDarkMode = useColorScheme() === "dark";
-  const inheritedBlurTarget = useContext(GlassBlurTargetContext);
-  const target = blurTarget ?? inheritedBlurTarget;
-  const supportsBlur =
-    Platform.OS === "ios" ||
-    (Platform.OS === "android" && Platform.Version >= 31 && target !== undefined);
-  const backgroundColor =
-    fallbackColor === undefined ? undefined : themeColorWithAlpha(String(fallbackColor), 1);
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
+  const hasShadow = chrome !== "none" && Platform.OS !== "android";
   const surfaceStyle: ViewStyle = {
     borderRadius: 32,
     overflow: "hidden",
-    shadowColor: chrome === "none" ? "transparent" : "#000000",
-    shadowOpacity: chrome === "none" ? 0 : isDarkMode ? 0.22 : 0.08,
-    shadowRadius: chrome === "none" ? 0 : 28,
-    shadowOffset:
-      chrome === "none"
-        ? {
-            width: 0,
-            height: 0,
-          }
-        : {
-            width: 0,
-            height: 14,
-          },
-    elevation: chrome === "none" ? 0 : 12,
+    shadowColor: hasShadow ? "#000000" : "transparent",
+    shadowOpacity: hasShadow ? (isDarkMode ? 0.22 : 0.08) : 0,
+    shadowRadius: hasShadow ? 28 : 0,
+    shadowOffset: { width: 0, height: hasShadow ? 14 : 0 },
+    elevation: hasShadow ? 12 : 0,
   };
 
   if (supportsGlass) {
@@ -113,21 +95,7 @@ export function GlassSurface({
       )}
       style={[surfaceStyle, style]}
     >
-      {supportsBlur ? (
-        <BlurView
-          pointerEvents="none"
-          blurTarget={target}
-          blurMethod="dimezisBlurViewSdk31Plus"
-          intensity={80}
-          tint={isDarkMode ? "dark" : "default"}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : null}
-      <View
-        pointerEvents="none"
-        className="absolute inset-0 bg-card"
-        style={{ backgroundColor, opacity: supportsBlur ? (isDarkMode ? 0.25 : 0.55) : 1 }}
-      />
+      <GlassBackdrop fallbackColor={fallbackColor} />
       {children}
     </View>
   );

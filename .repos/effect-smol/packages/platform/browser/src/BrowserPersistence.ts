@@ -14,7 +14,7 @@ import * as Clock from "effect/Clock"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Persistence from "effect/unstable/persistence/Persistence"
+import * as Persistence from "effect/persistence/Persistence"
 
 /**
  * Creates a `BackingPersistence` layer backed by IndexedDB, optionally using the provided database name.
