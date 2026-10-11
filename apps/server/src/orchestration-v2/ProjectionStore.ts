@@ -148,6 +148,9 @@ export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
+  // Work a restart or CLI replacement would cut off. Idle provider sessions
+  // do not count: they resume on the next turn.
+  | "active-work"
   | "subagent-results"
   | "delegated-completions";
 
@@ -587,6 +590,27 @@ function needsRecovery(
             )))
       );
     }
+    case "active-work":
+      // Queued runs don't count: one behind a live run is covered by that run,
+      // one about to start waits for the update admission permit, and one held
+      // by a usage limit would otherwise block updates until the limit resets.
+      return (
+        projection.runs.some((run) =>
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
+        ) ||
+        // A roster counts only while the session that owns it is live; one left
+        // by a crashed provider or archived thread would block updates forever.
+        projection.providerThreads.some(
+          (thread) =>
+            (thread.pendingBackgroundTasks?.length ?? 0) > 0 &&
+            projection.providerSessions.some(
+              (session) =>
+                session.id === thread.providerSessionId &&
+                session.status !== "stopped" &&
+                session.status !== "error",
+            ),
+        )
+      );
     case "runtime":
       return (
         projection.runs.some(
@@ -3625,6 +3649,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND type = 'subagent_result'
                   )))
                   ELSE 0 END
+              `;
+            case "active-work":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+                UNION
+                SELECT threads.thread_id FROM orchestration_v2_projection_provider_threads AS threads
+                WHERE CASE WHEN json_valid(threads.payload_json)
+                    THEN json_array_length(threads.payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_provider_sessions AS sessions
+                    WHERE sessions.provider_session_id = threads.provider_session_id
+                      AND sessions.status NOT IN ('stopped', 'error')
+                  )
               `;
             case "runtime":
               return sql`

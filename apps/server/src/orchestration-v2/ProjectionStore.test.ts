@@ -346,6 +346,8 @@ it.effect("memory recovery selection includes unfinished items from missing runs
     const threadId = yield* addOrphanedRecoveryCandidate("memory-recovery-candidates");
 
     assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+    // An orphaned item must not hold background updates back forever.
+    assert.notInclude(yield* projectionStore.getRecoveryThreadIds("active-work"), threadId);
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
@@ -2596,6 +2598,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.include(recoveryThreadIds, orphanedThreadId);
       assert.notInclude(recoveryThreadIds, settledThreadId);
       assert.notInclude(recoveryThreadIds, rolledBackThreadId);
+      const activeThreadIds = yield* projectionStore.getRecoveryThreadIds("active-work");
+      assert.include(activeThreadIds, runningThreadId);
+      assert.notInclude(activeThreadIds, orphanedThreadId);
+      assert.notInclude(activeThreadIds, settledThreadId);
     }),
   );
 

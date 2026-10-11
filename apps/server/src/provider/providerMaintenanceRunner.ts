@@ -40,6 +40,7 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
+const UPDATE_FORCE_KILL_AFTER = Duration.seconds(5);
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // Every progress publish resends the provider list to each client, so the
 // installer's output is sampled rather than forwarded line by line.
@@ -65,6 +66,8 @@ export interface ProviderMaintenanceRunnerShape {
           readonly provider: ProviderDriverKind;
           readonly instanceId?: ProviderInstanceId | undefined;
           readonly targetVersion?: string | undefined;
+          /** Skips installer output progress, for background installs nobody watches. */
+          readonly quiet?: boolean | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
 }
@@ -106,6 +109,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
               shell: resolved.shell,
+              // An installer that ignores SIGTERM must not hold up the update forever.
+              forceKillAfter: UPDATE_FORCE_KILL_AFTER,
               ...(input.env ? { env: input.env, extendEnv: true } : {}),
             }),
           )
@@ -118,7 +123,9 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                 }),
             ),
           );
-        yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        yield* Effect.addFinalizer(() =>
+          child.kill({ forceKillAfter: UPDATE_FORCE_KILL_AFTER }).pipe(Effect.ignore),
+        );
 
         // Holds the newest output line not yet reported; the sampler takes it.
         const pendingProgress = yield* Ref.make<string | null>(null);
@@ -390,6 +397,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
+    const quiet = typeof target !== "string" && target.quiet === true;
     const targetKey = `instance:${instanceId}`;
     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
       instanceId,
@@ -499,7 +507,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
-            const result = yield* runMaintenanceCommand(command, setRunningMessage);
+            const result = yield* runMaintenanceCommand(
+              command,
+              quiet ? () => Effect.void : setRunningMessage,
+            );
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -581,6 +592,25 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         targetKey,
         lockKey: update.lockKey,
         onQueued: setQueuedState,
+        onInterrupted: Effect.gen(function* () {
+          const current = (yield* providerRegistry.getProviders).find(
+            (candidate) => candidate.instanceId === instanceId,
+          );
+          // A state left queued or running would block background updates until restart.
+          const status = current?.updateState?.status;
+          if (status !== "queued" && status !== "running") return;
+          yield* setUpdateState(
+            makeUpdateState({
+              status: "failed",
+              startedAt: current?.updateState?.startedAt ?? null,
+              finishedAt: yield* nowIso,
+              message:
+                status === "queued"
+                  ? "Update canceled before installation started."
+                  : "Update canceled.",
+            }),
+          );
+        }),
         run: runProviderUpdate(),
       })
       .pipe(

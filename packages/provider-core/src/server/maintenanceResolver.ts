@@ -745,22 +745,17 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   const request = HttpClientRequest.get(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
-  const response = yield* client.execute(request).pipe(
+  // The timeout covers the body too: a stalled response must not hold up an update.
+  const payload = yield* client.execute(request).pipe(
+    Effect.flatMap((response) =>
+      response.status < 200 || response.status >= 300
+        ? Effect.succeed(null)
+        : response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse))),
+    ),
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
     Effect.orElseSucceed(() => Option.none()),
   );
-  if (Option.isNone(response)) {
-    return null;
-  }
-  const httpResponse = response.value;
-  if (httpResponse.status < 200 || httpResponse.status >= 300) {
-    return null;
-  }
-  const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
-    Effect.orElseSucceed(() => null),
-  );
-  return payload ? nonEmptyString(payload.version) : null;
+  return Option.isSome(payload) && payload.value ? nonEmptyString(payload.value.version) : null;
 });
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (

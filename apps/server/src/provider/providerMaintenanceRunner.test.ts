@@ -913,6 +913,9 @@ describe("providerMaintenanceRunner", () => {
 
         yield* Fiber.interrupt(first);
         releaseQueuedStateLatch.resolve();
+        const canceled = (yield* registry.getProviders)[0]?.updateState;
+        assert.strictEqual(canceled?.status, "failed");
+        assert.strictEqual(canceled?.message, "Update canceled before installation started.");
 
         const second = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.exit);
         assert.strictEqual(Exit.isSuccess(second), true);

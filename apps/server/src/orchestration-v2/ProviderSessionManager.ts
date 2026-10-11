@@ -192,6 +192,11 @@ export interface ProviderSessionManagerV2Shape {
      */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * True while any live session still runs provider work outside a turn, such
+   * as background commands or subagents, so updates can wait for it.
+   */
+  readonly hasPendingBackgroundWork: Effect.Effect<boolean>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -2027,8 +2032,21 @@ export const layerWithOptions = (
         ),
       );
 
+      const hasPendingBackgroundWork = Effect.gen(function* () {
+        for (const entry of (yield* Ref.get(sessions)).values()) {
+          if (entry.runtime.hasPendingBackgroundWork === undefined) continue;
+          // An unreadable session counts as busy: guessing idle could cut off its work.
+          const pending = yield* entry.runtime.hasPendingBackgroundWork.pipe(
+            Effect.catchCause(() => Effect.succeed(true)),
+          );
+          if (pending) return true;
+        }
+        return false;
+      });
+
       return ProviderSessionManagerV2.of({
         shutdown,
+        hasPendingBackgroundWork,
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,

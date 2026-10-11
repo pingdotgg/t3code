@@ -230,6 +230,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const supportsAutomaticUpdates = targets.every(
+    (target) => target.environment.serverConfig.environment.capabilities.automaticUpdates === true,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -462,6 +465,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       disabled={disabledFor("enableProviderUpdateChecks")}
                       onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
                     />
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
+                        icon="arrow.down.circle"
+                        label="Update automatically"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : supportsAutomaticUpdates
+                              ? "Install provider CLI updates while nothing is running."
+                              : "Update older servers to control automatic updates."
+                        }
+                        value={uniform("automaticUpdates")}
+                        disabled={disabledFor("automaticUpdates") || !supportsAutomaticUpdates}
+                        onValueChange={(value) => write({ automaticUpdates: value })}
+                      />
+                    </View>
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"
