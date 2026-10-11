@@ -25,6 +25,7 @@ import { restartContinuationRun } from "./RestartContinuation.ts";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  isWorktreeContinuationRun,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
@@ -286,8 +287,20 @@ export const make = Effect.gen(function* () {
       };
       // Queued runs have not started provider work. Preserve their execution
       // identities and order, but require explicit consent before draining them.
+      // A handoff's sole continuation already has that consent, and the old
+      // session was detached to run it in the newly bound worktree.
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const handoffContinuation =
+        continueAfterRestart &&
+        projection.thread.worktreePath != null &&
+        queuedRuns.length === 1 &&
+        queuedRuns[0]!.queueHeld !== true &&
+        isWorktreeContinuationRun(queuedRuns[0]!)
+          ? queuedRuns[0]
+          : undefined;
       for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued" || run.queueHeld === true || run === handoffContinuation)
+          continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -650,7 +663,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? (handoffContinuation ?? restartContinuationRun(projection))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -667,6 +680,18 @@ export const make = Effect.gen(function* () {
       ).length;
       let retiredEffects: number;
       if (events.length === 0) {
+        if (effects.length > 0) {
+          yield* eventSink.writeWithEffects({ commandId, events: [], effects }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "reconcile",
+                  threadId: projection.thread.id,
+                  cause,
+                }),
+            ),
+          );
+        }
         const retiredEffectIds = yield* outbox
           .cancelUnsettled({
             threadId: projection.thread.id,

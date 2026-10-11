@@ -1,4 +1,5 @@
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -3230,6 +3231,110 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const raced = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(raced.runs, 2);
         assert.isFalse(raced.messages.some((message) => message.id === "restart-stale-race"));
+      }),
+  );
+
+  it.effect.each(["continue", "cancel", "stop"] as const)(
+    "recovers a queued worktree handoff after restart with %s before delivery",
+    (action) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-restart-handoff-${action}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`handoff-create-${action}`),
+          threadId,
+          projectId: ProjectId.make("restart-project"),
+          title: "Handoff",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-restart-handoff",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`handoff-original-${action}`),
+          threadId,
+          messageId: MessageId.make(`handoff-original-${action}`),
+          text: "Original work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make(`handoff-queue-${action}`),
+          threadId,
+          messageId: MessageId.make(`message:mcp:session:worktree-continuation:${action}`),
+          text: "Keep fixing the login bug in the worktree.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const original = before.runs[0]!;
+        const queued = before.runs[1]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`command:runtime-reconcile:handoff-${action}`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`handoff-reconcile-${action}`),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: { ...original, status: "cancelled", completedAt: now },
+            },
+          ],
+          effects: [],
+        });
+        if (action === "cancel") {
+          yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`handoff-cancel-${action}`),
+            threadId,
+            runId: queued.id,
+          });
+        } else if (action === "stop") {
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`handoff-stop-${action}`),
+            threadId,
+          });
+        }
+        const continuation = continueRestartedRun({ threadId, sourceRunId: queued.id }).pipe(
+          Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+        );
+        yield* continuation;
+        yield* continuation;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(after.runs, action === "continue" ? 3 : 2);
+        if (action === "continue") {
+          assert.equal(after.runs[1]!.status, "cancelled");
+          assert.equal(after.runs[2]!.status, "starting");
+          assert.equal(after.runs[2]!.restartContinuationOfRunId, queued.id);
+          assert.equal(
+            after.messages.find((message) => message.id === after.runs[2]!.userMessageId)?.text,
+            "Keep fixing the login bug in the worktree.",
+          );
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`handoff-archive-${action}`),
+          threadId,
+        });
       }),
   );
 

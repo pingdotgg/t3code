@@ -86,7 +86,8 @@ import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.t
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
-import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
+import { isRestartNoteSource, isWorktreeContinuationRun } from "./RestartBackgroundNote.ts";
+import { restartContinuationBlocked } from "./RestartContinuation.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -4533,16 +4534,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       if (command.restartContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+        const secretRequests = yield* projectionStore
+          .getThreadRecords(command.threadId, ["turnItems"], {
+            turnItemTypes: ["secret_request"],
+          })
+          .pipe(mapDispatchError(command));
+        const worktreeContinuation =
+          source !== undefined &&
+          source.status === "queued" &&
+          source.queueHeld !== true &&
+          isWorktreeContinuationRun(source) &&
+          projection.thread.worktreePath != null &&
+          projection.runs.filter((run) => run.status === "queued").length === 1 &&
+          !projection.runs.some(isBlockingRun);
         if (
           !source ||
-          source.status !== "cancelled" ||
+          (source.status !== "cancelled" && !worktreeContinuation) ||
+          (isWorktreeContinuationRun(source) &&
+            source.status === "cancelled" &&
+            !projection.providerTurns.some(
+              (turn) => turn.runAttemptId === source.activeAttemptId,
+            )) ||
           isRestartNoteSource(source, projection.providerTurns) ||
-          projection.thread.archivedAt !== null ||
-          projection.thread.deletedAt !== null ||
+          restartContinuationBlocked(
+            { ...projection, turnItems: secretRequests.turnItems },
+            source,
+          ) ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
           projection.runs.some(
-            (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
+            (run) =>
+              run.id !== source.id &&
+              run.status !== "queued" &&
+              (worktreeContinuation ? run.ordinal > source.ordinal : runRanAfter(run, source)),
           ) ||
           (yield* stopReachedRun(command, command.threadId, source.id))
         ) {
@@ -4558,6 +4582,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: projection.thread,
           });
           return;
+        }
+        if (worktreeContinuation) {
+          yield* dispatchQueuedRunCancel(
+            {
+              type: "queued-run.cancel",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              runId: source.id,
+            },
+            events,
+          );
+          projection = yield* getProjectionWithPendingEvents(command.threadId, events);
         }
       }
 

@@ -10,6 +10,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
+type PromptAttempt = Attempt & Partial<Pick<OrchestrationV2RunAttempt, "reason">>;
 
 const MAX_LABEL_LENGTH = 160;
 
@@ -159,16 +160,43 @@ export function restartContinuationNote(
   return { work, settled: isRestartNoteSource(current, providerTurns) };
 }
 
+export const isWorktreeContinuationRun = (run: Pick<OrchestrationV2Run, "userMessageId">) =>
+  /^message:mcp:[^:]+:worktree-continuation:/.test(run.userMessageId);
+
+/** A handoff or replacement prompt that never reached the provider. */
+export function restartPromptSource(
+  source: OrchestrationV2Run,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+  attempts: ReadonlyArray<PromptAttempt>,
+): OrchestrationV2Run | undefined {
+  const visited = new Set<string>();
+  let current: OrchestrationV2Run | undefined = source;
+  while (current !== undefined && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (providerTurns.some((turn) => turn.runAttemptId === current?.activeAttemptId)) return;
+    if (
+      isWorktreeContinuationRun(current) ||
+      attempts.some(
+        (attempt) =>
+          attempt.id === current?.activeAttemptId && attempt.reason === "steering_restart",
+      )
+    )
+      return current;
+    current = runs.find((run) => run.id === current?.restartContinuationOfRunId);
+  }
+}
+
 /**
- * A restart continuation prompted with the note rather than a native resume.
+ * A restart continuation prompted with the note or an undelivered steering restart.
  * A turn cut mid-way that lost background work is prompted too, so the note
- * is delivered with it; only a continuation without a note resumes natively.
+ * is delivered with it; continuations with no new input resume natively.
  */
 export function isRestartNoteContinuation(
   run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
   runs: ReadonlyArray<OrchestrationV2Run>,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
-  attempts: ReadonlyArray<Attempt>,
+  attempts: ReadonlyArray<PromptAttempt>,
 ): boolean {
   const source =
     run.restartContinuationOfRunId === undefined
@@ -176,7 +204,8 @@ export function isRestartNoteContinuation(
       : runs.find((candidate) => candidate.id === run.restartContinuationOfRunId);
   return (
     source !== undefined &&
-    restartContinuationNote(source, runs, providerTurns, attempts).work.length > 0
+    (restartContinuationNote(source, runs, providerTurns, attempts).work.length > 0 ||
+      restartPromptSource(source, runs, providerTurns, attempts) !== undefined)
   );
 }
 
