@@ -80,15 +80,15 @@ function isProviderEnabledForProject(
  */
 function isProjectDisabledOverride(
   config: T3ServerConfig | null | undefined,
-  provider: { readonly instanceId: ModelSelection["instanceId"] } | undefined,
+  instanceId: ModelSelection["instanceId"],
   projectId: ProjectId | null,
 ): boolean {
-  if (!provider || !projectId || !config?.settings) {
+  if (!projectId || !config?.settings) {
     return false;
   }
   return (
     config.settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[
-      provider.instanceId
+      instanceId
     ] === false
   );
 }
@@ -162,7 +162,7 @@ export function resolveSelectableModelSelection(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   if (driver === "antigravity") {
-    return isProjectDisabledOverride(config, provider, projectId) ? null : selection;
+    return isProjectDisabledOverride(config, selection.instanceId, projectId) ? null : selection;
   }
   return provider &&
     isProviderEnabledForProject(config, provider, projectId) &&

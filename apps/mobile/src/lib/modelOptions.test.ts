@@ -645,6 +645,9 @@ describe("mobile model options", () => {
 
       expect(resolveSelectableModelSelection(config, selection, projectId)).toBeNull();
       expect(resolveSelectableModelSelection(config, selection, null)).toBe(selection);
+      expect(
+        resolveSelectableModelSelection({ ...config, providers: [] }, selection, projectId),
+      ).toBeNull();
     });
   });
 });
