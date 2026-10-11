@@ -264,33 +264,16 @@ interface ThreadSwipeableProps {
    * open/mid-drag state can't leak onto another row.
    */
   readonly resetKey?: string;
-  /** Paints the row without swipe machinery; see swipe-row-activation. */
+  /** Leaves out the swipe actions and gesture; see swipe-row-activation. */
   readonly dormant?: boolean;
   readonly simultaneousWith?: ComponentProps<typeof ReanimatedSwipeable>["simultaneousWith"];
   readonly threadTitle: string;
 }
 
-const closeDormant = () => {};
-
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
-  if (props.dormant) {
-    // Mirrors ReanimatedSwipeable's container and children views.
-    return (
-      <View
-        style={[
-          { overflow: "hidden", backgroundColor: props.backgroundColor },
-          props.containerStyle,
-        ]}
-      >
-        <View style={{ backgroundColor: props.backgroundColor }}>
-          {props.children(closeDormant)}
-        </View>
-      </View>
-    );
-  }
-  // Recycled content gets fresh native and animation state. Late callbacks
-  // from the previous row retain its action, never the replacement's action.
-  return <ThreadSwipeableRow key={props.resetKey} {...props} />;
+  // Not keyed by resetKey: remounting a recycled row rebuilt its whole tree
+  // while the list scrolled. ThreadSwipeableRow resets itself in place.
+  return <ThreadSwipeableRow {...props} />;
 }
 
 function ThreadSwipeableRow(props: ThreadSwipeableProps) {
@@ -305,7 +288,8 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
   const gateEnabled = use(SwipeableScrollGateContext);
   const mountedRef = useRef(true);
   const dismissalRef = useRef<{ finished: Promise<void>; restore: () => void } | null>(null);
-  const pendingDismissRef = useRef<(() => void) | null>(null);
+  const pendingDismissRef = useRef<{ id: number; resolve: () => void } | null>(null);
+  const dismissalIdRef = useRef(0);
   const activeTranslationRef = useRef<SharedValue<number> | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const dismissing = useSharedValue(false);
@@ -317,10 +301,20 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
   const primaryAction = props.primaryAction;
   const onSwipeableClose = props.onSwipeableClose;
 
+  // Tracks the swipeable's open state, which it does not expose.
+  const openRef = useRef(false);
+  // Bumped when the row is reused for other content, so a late restore from
+  // the previous content's dismissal cannot reset the new content.
+  const contentGenerationRef = useRef(0);
+
   const restoreRow = useCallback(() => {
     if (!mountedRef.current) return;
     dismissalRef.current = null;
     swipeableRef.current?.reset();
+    // reset() leaves an open row's tap-to-close gesture on, and that gesture
+    // cancels the next press on the row. Closing the now-closed row turns it
+    // off without moving anything.
+    if (openRef.current) swipeableRef.current?.close();
     fallbackTranslation.set(0);
     collapse.set(0);
     actionOpacity.set(1);
@@ -328,10 +322,13 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
     setIsDismissing(false);
   }, [actionOpacity, collapse, dismissing, fallbackTranslation]);
 
-  const finishDismiss = useCallback(() => {
-    const finish = pendingDismissRef.current;
+  // The collapse passes its dismissal id: a completion queued before the row was
+  // reused must not finish a newer dismissal.
+  const finishDismiss = useCallback((id?: number) => {
+    const pending = pendingDismissRef.current;
+    if (!pending || (id !== undefined && pending.id !== id)) return;
     pendingDismissRef.current = null;
-    finish?.();
+    pending.resolve();
   }, []);
 
   useLayoutEffect(() => {
@@ -347,8 +344,31 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
     };
   }, [actionOpacity, collapse, fallbackTranslation, finishDismiss]);
 
+  // Recycled content gets fresh swipe and animation state. Late callbacks
+  // from the previous content keep that render's action, never the new one's.
+  const resetKeyRef = useRef(props.resetKey);
+  useLayoutEffect(() => {
+    if (resetKeyRef.current === props.resetKey) return;
+    resetKeyRef.current = props.resetKey;
+    cancelAnimation(collapse);
+    cancelAnimation(actionOpacity);
+    cancelAnimation(fallbackTranslation);
+    if (activeTranslationRef.current) cancelAnimation(activeTranslationRef.current);
+    finishDismiss();
+    contentGenerationRef.current += 1;
+    fullSwipeArmedRef.current = false;
+    restoreRow();
+  }, [actionOpacity, collapse, fallbackTranslation, finishDismiss, props.resetKey, restoreRow]);
+
+  // A dormant row has no actions, so it must not stay open.
+  useLayoutEffect(() => {
+    if (props.dormant && openRef.current && dismissalRef.current === null) {
+      swipeableRef.current?.close();
+    }
+  }, [props.dormant]);
+
   const dismiss = useCallback(
-    (translation: SharedValue<number>) => {
+    (translation: SharedValue<number>, id: number) => {
       "worklet";
       if (dismissing.value) return;
       dismissing.set(true);
@@ -364,7 +384,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           if (!finished) return;
           collapse.set(
             withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
-              if (collapsed) runOnJS(finishDismiss)();
+              if (collapsed) runOnJS(finishDismiss)(id);
             }),
           );
         }),
@@ -372,21 +392,31 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
     },
     [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
   );
+  // A dormant row is out of view: an exit animation there only delays the action.
   useLayoutEffect(
     () =>
-      registerThreadDismissal(props.threadKey, () => {
-        if (dismissalRef.current) return dismissalRef.current;
-        const finished = new Promise<void>((resolve) => {
-          pendingDismissRef.current = resolve;
-        });
-        fullSwipeArmedRef.current = false;
-        setIsDismissing(true);
-        if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
-        runOnUI(dismiss)(activeTranslationRef.current ?? fallbackTranslation);
-        dismissalRef.current = { finished, restore: restoreRow };
-        return dismissalRef.current;
-      }),
-    [dismiss, fallbackTranslation, onSwipeableClose, props.threadKey, restoreRow],
+      props.dormant
+        ? undefined
+        : registerThreadDismissal(props.threadKey, () => {
+            if (dismissalRef.current) return dismissalRef.current;
+            const id = ++dismissalIdRef.current;
+            const finished = new Promise<void>((resolve) => {
+              pendingDismissRef.current = { id, resolve };
+            });
+            fullSwipeArmedRef.current = false;
+            setIsDismissing(true);
+            if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
+            runOnUI(dismiss)(activeTranslationRef.current ?? fallbackTranslation, id);
+            const generation = contentGenerationRef.current;
+            dismissalRef.current = {
+              finished,
+              restore: () => {
+                if (contentGenerationRef.current === generation) restoreRow();
+              },
+            };
+            return dismissalRef.current;
+          }),
+    [dismiss, fallbackTranslation, onSwipeableClose, props.dormant, props.threadKey, restoreRow],
   );
   const dismissStyle = useAnimatedStyle(() => ({
     height: dismissing.value ? rowHeight.value * (1 - collapse.value) : undefined,
@@ -432,7 +462,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
           containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
           dragOffsetFromRight={-8}
-          enabled={!isDismissing && props.enabled !== false && gateEnabled}
+          enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Fail the swipe once the pan is vertically dominant (patched-in RNGH
           // prop) — otherwise trackpad scrolls with ~8px of horizontal drift
@@ -441,6 +471,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           failOffsetY={[-10, 10]}
           friction={1}
           onSwipeableClose={() => {
+            openRef.current = false;
             fullSwipeArmedRef.current = false;
             if (swipeableRef.current) {
               props.onSwipeableClose?.(swipeableRef.current);
@@ -448,11 +479,15 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           }}
           onSwipeableRelease={handleRelease}
           onSwipeableOpenStartDrag={() => {
+            // WillOpen reaches JS after the release; count the row open from the
+            // drag so going dormant in between still closes it.
+            openRef.current = true;
             if (swipeableRef.current) {
               props.onSwipeableWillOpen?.(swipeableRef.current);
             }
           }}
           onSwipeableWillOpen={() => {
+            openRef.current = true;
             const methods = swipeableRef.current;
             if (!methods) {
               return;
@@ -467,33 +502,38 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
           }}
           overshootFriction={1}
           overshootRight
-          renderRightActions={(_progress, translation, methods) => (
-            <Animated.View
-              ref={() => {
-                activeTranslationRef.current = translation;
-              }}
-              style={actionStyle}
-            >
-              <ThreadSwipeActions
-                backgroundColor={props.backgroundColor}
-                compact={props.compactActions === true}
-                fullSwipeAction={fullSwipeAction}
-                fullSwipeThreshold={fullSwipeThreshold}
-                onFullSwipeArmedChange={handleFullSwipeArmedChange}
-                primaryAction={{
-                  ...primaryAction,
-                  onPress: commitPrimaryAction,
+          // Dormant rows keep this same tree, so waking one only adds its
+          // actions. Swapping trees remounted the content right under a tap,
+          // which flashed the icons and dropped the tap.
+          renderRightActions={(_progress, translation, methods) =>
+            props.dormant ? null : (
+              <Animated.View
+                ref={() => {
+                  activeTranslationRef.current = translation;
                 }}
-                secondaryAction={resolveSecondaryAction({
-                  close: () => methods.close(),
-                  onDelete: props.onDelete,
-                  secondaryAction: props.secondaryAction,
-                  threadTitle: props.threadTitle,
-                })}
-                translation={translation}
-              />
-            </Animated.View>
-          )}
+                style={actionStyle}
+              >
+                <ThreadSwipeActions
+                  backgroundColor={props.backgroundColor}
+                  compact={props.compactActions === true}
+                  fullSwipeAction={fullSwipeAction}
+                  fullSwipeThreshold={fullSwipeThreshold}
+                  onFullSwipeArmedChange={handleFullSwipeArmedChange}
+                  primaryAction={{
+                    ...primaryAction,
+                    onPress: commitPrimaryAction,
+                  }}
+                  secondaryAction={resolveSecondaryAction({
+                    close: () => methods.close(),
+                    onDelete: props.onDelete,
+                    secondaryAction: props.secondaryAction,
+                    threadTitle: props.threadTitle,
+                  })}
+                  translation={translation}
+                />
+              </Animated.View>
+            )
+          }
           rightThreshold={actionsWidth * 0.42}
           simultaneousWith={props.simultaneousWith}
         >
