@@ -150,9 +150,19 @@ export function useLocalStorage<T, E>(
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        const currentValue = getLocalStorageItem(key, schema) ?? initialValue;
         let valueToStore: T;
         if (typeof value === "function") {
+          // The read path tolerates an undecodable stored blob by falling
+          // back to the initial value. The updater gets the same treatment:
+          // without it, one corrupt blob turns every later write into a
+          // silent no-op.
+          let currentValue: T;
+          try {
+            currentValue = getLocalStorageItem(key, schema) ?? initialValue;
+          } catch (error) {
+            console.error("[LOCALSTORAGE] Could not decode stored value.", error);
+            currentValue = initialValue;
+          }
           try {
             valueToStore = (value as (val: T) => T)(currentValue);
           } catch (cause) {
@@ -163,6 +173,8 @@ export function useLocalStorage<T, E>(
             });
           }
         } else {
+          // Plain values never needed the stored blob at all; writing them
+          // must not depend on the old value being decodable.
           valueToStore = value;
         }
         if (valueToStore === null) {
