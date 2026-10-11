@@ -1,3 +1,4 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
@@ -55,7 +56,7 @@ import {
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Platform, ActivityIndicator, Alert, Pressable, View } from "react-native";
+import { Platform, Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -265,7 +266,7 @@ function PrimaryActionButton(props: {
       className="h-12 items-center justify-center rounded-full bg-primary active:opacity-70 disabled:opacity-45"
     >
       {props.loading ? (
-        <ActivityIndicator colorClassName={String("accent-primary-foreground")} />
+        <AppActivityIndicator colorClassName={String("accent-primary-foreground")} />
       ) : (
         <Text className="text-base font-t3-bold text-primary-foreground">{props.label}</Text>
       )}
@@ -665,7 +666,7 @@ export function AddProjectSourceScreen() {
             )}
           </ListSection>
           {discoveryState.isPending ? (
-            <ActivityIndicator colorClassName="accent-icon-muted" />
+            <AppActivityIndicator colorClassName="accent-icon-muted" />
           ) : null}
         </>
       ) : null}
@@ -918,7 +919,7 @@ function FolderBrowser(props: {
       <ListSection>
         {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
           <View className="items-center py-5">
-            <ActivityIndicator colorClassName="accent-icon-muted" />
+            <AppActivityIndicator colorClassName="accent-icon-muted" />
           </View>
         ) : null}
         {browsePath.canBrowseUp ? (
