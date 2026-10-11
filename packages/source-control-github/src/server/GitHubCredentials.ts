@@ -11,9 +11,13 @@ import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+import type { ServerSettings } from "@t3tools/contracts";
+
+import * as GitHubClient from "../client/definition.ts";
 
 /** How long a token is reused before `gh` is asked again, so a `gh auth switch` applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
@@ -130,8 +134,8 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const crypto = yield* Crypto.Crypto;
-  const environment = yield* HostProcessEnvironment;
-  const workingDirectory = yield* HostProcessWorkingDirectory;
+  const environment = yield* HostProcess.Environment;
+  const workingDirectory = yield* HostProcess.WorkingDirectory;
 
   /** `host:sha256(token)`, safe for cache keys and rate-limit scopes. */
   const fingerprintOf = (host: string, token: string) =>
@@ -176,17 +180,23 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const readSettings = (settings: ServerSettings) =>
+    readSourceControlHostSettings(
+      GitHubClient.settings,
+      settings.sourceControlHosts[GitHubClient.definition.kind],
+    );
+
   /** The Settings choice for a host; unreadable settings fall back to gh's own choice. */
   const hostChoice = (host: string) =>
     sourceControlHost.settings.get.pipe(
-      Effect.map((settings) => settings.github.hosts[host]),
+      Effect.map((settings) => readSettings(settings).hosts[host]),
       Effect.orElseSucceed(() => undefined),
     );
 
   /** A token saved in Settings for the host, read fresh so a saved or removed one applies at once. */
   const savedToken = (host: string) =>
     sourceControlHost.settings.get.pipe(
-      Effect.map((settings) => settings.github.tokens[host]?.trim() || null),
+      Effect.map((settings) => readSettings(settings).tokens[host]?.trim() || null),
       Effect.orElseSucceed(() => null),
     );
 

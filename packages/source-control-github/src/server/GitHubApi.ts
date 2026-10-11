@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -33,16 +34,6 @@ export const PinnedGitHubCredential = Context.Reference<{
 } | null>("@t3tools/source-control-github/server/GitHubApi/PinnedGitHubCredential", {
   defaultValue: () => null,
 });
-
-/**
- * Set by interactive callers (a user's read or write, not a background sweep). Requests made
- * under it may spend the GraphQL reserve and go through a rate-limit pause: a user acting on a
- * pull request should not be refused because a background read exhausted the quota.
- */
-export const AllowGitHubReserve = Context.Reference<boolean>(
-  "@t3tools/source-control-github/server/GitHubApi/AllowGitHubReserve",
-  { defaultValue: () => false },
-);
 
 export class GitHubApiRequestError extends Schema.TaggedError<GitHubApiRequestError>()(
   "GitHubApiRequestError",
@@ -137,7 +128,7 @@ export interface GitHubRestInput {
   readonly maxResponseBytes?: number;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
-  /** Overrides `AllowGitHubReserve` for this one request. */
+  /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
   readonly allowReserve?: boolean;
 }
 
@@ -399,7 +390,7 @@ export const make = Effect.gen(function* () {
     // this reads today is `core`; a `search/` read would need its own resource here. A refusal
     // still pauses the whole host, the key PullRequestService records its own backoff under.
     const resource = input.graphql === true ? "graphql" : "core";
-    const key = { provider: "github" as const, host };
+    const key = { provider: SourceControlProviderKind.make("github"), host };
     const run = Effect.gen(function* () {
       const lease = yield* quota
         .admit(host, resource, { allowReserve: input.allowReserve })
@@ -525,7 +516,7 @@ export const make = Effect.gen(function* () {
       input.body === undefined
         ? withEtag
         : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
-    return AllowGitHubReserve.pipe(
+    return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((interactive) =>
         send({
           host: input.host,
@@ -545,7 +536,7 @@ export const make = Effect.gen(function* () {
       const host = normalizeHost(input.host);
       const { fingerprint } = yield* credential(host);
       const scope = (yield* SourceControlRateLimit.CredentialScope) || fingerprint;
-      const allowReserve = input.allowReserve ?? (yield* AllowGitHubReserve);
+      const allowReserve = input.allowReserve ?? (yield* SourceControlRateLimit.Interactive);
       // The document, never its variables: user text (bodies, search terms) travels as variables.
       yield* Effect.annotateCurrentSpan({
         "github.operation": input.operation,

@@ -4,7 +4,6 @@
  *
  * @module provider/Drivers/claudeUsage
  */
-import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -18,6 +17,7 @@ import {
   type TranscriptUsageFormat,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Parses one line of a Claude Code transcript.
@@ -111,10 +111,11 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     // An undecodable config has no trustworthy home to read.
     if (config === undefined) return [];
     const path = yield* Path.Path;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const configured = config.homePath.trim();
     const home = configured
-      ? expandHomePath(configured)
-      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+      ? expandHomePath(configured, homeDirectory)
+      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
     return [{ dir: path.resolve(home, "projects") }];
   }),
 };

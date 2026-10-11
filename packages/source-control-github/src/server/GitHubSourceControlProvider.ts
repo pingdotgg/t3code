@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -9,20 +10,19 @@ import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
-  DEFAULT_SERVER_SETTINGS,
   SourceControlProviderError,
   TrimmedNonEmptyString,
   type ChangeRequest,
-  type GitHubSettings,
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import {
   decodeGitHubPullRequestEntries,
   type NormalizedGitHubPullRequestRecord,
@@ -53,6 +53,9 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+
+import * as GitHubClient from "../client/definition.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -61,7 +64,7 @@ const decodeLinkSubject = Schema.decodeUnknownEffect(
 );
 
 function toChangeRequest(record: NormalizedGitHubPullRequestRecord): ChangeRequest {
-  return { provider: "github", ...record };
+  return { provider: SourceControlProviderKind.make("github"), ...record };
 }
 
 function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
@@ -83,7 +86,7 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
  */
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
-  settings: GitHubSettings = DEFAULT_SERVER_SETTINGS.github,
+  settings: GitHubClient.GitHubSettings = readSourceControlHostSettings(GitHubClient.settings, {}),
 ) {
   const output = combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
@@ -163,7 +166,7 @@ export function parseGitHubAuth(
 
 export const discovery = {
   type: "cli",
-  kind: "github",
+  kind: SourceControlProviderKind.make("github"),
   label: "GitHub",
   executable: "gh",
   versionArgs: ["--version"],
@@ -192,7 +195,7 @@ export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
 
   return {
     type: "managed-cli",
@@ -200,9 +203,12 @@ export const makeDiscovery = Effect.gen(function* () {
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
-      const settings = yield* sourceControlHost.settings.get.pipe(
-        Effect.map((current) => current.github),
-        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.github),
+      const settings = readSourceControlHostSettings(
+        GitHubClient.settings,
+        yield* sourceControlHost.settings.get.pipe(
+          Effect.map((current) => current.sourceControlHosts[GitHubClient.definition.kind]),
+          Effect.orElseSucceed(() => undefined),
+        ),
       );
       const cli = yield* probeSourceControlProvider({
         cwd,
@@ -270,7 +276,7 @@ export const makeDiscovery = Effect.gen(function* () {
         Effect.map((known) =>
           known
             ? ({
-                kind: "github",
+                kind: SourceControlProviderKind.make("github"),
                 name: "GitHub Self-Hosted",
                 baseUrl: context.provider.baseUrl,
               } as const)
@@ -477,7 +483,7 @@ export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const git = sourceControlHost.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -877,7 +883,7 @@ export const make = Effect.gen(function* () {
     ) =>
     (error: GitHubFailure) =>
       new SourceControlProviderError({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         operation,
         cwd,
         ...(context?.reference === undefined
@@ -914,7 +920,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (cause) =>
             new SourceControlProviderError({
-              provider: "github",
+              provider: SourceControlProviderKind.make("github"),
               operation: "resolveLink",
               cwd: input.cwd,
               detail: "The linked subject could not be read.",
@@ -926,7 +932,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new SourceControlProviderError({
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             operation: "resolveLink.decode",
             cwd: input.cwd,
             detail: "The linked subject could not be read.",
@@ -938,7 +944,19 @@ export const make = Effect.gen(function* () {
   });
 
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "github",
+    kind: SourceControlProviderKind.make("github"),
+    // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
+    // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
+    // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,
+    // a bare branch also lists same-named branches on other forks (`main`, `patch-1`), so read a
+    // full page and let the owner check pick the right head. gh fetches up to 100 in one
+    // request, and GitHub prices a first:100 connection like first:1.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
+    readChangeRequestTemplate: ({ cwd, treeish }) =>
+      GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "github.com") return undefined;
@@ -950,7 +968,7 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests: (input) =>
       // An open lookup is a user waiting on a status; the rest may be a background sweep.
-      (input.state === "open" ? Effect.succeed(true) : GitHubApi.AllowGitHubReserve).pipe(
+      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
           listByHead({
             cwd: input.cwd,
@@ -1012,7 +1030,13 @@ export const make = Effect.gen(function* () {
           Effect.map((locator) => locator.host),
           Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
         )).toLowerCase();
-        const locator = parseGitHubRepositorySelector(input.repository, fallbackHost);
+        // A bare name is the signed-in account's repository, the way `gh repo view` reads it.
+        const bareName = input.repository.trim().replace(/\.git$/i, "");
+        const locator =
+          parseGitHubRepositorySelector(input.repository, fallbackHost) ??
+          (/^[^/\s]+$/.test(bareName)
+            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
+            : null);
         if (locator === null) return yield* failure("Repositories are named owner/name.");
         return repositoryCloneUrls(yield* readRepository(locator));
       }).pipe(

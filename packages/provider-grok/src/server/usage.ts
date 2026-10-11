@@ -4,7 +4,6 @@
  *
  * @module provider-grok/server/usage
  */
-import * as NodeOS from "node:os";
 
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -20,6 +19,7 @@ import {
 } from "@t3tools/provider-core/server/usage";
 
 import type { GrokSettings } from "../settings.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
@@ -229,8 +229,10 @@ export const grokUsageReader: ProviderUsageReader<GrokSettings, Path.Path> = {
   format: grokUsageFormat,
   directories: Effect.fn("grokUsageReader.directories")(function* ({ environment }) {
     const path = yield* Path.Path;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const home = expandHomePath(
-      environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
+      environment.GROK_HOME?.trim() || path.join(homeDirectory, ".grok"),
+      homeDirectory,
     );
     // Sessions also ship multi-megabyte `chat_history` and `events` logs that
     // never carry usage; only `updates.jsonl` does.

@@ -4,7 +4,6 @@
  *
  * @module provider-opencode/server/usage
  */
-import * as NodeOS from "node:os";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
@@ -12,7 +11,7 @@ import {
   type ProviderUsageReader,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -92,6 +91,7 @@ export interface OpenCodeUsageReadResult {
 }
 
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
+const MESSAGE_PAGE_SIZE = 64;
 
 /** Whether the path is itself a symlink, without following it. */
 const isSymbolicLink = Effect.fnUntraced(function* (path: string) {
@@ -188,26 +188,47 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        const where = predicates.length > 0 ? ` WHERE ${predicates.join(" AND ")}` : "";
-        const rows = yield* sql.unsafe<{
-          readonly id: unknown;
-          readonly session_id: unknown;
-          readonly data: unknown;
-          readonly created: unknown;
-        }>(
-          `SELECT id, session_id, data, ${timestamp} AS created FROM ${table}${where}`,
-          timestamp === "NULL" ? [] : [sinceMs],
-        );
-        for (const [index, row] of rows.entries()) {
-          append(
-            file.records,
-            parseOpenCodeMessage(text(row.data), {
-              id: text(row.id),
-              sessionId: text(row.session_id),
-              ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
-            }),
+        const lastRowId = (yield* sql.unsafe<{ readonly last_row_id: number | null }>(
+          `SELECT MAX(rowid) AS last_row_id FROM ${table}`,
+        ))[0]?.last_row_id;
+        if (lastRowId === null || lastRowId === undefined) continue;
+        let afterRowId: number | undefined;
+        // SqlClient materializes each result with StatementSync.all(). Keep
+        // message bodies in small pages, and exclude rows appended mid-scan.
+        while (true) {
+          const pagePredicates = [
+            ...predicates,
+            "rowid <= ?",
+            ...(afterRowId === undefined ? [] : ["rowid > ?"]),
+          ];
+          const rows = yield* sql.unsafe<{
+            readonly row_id: number;
+            readonly id: unknown;
+            readonly session_id: unknown;
+            readonly data: unknown;
+            readonly created: unknown;
+          }>(
+            `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
+             FROM ${table} WHERE ${pagePredicates.join(" AND ")} ORDER BY rowid LIMIT ${MESSAGE_PAGE_SIZE}`,
+            [
+              ...(timestamp === "NULL" ? [] : [sinceMs]),
+              lastRowId,
+              ...(afterRowId === undefined ? [] : [afterRowId]),
+            ],
           );
-          if (index % 256 === 255) yield* Effect.yieldNow;
+          for (const row of rows) {
+            append(
+              file.records,
+              parseOpenCodeMessage(text(row.data), {
+                id: text(row.id),
+                sessionId: text(row.session_id),
+                ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
+              }),
+            );
+          }
+          if (rows.length < MESSAGE_PAGE_SIZE) break;
+          afterRowId = rows[rows.length - 1]!.row_id;
+          yield* Effect.yieldNow;
         }
       }
     }).pipe(
@@ -303,7 +324,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
 const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
     .map((value) => value.trim())
@@ -313,13 +335,13 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
     path.join(
       dataHome && path.isAbsolute(dataHome)
         ? dataHome
-        : path.join(NodeOS.homedir(), ".local", "share"),
+        : path.join(homeDirectory, ".local", "share"),
       "opencode",
     ),
   ];
   const canonical = new Set<string>();
   for (const root of roots?.length ? roots : defaults) {
-    const resolved = path.resolve(expandHomePath(root));
+    const resolved = path.resolve(expandHomePath(root, homeDirectory));
     canonical.add(yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)));
   }
   return [...canonical];

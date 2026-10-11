@@ -12,7 +12,6 @@ import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { AllowGitHubReserve } from "./GitHubApi.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -78,7 +77,7 @@ const mockApi = Layer.effect(
     const quota = yield* GitHubQuota.GitHubQuota;
     return GitHubApi.GitHubApi.of({
       graphql: (input) =>
-        GitHubApi.AllowGitHubReserve.pipe(
+        SourceControlRateLimit.Interactive.pipe(
           Effect.flatMap((interactive) =>
             quota.admit(input.host, "graphql", {
               allowReserve: input.allowReserve ?? interactive,
@@ -3864,7 +3863,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const error = yield* Effect.flip(cli.getPullRequestDetail(input));
       expect(error._tag).toBe("SourceControlRateLimitPausedError");
       expect(mockedExecute).toHaveBeenCalledOnce();
-      yield* cli.getPullRequestDetail(input).pipe(Effect.provideService(AllowGitHubReserve, true));
+      yield* cli
+        .getPullRequestDetail(input)
+        .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
       expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );

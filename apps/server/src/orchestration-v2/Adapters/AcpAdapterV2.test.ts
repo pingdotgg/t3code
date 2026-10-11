@@ -1,4 +1,6 @@
 import {
+  extractCopilotSubagentUpdate,
+  makeCopilotSubagentRouting,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
@@ -27,7 +29,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
-import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -705,7 +707,7 @@ describe("AcpAdapterV2", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const selfInvocation = yield* resolveSelfInvocation().pipe(
-        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(HostProcess.IsExecutable, true),
       );
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1464,6 +1466,206 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("routes interleaved Copilot subagent output into subagent threads", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      let sessionEvent:
+        | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+        | undefined;
+      const routing = makeCopilotSubagentRouting();
+      const instanceId = ProviderInstanceId.make("copilot-replay");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: routing.registerExtensions,
+          normalizeSessionUpdate: routing.normalizeSessionUpdate,
+          extractSubagentUpdate: extractCopilotSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              handleExtNotification: (method, payload, next) =>
+                Effect.sync(() => {
+                  if (method === "github.com/copilot/sessionEvent") {
+                    sessionEvent = next as typeof sessionEvent;
+                  }
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  assert.isDefined(handler);
+                  assert.isDefined(sessionEvent);
+                  const sessionId = "mock-session-1";
+                  const raw = (type: string, data: object, agentId?: string) =>
+                    sessionEvent!({ sessionId, type, data, ...(agentId ? { agentId } : {}) });
+                  const update = (next: EffectAcpSchema.SessionUpdate) =>
+                    handler!({ sessionId, update: next });
+                  // Copilot sends each chunk's raw delta just before the chunk.
+                  const chunk = (text: string, task?: string) =>
+                    raw("assistant.message_delta", {
+                      deltaContent: text,
+                      ...(task ? { parentToolCallId: task } : {}),
+                    }).pipe(
+                      Effect.andThen(
+                        update({
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text },
+                        }),
+                      ),
+                    );
+                  const launch = (toolCallId: string, description: string, mode: string) =>
+                    update({
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title: description,
+                      kind: "other",
+                      status: "pending",
+                      rawInput: {
+                        description,
+                        prompt: `${description}.`,
+                        agent_type: "explore",
+                        mode,
+                      },
+                    });
+                  // Shapes captured from Copilot CLI 1.0.95 with two sync and one
+                  // background subagent launched in one batch.
+                  yield* chunk("Launching ");
+                  yield* launch("task-a", "Describe a.txt", "sync");
+                  yield* launch("task-b", "Describe b.txt", "sync");
+                  yield* launch("task-bg", "List directory", "background");
+                  yield* raw("subagent.started", { toolCallId: "task-a" }, "agent-a");
+                  yield* raw("subagent.started", { toolCallId: "task-b" }, "agent-b");
+                  yield* raw("subagent.started", { toolCallId: "task-bg" }, "agent-bg");
+                  yield* update({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "task-bg",
+                    status: "completed",
+                    rawOutput: { content: "Agent started in background with agent_id: agent-bg." },
+                  });
+                  yield* update({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "view-a",
+                    title: "Viewing a.txt",
+                    kind: "read",
+                    status: "completed",
+                    rawInput: { path: "a.txt" },
+                    _meta: { "github.com/copilot": { agentId: "agent-a" } },
+                  });
+                  yield* chunk("`a.txt` says", "task-a");
+                  yield* chunk("`b.txt` has", "task-b");
+                  yield* chunk(" hello.", "task-a");
+                  yield* chunk("a.txt b.txt", "task-bg");
+                  yield* chunk(" three lines.", "task-b");
+                  for (const [task, agent, text] of [
+                    ["task-a", "agent-a", "`a.txt` says hello."],
+                    ["task-b", "agent-b", "`b.txt` has three lines."],
+                  ] as const) {
+                    yield* update({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: task,
+                      status: "completed",
+                      rawOutput: { content: text },
+                    });
+                    yield* raw("subagent.completed", { toolCallId: task }, agent);
+                  }
+                  yield* raw("subagent.completed", { toolCallId: "task-bg" }, "agent-bg");
+                  yield* chunk("all done.");
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("copilot-replay-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-replay-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const lastText = (thread: string | null | undefined) =>
+        new Map(
+          items.flatMap((item) =>
+            item.threadId === thread && item.type === "assistant_message"
+              ? [[item.id, item.text] as const]
+              : [],
+          ),
+        );
+      assert.deepEqual([...lastText(threadId).values()].join(""), "Launching all done.");
+      const tasks = new Map(
+        events.flatMap((event) =>
+          event.type === "subagent.updated"
+            ? [[event.subagent.nativeTaskRef?.nativeId, event.subagent] as const]
+            : [],
+        ),
+      );
+      const outputs = Object.fromEntries(
+        [...tasks].map(([id, task]) => [
+          id,
+          [task.status, [...lastText(task.childThreadId).values()].join("")],
+        ]),
+      );
+      assert.deepEqual(outputs, {
+        "task-a": ["completed", "`a.txt` says hello."],
+        "task-b": ["completed", "`b.txt` has three lines."],
+        "task-bg": ["completed", "a.txt b.txt"],
+      });
+      assert.isTrue(
+        items.some(
+          (item) =>
+            item.threadId === tasks.get("task-a")?.childThreadId &&
+            item.type === "dynamic_tool" &&
+            item.title === "Read a.txt",
+        ),
+      );
+      assert.isFalse(
+        items.some((item) => item.threadId === threadId && item.type === "dynamic_tool"),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("projects ACP v2 fidelity updates into first-class orchestration items", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1833,7 +2035,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const fileSystem = yield* FileSystem.FileSystem;
       let published: ReadonlyArray<number> = [];
       const failed = yield* Effect.scoped(
@@ -1947,7 +2149,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("reaps detached native work when the provider exits before explicit teardown", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2026,7 +2228,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("surfaces reduced guarantee when delegated cgroup containment is unavailable", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const selfInvocation = yield* resolveSelfInvocation();
@@ -3100,7 +3302,7 @@ describe("AcpAdapterV2", () => {
           instanceId,
           settings: DEFAULT_GROK_SETTINGS,
           environment: {},
-          hostPlatform: yield* HostProcessPlatform,
+          hostPlatform: yield* HostProcess.Platform,
           selfInvocation: yield* resolveSelfInvocation(),
           // Production Grok runtimes are wrapped by the x.ai prompt runtime.
           makeRuntime: (input) =>
@@ -3147,7 +3349,7 @@ describe("AcpAdapterV2", () => {
         instanceId,
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
-        hostPlatform: yield* HostProcessPlatform,
+        hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
         // Production Grok runtimes are wrapped by the x.ai prompt runtime.
         makeRuntime: (input) =>
@@ -13147,7 +13349,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("direct Stop skips uninterruptible ACP cancel and recovers after native teardown", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -13567,7 +13769,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("restart_active terminates native work and reloads a clean runtime", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;

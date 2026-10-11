@@ -2,7 +2,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
@@ -37,15 +36,11 @@ import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
   return { ...actual, open: vi.fn(actual.open), realpath: vi.fn(actual.realpath) };
-});
-
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof NodeOS>();
-  return { ...actual, homedir: vi.fn(actual.homedir) };
 });
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -299,8 +294,7 @@ describe("AssetAccess", () => {
       yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
       yield* fs.writeFileString(filePath, "recording bytes");
       const canonicalFile = yield* fs.realPath(filePath);
-      const homeSpy = vi.mocked(NodeOS.homedir).mockReturnValue(home);
-      try {
+      yield* Effect.gen(function* () {
         for (const workspaceRoot of [
           path.join(home, "project"),
           path.join(directory, "srv", "project"),
@@ -332,9 +326,7 @@ describe("AssetAccess", () => {
             expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
           }
         }
-      } finally {
-        homeSpy.mockRestore();
-      }
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1231,6 +1223,38 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe("favicon.svg");
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-favicon\.svg$/);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves a native macOS app icon as its embedded PNG", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-icns-",
+      });
+      const icns = new Uint8Array(8 + 8 + screenshotPng.length);
+      icns.set(new TextEncoder().encode("icns"));
+      new DataView(icns.buffer).setUint32(4, icns.length);
+      icns.set(new TextEncoder().encode("ic07"), 8);
+      new DataView(icns.buffer).setUint32(12, 8 + screenshotPng.length);
+      icns.set(screenshotPng, 16);
+      yield* fileSystem.makeDirectory(path.join(root, "Resources"));
+      yield* fileSystem.writeFile(path.join(root, "Resources", "AppIcon.icns"), icns);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(result.sourcePath).toBe(path.join("Resources", "AppIcon.icns"));
+      const asset = yield* resolveAsset(
+        suffix.slice(0, separatorIndex),
+        suffix.slice(separatorIndex + 1),
+      );
+      expect(asset?.kind === "bytes" ? asset.mimeType : null).toBe("image/png");
+      expect(asset?.kind === "bytes" ? Uint8Array.from(asset.bytes) : null).toEqual(screenshotPng);
     }).pipe(Effect.provide(layerTest)),
   );
 

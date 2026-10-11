@@ -13,7 +13,9 @@ public final class T3NativeControlsModule: Module {
   public func definition() -> ModuleDefinition {
     Constants {
       if #available(iOS 26.0, *) {
-        return ["supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil]
+        return [
+          "supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil,
+        ]
       }
       return ["supportsWorkspaceColumns": false]
     }

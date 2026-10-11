@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
@@ -59,7 +60,7 @@ it("keeps GitHub's exact retry time", () => {
   assert.deepStrictEqual(
     gitHubProviderFailure(
       new SourceControlRateLimit.SourceControlRateLimitPausedError({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         host: "github.com",
         retryAt: 1_786_802_400_000,
       }),

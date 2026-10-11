@@ -42,11 +42,7 @@ import {
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
 } from "@t3tools/contracts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -314,11 +310,15 @@ interface ServerTab {
   readonly openerTabId: string | undefined;
   /** Finished downloads, newest last; files live until the tab closes. */
   readonly downloads: Array<ServerDownload>;
-  /** A page's open file picker, waiting for the controlling viewer's files. */
+  /**
+   * A page's open file picker, waiting for the controlling viewer's files. Its
+   * id is reissued for each viewer it is offered to, so only that viewer can answer.
+   */
   fileChooser: {
     readonly id: string;
     readonly chooser: FileChooser;
     readonly accept: string;
+    readonly offeredTo: string | null;
   } | null;
   dialog: Dialog | null;
   setting: PreviewViewportSetting;
@@ -476,7 +476,7 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const host = { platform: yield* HostProcessPlatform, arch: yield* HostProcessArchitecture };
+  const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -1031,14 +1031,27 @@ const make = Effect.gen(function* () {
         .catch(() => null)) ?? "";
     // A newer picker replaces an unanswered one, as a real browser allows only one.
     if (previous) closeFileChooser(tab);
-    tab.fileChooser = { id: NodeCrypto.randomUUID(), chooser, accept: accept.slice(0, 1024) };
+    tab.fileChooser = {
+      id: NodeCrypto.randomUUID(),
+      chooser,
+      accept: accept.slice(0, 1024),
+      offeredTo: null,
+    };
     pushFileChooser(tab);
   };
 
   const pushFileChooser = (tab: ServerTab) => {
-    const message = fileChooserMessage(tab);
+    const open = tab.fileChooser;
     const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
-    if (message) controller?.push(message);
+    if (!open || !controller) return;
+    if (open.offeredTo !== controller.id) {
+      // A new controller gets a fresh id; the previous one can no longer answer.
+      tab.fileChooser = { ...open, id: NodeCrypto.randomUUID(), offeredTo: controller.id };
+      if (open.offeredTo !== null)
+        for (const viewer of tab.viewers) viewer.push({ _tag: "fileChooserClosed", id: open.id });
+    }
+    const message = fileChooserMessage(tab);
+    if (message) controller.push(message);
   };
 
   const closeFileChooser = (tab: ServerTab) => {
@@ -1054,7 +1067,14 @@ const make = Effect.gen(function* () {
   ) => {
     const tab = tabs.get(tabKey(input.threadId, input.tabId));
     const open = tab?.fileChooser;
-    if (!tab || !open || open.id !== input.chooserId) return false;
+    if (
+      !tab ||
+      !open ||
+      open.id !== input.chooserId ||
+      open.offeredTo === null ||
+      open.offeredTo !== tab.control.controller
+    )
+      return false;
     if (input.files.length > 0) {
       await open.chooser.setFiles(
         open.chooser.isMultiple() ? [...input.files] : input.files.slice(0, 1),
@@ -2367,7 +2387,7 @@ const make = Effect.gen(function* () {
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
   // Whoever runs the server learns the fix before anyone opens a tab.
   if (
-    !PreviewBrowserHost.sandboxDisabled(yield* HostProcessEnvironment) &&
+    !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)
   ) {
     yield* Effect.logWarning(

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -18,7 +19,7 @@ const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
 export const discovery = {
   type: "cli",
-  kind: "forgejo",
+  kind: SourceControlProviderKind.make("forgejo"),
   label: "Forgejo / Gitea",
   executable: "tea",
   versionArgs: ["--version"],
@@ -47,7 +48,13 @@ export const discovery = {
         remote,
         input.context.requestedHost,
       );
-    return login ? { kind: "forgejo", name: "Forgejo / Gitea", baseUrl: login.url } : null;
+    return login
+      ? {
+          kind: SourceControlProviderKind.make("forgejo"),
+          name: "Forgejo / Gitea",
+          baseUrl: login.url,
+        }
+      : null;
   },
   installHint:
     "Install `fj` 0.6 or later from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj --host <server-url> auth add-token`, or install `tea` 0.16 or later from https://gitea.com/gitea/tea and run `tea login add` for each Forgejo or Gitea server.",
@@ -60,7 +67,7 @@ export const makeDiscovery = Effect.gen(function* () {
   if (!listLogins) return discovery;
   return {
     type: "managed-cli",
-    kind: "forgejo",
+    kind: SourceControlProviderKind.make("forgejo"),
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("ForgejoSourceControlProvider.discovery")(function* (cwd: string) {
@@ -150,12 +157,66 @@ export const makeDiscovery = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           }).pipe(Effect.orElseSucceed(() => []));
           const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
-          if (login) return { kind: "forgejo" as const, name: discovery.label, baseUrl: login.url };
+          if (login)
+            return {
+              kind: SourceControlProviderKind.make("forgejo"),
+              name: discovery.label,
+              baseUrl: login.url,
+            };
         }
         return null;
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;
+});
+
+/** HTTP paths can include an installation mount; Forgejo's API always names owner/repo. */
+export function repositoryNameFromRemoteUrl(url: string): string | null {
+  const path = SourceControlProvider.repositoryPathFromRemoteUrl(url);
+  return path === null || !/^https?:\/\//iu.test(url.trim())
+    ? path
+    : path.split("/").slice(-2).join("/");
+}
+
+/**
+ * A Forgejo remote's URL can't say which server it belongs to (an SSH alias, an installation
+ * mount), so the identity's browser URL comes from the login that serves it.
+ */
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("ForgejoSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
+  if (
+    !remote ||
+    !identity.rootPath ||
+    (identity.provider !== undefined &&
+      identity.provider !== "unknown" &&
+      identity.provider !== "forgejo")
+  )
+    return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  if (context?.provider.kind !== "forgejo") return identity;
+  const baseUrl = context.provider.baseUrl.replace(/\/+$/, "");
+  const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+  const path =
+    !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
+      ? remote.path.slice(basePath.length + 1)
+      : remote.path;
+  return {
+    ...identity,
+    provider: SourceControlProviderKind.make("forgejo"),
+    webUrl: `${baseUrl}/${path}`,
+  };
 });
 
 const RepositorySchema = Schema.Struct({
@@ -200,7 +261,7 @@ export const make = Effect.gen(function* () {
     Effect.mapError(
       (cause: unknown) =>
         new SourceControlProviderError({
-          provider: "forgejo",
+          provider: SourceControlProviderKind.make("forgejo"),
           operation,
           cwd,
           ...(isForgejoCliError(cause) ? { command: cause.command } : {}),
@@ -227,7 +288,9 @@ export const make = Effect.gen(function* () {
     );
   });
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "forgejo",
+    kind: SourceControlProviderKind.make("forgejo"),
+    repositoryNameFromRemoteUrl,
+    refineRepositoryIdentity,
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
@@ -239,7 +302,7 @@ export const make = Effect.gen(function* () {
           const items = yield* request(
             {
               ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&sort=recentupdate&limit=50&page=${page}`,
+              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
             },
             Schema.Array(ForgejoPullRequestSchema),
           );

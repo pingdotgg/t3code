@@ -10,12 +10,11 @@
  *
  * @module provider-cursor/server/CursorUsageAccounts
  */
-import * as NodeOS from "node:os";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -68,8 +67,8 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   /** Account caches by credential source. */
@@ -283,7 +282,7 @@ const make = Effect.gen(function* () {
 
   const scan: CursorUsageAccounts["Service"]["scan"] = Effect.fn("CursorUsageAccounts.scan")(
     function* ({ keychainUsageEnabled, windowStartMs, retentionCutoffMs, awaitRefresh }) {
-      const home = NodeOS.homedir();
+      const home = yield* HostProcess.HomeDirectory;
       const userHome =
         (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
       const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();

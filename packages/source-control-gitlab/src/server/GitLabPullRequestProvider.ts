@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestCapabilities,
@@ -13,20 +14,12 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [
-    "merge",
-    "ready",
-    "draft",
-    "close",
-    "reopen",
-    "update-branch",
-    "enable-auto-merge",
-    "disable-auto-merge",
-  ],
+  actions: [...definition.changeRequestActions],
   // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
   mergeMethods: ["merge", "squash", "rebase"],
   // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing
@@ -111,7 +104,7 @@ export const make = Effect.gen(function* () {
 
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
-      provider: "gitlab",
+      provider: SourceControlProviderKind.make("gitlab"),
       operation,
       ...gitLabProviderFailure(error),
       detail: error.detail,
@@ -119,7 +112,7 @@ export const make = Effect.gen(function* () {
     });
 
   const provider: PullRequestProviderApi = {
-    kind: "gitlab",
+    kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
 
     getViewer: (input) =>

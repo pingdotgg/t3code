@@ -8,7 +8,6 @@
  *
  * @module provider/Drivers/AntigravityUsage
  */
-import * as NodeOS from "node:os";
 
 import { type AntigravitySettings, UsageReadError } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -18,7 +17,7 @@ import type {
   ProviderUsageReader,
   ProviderUsageScan,
 } from "@t3tools/provider-core/server/usage";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -45,12 +44,12 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const hostEnvironment = yield* HostProcess.Environment;
   const cache = makeAntigravityUsageCache();
 
   /** `ANTIGRAVITY_DATA_DIR` (comma-separated) or the defaults, canonicalized. */
   const dataRoots = Effect.gen(function* () {
-    const home = NodeOS.homedir();
+    const home = yield* HostProcess.HomeDirectory;
     const configured = hostEnvironment["ANTIGRAVITY_DATA_DIR"]
       ?.split(",")
       .map((value) => value.trim())
@@ -63,7 +62,7 @@ const make = Effect.gen(function* () {
     ];
     const canonical = new Set<string>();
     for (const root of configured?.length ? configured : defaults) {
-      const resolved = path.resolve(expandHomePath(root));
+      const resolved = path.resolve(expandHomePath(root, home));
       canonical.add(
         yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
       );
