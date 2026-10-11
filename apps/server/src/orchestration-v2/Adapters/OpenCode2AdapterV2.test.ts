@@ -51,7 +51,7 @@ import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
   makeProviderReplayGate,
   type ProviderReplayGate,
-} from "../testkit/ProviderReplayGate.testkit.ts";
+} from "@t3tools/provider-testing/replayGate";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
@@ -2045,7 +2045,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The single reader of the runtime's events.
       const launched = yield* Deferred.make<void>();
       const childRan = yield* Deferred.make<void>();
-      const ended: Array<ProviderAdapterV2Event> = [];
+      const ended: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const allEnded = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
