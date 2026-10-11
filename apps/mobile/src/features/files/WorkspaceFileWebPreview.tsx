@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
 import { WebView } from "react-native-webview";
 
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
 import { FilePreviewLoading } from "./FilePreviewFeedback";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -46,7 +47,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
         }}
         renderLoading={() => (
           <View className="absolute inset-0 items-center justify-center bg-card">
-            <ActivityIndicator />
+            <AppActivityIndicator />
           </View>
         )}
         style={{ flex: 1, backgroundColor: "transparent" }}

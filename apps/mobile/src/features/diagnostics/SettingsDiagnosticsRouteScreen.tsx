@@ -1,8 +1,9 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -85,7 +86,7 @@ export function SettingsDiagnosticsRouteScreen() {
         <SettingsSection title="Startup crashes">
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
-              <ActivityIndicator />
+              <AppActivityIndicator />
               <Text className="text-center text-sm text-foreground-muted">Reading crash log…</Text>
             </View>
           ) : state.status === "unavailable" ? (

@@ -6,8 +6,9 @@ import {
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, ScrollView, View } from "react-native";
+import { AppState, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { WorktreeSetupSheet } from "./worktree-setup-sheet";
@@ -97,10 +98,14 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
             }
           >
             {backgroundSetup ? (
-              <ActivityIndicator
-                size="small"
+              <AppActivityIndicator
+                size={Platform.OS === "android" ? 12 : "small"}
                 colorClassName="accent-icon-muted"
-                style={{ width: 12, height: 12, transform: [{ scale: 0.65 }] }}
+                style={{
+                  width: 12,
+                  height: 12,
+                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+                }}
               />
             ) : failed ? (
               <SymbolView
@@ -302,7 +307,7 @@ function StageRow({
     >
       <View className="w-6 items-center">
         {stage.status === "running" && animate ? (
-          <ActivityIndicator
+          <AppActivityIndicator
             size="small"
             colorClassName="accent-icon-muted"
             style={{ transform: [{ scale: 0.75 }] }}

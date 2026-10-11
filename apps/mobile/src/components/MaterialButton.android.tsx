@@ -1,7 +1,7 @@
 import {
   Box,
   Button,
-  CircularProgressIndicator,
+  LoadingIndicator,
   FilledTonalButton,
   Host,
   Row,
@@ -78,9 +78,8 @@ export function MaterialButton(props: MaterialButtonProps) {
             <Row verticalAlignment="center">
               {props.loading ? (
                 <>
-                  <CircularProgressIndicator
+                  <LoadingIndicator
                     modifiers={[size(mediumIconSize, mediumIconSize)]}
-                    strokeWidth={2}
                     color={colors["--color-foreground-muted"]}
                   />
                   <Box modifiers={[size(8 * scale, 1)]} />

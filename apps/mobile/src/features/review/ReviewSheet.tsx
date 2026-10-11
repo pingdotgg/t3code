@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
@@ -19,7 +20,6 @@ import {
   useState,
 } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -855,7 +855,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     Platform.OS !== "android" && "border-b border-border bg-card",
                   )}
                 >
-                  <ActivityIndicator size="small" />
+                  <AppActivityIndicator size="small" />
                   <Text className="text-xs text-foreground-muted">Loading diff…</Text>
                 </View>
               ) : parsedDiff.kind === "empty" ? (
