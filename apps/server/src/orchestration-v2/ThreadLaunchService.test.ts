@@ -118,8 +118,13 @@ function makeHarness(options: HarnessOptions = {}) {
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerThreadManagement = ThreadManagement.layer.pipe(Layer.provide(layerOrchestrator));
+  const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
+  const layerThreadManagement = ThreadManagement.layer.pipe(
+    Layer.provide(layerOrchestrator),
+    Layer.provide(layerServerSettings),
+    Layer.provide(layerReceipts),
+  );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
     options.createWorktree ??
@@ -185,7 +190,7 @@ function makeHarness(options: HarnessOptions = {}) {
       generateThreadTitle,
       generateBranchName,
     }),
-    ServerSettings.layerTest(options.serverSettings),
+    layerServerSettings,
     ProviderRegistryMock.layer(options.providers),
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -1765,6 +1770,70 @@ it.effect("replays a server-allocated launch", () =>
   }),
 );
 
+it.effect("refuses a launch when the project disables the model's provider instance", () => {
+  const harness = makeHarness({
+    serverSettings: {
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const failed = yield* launches
+      .launch(
+        launchInput({
+          command: "command:launch:project-disabled-instance",
+          thread: "thread:launch:project-disabled-instance",
+          message: "Hello",
+        }),
+      )
+      .pipe(Effect.flip);
+    if (failed._tag !== "ThreadManagementProviderInstanceDisabledError") {
+      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${failed._tag}`);
+    }
+    assert.equal(failed.projectId, projectId);
+    assert.equal(failed.instanceId, modelSelection.instanceId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("replays an accepted launch after the project disables the instance", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const input = launchInput({
+      command: "command:launch:retry-after-disable",
+      thread: "thread:launch:retry-after-disable",
+      message: "Hello",
+    });
+    const first = yield* launches.launch(input);
+
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+      },
+    });
+
+    const retry = yield* launches.launch(input);
+    assert.equal(retry.threadId, first.threadId);
+    assert.isTrue(retry.resumed);
+
+    const fresh = yield* launches
+      .launch(
+        launchInput({
+          command: "command:launch:fresh-after-disable",
+          thread: "thread:launch:fresh-after-disable",
+          message: "Hello",
+        }),
+      )
+      .pipe(Effect.flip);
+    if (fresh._tag !== "ThreadManagementProviderInstanceDisabledError") {
+      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${fresh._tag}`);
+    }
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("rejects a server-allocated launch replay with a mismatching thread id", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -1782,7 +1851,9 @@ it.effect("rejects a server-allocated launch replay with a mismatching thread id
       })
       .pipe(Effect.flip);
     assert.notEqual(first.threadId, ThreadId.make("thread:launch:allocated-mismatch"));
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.include(String(failed.cause), "cannot be replayed");
   }).pipe(Effect.provide(harness.layer));
@@ -1804,7 +1875,9 @@ it.effect("rejects a server-allocated launch receipt from another project", () =
         projectId: otherProjectId,
       })
       .pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "resolve-project");
     assert.equal(failed.threadId, first.threadId);
     assert.equal(failed.cause, "Project identity changed.");
@@ -1828,7 +1901,9 @@ it.effect("rejects a server-allocated launch retry after the thread is deleted",
       threadId: first.threadId,
     });
     const failed = yield* launches.launch(rest).pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.equal(failed.threadId, first.threadId);
     assert.equal(failed.cause, "Thread not found.");
@@ -1869,7 +1944,9 @@ it.effect("does not treat an unrelated accepted command receipt as a launch", ()
       message: "Should not become a launch",
     });
     const failed = yield* launches.launch(rest).pipe(Effect.flip);
-    assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
     assert.equal(failed.operation, "create-thread");
     assert.include(String(failed.cause), "cannot be replayed");
     const projection = yield* threads.getThreadProjection(threadId);
@@ -1914,7 +1991,9 @@ it.effect("bounds concurrent first launches to one thread per command", () =>
           continue;
         }
         const error = Cause.findErrorOption(result.cause).pipe(Option.getOrThrow);
-        assert.equal(error._tag, "ThreadLaunchError");
+        if (error._tag !== "ThreadLaunchError") {
+          assert.fail(`expected ThreadLaunchError, got ${error._tag}`);
+        }
         assert.equal(error.operation, "create-thread");
         assert.include(String(error.cause), "cannot be replayed");
         const retried = yield* launches.launch(rest);
@@ -2530,3 +2609,99 @@ it.effect.each([
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("replays an accepted send after the project disables the instance", () => {
+  const harness = makeHarness();
+  const layerFiles = ServerConfig.layerTest(process.cwd(), { prefix: "t3-send-retry-" }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const created = yield* launches.launch(
+      launchInput({
+        command: "command:send:retry-setup",
+        thread: "thread:send:retry-after-disable",
+      }),
+    );
+
+    const sendInput = {
+      commandId: CommandId.make("command:send:retry-after-disable"),
+      projectId,
+      threadId: created.threadId,
+      messageId: MessageId.make("message:send:retry-after-disable"),
+      text: "Hello again",
+      attachments: [],
+      mode: "auto" as const,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    };
+    const first = yield* ThreadMessageIntake.sendToThread(sendInput);
+
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+      },
+    });
+
+    const retry = yield* ThreadMessageIntake.sendToThread(sendInput);
+    assert.equal(retry.message.id, first.message.id);
+
+    const fresh = yield* ThreadMessageIntake.sendToThread({
+      ...sendInput,
+      commandId: CommandId.make("command:send:fresh-after-disable"),
+      messageId: MessageId.make("message:send:fresh-after-disable"),
+    }).pipe(Effect.flip);
+    if (fresh._tag !== "ThreadManagementProviderInstanceDisabledError") {
+      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${fresh._tag}`);
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
+});
+
+it.effect("replays an accepted message.dispatch after the project disables the instance", () => {
+  const harness = makeHarness();
+  const layerFiles = ServerConfig.layerTest(process.cwd(), { prefix: "t3-dispatch-retry-" }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const created = yield* launches.launch(
+      launchInput({
+        command: "command:dispatch:retry-setup",
+        thread: "thread:dispatch:retry-after-disable",
+      }),
+    );
+
+    const dispatchInput = {
+      type: "message.dispatch" as const,
+      commandId: CommandId.make("command:dispatch:retry-after-disable"),
+      threadId: created.threadId,
+      messageId: MessageId.make("message:dispatch:retry-after-disable"),
+      text: "Hello again",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" as const },
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    };
+    const first = yield* ThreadMessageIntake.dispatchCommand(dispatchInput);
+
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+      },
+    });
+
+    const retry = yield* ThreadMessageIntake.dispatchCommand(dispatchInput);
+    assert.deepEqual(retry, first);
+
+    const fresh = yield* ThreadMessageIntake.dispatchCommand({
+      ...dispatchInput,
+      commandId: CommandId.make("command:dispatch:fresh-after-disable"),
+      messageId: MessageId.make("message:dispatch:fresh-after-disable"),
+    }).pipe(Effect.flip);
+    if (fresh._tag !== "ThreadManagementProviderInstanceDisabledError") {
+      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${fresh._tag}`);
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
+});

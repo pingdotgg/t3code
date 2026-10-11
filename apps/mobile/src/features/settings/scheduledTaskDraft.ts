@@ -28,13 +28,18 @@ export function scheduledTaskDefaultModel(
   const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
     .defaultModelSelection;
   const projectDefaultSelection =
-    resolveDefaultableModelSelection(config, configured) ??
-    resolveDefaultableModelSelection(config, settings.defaultModelSelection);
+    resolveDefaultableModelSelection(config, configured, project?.id ?? null) ??
+    resolveDefaultableModelSelection(config, settings.defaultModelSelection, project?.id ?? null);
   return resolveNewTaskModelSelection({
     draftSelection: null,
     projectDefaultSelection,
     stickySelection: null,
-    modelOptions: buildModelOptions(config, projectDefaultSelection),
+    modelOptions: buildModelOptions(
+      config,
+      projectDefaultSelection,
+      undefined,
+      project?.id ?? null,
+    ),
   });
 }
 

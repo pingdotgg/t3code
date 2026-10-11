@@ -2,9 +2,11 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProjectId,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -52,6 +54,45 @@ function providerDisplayLabel(provider: {
   return provider.instanceId;
 }
 
+/**
+ * `provider.enabled` reflects the machine plus any project's keep-alive
+ * override, so it alone can't tell this project apart from one that merely
+ * shares the instance. Settings carry the real per-project view.
+ */
+function isProviderEnabledForProject(
+  config: T3ServerConfig | null | undefined,
+  provider:
+    | { readonly instanceId: ModelSelection["instanceId"]; readonly enabled: boolean }
+    | undefined,
+  projectId: ProjectId | null,
+): boolean {
+  if (!provider) {
+    return false;
+  }
+  return config?.settings
+    ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
+    : provider.enabled;
+}
+
+/**
+ * Whether the project has explicitly turned this instance off, as opposed
+ * to it merely being disabled or unreachable at the machine level.
+ */
+function isProjectDisabledOverride(
+  config: T3ServerConfig | null | undefined,
+  instanceId: ModelSelection["instanceId"],
+  projectId: ProjectId | null,
+): boolean {
+  if (!projectId || !config?.settings) {
+    return false;
+  }
+  return (
+    config.settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[
+      instanceId
+    ] === false
+  );
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -77,13 +118,20 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/**
+ * Whether the selection cannot be sent as is: the project turned its instance
+ * off, or a known Antigravity selection needs setup or a different model.
+ */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
+  projectId: ProjectId | null = null,
 ): boolean {
   if (!config || !selection) {
     return false;
+  }
+  if (isProjectDisabledOverride(config, selection.instanceId, projectId)) {
+    return true;
   }
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
@@ -93,12 +141,29 @@ export function isModelSelectionUnavailable(
   return (
     driver === "antigravity" &&
     (!provider ||
-      !provider.enabled ||
+      !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       provider.availability === "unavailable" ||
       !provider.models.some((model) => model.slug === selection.model))
   );
+}
+
+/** Why `isModelSelectionUnavailable` refused a selection, worded for the recovery that applies. */
+export function describeUnavailableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection,
+  projectId: ProjectId | null,
+): { readonly title: string; readonly detail: string } {
+  return isProjectDisabledOverride(config, selection.instanceId, projectId)
+    ? {
+        title: "Model turned off for this project",
+        detail: "Turn it back on in this project's provider settings, or choose another model.",
+      }
+    : {
+        title: "Antigravity model unavailable",
+        detail: "Set up Antigravity on web or desktop, or choose another model.",
+      };
 }
 
 /**
@@ -109,6 +174,7 @@ export function isModelSelectionUnavailable(
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
+  projectId: ProjectId | null = null,
 ): ModelSelection | null {
   if (!selection || !config) {
     return selection;
@@ -119,10 +185,10 @@ export function resolveSelectableModelSelection(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   if (driver === "antigravity") {
-    return selection;
+    return isProjectDisabledOverride(config, selection.instanceId, projectId) ? null : selection;
   }
   return provider &&
-    provider.enabled &&
+    isProviderEnabledForProject(config, provider, projectId) &&
     provider.installed &&
     provider.auth.status !== "unauthenticated"
     ? selection
@@ -137,8 +203,9 @@ export function resolveSelectableModelSelection(
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
+  projectId: ProjectId | null = null,
 ): ModelSelection | null {
-  const usable = resolveSelectableModelSelection(config, selection);
+  const usable = resolveSelectableModelSelection(config, selection, projectId);
   if (!usable || !config) {
     return usable;
   }
@@ -167,13 +234,14 @@ export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
   providerInstanceId?: ModelSelection["instanceId"],
+  projectId: ProjectId | null = null,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
     if (
       (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
-      !provider.enabled ||
+      !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")
@@ -251,7 +319,8 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection) ||
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
+        (provider !== undefined && !isProviderEnabledForProject(config, provider, projectId)) ||
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),

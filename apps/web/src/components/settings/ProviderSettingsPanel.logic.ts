@@ -3,7 +3,11 @@ import {
   AuthProvidersManageScope,
   type AuthSessionState,
   type EnvironmentId,
+  type ProjectId,
+  type ProjectSettingsOverrides,
+  type ProviderInstanceId,
   sessionGrantsScope,
+  type ServerSettings,
   type SessionGrantInput,
 } from "@t3tools/contracts";
 
@@ -103,6 +107,37 @@ export function resolveRemoteOperateAccess(input: {
   readonly hasError: boolean;
 }): ProviderOperateAccess {
   return resolveSessionOperateAccess(input);
+}
+
+/**
+ * The patch for one instance's project override, following the envelope
+ * replacement rule for `projectSettingsOverrides`: the returned entry
+ * replaces the project's whole override set, and `null` removes it.
+ * `value: undefined` resets that single instance back to inheriting the
+ * environment's enablement, leaving any other overridden keys untouched.
+ */
+/** Every checkout of a project on one environment shares the same choice. */
+export function buildProviderInstanceEnablementOverridePatch(
+  settings: Pick<ServerSettings, "projectSettingsOverrides">,
+  projectIds: readonly ProjectId[],
+  instanceId: ProviderInstanceId,
+  value: boolean | undefined,
+): Record<ProjectId, ProjectSettingsOverrides | null> {
+  const patch: Record<ProjectId, ProjectSettingsOverrides | null> = {};
+  for (const projectId of projectIds) {
+    const current = settings.projectSettingsOverrides[projectId];
+    const enablement = { ...current?.providerInstanceEnablement };
+    if (value === undefined) delete enablement[instanceId];
+    else enablement[instanceId] = value;
+
+    const { providerInstanceEnablement: _omit, ...rest } = current ?? {};
+    const nextEntry: ProjectSettingsOverrides =
+      Object.keys(enablement).length > 0
+        ? { ...rest, providerInstanceEnablement: enablement }
+        : rest;
+    patch[projectId] = Object.keys(nextEntry).length === 0 ? null : nextEntry;
+  }
+  return patch;
 }
 
 export function classifyProviderEnvironmentAccess(input: {

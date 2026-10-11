@@ -55,7 +55,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
@@ -472,6 +472,19 @@ export function ProviderEnvironmentSection(props: {
   );
 }
 
+/**
+ * When a project is in scope, the enable control reads and writes that
+ * project's override instead of the environment's `instance.enabled`.
+ * `value` is the project's explicit override (`undefined` means it
+ * inherits the environment); `effectiveEnabled` is what the Switch shows.
+ */
+interface ProjectEnablementControl {
+  readonly value: boolean | undefined;
+  readonly effectiveEnabled: boolean;
+  readonly onChange: (next: boolean) => void;
+  readonly onReset: () => void;
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -511,6 +524,8 @@ interface ProviderInstanceCardProps {
   readonly isUpdating?: boolean | undefined;
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
+  /** Omit this prop entirely for environment-wide editing. */
+  readonly projectEnablement?: ProjectEnablementControl | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -540,6 +555,9 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
  *     driver-specific `config.enabled` into the envelope on load and both
  *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
  *     false wins, then envelope, then config, then the driver default).
+ *     With `projectEnablement` set, the Switch instead reads and writes
+ *     that project's override, leaving the environment's `instance.enabled`
+ *     untouched.
  */
 export function ProviderInstanceCard({
   instanceId,
@@ -568,8 +586,11 @@ export function ProviderInstanceCard({
   onAcceptUrlAuth,
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
+  projectEnablement,
 }: ProviderInstanceCardProps) {
-  const enabled = resolveProviderInstanceEnabled(instance);
+  const enabled = projectEnablement
+    ? projectEnablement.effectiveEnabled
+    : resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -577,8 +598,9 @@ export function ProviderInstanceCard({
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
+  // `liveProvider.enabled` is machine-wide; a project override can turn it on.
   const summary = enabled
-    ? getProviderSummary(liveProvider)
+    ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
@@ -665,6 +687,10 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
+    if (projectEnablement) {
+      projectEnablement.onChange(value);
+      return;
+    }
     onUpdate({ ...instance, enabled: value });
   };
 
@@ -963,10 +989,18 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center">
+        <span className="flex h-5 shrink-0 items-center gap-1">
+          {projectEnablement?.value !== undefined ? (
+            <SettingResetButton
+              label={`${displayName} enablement`}
+              tooltip="Reset to the device setting"
+              disabled={readOnly || !canWriteSettings}
+              onClick={projectEnablement.onReset}
+            />
+          ) : null}
           <Switch
             checked={enabled}
-            disabled={readOnly}
+            disabled={readOnly || (projectEnablement !== undefined && !canWriteSettings)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />

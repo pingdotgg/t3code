@@ -62,7 +62,7 @@ export function SourceControlWritingSettingsSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, targets } = useSettingsScope();
+  const { environment, connectedEnvironments, targets, target } = useSettingsScope();
   // The representative supplies the provider list; a model choice is checked
   // against every target before it fans out.
   const environmentId = environment?.environmentId ?? null;
@@ -98,20 +98,37 @@ export function SourceControlWritingSettingsSection() {
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const defaultModelSelection = resolveAppModelSelectionState(settings, textGenerationProviders);
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(textGenerationProviders),
+      settings,
+      target?.projectId ?? null,
+    ),
+  );
+  // The environment default can name an instance this project turned off.
+  const projectEnabledInstanceIds = new Set(
+    instanceEntries
+      .filter((entry) => entry.enabled && entry.isAvailable)
+      .map((entry) => entry.instanceId),
+  );
+  const projectEffectiveTextGenerationProviders = textGenerationProviders.filter((provider) =>
+    projectEnabledInstanceIds.has(provider.instanceId),
+  );
+  const defaultModelSelection = resolveAppModelSelectionState(
+    settings,
+    projectEffectiveTextGenerationProviders,
+  );
   const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
   const activeSelection = resolveAppModelSelectionState(
     {
       ...settings,
       textGenerationModelSelection: resolveSourceControlWriterModelSelection(
         settings,
-        textGenerationProviders,
+        projectEffectiveTextGenerationProviders,
+        target?.projectId ?? null,
       ),
     },
-    textGenerationProviders,
-  );
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(textGenerationProviders), settings),
+    projectEffectiveTextGenerationProviders,
   );
   const canEnableDedicatedModel = instanceEntries.some(
     (entry) =>
@@ -119,7 +136,7 @@ export function SourceControlWritingSettingsSection() {
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );

@@ -1,12 +1,19 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -70,12 +77,58 @@ export function isModelSelectionProviderEnabled(
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
 }
 
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+].map((driver) => ProviderDriverKind.make(driver));
+
+/**
+ * The text generation model on the first instance `isEnabled` accepts: the
+ * built-in default instances in preference order, then configured instances
+ * of those drivers. `null` when none is.
+ */
+export function fallbackTextGenerationModelSelection(
+  providerInstances: ServerSettings["providerInstances"],
+  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
+): ModelSelection | null {
+  const candidates = [
+    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
+      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
+    ),
+    ...Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+      TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
+        ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
+        : [],
+    ),
+  ];
+  const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
+  if (match === undefined) return null;
+  const [instanceId, driver] = match;
+  return {
+    instanceId,
+    model:
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_MODEL_BY_PROVIDER[driver] ??
+      DEFAULT_TEXT_GENERATION_MODEL,
+  };
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
+  projectId: ProjectId | null = null,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+  if (
+    !selection ||
+    !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
     return settings.textGenerationModelSelection;
   }
   if (providers === undefined) {

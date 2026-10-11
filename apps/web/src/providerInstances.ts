@@ -15,9 +15,9 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
-  isUnconfiguredDefaultInstanceEnabled,
-  resolveProviderInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   type ModelSelection,
+  type ProjectId,
   type ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -154,7 +154,11 @@ export function deriveProviderInstanceEntries(
  */
 export function deriveProviderEntriesByEnvironment(
   providersByEnvironment: Iterable<
-    readonly [string, ReadonlyArray<ServerProvider>, Pick<ServerSettings, "providerInstances">?]
+    readonly [
+      string,
+      ReadonlyArray<ServerProvider>,
+      Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">?,
+    ]
   >,
 ): ReadonlyMap<string, ReadonlyMap<string, ProviderInstanceEntry>> {
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
@@ -179,20 +183,22 @@ export function deriveProviderEntriesByEnvironment(
  * streamed state, since the server runs it with default config. Any other
  * instance missing from `providerInstances` is stale (for example
  * immediately after deletion) and is treated as disabled.
+ *
+ * `projectId` folds in that project's `providerInstanceEnablement` override
+ * (enable or disable in either direction over the machine value); `null`
+ * (no project in scope, or a caller that isn't project-aware) resolves the
+ * machine value only, matching every call site before this parameter existed.
  */
 export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
-  settings: Pick<ServerSettings, "providerInstances">,
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null = null,
 ): ReadonlyArray<ProviderInstanceEntry> {
   return entries.map((entry) => {
     const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
       ? settings.providerInstances[entry.instanceId]
       : undefined;
-    const enabled = explicitInstance
-      ? resolveProviderInstanceEnabled(explicitInstance)
-      : entry.isDefault
-        ? isUnconfiguredDefaultInstanceEnabled(entry.instanceId)
-        : false;
+    const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
     if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) {
       return enabled === entry.enabled ? entry : { ...entry, enabled };
     }

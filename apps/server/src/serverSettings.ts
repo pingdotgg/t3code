@@ -11,9 +11,6 @@
  * @module ServerSettings
  */
 import {
-  DEFAULT_TEXT_GENERATION_MODEL,
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -61,6 +58,7 @@ import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJso
 import {
   applyServerSettingsPatch,
   deriveLegacyProjectOverrides,
+  fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -557,17 +555,6 @@ function migrateLegacyProviderSettings(
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
-const TEXT_GENERATION_FALLBACK_DRIVERS = [
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "muse",
-  "pi",
-  "opencode",
-  "antigravity",
-].map((driver) => ProviderDriverKind.make(driver));
-
 /** ACP Registry instances reject every application text-generation operation. */
 function selectionSupportsTextGeneration(
   settings: ServerSettings,
@@ -584,27 +571,15 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // The built-in default instances in preference order. A slot without an
-  // explicit instance uses its driver's default enabled state.
-  const fallback = TEXT_GENERATION_FALLBACK_DRIVERS.find((driver) =>
-    resolveProviderInstanceEnabled(
-      settings.providerInstances[defaultInstanceIdForDriver(driver)] ?? { driver, config: {} },
-    ),
+  // A slot without an explicit instance uses its driver's default enabled state.
+  const fallback = fallbackTextGenerationModelSelection(
+    settings.providerInstances,
+    (instanceId, driver) =>
+      resolveProviderInstanceEnabled(
+        settings.providerInstances[instanceId] ?? { driver, config: {} },
+      ),
   );
-  if (!fallback) {
-    return settings;
-  }
-
-  return {
-    ...settings,
-    textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
-    } satisfies ModelSelection,
-  };
+  return fallback === null ? settings : { ...settings, textGenerationModelSelection: fallback };
 }
 
 // Values under these keys are compared as a whole — never stripped field-by-field.

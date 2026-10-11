@@ -435,7 +435,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
     props.connectionState === "connected" &&
-    isModelSelectionUnavailable(props.serverConfig, currentModelSelection);
+    isModelSelectionUnavailable(
+      props.serverConfig,
+      currentModelSelection,
+      props.selectedThread.projectId,
+    );
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (
@@ -651,8 +655,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ? undefined
     : currentModelSelection.instanceId;
   const modelOptions = useMemo(
-    () => buildModelOptions(props.serverConfig, currentModelSelection, lockedProviderInstanceId),
-    [props.serverConfig, currentModelSelection, lockedProviderInstanceId],
+    () =>
+      buildModelOptions(
+        props.serverConfig,
+        currentModelSelection,
+        lockedProviderInstanceId,
+        props.selectedThread.projectId,
+      ),
+    [
+      props.serverConfig,
+      currentModelSelection,
+      lockedProviderInstanceId,
+      props.selectedThread.projectId,
+    ],
   );
   const threadProviderGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const currentModelOption =

@@ -147,6 +147,42 @@ describe("resolveProjectSettings", () => {
     expect(resolved.settings.defaultModelSelection).toBeNull();
     expect(resolved.sources.defaultModelSelection).toBe("environment");
   });
+
+  it("moves text generation off an instance the project turned off", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: createModelSelection(codex, "gpt-5"),
+      projectSettingsOverrides: { [projectId]: { providerInstanceEnablement: { [codex]: false } } },
+    };
+    expect(
+      resolveProjectSettings(settings, projectId).settings.textGenerationModelSelection.instanceId,
+    ).toBe(ProviderInstanceId.make("claudeAgent"));
+    expect(
+      resolveProjectSettings(settings, otherProjectId).settings.textGenerationModelSelection,
+    ).toEqual(settings.textGenerationModelSelection);
+  });
+
+  it("falls back to a configured instance when every built-in one is off for the project", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const codexWork = ProviderInstanceId.make("codex_work");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: createModelSelection(codex, "gpt-5"),
+      providerInstances: { [codexWork]: { driver: ProviderDriverKind.make("codex"), config: {} } },
+      projectSettingsOverrides: {
+        [projectId]: {
+          providerInstanceEnablement: {
+            [codex]: false,
+            [ProviderInstanceId.make("claudeAgent")]: false,
+          },
+        },
+      },
+    };
+    expect(
+      resolveProjectSettings(settings, projectId).settings.textGenerationModelSelection.instanceId,
+    ).toBe(codexWork);
+  });
 });
 
 describe("resolveProjectSettings with a t3.json", () => {

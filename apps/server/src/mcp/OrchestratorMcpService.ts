@@ -214,6 +214,8 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
     case "ThreadManagementProjectThreadsListError":
     case "ThreadManagementDurableRunProjectionError":
       return failure("orchestration_error", error.message);
+    case "ThreadManagementProviderInstanceDisabledError":
+      return failure("invalid_request", error.message);
   }
 }
 
@@ -1132,6 +1134,19 @@ const make = Effect.gen(function* () {
    * unattended agent can see a provider as unavailable after it was fixed.
    * Re-probe the requested instance once before refusing it.
    */
+  const assertTargetEnabledForProject = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+    commandId: CommandId,
+    target: ResolvedTarget,
+  ) =>
+    threadManagement
+      .assertProviderInstanceEnabled({
+        projectId: parent.thread.projectId,
+        commandId,
+        instanceId: target.modelSelection.instanceId,
+      })
+      .pipe(Effect.mapError(threadManagementFailure));
+
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
     const instanceId =
       input.target?.providerInstanceId ??
@@ -1176,20 +1191,35 @@ const make = Effect.gen(function* () {
         }
         // Inherit the parent's instance only when it can actually serve the
         // child; an unavailable parent yields to a healthy instance of the
-        // requested driver rather than failing the delegation.
-        const inheritedCandidate = candidates.find(
-          (candidate) =>
-            candidate.instanceId === input.parent.thread.modelSelection.instanceId &&
-            providerConstraints(candidate, true).length === 0,
-        );
-        const availableCandidate = candidates.find(
+        // requested driver rather than failing the delegation. An instance
+        // the project turned off cannot serve either, so selection skips it
+        // for the next candidate instead of failing the enablement check.
+        const healthyCandidates = candidates.filter(
           (candidate) => providerConstraints(candidate, true).length === 0,
         );
-        instanceId = inheritedCandidate?.instanceId ?? availableCandidate?.instanceId;
+        const inheritedCandidate = healthyCandidates.find(
+          (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
+        );
+        const orderedCandidates = [
+          ...(inheritedCandidate === undefined ? [] : [inheritedCandidate]),
+          ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
+        ];
+        for (const candidate of orderedCandidates) {
+          const enabledForProject = yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId: input.parent.thread.projectId,
+            instanceId: candidate.instanceId,
+          });
+          if (enabledForProject) {
+            instanceId = candidate.instanceId;
+            break;
+          }
+        }
         if (instanceId === undefined) {
           return yield* failure(
             "provider_unavailable",
-            `No available V2 provider instance for driver ${requestedDriver}.`,
+            healthyCandidates.length === 0
+              ? `No available V2 provider instance for driver ${requestedDriver}.`
+              : `No instance of driver ${requestedDriver} is enabled for this project.`,
           );
         }
       }
@@ -1931,6 +1961,7 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
+        yield* assertTargetEnabledForProject(parent, commandId, target);
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -2216,6 +2247,11 @@ const make = Effect.gen(function* () {
                 requestKey: key,
                 index,
               });
+              yield* assertTargetEnabledForProject(
+                parent,
+                stableCommandId({ scope, requestKey: key, operation: "create-thread", index }),
+                target,
+              );
               const title = threadTitle({
                 parentTitle: parent.thread.title,
                 prompt: request.prompt,

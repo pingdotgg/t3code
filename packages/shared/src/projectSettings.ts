@@ -6,6 +6,7 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  resolveProjectProviderInstanceEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
   type T3ProjectFile,
@@ -13,7 +14,7 @@ import {
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "./path.ts";
-import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
+import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
 
 /**
  * Where a project-scoped value came from. The order is the priority order:
@@ -174,17 +175,32 @@ function resolveProjectOverrides(
     // undefined; that is not an override.
     if (value === undefined) continue;
     // A model on a disabled provider falls back to the environment, like the
-    // environment-level guards do for these keys.
+    // environment-level guards do for these keys. An instance this project
+    // enabled via `providerInstanceEnablement` still counts as enabled here.
     if (
       (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&
       value !== null &&
-      !isModelSelectionProviderEnabled(settings, value as ModelSelection)
+      !resolveProjectProviderInstanceEnabled(
+        settings,
+        projectId,
+        (value as ModelSelection).instanceId,
+      )
     ) {
       continue;
     }
     effective[key] = value;
     sources[key] = "project";
+  }
+  // Like the environment guard, text generation never runs on an instance
+  // this project turned off.
+  const textGeneration = effective.textGenerationModelSelection as ModelSelection;
+  if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
+    const fallback = fallbackTextGenerationModelSelection(
+      settings.providerInstances,
+      (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
+    );
+    if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }
   return { settings: effective as ServerSettings, sources, overrides };
 }

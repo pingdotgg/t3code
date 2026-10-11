@@ -167,7 +167,10 @@ export class ThreadLaunchService extends Context.Service<
   {
     readonly launch: (
       input: ThreadLaunchInput,
-    ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
+    ) => Effect.Effect<
+      ThreadLaunchResult,
+      ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
     /**
      * Fails when a new worktree's base ref cannot give provisioning a commit.
      * `launch` accepts such a launch and reports the failure inside the
@@ -341,6 +344,7 @@ const make = Effect.gen(function* () {
               : ServerSettings.resolveSourceControlWriterModelSelection(
                   settings,
                   yield* providerRegistry.getProviders,
+                  input.projectId,
                 );
           return yield* textGeneration
             .generateBranchName({
@@ -764,6 +768,13 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      yield* ThreadManagement.assertProviderInstanceEnabledForProject(
+        serverSettings,
+        receipts,
+        input.commandId,
+        input.projectId,
+        input.modelSelection.instanceId,
+      );
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before
