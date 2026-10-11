@@ -72,7 +72,8 @@ import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
-const PREVIOUS_WORKTREE_ITEM_VALUE = "__previous_worktree__";
+// Git forbids ":" in ref names, so this never matches a real branch.
+const PREVIOUS_WORKTREE_ITEM_VALUE = "__previous_worktree__:";
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
