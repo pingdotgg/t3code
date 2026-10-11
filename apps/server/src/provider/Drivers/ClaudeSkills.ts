@@ -7,6 +7,8 @@
  * matching the CLI. `.agents/skills` is a Codex location: verified against the
  * CLI, a skill that lives only there is answered with `Unknown command`, so it
  * is not scanned here.
+ * Enabled installed plugins contribute namespaced skills from their install's
+ * `skills/` directory and manifest-declared directories.
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
@@ -18,6 +20,7 @@ import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -27,6 +30,13 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 type ClaudeSkillScope = "user" | "project";
 
+type ClaudeSkillRoot = {
+  readonly directory: string;
+  readonly scope: ClaudeSkillScope;
+  readonly prefix?: string;
+  readonly singleSkill?: boolean;
+};
+
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
 type SkillFrontmatter =
@@ -34,6 +44,7 @@ type SkillFrontmatter =
   | { readonly kind: "malformed" }
   | {
       readonly kind: "parsed";
+      readonly name?: string;
       readonly description?: string;
       readonly userInvocationOnly?: boolean;
       readonly userInvocable?: boolean;
@@ -102,9 +113,11 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   }
 
   const record = parsed as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name.trim() : "";
   const description = typeof record.description === "string" ? record.description.trim() : "";
   return {
     kind: "parsed",
+    ...(name ? { name } : {}),
     ...(description ? { description } : {}),
     ...(parseFrontmatterBoolean(record["disable-model-invocation"]) === true
       ? { userInvocationOnly: true }
@@ -212,6 +225,13 @@ const SkillOverrideSettings = fromLenientJson(
   }),
 );
 const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
+const decodeEnabledPluginSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.Struct({
+      enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+    }),
+  ),
+);
 
 /**
  * What a `skillOverrides` entry says about one skill. `"user-invocable-only"`
@@ -235,15 +255,16 @@ function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverrid
   }
 }
 
-const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
+const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   configDirPath: string,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<ReadonlyMap<string, SkillOverride>, never, FileSystem.FileSystem | Path.Path> {
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
+  const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
   for (const settingsPath of skillOverrideSettingsPaths(
@@ -270,17 +291,92 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
       ),
       Effect.orElseSucceed(() => undefined),
     );
-    const overrides = parsed?.skillOverrides;
-    if (!overrides) {
-      continue;
-    }
-
-    for (const [name, value] of Object.entries(overrides)) {
+    for (const [name, value] of Object.entries(parsed?.skillOverrides ?? {})) {
       overridesByName.set(name, parseSkillOverride(value));
+    }
+    // Decode independently: an invalid skillOverrides map must not discard
+    // the plugin enablement in the same settings file.
+    const pluginSettings = yield* decodeEnabledPluginSettings(contents).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    for (const [key, enabled] of Object.entries(pluginSettings?.enabledPlugins ?? {})) {
+      enabledPlugins.set(key, enabled);
     }
   }
 
-  return overridesByName;
+  return { skillOverrides: overridesByName, enabledPlugins };
+});
+
+const InstalledPlugins = Schema.fromJsonString(
+  Schema.Struct({ plugins: Schema.Record(Schema.String, Schema.Array(Schema.Unknown)) }),
+);
+const decodeInstalledPlugin = Schema.decodeUnknownOption(
+  Schema.Struct({
+    scope: Schema.Literals(["user", "project", "local"]),
+    installPath: Schema.NonEmptyString,
+    projectPath: Schema.optional(Schema.NonEmptyString),
+  }),
+);
+const PluginManifest = Schema.fromJsonString(
+  Schema.Struct({
+    name: Schema.optional(Schema.NonEmptyString),
+    skills: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  }),
+);
+
+/** Installed plugin records are authoritative; marketplace catalogs include uninstalled plugins. */
+const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
+  configDirPath: string,
+  cwd: string | undefined,
+  enabledPlugins: ReadonlyMap<string, boolean>,
+): Effect.fn.Return<ReadonlyArray<ClaudeSkillRoot>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const installed = yield* fileSystem
+    .readFileString(path.join(configDirPath, "plugins", "installed_plugins.json"))
+    .pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(InstalledPlugins)),
+      Effect.orElseSucceed(() => undefined),
+    );
+  const roots: Array<ClaudeSkillRoot> = [];
+  const workspace = cwd === undefined ? undefined : path.resolve(cwd);
+  const scopePriority = { user: 0, project: 1, local: 2 };
+
+  for (const [key, entries] of Object.entries(installed?.plugins ?? {}).sort()) {
+    if (enabledPlugins.get(key) !== true) continue;
+    // Project and local installs only apply to their own workspace; the narrowest wins.
+    const install = entries
+      .flatMap((entry) => Option.toArray(decodeInstalledPlugin(entry)))
+      .filter(
+        (record) =>
+          record.scope === "user" ||
+          (record.projectPath !== undefined && path.resolve(record.projectPath) === workspace),
+      )
+      .sort((left, right) => scopePriority[right.scope] - scopePriority[left.scope])[0];
+    if (!install) continue;
+    const scope = install.scope === "user" ? "user" : "project";
+
+    const manifest = yield* fileSystem
+      .readFileString(path.join(install.installPath, ".claude-plugin", "plugin.json"))
+      .pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(PluginManifest)),
+        Effect.orElseSucceed(() => undefined),
+      );
+    const prefix = manifest?.name ?? key.split("@")[0];
+    if (!prefix) continue;
+    roots.push({ directory: path.join(install.installPath, "skills"), scope, prefix });
+    // Plugins such as mattpocock-skills declare individual nested skill folders;
+    // a declared path can also be a directory containing several skills.
+    const declared = manifest?.skills;
+    for (const relative of typeof declared === "string" ? [declared] : (declared ?? [])) {
+      const directory = path.resolve(install.installPath, relative);
+      const singleSkill = yield* fileSystem
+        .exists(path.join(directory, "SKILL.md"))
+        .pipe(Effect.orElseSucceed(() => false));
+      roots.push({ directory, scope, prefix, singleSkill });
+    }
+  }
+  return roots;
 });
 
 /**
@@ -330,21 +426,30 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
-  const skillOverrides = yield* readSkillOverrides(configDirPath, cwd, environment ?? process.env);
+  const { skillOverrides, enabledPlugins } = yield* readSkillSettings(
+    configDirPath,
+    cwd,
+    environment ?? process.env,
+  );
 
-  const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
+  const roots: ReadonlyArray<ClaudeSkillRoot> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
+    ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins)),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const entries = root.singleSkill
+      ? [path.basename(root.directory)]
+      : yield* fileSystem
+          .readDirectory(root.directory)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
     for (const entry of [...entries].sort()) {
-      const skillPath = path.join(root.directory, entry, "SKILL.md");
+      const skillPath = root.singleSkill
+        ? path.join(root.directory, "SKILL.md")
+        : path.join(root.directory, entry, "SKILL.md");
       const contents = yield* fileSystem
         .readFileString(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));
@@ -360,16 +465,22 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // Claude Code identifies a skill by its directory, not by the
+      // Claude Code identifies a user/project skill by its directory, not by the
       // frontmatter `name`: verified against the CLI, a skill in `probe-alias/`
       // declaring `name: probe-alias-frontmatter` is published as
       // `probe-alias`, and only `skillOverrides["probe-alias"]` switches it
       // off. Keying off the frontmatter name would report a command that does
       // not exist and miss the override that disables it.
-      const name = entry.trim();
-      if (!name) {
+      const directoryName = entry.trim();
+      if (!directoryName) {
         continue;
       }
+      // Plugin skills use their frontmatter name, with a sanitized directory fallback.
+      const pluginSkillName =
+        root.prefix && frontmatter.kind === "parsed" ? frontmatter.name : undefined;
+      const name = root.prefix
+        ? `${root.prefix}:${pluginSkillName ?? directoryName.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+        : directoryName;
 
       // First root wins, so a later root never displaces a higher-precedence
       // skill of the same name.
