@@ -72,6 +72,17 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
   });
 
+  it("says runs post into this thread by default only in its own project", () => {
+    const schema = Tool.getJsonSchema(ScheduleTaskTool) as {
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+
+    assert.include(
+      JSON.stringify(schema.properties?.bindToCurrentThread),
+      "In another project, or without a calling thread, each run launches a fresh thread",
+    );
+  });
+
   it("publishes thread metadata actions from an object-root schema", () => {
     const schema = Tool.getJsonSchema(ThreadUpdateTool) as {
       readonly type?: unknown;
