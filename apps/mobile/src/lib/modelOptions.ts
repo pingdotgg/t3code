@@ -143,6 +143,23 @@ export function isModelSelectionUnavailable(
   );
 }
 
+/** Why `isModelSelectionUnavailable` refused a selection, worded for the recovery that applies. */
+export function describeUnavailableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection,
+  projectId: ProjectId | null,
+): { readonly title: string; readonly detail: string } {
+  return isProjectDisabledOverride(config, selection.instanceId, projectId)
+    ? {
+        title: "Model turned off for this project",
+        detail: "Turn it back on in this project's provider settings, or choose another model.",
+      }
+    : {
+        title: "Antigravity model unavailable",
+        detail: "Set up Antigravity on web or desktop, or choose another model.",
+      };
+}
+
 /**
  * Keep Antigravity selections when setup or catalog changes make them
  * unavailable. Other providers fall through to the server default when they

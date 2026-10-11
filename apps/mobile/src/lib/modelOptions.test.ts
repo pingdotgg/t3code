@@ -12,6 +12,7 @@ import {
 
 import {
   buildModelOptions,
+  describeUnavailableModelSelection,
   groupByProvider,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
@@ -532,6 +533,23 @@ describe("mobile model options", () => {
         settings,
       } as unknown as ServerConfig;
     }
+
+    it("words a project's own turn-off apart from missing setup", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+      const selection = { instanceId, model: "model-a" };
+
+      expect(
+        describeUnavailableModelSelection(configWith(settings), selection, projectId).title,
+      ).toBe("Model turned off for this project");
+      expect(describeUnavailableModelSelection(configWith(settings), selection, null).title).toBe(
+        "Antigravity model unavailable",
+      );
+    });
 
     it("hides an instance the project disables even though the machine enables it", () => {
       const settings: ServerSettings = {

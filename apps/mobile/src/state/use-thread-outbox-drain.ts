@@ -26,7 +26,10 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
-import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import {
+  describeUnavailableModelSelection,
+  isModelSelectionUnavailable,
+} from "../lib/modelOptions";
 import {
   retainAcknowledgedThreadMessage,
   forgetAcknowledgedThreadMessage,
@@ -812,10 +815,12 @@ export function useThreadOutboxDrain(): void {
       if (!serverConfig) return false;
       const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
       if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
-        return restoreQueuedMessage(
-          queuedMessage,
-          "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
+        const { title, detail } = describeUnavailableModelSelection(
+          serverConfig,
+          settings.modelSelection,
+          thread.projectId,
         );
+        return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
       }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
@@ -894,10 +899,12 @@ export function useThreadOutboxDrain(): void {
       );
       if (!currentConfig) return false;
       if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
-        return restoreQueuedMessage(
-          persistedMessage,
-          "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
+        const { title, detail } = describeUnavailableModelSelection(
+          currentConfig,
+          settings.modelSelection,
+          thread.projectId,
         );
+        return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
       }
       const sendSettings = resolveQueuedThreadSettings(
         queuedMessage,
@@ -991,10 +998,12 @@ export function useThreadOutboxDrain(): void {
         serverConfig.providers,
       );
       if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
-        return restoreQueuedMessage(
-          queuedMessage,
-          "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
+        const { title, detail } = describeUnavailableModelSelection(
+          serverConfig,
+          settings.modelSelection,
+          creation.projectId,
         );
+        return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
       }
       let prepared: PreparedTurnAttachments;
       let persistedMessage: QueuedThreadMessage;
@@ -1036,10 +1045,12 @@ export function useThreadOutboxDrain(): void {
       );
       if (!currentConfig) return false;
       if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
-        return restoreQueuedMessage(
-          persistedMessage,
-          "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
+        const { title, detail } = describeUnavailableModelSelection(
+          currentConfig,
+          settings.modelSelection,
+          creation.projectId,
         );
+        return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
       }
       const sendSettings = resolveQueuedThreadSettings(
         queuedMessage,
