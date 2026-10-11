@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
 import { cn } from "../../lib/utils";
-import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
