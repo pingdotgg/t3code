@@ -2,18 +2,28 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  EventId,
   MessageId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
+  TurnItemId,
   ProjectId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -26,9 +36,11 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -513,6 +525,7 @@ function makeLocalCommandHarness(input: {
                   (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
               ),
             }),
+          getThreadRecords: () => Effect.succeed(projection as never),
           getTurnStartHistory: () =>
             Effect.fail(
               new ProjectionStore.ProjectionStoreReadError({
@@ -855,3 +868,557 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+// Runs the start path against the real event sink and projection store, so the
+// failure write goes through the same commit guard production uses.
+function makePersistedStartFailureHarness() {
+  const now = DateTime.makeUnsafe("2026-10-06T12:00:00Z");
+  const driver = ProviderDriverKind.make("codex");
+  const instanceId = ProviderInstanceId.make("codex-start-failure");
+  const threadId = ThreadId.make("thread-start-failure");
+  const runId = RunId.make("run-start-failure");
+  const attemptId = RunAttemptId.make("attempt-start-failure");
+  const rootNodeId = NodeId.make("root-start-failure");
+  const providerThreadId = ProviderThreadId.make("provider-thread-start-failure");
+  const providerSessionId = ProviderSessionId.make("provider-session-start-failure");
+  const providerTurnId = ProviderTurnId.make("provider-turn-start-failure");
+  const checkpointScopeId = CheckpointScopeId.make("scope-start-failure");
+  const messageId = MessageId.make("message-start-failure");
+  const approvalNodeId = NodeId.make("node-approval-start-failure");
+  const approvalRequestId = RuntimeRequestId.make("request-approval-start-failure");
+  const approvalItemId = TurnItemId.make("item-approval-start-failure");
+  const thread: OrchestrationV2AppThread = {
+    createdBy: "user",
+    creationSource: "web",
+    id: threadId,
+    projectId: ProjectId.make("project-start-failure"),
+    title: "Start failure",
+    providerInstanceId: instanceId,
+    modelSelection: { instanceId, model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: providerThreadId,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+  const run: OrchestrationV2Run = {
+    id: runId,
+    threadId,
+    ordinal: 1,
+    providerInstanceId: instanceId,
+    modelSelection: thread.modelSelection,
+    providerThreadId,
+    userMessageId: messageId,
+    rootNodeId,
+    activeAttemptId: attemptId,
+    status: "starting",
+    requestedAt: now,
+    startedAt: null,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const approvalRequest: OrchestrationV2RuntimeRequest = {
+    id: approvalRequestId,
+    nodeId: approvalNodeId,
+    providerTurnId,
+    nativeRequestRef: null,
+    kind: "command",
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId },
+    createdAt: now,
+    resolvedAt: null,
+  };
+  const approvalNode: OrchestrationV2ExecutionNode = {
+    id: approvalNodeId,
+    threadId,
+    runId,
+    parentNodeId: rootNodeId,
+    rootNodeId,
+    kind: "approval_request",
+    status: "waiting",
+    countsForRun: false,
+    providerThreadId,
+    providerTurnId,
+    nativeItemRef: null,
+    runtimeRequestId: approvalRequestId,
+    checkpointScopeId: null,
+    startedAt: now,
+    completedAt: null,
+  };
+  const approvalItem: OrchestrationV2TurnItem = {
+    id: approvalItemId,
+    threadId,
+    runId,
+    nodeId: approvalNodeId,
+    providerThreadId,
+    providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "waiting",
+    title: "Run npm test?",
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+    type: "approval_request",
+    requestId: approvalRequestId,
+    requestKind: "command",
+  };
+  // The run as a restarted attempt inherits it: the earlier attempt left an
+  // approval waiting under the run.
+  const seedPayloads: ReadonlyArray<
+    Pick<OrchestrationV2DomainEvent, "type" | "payload"> & { readonly runId?: RunId }
+  > = [
+    { type: "thread.created", payload: thread },
+    {
+      type: "message.updated",
+      payload: {
+        id: messageId,
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        role: "user",
+        createdBy: "user",
+        creationSource: "web",
+        text: "Continue",
+        attachments: [],
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    { type: "run.created", payload: run },
+    {
+      type: "run-attempt.created",
+      payload: {
+        id: attemptId,
+        runId,
+        attemptOrdinal: 2,
+        rootNodeId,
+        providerInstanceId: instanceId,
+        providerThreadId,
+        providerTurnId: null,
+        reason: "steering_restart",
+        status: "pending",
+        startedAt: null,
+        completedAt: null,
+      },
+    },
+    {
+      type: "checkpoint-scope.created",
+      payload: {
+        id: checkpointScopeId,
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        parentScopeId: null,
+        providerThreadId,
+        kind: "root_run",
+        ordinalWithinParent: 0,
+        advancesAppRunCount: true,
+        cwd: "/tmp/start-failure",
+        createdAt: now,
+      },
+    },
+    {
+      type: "node.updated",
+      payload: {
+        id: rootNodeId,
+        threadId,
+        runId,
+        parentNodeId: null,
+        rootNodeId,
+        kind: "root_turn",
+        status: "running",
+        countsForRun: true,
+        providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId,
+        startedAt: now,
+        completedAt: null,
+      },
+    },
+    {
+      type: "provider-thread.updated",
+      payload: {
+        id: providerThreadId,
+        driver,
+        providerInstanceId: instanceId,
+        providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "not_loaded",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    { type: "node.updated", payload: approvalNode },
+    { type: "runtime-request.updated", payload: approvalRequest },
+    { type: "turn-item.updated", payload: approvalItem },
+  ];
+  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+    Layer.provideMerge(layerDatabase),
+  );
+  const layerSink = EventSink.layer.pipe(Layer.provide(layerStores));
+  const layerPersistence = Layer.mergeAll(layerStores, layerSink, IdAllocator.layer);
+  // `beforeFailureWrite` runs once the start has read its projection and
+  // given up on the provider, right before the failure is committed.
+  const run_ = (options: {
+    /** Rows the run inherited besides the approval. */
+    readonly seed?: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly beforeFailureWrite?: Effect.Effect<
+      void,
+      EventSink.EventSinkV2Error,
+      EventSink.EventSinkV2
+    >;
+    readonly projectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+      eventSink: EventSink.EventSinkV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
+  }) =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* eventSink.write({
+        events: yield* Effect.forEach(seedPayloads, (event) =>
+          Effect.gen(function* () {
+            return {
+              ...event,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              threadId,
+              occurredAt: now,
+            } as OrchestrationV2DomainEvent;
+          }),
+        ),
+      });
+      if (options.seed !== undefined) yield* eventSink.write({ events: options.seed });
+      const gatedSink = EventSink.EventSinkV2.of({
+        ...eventSink,
+        writeIfRunCurrent: (input) =>
+          (options.beforeFailureWrite ?? Effect.void).pipe(
+            Effect.provideService(EventSink.EventSinkV2, eventSink),
+            Effect.orDie,
+            Effect.andThen(eventSink.writeIfRunCurrent(input)),
+          ),
+      });
+      const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2.pipe(
+        Effect.provide(
+          ProviderTurnStart.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(EventSink.EventSinkV2, gatedSink),
+                Layer.succeed(
+                  ProjectionStore.ProjectionStoreV2,
+                  options.projectionStore?.(store, eventSink) ?? store,
+                ),
+                IdAllocator.layer,
+                Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+                FileSystem.layerNoop({}),
+                Layer.mock(GitWorkflow.GitWorkflowService)({}),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+                  open: () =>
+                    Effect.fail(
+                      new ProviderSessionManager.ProviderSessionOpenError({
+                        instanceId,
+                        providerSessionId,
+                        cause: "replacement session failed to open",
+                      }),
+                    ),
+                }),
+                Layer.mock(ProviderAuthService.ProviderAuthService)({
+                  tryHandlePromptCommand: () => Effect.succeed(false),
+                }),
+                Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+                  startRootRun: () => Effect.die("a failed open must not start the run"),
+                }),
+                Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+                  resolve: () => Effect.succeed({} as never),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* service.start({ threadId, runId });
+      return yield* store.getThreadProjection(threadId);
+    }).pipe(Effect.provide(Layer.fresh(layerPersistence)));
+  return {
+    now,
+    driver,
+    instanceId,
+    threadId,
+    runId,
+    rootNodeId,
+    providerThreadId,
+    approvalRequest,
+    approvalNode,
+    approvalItem,
+    run: run_,
+  };
+}
+
+// The user accepts the approval the run inherited.
+const acceptApproval = (
+  harness: ReturnType<typeof makePersistedStartFailureHarness>,
+  eventSink: EventSink.EventSinkV2Shape,
+) =>
+  eventSink.write({
+    events: [
+      {
+        id: EventId.make("event-approval-accepted"),
+        type: "runtime-request.updated",
+        threadId: harness.threadId,
+        nodeId: harness.approvalNode.id,
+        occurredAt: harness.now,
+        payload: {
+          ...harness.approvalRequest,
+          status: "resolved",
+          decision: "accept",
+          resolvedAt: harness.now,
+        },
+      },
+      {
+        id: EventId.make("event-approval-node-completed"),
+        type: "node.updated",
+        threadId: harness.threadId,
+        nodeId: harness.approvalNode.id,
+        occurredAt: harness.now,
+        payload: { ...harness.approvalNode, status: "completed", completedAt: harness.now },
+      },
+      {
+        id: EventId.make("event-approval-item-completed"),
+        type: "turn-item.updated",
+        threadId: harness.threadId,
+        nodeId: harness.approvalNode.id,
+        occurredAt: harness.now,
+        payload: {
+          ...harness.approvalItem,
+          status: "completed",
+          completedAt: harness.now,
+          updatedAt: harness.now,
+        },
+      },
+    ],
+  });
+
+const expectApprovalAccepted = (projection: OrchestrationV2ThreadProjection) => {
+  expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
+  expect(projection.runtimeRequests).toMatchObject([{ status: "resolved", decision: "accept" }]);
+  const approvalNode = projection.nodes.find((node) => node.kind === "approval_request");
+  const approvalItem = projection.turnItems.find((item) => item.type === "approval_request");
+  expect(approvalNode?.status).toBe("completed");
+  expect(approvalItem?.status).toBe("completed");
+};
+
+effectIt.effect("keeps an approval accepted while a failed start is written", () =>
+  Effect.gen(function* () {
+    const harness = makePersistedStartFailureHarness();
+    const projection = yield* harness.run({
+      // The user approves after the failure read the approval as pending.
+      beforeFailureWrite: Effect.gen(function* () {
+        yield* acceptApproval(harness, yield* EventSink.EventSinkV2);
+      }),
+    });
+
+    expectApprovalAccepted(projection);
+  }),
+);
+
+effectIt.effect("keeps an approval accepted while the failure reads what it inherited", () =>
+  Effect.gen(function* () {
+    const harness = makePersistedStartFailureHarness();
+    let settling = false;
+    let accepted = false;
+    const projection = yield* harness.run({
+      // The user approves while the failure's recovery read runs: it loaded
+      // the approval's node and item as waiting, but the request had left the
+      // pending-requests read, so no cancellation accompanies their settlement.
+      projectionStore: (store, eventSink) => ({
+        ...store,
+        // Only the inherited-work read asks for subagent links.
+        getThreadRecords: (threadId, fields, filter) =>
+          Effect.sync(() => {
+            if (fields.some((field) => field === "subagents")) settling = true;
+          }).pipe(Effect.andThen(store.getThreadRecords(threadId, fields, filter))),
+        getRuntimeRecoveryProjection: (threadId) =>
+          store.getRuntimeRecoveryProjection(threadId).pipe(
+            Effect.flatMap((recovery) =>
+              !settling || accepted
+                ? Effect.succeed(recovery)
+                : Effect.sync(() => {
+                    accepted = true;
+                  }).pipe(
+                    Effect.andThen(acceptApproval(harness, eventSink)),
+                    Effect.orDie,
+                    Effect.as({
+                      ...recovery,
+                      runtimeRequests: recovery.runtimeRequests.filter(
+                        (request) => request.id !== harness.approvalRequest.id,
+                      ),
+                    }),
+                  ),
+            ),
+          ),
+      }),
+    });
+
+    expect(accepted).toBe(true);
+
+    expectApprovalAccepted(projection);
+  }),
+);
+
+effectIt.effect("fails the run when the work it inherited cannot be read", () =>
+  Effect.gen(function* () {
+    const harness = makePersistedStartFailureHarness();
+    const projection = yield* harness.run({
+      // The start's own reads succeed; only the inherited-work read fails.
+      projectionStore: (store) => ({
+        ...store,
+        getThreadRecords: (threadId, fields, filter) =>
+          fields.some((field) => field === "subagents")
+            ? Effect.fail(
+                new ProjectionStore.ProjectionStoreReadError({
+                  threadId,
+                  cause: "database unavailable",
+                }),
+              )
+            : store.getThreadRecords(threadId, fields, filter),
+      }),
+    });
+
+    expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
+    expect(projection.attempts.map((attempt) => attempt.status)).toEqual(["failed"]);
+    expect(projection.turnItems).toMatchObject([
+      { type: "approval_request", status: "waiting" },
+      { type: "error", title: "Provider session failed to open" },
+    ]);
+  }),
+);
+
+effectIt.effect("keeps a native subagent that completed while a failed start is written", () =>
+  Effect.gen(function* () {
+    const harness = makePersistedStartFailureHarness();
+    const subagentNode: OrchestrationV2ExecutionNode = {
+      ...harness.approvalNode,
+      id: NodeId.make("node-subagent-start-failure"),
+      kind: "subagent",
+      status: "running",
+      runtimeRequestId: null,
+    };
+    const subagent: OrchestrationV2Subagent = {
+      id: subagentNode.id,
+      threadId: harness.threadId,
+      runId: harness.runId,
+      parentNodeId: harness.rootNodeId,
+      origin: "provider_native",
+      createdBy: "agent",
+      driver: harness.driver,
+      providerInstanceId: harness.instanceId,
+      providerThreadId: harness.providerThreadId,
+      childThreadId: null,
+      nativeTaskRef: null,
+      prompt: "Explore the repo",
+      title: "Explorer",
+      model: null,
+      status: "running",
+      result: null,
+      startedAt: harness.now,
+      completedAt: null,
+      updatedAt: harness.now,
+    };
+    const subagentItem: OrchestrationV2TurnItem = {
+      id: TurnItemId.make("item-subagent-start-failure"),
+      threadId: harness.threadId,
+      runId: harness.runId,
+      nodeId: subagentNode.id,
+      providerThreadId: harness.providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "running",
+      title: "Explorer",
+      startedAt: harness.now,
+      completedAt: null,
+      updatedAt: harness.now,
+      type: "subagent",
+      subagentId: subagent.id,
+      origin: "provider_native",
+      driver: harness.driver,
+      providerInstanceId: harness.instanceId,
+      childThreadId: null,
+      prompt: subagent.prompt,
+      result: null,
+    };
+    const base = { threadId: harness.threadId, runId: harness.runId, occurredAt: harness.now };
+    const subagentEvents = (
+      label: string,
+      update: { readonly status: "running" | "completed"; readonly result: string | null },
+    ): ReadonlyArray<OrchestrationV2DomainEvent> => {
+      const completedAt = update.status === "completed" ? harness.now : null;
+      return [
+        {
+          ...base,
+          id: EventId.make(`event-subagent-node-${label}`),
+          type: "node.updated",
+          nodeId: subagentNode.id,
+          payload: { ...subagentNode, status: update.status, completedAt },
+        },
+        {
+          ...base,
+          id: EventId.make(`event-subagent-${label}`),
+          type: "subagent.updated",
+          nodeId: subagent.id,
+          payload: { ...subagent, ...update, completedAt },
+        },
+        {
+          ...base,
+          id: EventId.make(`event-subagent-item-${label}`),
+          type: "turn-item.updated",
+          nodeId: subagentNode.id,
+          payload: { ...subagentItem, ...update, completedAt },
+        },
+      ];
+    };
+    const projection = yield* harness.run({
+      seed: subagentEvents("running", { status: "running", result: null }),
+      // The earlier attempt's session still reports on its native subagent;
+      // it finishes after the failure read it as running.
+      beforeFailureWrite: Effect.gen(function* () {
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: subagentEvents("completed", { status: "completed", result: "Found it" }),
+        });
+      }),
+    });
+
+    expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
+    expect(projection.subagents).toMatchObject([{ status: "completed", result: "Found it" }]);
+    expect(projection.nodes.find((node) => node.id === subagentNode.id)?.status).toBe("completed");
+    expect(projection.turnItems.find((item) => item.id === subagentItem.id)).toMatchObject({
+      status: "completed",
+      result: "Found it",
+    });
+  }),
+);

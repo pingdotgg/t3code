@@ -2,6 +2,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  isProviderNativeSubagentThread,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
@@ -177,6 +178,103 @@ export const layer: Layer.Layer<
             .pipe(Effect.catchCause(() => Effect.succeed(false))),
       };
     };
+
+    /**
+     * Ends the work a run that never reached its provider still shows. A
+     * restart supersedes only the root turn, so requests, streaming replies and
+     * background work an earlier attempt left open stay with the run, and once
+     * it fails nothing will report on them. The run's projection rows feed
+     * RunExecutionService's terminal cascade, the same one a started run uses.
+     */
+    const inheritedWorkSettlement = Effect.fn(
+      "orchestrationV2.providerTurnStart.inheritedWorkSettlement",
+    )(function* (input: { readonly run: OrchestrationV2Run; readonly now: DateTime.Utc }) {
+      const { run } = input;
+      // Lifetime links, settled rows included: a subagent row can settle before
+      // its child thread does. App-owned tasks (delegate_task) run on their own.
+      const nativeLinks = (threadId: ThreadId) =>
+        projectionStore
+          .getThreadRecords(threadId, ["subagents", "turnItems"], {
+            turnItemTypes: ["subagent"],
+            ...(threadId === run.threadId ? { turnItemRunIds: [run.id] } : {}),
+          })
+          .pipe(
+            Effect.map((records) =>
+              [...records.subagents, ...records.turnItems].flatMap((row) =>
+                (threadId !== run.threadId || row.runId === run.id) &&
+                "childThreadId" in row &&
+                row.childThreadId !== null &&
+                row.origin === "provider_native"
+                  ? [row.childThreadId]
+                  : [],
+              ),
+            ),
+          );
+      const pending = [...(yield* nativeLinks(run.threadId))];
+      const linkedChildThreadIds = new Set<ThreadId>();
+      const threads = [yield* projectionStore.getRuntimeRecoveryProjection(run.threadId)];
+      for (let threadId = pending.shift(); threadId !== undefined; threadId = pending.shift()) {
+        if (threadId === run.threadId || linkedChildThreadIds.has(threadId)) continue;
+        const child = yield* projectionStore.getRuntimeRecoveryProjection(threadId).pipe(
+          Effect.map(Option.some),
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(Option.none()),
+          }),
+        );
+        if (Option.isNone(child) || !isProviderNativeSubagentThread(child.value.thread)) continue;
+        linkedChildThreadIds.add(threadId);
+        // A child thread has no runs, so the recovery read leaves out its
+        // streaming replies, provider turns, subagents whose item already
+        // settled, and its pending requests' nodes and items; read them by
+        // thread instead.
+        const records = yield* projectionStore.getThreadRecords(
+          threadId,
+          ["messages", "nodes", "turnItems", "providerTurns", "subagents"],
+          {
+            messageRoles: ["assistant"],
+            turnItemTypes: ["approval_request", "user_input_request"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
+        );
+        const requestNodeIds = new Set(
+          child.value.runtimeRequests.flatMap((request) =>
+            request.status === "pending" ? [request.nodeId] : [],
+          ),
+        );
+        const knownNodeIds = new Set(child.value.nodes.map((node) => node.id));
+        const knownItemIds = new Set(child.value.turnItems.map((item) => item.id));
+        threads.push({
+          ...child.value,
+          providerTurns: records.providerTurns,
+          subagents: records.subagents,
+          nodes: [
+            ...child.value.nodes,
+            ...records.nodes.filter(
+              (node) => requestNodeIds.has(node.id) && !knownNodeIds.has(node.id),
+            ),
+          ],
+          turnItems: [
+            ...child.value.turnItems,
+            ...records.turnItems.filter((item) => !knownItemIds.has(item.id)),
+          ],
+          messages: records.messages.filter((message) => message.streaming),
+        });
+        pending.push(...(yield* nativeLinks(threadId)));
+      }
+      const linked = RunExecutionService.openRunOwnedWorkFromProjection({
+        run,
+        threads,
+        linkedChildThreadIds,
+      });
+      return yield* RunExecutionService.cascadeTerminalizeRunOwnedSubagents({
+        run,
+        open: linked,
+        // The same status a started run's failure gives the work it owned.
+        status: "failed",
+        completedAt: input.now,
+        allocateEventId: () => idAllocator.allocate.event({ threadId: run.threadId }),
+      });
+    });
 
     const makeDeliverySession = (
       session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -366,7 +464,31 @@ export const layer: Layer.Layer<
             runId,
             activeAttemptId: attempt.id,
             expectedStatus: "starting",
-            events,
+            // An answer or approval that lands while the failure is written wins
+            // over cancelling the request it resolved.
+            guardPendingRequestCancellations: true,
+            // A provider-native child the earlier attempt still reports on can
+            // finish between the inherited-work read and this commit.
+            guardSettledWork: true,
+            events:
+              status === "failed"
+                ? [
+                    // Failing the run matters more than settling what it
+                    // inherited: a read that fails here must not leave it
+                    // `starting`.
+                    ...(yield* inheritedWorkSettlement({ run, now }).pipe(
+                      Effect.catchCause((cause) =>
+                        Cause.hasInterruptsOnly(cause)
+                          ? Effect.failCause(cause)
+                          : Effect.logWarning(
+                              "provider turn start could not settle the work a failed run inherited",
+                              { threadId: projection.thread.id, runId, cause: Cause.pretty(cause) },
+                            ).pipe(Effect.as([])),
+                      ),
+                    )),
+                    ...events,
+                  ]
+                : events,
           });
         },
       );
