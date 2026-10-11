@@ -157,6 +157,7 @@ async function setup(h264 = false) {
       const packet = new Uint8Array(1 + json.length);
       packet[0] = 0x82;
       packet.set(json, 1);
+      sockets[0]?.onmessage?.({ data: Uint8Array.of(0x83).buffer });
       sockets[0]?.onmessage?.({ data: packet.buffer });
       videoBody?.enqueue(new Uint8Array([0, 0, 0, 5, 1, 1, 0x64, 0, 0x1f]));
     },

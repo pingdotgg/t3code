@@ -111,6 +111,7 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   client.start();
   await socketConstructed;
   const ws = Socket.instances[0]!;
+  ws.onmessage?.({ data: Uint8Array.of(0x83).buffer });
   const config = (
     id: number,
     orientation: DeviceScreenSize["orientation"] = "portrait",

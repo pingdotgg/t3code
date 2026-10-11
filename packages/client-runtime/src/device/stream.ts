@@ -128,7 +128,6 @@ const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
 const IOS_MSG_KEY = 0x06;
 const IOS_MSG_ORIENTATION = 0x07;
-const IOS_MSG_HARDWARE_KEYBOARD = 0x0d;
 // helper -> browser.
 const IOS_TAG_SCREEN_CONFIG = 0x82;
 const IOS_TAG_INPUT_ADMITTED = 0x83;
@@ -366,8 +365,8 @@ export function createDeviceStreamClient(
   const retryTimers = new Map<"video" | "input", ReturnType<typeof setTimeout>>();
   let primeController: AbortController | null = null;
   let videoDecoder: VideoDecoder | null = null;
-  let decoderConfig: VideoDecoderConfig | null = null;
   let decodedVideoGeneration: number | null = null;
+  let iosInputAdmitted = false;
   let iosInputUnavailable = false;
   let timestamp = 0;
   let awaitingKeyframe = true;
@@ -388,7 +387,13 @@ export function createDeviceStreamClient(
   let pendingOrientation: { requestId: number } | null = null;
   const duoControl = createDuoControl({
     send(request) {
-      if (socket?.readyState !== WebSocket.OPEN || !screen?.supportsHingeAngle) return false;
+      if (
+        !iosInputAdmitted ||
+        iosInputUnavailable ||
+        socket?.readyState !== WebSocket.OPEN ||
+        !screen?.supportsHingeAngle
+      )
+        return false;
       if (request.command.control === "physical" && !screen.supportsPhysicalOrientation)
         return false;
       try {
@@ -522,7 +527,6 @@ export function createDeviceStreamClient(
       // Already closed.
     }
     videoDecoder = null;
-    decoderConfig = null;
     awaitingKeyframe = true;
   };
 
@@ -580,7 +584,6 @@ export function createDeviceStreamClient(
     try {
       if (!videoDecoder || videoDecoder.state === "closed") videoDecoder = makeDecoder();
       videoDecoder.configure(full);
-      decoderConfig = full;
       return true;
     } catch (cause) {
       if (platform === "android") fail(`Video decoder: ${(cause as Error).message}`);
@@ -595,22 +598,15 @@ export function createDeviceStreamClient(
       awaitingKeyframe = false;
     }
     if (videoDecoder.decodeQueueSize > SOFT_DECODE_QUEUE) {
-      if (platform !== "ios" || !decoderConfig) {
+      if (platform !== "ios") {
         recoverDecoder();
         return;
       }
-      // A slow viewer can accumulate healthy H.264 frames. Drop that backlog
-      // and resume at an IDR instead of permanently giving up its 3D view.
-      try {
-        videoDecoder.reset();
-        videoDecoder.configure(decoderConfig);
-        awaitingKeyframe = true;
-        if (!isKey) return;
-        awaitingKeyframe = false;
-      } catch {
-        recoverDecoder();
-        return;
-      }
+      // Native IDRs are spaced by frame count, so an idle simulator may take
+      // minutes to produce one. A new AVCC subscription forces a fresh IDR.
+      controller?.abort();
+      closeDecoder();
+      return;
     }
     try {
       videoDecoder.decode(
@@ -698,6 +694,7 @@ export function createDeviceStreamClient(
         if (!isCurrent()) return;
         if (done) break;
         for (const chunk of demuxer.push(value)) {
+          if (videoController.signal.aborted) break;
           switch (chunk.type) {
             case "seed":
               void createImageBitmap(new Blob([chunk.payload as BlobPart], { type: "image/jpeg" }))
@@ -740,7 +737,9 @@ export function createDeviceStreamClient(
       }
     } catch (cause) {
       if (!isCurrent()) return;
-      retryDetail ??= (cause as Error).message;
+      retryDetail ??= videoController.signal.aborted
+        ? "Video decoder fell behind. Reconnecting…"
+        : (cause as Error).message;
     }
     if (isCurrent()) {
       controller = null;
@@ -822,18 +821,16 @@ export function createDeviceStreamClient(
     const ws = new WebSocket(wsUrl(`/helper/ws?device=${device}`));
     ws.binaryType = "arraybuffer";
     socket = ws;
-    ws.onopen = () => {
-      if (stopped || socket !== ws) return;
-      ws.send(taggedJson(IOS_MSG_HARDWARE_KEYBOARD, { enabled: false }));
-    };
+    iosInputAdmitted = false;
+    iosInputUnavailable = false;
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       const bytes = new Uint8Array(event.data);
       if (socket !== ws || stopped || bytes.length < 1) return;
       if (bytes[0] === IOS_TAG_INPUT_ADMITTED) {
-        iosInputUnavailable = false;
-        events.onInputConnected(true);
+        iosInputAdmitted = true;
+        events.onInputConnected(!iosInputUnavailable);
         return;
       }
       try {
@@ -846,7 +843,7 @@ export function createDeviceStreamClient(
           if (Option.isSome(config)) {
             iosInputUnavailable = config.value.inputUnavailable === true;
             events.onInputConnected(
-              !iosInputUnavailable,
+              iosInputAdmitted && !iosInputUnavailable,
               iosInputUnavailable ? "Simulator input is unavailable" : undefined,
             );
             const previous = screen;
@@ -884,6 +881,7 @@ export function createDeviceStreamClient(
     ws.onclose = (event) => {
       if (socket !== ws) return;
       socket = null;
+      iosInputAdmitted = false;
       duoControl.clear();
       rotationCursor = null;
       if (stopped) return;
@@ -979,6 +977,7 @@ export function createDeviceStreamClient(
     stopped = false;
     generation++;
     configuring = false;
+    iosInputAdmitted = false;
     iosInputUnavailable = false;
     connecting();
     if (platform === "ios") {
@@ -1022,7 +1021,11 @@ export function createDeviceStreamClient(
   };
 
   const send = (payload: Uint8Array<ArrayBuffer> | string) => {
-    if (!stopped && !iosInputUnavailable && socket?.readyState === WebSocket.OPEN)
+    if (
+      !stopped &&
+      (platform !== "ios" || (iosInputAdmitted && !iosInputUnavailable)) &&
+      socket?.readyState === WebSocket.OPEN
+    )
       socket.send(payload);
   };
 
