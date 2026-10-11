@@ -20,6 +20,16 @@ Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
 reports as broken.
 
+Extra environment for the service belongs in `service.env` under T3 home
+(`~/.t3/service.env` by default). The service launcher merges that file when it
+starts, so Bitbucket credentials and `T3CODE_PORT` / `T3CODE_HOST` pins survive
+`t3 update` and `t3 service install`. Restart the service after editing it:
+
+```sh
+T3CODE_BITBUCKET_EMAIL=you@example.com
+T3CODE_BITBUCKET_API_TOKEN=your-token
+```
+
 `t3 update` downloads the newest release on your channel and switches `t3`
 and the service to it. Restarting interrupts running agent turns, terminals,
 and remote clients, so it asks first; answer no and the service keeps running

@@ -78,7 +78,9 @@ it. Saved tokens can't be viewed again; enter a new one to replace it, or choose
 everything saved for Bitbucket.
 
 If no credentials are saved, T3 Code falls back to these variables in the server's environment.
-Restart the server after changing them:
+Restart the server after changing them. If T3 Code runs as a background service, put them in
+`service.env` under T3 home (`~/.t3/service.env` by default) instead of a shell export or the
+service unit. See [Running T3 Code in the background](./background-service.md).
 
 ```bash
 export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
@@ -199,7 +201,7 @@ does not show its diff, so marks are made and read on web and desktop.
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
   check the credentials saved in Settings → Source Control, or confirm the running server received
-  the environment variables.
+  the environment variables, or `service.env` under T3 home if it runs as a background service.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source Control.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
