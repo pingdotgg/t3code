@@ -38,7 +38,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
-import { Code2, Eye, Table2 } from "lucide";
+import { Check, Code2, Copy, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -51,6 +51,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -138,6 +139,32 @@ const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+
+function FileContentsCopyAction(props: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly relativePath: string;
+  readonly contents: string;
+  readonly truncated: boolean;
+}) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.relativePath });
+  return (
+    <FileSurfaceAction
+      label={isCopied ? "Copied" : props.truncated ? "Copy preview" : "Copy contents"}
+      disabled={props.contents.length === 0}
+      onPress={() =>
+        copyToClipboard(
+          getProjectFileContents(props.environmentId, props.cwd, props.relativePath) ??
+            props.contents,
+          undefined,
+        )
+      }
+    >
+      <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+    </FileSurfaceAction>
+  );
+}
+
 // Shared by the read-only and annotated surfaces, so it is generic over annotation metadata.
 type FilePostRender = <LAnnotation>(
   fileContainer: HTMLElement,
@@ -1279,6 +1306,16 @@ export default function FilePreviewPanel({
               availableEditors={availableEditors}
               openInCwd={absolutePath}
               compact
+            />
+          ) : null}
+          {previewPath !== null && !file.isNotFile && !isMedia && !isPdf && file.data !== null ? (
+            <FileContentsCopyAction
+              key={JSON.stringify([environmentId, cwd, previewPath])}
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={previewPath}
+              contents={file.data.contents}
+              truncated={file.data.truncated}
             />
           ) : null}
           {canToggleRendered && renderedMode ? (
