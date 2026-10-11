@@ -535,14 +535,37 @@ export const layer: Layer.Layer<
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
-          case "app_thread.created":
+          case "app_thread.created": {
+            const offered = input.event.appThread;
+            const existing = yield* projections.getThread(offered.id).pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+              }),
+            );
+            if (
+              existing !== null &&
+              existing.title === offered.title &&
+              modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
+            )
+              return [];
+            const now = yield* DateTime.now;
             return [
               yield* makeDomainEvent(input, {
-                type: "thread.created",
-                threadId: input.event.appThread.id,
-                payload: input.event.appThread,
+                type: existing === null ? "thread.created" : "thread.metadata-updated",
+                threadId: offered.id,
+                payload:
+                  existing === null
+                    ? offered
+                    : {
+                        ...existing,
+                        title: offered.title,
+                        modelSelection: offered.modelSelection,
+                        updatedAt: now,
+                      },
+                occurredAt: now,
               }),
             ];
+          }
           case "provider_session.updated":
             return [
               yield* makeDomainEvent(input, {
@@ -795,6 +818,10 @@ export const layer: Layer.Layer<
               );
             }),
           ),
+          (effect) =>
+            input.event.type === "app_thread.created"
+              ? threadCommands.withLock(input.event.appThread.id, effect)
+              : effect,
         ),
     });
   }),

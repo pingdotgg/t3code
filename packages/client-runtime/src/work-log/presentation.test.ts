@@ -308,6 +308,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["t3_thread_fork", "Forking this thread", "Requested a fork of this thread"],
     ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],
     ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
+    ["t3_workflow_stop", "Stopping a workflow", "Requested a stop for a workflow"],
   ])("labels %s through its lifecycle", (tool, running, completed) => {
     expect(resolveWorkEntryToolPresentation({ label: `T3-code.${tool}` })?.displayName).toBe(
       running,
@@ -318,6 +319,47 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolLifecycleStatus: "completed",
       })?.displayName,
     ).toBe(completed);
+  });
+
+  it("summarizes workflow stop targets separately from their parent thread", () => {
+    const entry = {
+      id: "workflow-stop",
+      createdAt: "2026-10-07T00:00:00.000Z",
+      tone: "tool",
+      label: "Custom title",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+      toolData: {
+        server: "t3-code",
+        tool: "t3_workflow_stop",
+        arguments: { threadId: "parent", subagentId: "workflow-1" },
+        result: {},
+      },
+    } satisfies WorkLogPresentationEntry;
+    expect(
+      summarizeToolGroup([
+        entry,
+        entry,
+        {
+          ...entry,
+          toolData: {
+            ...entry.toolData,
+            arguments: { threadId: "parent", subagentId: "workflow-2" },
+          },
+        },
+        {
+          ...entry,
+          toolData: {
+            ...entry.toolData,
+            tool: "t3_thread_interrupt",
+            arguments: { threadId: "parent" },
+          },
+        },
+      ]),
+    ).toEqual({
+      summary: "Requested stops for 2 workflows and requested interrupts for 1 thread",
+      hasFailure: false,
+    });
   });
 
   it("summarizes project tools from MCP arguments and results without claiming failed effects", () => {

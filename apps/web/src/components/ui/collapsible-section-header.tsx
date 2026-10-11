@@ -14,11 +14,13 @@ export function CollapsibleSectionHeader({
   children,
   expanded,
   tone = "muted",
+  variant = "default",
   accessory,
   ...buttonProps
 }: Omit<ComponentProps<"button">, "className" | "style" | "aria-expanded"> & {
   expanded: boolean;
   tone?: keyof typeof tones;
+  variant?: "default" | "panel";
   accessory?: ReactNode;
 }) {
   return (
@@ -27,7 +29,8 @@ export function CollapsibleSectionHeader({
       type="button"
       aria-expanded={expanded}
       className={cn(
-        "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        variant === "panel" ? "ps-2 pe-2.5" : "px-2",
         tones[tone].label,
       )}
     >

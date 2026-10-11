@@ -36,6 +36,7 @@ import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
@@ -112,6 +113,7 @@ const decodeOrchestrationV2Checkpoint = Schema.decodeUnknownSync(OrchestrationV2
 const decodeOrchestrationV2DomainEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
 const decodeProviderReplayTranscript = Schema.decodeUnknownSync(ProviderReplayTranscript);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
+const encodeOrchestrationV2SubagentJson = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeOrchestrationV2ThreadProjection = Schema.decodeUnknownSync(
   OrchestrationV2ThreadProjection,
 );
@@ -928,6 +930,68 @@ describe("orchestration V2 contracts", () => {
     if (turnItem.type !== "subagent") throw new Error("expected subagent item");
     expect(turnItem.progress).toBe("Inspecting package metadata");
   });
+
+  it.each(["  indented prompt\n", "\n \t\n"])(
+    "preserves workflow prompt and result %j in stored and wire JSON",
+    (preview) => {
+      const subagent = {
+        ...decodeOrchestrationV2Subagent({
+          id: "workflow-coordinator",
+          threadId: "thread-1",
+          runId: "run-1",
+          parentNodeId: "node-root-1",
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: "claudeAgent",
+          providerInstanceId: "claudeAgent",
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Run workflow",
+          title: null,
+          model: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        }),
+        workflow: {
+          phases: [],
+          agents: [
+            {
+              index: 1,
+              label: "Member",
+              state: "completed" as const,
+              prompt: preview,
+              result: preview,
+            },
+          ],
+        },
+      };
+      const { workflow, ...coordinator } = subagent;
+      const incoming = { ...encodeOrchestrationV2SubagentJson(coordinator), workflow };
+      for (const codec of [
+        OrchestrationV2SubagentJson,
+        Schema.toCodecJson(OrchestrationV2Subagent),
+      ]) {
+        const encode = Schema.encodeSync(codec);
+        const decode = Schema.decodeUnknownSync(codec);
+        const json: unknown = JSON.parse(JSON.stringify(encode(subagent)));
+        expect(json).toMatchObject({
+          workflow: { agents: [{ prompt: preview, result: preview }] },
+        });
+        expect(decode(json).workflow?.agents[0]).toMatchObject({
+          prompt: preview,
+          result: preview,
+        });
+        expect(decode(incoming).workflow?.agents[0]).toMatchObject({
+          prompt: preview,
+          result: preview,
+        });
+      }
+    },
+  );
 
   it("decodes app-owned subagent parent-wake policies", () => {
     const appOwnedSubagent = {

@@ -5,25 +5,38 @@ import {
   NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ProviderThread,
+  ProviderThreadId,
+  ProviderDriverKind,
+  ProviderSessionId,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { DispatchModeLimit, type DispatchModeRefusal } from "./DispatchModeLimit.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -269,6 +282,7 @@ it.effect("classifies projection infrastructure failures separately from a missi
     cause: infrastructureCause,
   });
   const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.fail(projectionError),
@@ -302,6 +316,7 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     },
   } as OrchestrationV2ThreadProjection;
   const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.succeed(projection),
@@ -327,6 +342,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     cause: new Error("checkpoint import failed"),
   });
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -368,6 +384,7 @@ it.effect.each([
         runs: status === "missing" ? [] : [{ id: runId, status }],
       }) as unknown as OrchestrationV2ThreadProjection;
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -434,6 +451,7 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -475,6 +493,222 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
 );
 
 it.effect.each([
+  "running",
+  "missing",
+  "completed",
+  "unsupported",
+  "missing-native-id",
+  "wrong-thread",
+  "no-session",
+  "unsupported-runtime",
+  "provider-failed",
+  "provider-timeout",
+  "within-limit",
+  "runtime-raised",
+  "interaction-raised",
+] as const)("stops a persisted workflow with state %s", (state) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:workflow-stop");
+    const subagentId = NodeId.make("node:workflow-stop");
+    const runId = RunId.make("run:workflow-stop");
+    const providerThreadId = ProviderThreadId.make("provider-thread:workflow-stop");
+    const providerSessionId = ProviderSessionId.make("provider-session:workflow-stop");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const now = yield* DateTime.now;
+    let targetModes: Pick<OrchestrationV2ThreadShell, "runtimeMode" | "interactionMode"> = {
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    };
+    const task: OrchestrationV2Subagent = {
+      id: subagentId,
+      threadId,
+      runId,
+      parentNodeId: NodeId.make("node:workflow-parent"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver,
+      providerInstanceId: instanceId,
+      providerThreadId: null,
+      childThreadId: null,
+      nativeTaskRef:
+        state === "missing-native-id"
+          ? null
+          : {
+              driver,
+              nativeId: "native-workflow-id",
+              strength: "strong",
+            },
+      workflow: { phases: [], agents: [] },
+      prompt: "Run the workflow",
+      title: null,
+      model: null,
+      status: state === "completed" ? "completed" : "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      ...(state === "unsupported" ? { driver: ProviderDriverKind.make("codex") } : {}),
+    };
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId: instanceId,
+      providerSessionId,
+      appThreadId: state === "wrong-thread" ? ThreadId.make("other-thread") : threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: [],
+      contextUsage: null,
+      nativeMetadata: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const calls: Array<{ taskId: string; providerThread: OrchestrationV2ProviderThread }> = [];
+    const stopStarted = yield* Deferred.make<void>();
+    const runtime = {
+      driver,
+      providerSessionId,
+      instanceId,
+      ...(state === "unsupported-runtime"
+        ? {}
+        : {
+            stopTask: (input: (typeof calls)[number]) =>
+              state === "provider-failed"
+                ? Effect.fail(
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver,
+                      detail: "private provider detail",
+                    }),
+                  )
+                : state === "provider-timeout"
+                  ? Deferred.succeed(stopStarted, undefined).pipe(Effect.andThen(Effect.never))
+                  : Effect.sync(() => {
+                      calls.push(input);
+                    }),
+          }),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () =>
+              Effect.sync(
+                () =>
+                  ({
+                    thread: { id: threadId, deletedAt: null, ...targetModes },
+                    subagents: state === "missing" ? [] : [task],
+                    runs: [{ id: runId, providerThreadId }],
+                    providerThreads: [providerThread],
+                  }) as unknown as OrchestrationV2ThreadProjection,
+              ),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: (id) => {
+              expect(id).toBe(providerSessionId);
+              return Effect.succeed(state === "no-session" ? Option.none() : Option.some(runtime));
+            },
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
+      const stop = service
+        .stopWorkflow({ threadId, subagentId })
+        .pipe(
+          Effect.provideService(
+            DispatchModeLimit,
+            state === "within-limit" || state === "runtime-raised" || state === "interaction-raised"
+              ? { runtimeMode: "approval-required", interactionMode: "plan", refused }
+              : undefined,
+          ),
+          Effect.result,
+        );
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const result =
+        state === "runtime-raised" || state === "interaction-raised"
+          ? yield* Effect.gen(function* () {
+              const started = yield* Deferred.make<void>();
+              const pending = yield* executor.withLock(
+                threadId,
+                Effect.gen(function* () {
+                  const fiber = yield* Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(stop),
+                    Effect.forkChild,
+                  );
+                  yield* Deferred.await(started);
+                  targetModes =
+                    state === "runtime-raised"
+                      ? { ...targetModes, runtimeMode: "full-access" }
+                      : { ...targetModes, interactionMode: "default" };
+                  return fiber;
+                }),
+              );
+              return yield* Fiber.join(pending);
+            })
+          : state === "provider-timeout"
+            ? yield* Effect.gen(function* () {
+                const finished = yield* Ref.make(false);
+                const pending = yield* stop.pipe(
+                  Effect.tap(() => Ref.set(finished, true)),
+                  Effect.forkChild,
+                );
+                yield* Deferred.await(stopStarted);
+                yield* TestClock.adjust("15 seconds");
+                expect(yield* Ref.get(finished)).toBe(true);
+                const result = yield* Fiber.join(pending);
+                expect(yield* executor.withLock(threadId, Effect.succeed("lock-released"))).toBe(
+                  "lock-released",
+                );
+                return result;
+              })
+            : yield* stop;
+      if (state === "running" || state === "within-limit") {
+        expect(result).toMatchObject({ _tag: "Success" });
+        expect(calls).toEqual([{ taskId: "native-workflow-id", providerThread }]);
+        expect(task.status).toBe("running");
+      } else {
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "OrchestrationV2StopWorkflowError",
+            threadId,
+            subagentId,
+            reason:
+              state === "missing" || state === "completed"
+                ? "not-running"
+                : state === "unsupported" || state === "unsupported-runtime"
+                  ? "unsupported"
+                  : state === "provider-failed" || state === "provider-timeout"
+                    ? "stop-failed"
+                    : "unavailable",
+          },
+        });
+        expect(calls).toEqual([]);
+        if (state === "provider-timeout") {
+          expect(result).toMatchObject({ failure: { cause: { _tag: "TimeoutError" } } });
+        }
+        if (state === "runtime-raised" || state === "interaction-raised") {
+          expect(yield* Ref.get(refused)).toEqual({
+            threadId,
+            ...targetModes,
+            mode: state === "runtime-raised" ? "runtime" : "interaction",
+          });
+        }
+      }
+    }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
+  }),
+);
+
+it.effect.each([
   { status: "completed" as const, settles: true },
   { status: "failed" as const, settles: false },
   { status: "interrupted" as const, settles: false },
@@ -485,6 +719,7 @@ it.effect.each([
     const runId = RunId.make("run:thread-management:settle-after-run");
     const dispatched: Array<string> = [];
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),

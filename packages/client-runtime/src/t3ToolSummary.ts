@@ -168,6 +168,13 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(threadIds), "thread"),
       );
       break;
+    case "workflow-stop":
+      label = phrase(
+        "Requested stops for",
+        "stop",
+        quantity(countEntities(entityIds("subagentId")), "workflow"),
+      );
+      break;
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;

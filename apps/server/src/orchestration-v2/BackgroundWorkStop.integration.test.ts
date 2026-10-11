@@ -42,10 +42,12 @@ const stopEarlierBackgroundWork = ({
   stopWithQueue,
   olderStart = false,
   stalledRun,
+  workflowMember = false,
 }: {
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
+  readonly workflowMember?: boolean;
   readonly stalledRun?:
     | "missing-session"
     | "missing-session-terminal"
@@ -488,23 +490,27 @@ const stopEarlierBackgroundWork = ({
           events: [
             // A subagent the reviewer started, which the provider records on the
             // reviewer's own thread.
-            {
-              id: EventId.make("nested-subagent-item"),
-              type: "turn-item.updated",
-              threadId: reviewerThreadId,
-              occurredAt: now,
-              payload: {
-                ...nested,
-                id: nestedItemId,
-                nodeId: nestedSubagentId,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                type: "subagent",
-                subagentId: nestedSubagentId,
-              },
-            },
+            ...(workflowMember
+              ? []
+              : [
+                  {
+                    id: EventId.make("nested-subagent-item"),
+                    type: "turn-item.updated",
+                    threadId: reviewerThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...nested,
+                      id: nestedItemId,
+                      nodeId: nestedSubagentId,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      type: "subagent",
+                      subagentId: nestedSubagentId,
+                    },
+                  } as const,
+                ]),
             {
               id: EventId.make("nested-subagent"),
               type: "subagent.updated",
@@ -515,12 +521,36 @@ const stopEarlierBackgroundWork = ({
                 id: nestedSubagentId,
                 parentNodeId: reviewerRootId,
                 createdBy: "agent",
-                nativeTaskRef: null,
+                nativeTaskRef: workflowMember
+                  ? { driver, nativeId: "workflow:member", strength: "strong" }
+                  : null,
                 model: null,
               },
             },
           ],
         });
+        if (workflowMember) {
+          // Workflow members have execution nodes and child roots, but no subagent turn item.
+          const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("workflow-member-node"),
+                type: "node.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  ...memberRoot,
+                  id: nestedSubagentId,
+                  threadId: reviewerThreadId,
+                  parentNodeId: reviewerRootId,
+                  rootNodeId: reviewerRootId,
+                  kind: "subagent",
+                },
+              },
+            ],
+          });
+        }
         // A settled run with its root node, attempt, provider turn and,
         // optionally, a command or native subagent it left running.
         const settledRun = (input: {
@@ -883,10 +913,18 @@ const stopEarlierBackgroundWork = ({
         const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
         assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
         assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
-        assert.equal(
-          reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
-          "interrupted",
-        );
+        if (workflowMember) {
+          assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
+          assert.equal(
+            reviewerThread.nodes.find((node) => node.id === nestedSubagentId)?.status,
+            "interrupted",
+          );
+        } else {
+          assert.equal(
+            reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
+            "interrupted",
+          );
+        }
         const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
         assert.equal(testerThread.nodes[0]?.status, "interrupted");
       }).pipe(
@@ -903,6 +941,10 @@ const stopEarlierBackgroundWork = ({
 
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   stopEarlierBackgroundWork({}),
+);
+
+it.effect("Stop settles workflow members without subagent turn items", () =>
+  stopEarlierBackgroundWork({ workflowMember: true }),
 );
 
 it.effect(

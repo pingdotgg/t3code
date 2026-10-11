@@ -1589,6 +1589,90 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("updates provider child metadata without recreating its saved thread", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "workflow-member-metadata",
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      const offered = {
+        ...rootEvent.payload,
+        id: childThreadId,
+        title: "Inspect checkout",
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: rootEvent.threadId,
+          relationshipToParent: "subagent" as const,
+          rootThreadId: rootEvent.threadId,
+        },
+      };
+      const ingest = (appThread: OrchestrationV2AppThread) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: { type: "app_thread.created", driver: CODEX_DRIVER, appThread },
+        });
+      yield* eventSink.write({ events: [rootEvent] });
+      const created = yield* Effect.all([ingest(offered), ingest(offered)], {
+        concurrency: "unbounded",
+      });
+      assert.deepEqual(
+        created.flat().map((stored) => stored.event.type),
+        ["thread.created"],
+      );
+      const saved = {
+        ...offered,
+        archivedAt: now,
+        deletedAt: now,
+        activeProviderThreadId: rootEvent.payload.activeProviderThreadId,
+        branch: "user/checkout",
+      };
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+            threadId: childThreadId,
+            type: "thread.deleted",
+            payload: saved,
+          },
+        ],
+      });
+      for (const metadata of [
+        { title: "Review checkout", modelSelection },
+        { title: "Review checkout", modelSelection: { ...modelSelection, model: "gpt-6.1-sol" } },
+      ]) {
+        const updated = yield* ingest({ ...offered, ...metadata });
+        assert.deepEqual(
+          updated.map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        const thread = yield* projectionStore.getThread(childThreadId);
+        assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
+      }
+      assert.deepEqual(
+        yield* ingest({
+          ...offered,
+          title: "Review checkout",
+          modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
+        }),
+        [],
+      );
+    }),
+  );
+
   it.effect("moves a native subagent's thread to the model its provider reports later", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

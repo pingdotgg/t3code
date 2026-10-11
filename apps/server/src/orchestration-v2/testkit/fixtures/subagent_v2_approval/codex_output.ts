@@ -59,6 +59,20 @@ export function assertSubagentV2ApprovalOutput(
   const approval = approvalItems[0]!;
   assert.equal(approval.runId, run.id);
   assert.equal(approval.status, "completed");
+  const pendingRequestIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "runtime-request.updated" &&
+      event.payload.id === request.id &&
+      event.payload.status === "pending",
+  );
+  const waitingItemIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "turn-item.updated" &&
+      event.payload.id === approval.id &&
+      event.payload.status === "waiting",
+  );
+  assert.isAtLeast(waitingItemIndex, 0);
+  assert.isAbove(pendingRequestIndex, waitingItemIndex);
   if (approval.type !== "approval_request") throw new Error("expected an approval item");
   assert.equal(approval.requestId, request.id);
   assert.include(approval.prompt ?? "", "subagent-approval.txt");

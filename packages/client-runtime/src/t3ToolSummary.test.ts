@@ -248,4 +248,21 @@ describe("summarizeT3ToolCalls", () => {
       ]).label,
     ).toBe("Requested deletion of 1 scheduled task");
   });
+
+  it("counts workflow stop requests by coordinator and excludes failed requests", () => {
+    const first = completed({ threadId: "parent", subagentId: "workflow-1" }, {});
+    const failed = completed({ threadId: "parent", subagentId: "workflow-3" }, { isError: true });
+    expect(
+      summarizeT3ToolCalls("workflow-stop", [
+        first,
+        first,
+        completed({ threadId: "parent", subagentId: "workflow-2" }, {}),
+        failed,
+      ]),
+    ).toEqual({ label: "Requested stops for 2 workflows", failedCount: 1 });
+    expect(summarizeT3ToolCalls("workflow-stop", [failed])).toEqual({
+      label: "Tried to stop 1 workflow",
+      failedCount: 1,
+    });
+  });
 });
