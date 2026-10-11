@@ -58,6 +58,108 @@ const insertRow = (
     run_count: 0,
   })}`;
 
+it.effect.each([
+  ["interval", "pending"],
+  ["interval", "running"],
+  ["fixed_time", "pending"],
+  ["fixed_time", "running"],
+] as const)(
+  "defers a bound %s catch-up while its restart continuation is %s",
+  ([trigger, continuationStatus]) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-09T12:00:00.000Z";
+      const scheduleJson =
+        trigger === "interval"
+          ? '{"type":"interval","everyMs":60000}'
+          : '{"type":"fixed_time","timeOfDay":"12:00"}';
+      yield* TestClock.setTime(Date.parse(now) + 1_000);
+      for (const id of ["bound", "fresh"]) {
+        yield* insertRow(
+          sql,
+          { id, next: now, enabled: 1, status: "succeeded", scheduleJson },
+          now,
+        );
+      }
+      yield* sql`UPDATE scheduled_tasks SET thread_id = 'thread:restart', run_count = 1
+                 WHERE task_id = 'bound'`;
+      yield* sql`INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:restart-continuation:cut', 'command:restart', 'thread:restart',
+        'provider-runtime.continue', '{"type":"provider-runtime.continue","sourceRunId":"cut"}',
+        ${continuationStatus}, ${now}, ${now}, ${now}
+      )`;
+      const sends: Parameters<
+        ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]
+      >[0][] = [];
+      let launches = 0;
+      let poll: Effect.Effect<void> | undefined;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            ScheduledTaskService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeCrypto.layer,
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                    launch: () => {
+                      launches += 1;
+                      return Effect.succeed({} as never);
+                    },
+                  }),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    sendToThread: (input) => {
+                      sends.push(input);
+                      return Effect.succeed({} as never);
+                    },
+                  }),
+                  Layer.succeed(Scheduler.Scheduler, {
+                    register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+                      Effect.context<R>().pipe(
+                        Effect.map((context) => {
+                          poll = work.pipe(Effect.provideContext(context), Effect.orDie);
+                        }),
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          );
+          assert.isDefined(poll);
+          yield* poll!;
+          assert.lengthOf(sends, 0);
+          assert.equal(launches, 1);
+          const deferred = yield* sql<{ next_run_at: string; run_count: number }>`
+            SELECT next_run_at, run_count FROM scheduled_tasks WHERE task_id = 'bound'
+          `;
+          assert.equal(deferred[0]?.next_run_at, now);
+          assert.equal(deferred[0]?.run_count, 1);
+
+          yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+          yield* poll!;
+          assert.lengthOf(sends, 1);
+          assert.equal(sends[0]?.threadId, "thread:restart");
+          assert.equal(sends[0]?.mode, "queue");
+          const completed = yield* sql<{
+            next_run_at: string;
+            run_count: number;
+            last_run_status: string;
+          }>`SELECT next_run_at, run_count, last_run_status FROM scheduled_tasks
+             WHERE task_id = 'bound'`;
+          assert.equal(completed[0]?.last_run_status, "succeeded");
+          assert.equal(completed[0]?.run_count, 2);
+          assert.isAbove(Date.parse(completed[0]!.next_run_at), Date.parse(now) + 1_000);
+          yield* poll!;
+          assert.lengthOf(sends, 1);
+          assert.equal(launches, 1);
+        }),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("loads only due tasks and skips corrupt due rows without decoding settled tasks", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -168,6 +270,18 @@ it.effect(
       const hugeInterval = '{"type":"interval","everyMs":9000000000000000}';
       for (const row of [
         { id: "stuck-valid", next: now, status: "running" },
+        {
+          id: "stuck-fixed",
+          next: now,
+          status: "running",
+          scheduleJson: '{"type":"fixed_time","timeOfDay":"12:00"}',
+        },
+        {
+          id: "stuck-webhook",
+          next: null,
+          status: "running",
+          scheduleJson: '{"type":"webhook","signature":null}',
+        },
         { id: "stuck-corrupt", next: now, status: "running", scheduleJson: "broken" },
         { id: "stuck-huge", next: now, status: "running", scheduleJson: hugeInterval },
         { id: null, next: now, status: "running" },
@@ -241,19 +355,29 @@ it.effect(
       }>`SELECT task_id, last_run_status, last_run_error, next_run_at, run_count
        FROM scheduled_tasks ORDER BY task_id`;
       const byId = new Map(rows.map((row) => [row.task_id, row]));
-      assert.equal(rows.length, 9);
+      assert.equal(rows.length, 11);
       // The decodable stuck run is rescheduled for its next occurrence; the
       // undecodable and unrepresentable rows are released without a next run.
       // A NULL id must still match its own row — `= NULL` never does.
       assert.equal(byId.get("stuck-valid")?.last_run_status, "failed");
       assert.isNotNull(byId.get("stuck-valid")?.next_run_at);
+      assert.isAbove(Date.parse(byId.get("stuck-fixed")!.next_run_at!), Date.parse(now) + 7_000);
+      assert.isNull(byId.get("stuck-webhook")?.next_run_at);
       assert.equal(byId.get("stuck-corrupt")?.last_run_status, "failed");
       assert.equal(byId.get(null)?.last_run_status, "failed");
       const stuckHuge = byId.get("stuck-huge");
       assert.equal(stuckHuge?.last_run_status, "failed");
       assert.isNull(stuckHuge?.next_run_at);
-      for (const id of ["stuck-valid", "stuck-corrupt", "stuck-huge", null]) {
+      for (const id of [
+        "stuck-valid",
+        "stuck-fixed",
+        "stuck-webhook",
+        "stuck-corrupt",
+        "stuck-huge",
+        null,
+      ]) {
         const row = byId.get(id);
+        assert.equal(row?.last_run_status, "failed");
         assert.equal(row?.last_run_error, "Run was interrupted by a server restart.");
         assert.equal(row?.run_count, 1);
       }
