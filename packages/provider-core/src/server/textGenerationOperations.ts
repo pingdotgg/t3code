@@ -18,6 +18,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -37,12 +38,40 @@ export interface Request<S extends Schema.Top> {
   readonly modelSelection: ModelSelection;
   /** The user's attachments, already listed in the prompt. Providers that accept images send them. */
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /**
+   * Set when the model must investigate `cwd` before answering: it may read files and run
+   * read-only commands there, over as many turns as it needs, and must change nothing. Absent,
+   * the prompt carries everything and the model runs with no tools at all. A runner that cannot
+   * guarantee read-only tools fails rather than answering blind.
+   */
+  readonly investigate?: { readonly timeoutMs: number } | undefined;
 }
+
+/** How long an investigating run may take; a large change needs far longer than a title. */
+const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
+
+/** The refusal a runner gives when it has no read-only tool mode to investigate with. */
+export const investigationUnsupported = (operation: Operation, provider: string) =>
+  new TextGenerationError({
+    operation,
+    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, or source control writer model when none is set.`,
+  });
 
 /** Runs one request and decodes the reply as its `outputSchema`. */
 export type Runner = <S extends Schema.Top>(
   request: Request<S>,
 ) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+
+/**
+ * For a runner with no read-only tool mode: it answers prompts that carry everything, and
+ * refuses an investigation rather than answering one blind.
+ */
+export const withoutInvestigation =
+  (provider: string, run: Runner): Runner =>
+  (request) =>
+    request.investigate
+      ? Effect.fail(investigationUnsupported(request.operation, provider))
+      : run(request);
 
 /** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
@@ -148,10 +177,23 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     };
   });
 
+  const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = Effect.fn(
+    `${name}.generateReviewGuide`,
+  )(function* (input) {
+    return yield* run({
+      operation: "generateReviewGuide",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      ...buildReviewGuidePrompt(input),
+    });
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateReviewGuide,
   } satisfies ProviderTextGeneration;
 }

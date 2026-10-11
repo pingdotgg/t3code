@@ -44,6 +44,8 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsReviewerCandidates,
   WS_METHODS.pullRequestsLabelCandidates,
 ]);
+// Review guides are not routed: each server keeps its own, so another server answering would
+// report none, or start a run nobody on the pull request's own server can see.
 const writes = new Set<string>([
   WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,

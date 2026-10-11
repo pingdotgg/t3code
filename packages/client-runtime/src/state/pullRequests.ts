@@ -204,6 +204,16 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  // The stored guide only changes when somebody generates one, which refreshes it below.
+  const reviewGuide = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:review-guide",
+      tag: WS_METHODS.pullRequestsReviewGuide,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewGuide, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
   const reviewerCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:reviewer-candidates",
@@ -500,6 +510,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             missingIdentities,
           );
         }),
+    }),
+    reviewGuide,
+    /** Runs a model on the environment; never fired without the reader asking for it. */
+    generateReviewGuide: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:generate-review-guide",
+      tag: WS_METHODS.pullRequestsGenerateReviewGuide,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsGenerateReviewGuide, input),
+      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(reviewGuide(target))),
     }),
     /** Read when the label menu opens, and kept for a minute, like the reviewer candidates. */
     labelCandidates,

@@ -17,7 +17,10 @@ vi.mock("./useScopedSettings", () => ({
     ...DEFAULT_UNIFIED_SETTINGS,
     sourceControlWritingStyle: state.styles[0],
   }),
-  useScopedSettingsMixed: () => JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
+  // Review guides stay off and agreed here, so their rows do not render beside the style's.
+  useScopedSettingsMixed: (keys: ReadonlyArray<string>) =>
+    !keys.includes("reviewGuidesEnabled") &&
+    JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
   useUpdateScopedSettings: () => state.updateSettings,
 }));
 vi.mock("./SettingsScopeContext", () => ({

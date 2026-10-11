@@ -32,6 +32,7 @@ export function PullRequestComposer({
   onCommentAction,
   onCommented,
   onReviewSubmitted,
+  openReviewRequest,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -43,6 +44,11 @@ export function PullRequestComposer({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onReviewSubmitted: () => void;
+  /**
+   * Opens the composer on the review, each time the number changes. The guide's last stop asks
+   * for it, so finishing the tour lands on the comments it collected and the verdict.
+   */
+  openReviewRequest?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
@@ -58,6 +64,12 @@ export function PullRequestComposer({
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
   );
   const reviewStarted = pendingComments.length > 0 || summaryStarted;
+  const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
+  if (openReviewRequest !== answeredOpenRequest) {
+    setAnsweredOpenRequest(openReviewRequest);
+    setRequestedMode("review");
+    setOpen(true);
+  }
 
   // What is offered is the intersection of two different questions: what this host can do at
   // all, and what this account may do on this repository. Either one saying no means a control

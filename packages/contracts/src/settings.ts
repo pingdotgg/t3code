@@ -957,6 +957,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
+  "reviewGuideModelSelection",
+  "reviewGuideInstructions",
   "sourceControlWritingStyle",
   "removeAgentCreditsOnMerge",
   "branchNamingMode",
@@ -988,6 +990,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
@@ -1017,6 +1021,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
 >([
   "defaultModelSelection",
   "sourceControlWriterModelSelection",
+  "reviewGuideModelSelection",
   "pullRequestMergeMethod",
   "sidebarAutoSettleAfterDays",
 ]);
@@ -1241,6 +1246,24 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Beta: review guides on this server. Off hides the Guide tab in every client and refuses to
+   * write guides, for people and agents alike.
+   */
+  reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * The model that reads a pull request to write its review guide. It investigates a checkout
+   * over many turns, so it can want a stronger model than one-shot writing. `null` uses the
+   * source control writer model.
+   */
+  reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * The maintainer's taste for review guides: what to dwell on, skip, or order first. Shapes the
+   * guide's emphasis only; the output format and coverage rules stay fixed.
+   */
+  reviewGuideInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
    * The merge method pull requests start with; `null` reuses the method
    * last chosen on this device. Server-side so a project can override it
@@ -1516,6 +1539,9 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewGuidesEnabled: Schema.optionalKey(Schema.Boolean),
+  reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({

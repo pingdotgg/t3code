@@ -185,6 +185,34 @@ PR creation from Git actions continue to use the project's environment.
 For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
 declined pull request.
 
+### Review guides
+
+Review guides are in beta. Turn on **Review guides** in Settings → Source Control to add the
+**Guide** tab to pull requests on that server.
+
+The **Guide** tab gives you a tour of a pull request without reading it line by line: stops
+through the change in reading order. Each stop points at the lines worth reading, and a stop marked
+**Look closely** has a call only a maintainer can make. Mechanical changes such as renames and
+snapshots are grouped at the end, and every changed file appears somewhere on the tour.
+Conversations already resolved in review are left out. For a pull request in a stack, the guide
+covers that layer only, and may point out what a lower layer introduced or what a higher one uses.
+
+Choose **Write guide** to have the review guide model from Settings → Source Control read the
+change in a temporary checkout; without one set, the source control writer model is used. Nothing
+in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
+the app and you are told when the guide is ready. Claude and Codex can write guides. The guide is
+kept for everyone using this server. To write it again, for example after a push or after changing
+the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
+
+While reading a stop, select lines in an excerpt to add a comment to your review or ask an agent
+about them; comments wait with the ones from the **Code** tab until you send the review. Choose a
+suggested question, or **Ask about this stop**, to open a thread that already knows which stop you
+are on. **Finish review** on the last stop opens the review with everything you collected.
+
+To shape guides to your taste, write **Review guide instructions** in Settings → Source Control,
+such as what to show first or what to skip; projects can override them. They change emphasis and
+ordering, not the guide's layout or which files it covers.
+
 ### Mark files as viewed
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a

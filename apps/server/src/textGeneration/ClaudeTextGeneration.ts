@@ -40,6 +40,22 @@ import {
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+/** The tools an investigation can see. `--tools` takes bare names; patterns go in the allow list. */
+const CLAUDE_INVESTIGATION_TOOLS = "Read,Grep,Glob,Bash";
+/** What it may run without asking. In dontAsk mode every other call, Bash included, is refused. */
+const CLAUDE_INVESTIGATION_ALLOWED = [
+  "Read",
+  "Grep",
+  "Glob",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+].join(",");
+/**
+ * The allowed git commands accept any trailing arguments, and `--output` makes each of them write
+ * a file anywhere. Deny rules win over allow rules, so this keeps the investigation read-only.
+ */
+const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -112,6 +128,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     prompt,
     outputSchema: outputSchemaJson,
     modelSelection,
+    investigate,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
@@ -189,8 +206,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--settings",
           settingsJson,
           // Metadata prompts need no executable capabilities, even when they contain a skill name.
-          "--tools",
-          "",
+          // An investigation gets the read-only file tools and Git's read commands, and nothing
+          // that writes: in dontAsk mode anything not allowed here is refused.
+          ...(investigate
+            ? [
+                "--tools",
+                CLAUDE_INVESTIGATION_TOOLS,
+                "--allowedTools",
+                CLAUDE_INVESTIGATION_ALLOWED,
+                "--disallowedTools",
+                CLAUDE_INVESTIGATION_DENIED,
+              ]
+            : ["--tools", ""]),
           "--disable-slash-commands",
           "--strict-mcp-config",
           "--permission-mode",
@@ -246,7 +273,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const rawStdout = yield* runClaudeCommand().pipe(
       Effect.scoped,
-      Effect.timeoutOption(CLAUDE_TIMEOUT_MS),
+      Effect.timeoutOption(investigate?.timeoutMs ?? CLAUDE_TIMEOUT_MS),
       Effect.flatMap(
         Option.match({
           onNone: () =>

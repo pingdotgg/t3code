@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -179,6 +180,60 @@ describe("buildBranchNamePrompt", () => {
     expect(result.prompt).toContain("screenshot.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("12345 bytes");
+  });
+});
+
+describe("buildReviewGuidePrompt", () => {
+  const input = {
+    number: 42,
+    title: "Add search",
+    description: "",
+    baseBranch: "main",
+    baseCommit: "abc123",
+    settledReview: "",
+  };
+
+  it("adds the maintainer's preferences after the change context", () => {
+    const { prompt } = buildReviewGuidePrompt({
+      ...input,
+      instructions: "  Skip test files unless they change behavior.  ",
+    });
+    const preferences = prompt.indexOf("The maintainer's preferences for guides:");
+    expect(preferences).toBeGreaterThan(prompt.indexOf("Already settled in review:"));
+    expect(prompt.slice(preferences)).toContain("Skip test files unless they change behavior.");
+    expect(prompt.slice(preferences)).toContain("do not change the JSON format");
+  });
+
+  it("names the stack's other layers as context the guide may point at", () => {
+    const { prompt } = buildReviewGuidePrompt({
+      ...input,
+      stack: [
+        { number: 41, title: "Add the index", headSha: "aaa111", state: "merged" },
+        { number: 42, title: "Add search", headSha: "bbb222", state: "open" },
+        { number: 43, title: "Search UI", headSha: null, state: "open" },
+      ],
+    });
+    expect(prompt).toContain("1. #41: Add the index, merged, head aaa111");
+    expect(prompt).toContain("2. #42 (this change): Add search\n");
+    expect(prompt).toContain("3. #43: Search UI, head not available");
+    expect(prompt).toContain("Never excerpt another layer's code");
+  });
+
+  it("leaves the stack out for a change that is not in one", () => {
+    expect(buildReviewGuidePrompt(input).prompt).not.toContain("layer of a stack");
+    expect(
+      buildReviewGuidePrompt({
+        ...input,
+        stack: [{ number: 42, title: "Add search", headSha: "bbb222", state: "open" }],
+      }).prompt,
+    ).not.toContain("layer of a stack");
+  });
+
+  it("leaves the section out when there are no preferences", () => {
+    expect(buildReviewGuidePrompt(input).prompt).not.toContain("preferences for guides");
+    expect(buildReviewGuidePrompt({ ...input, instructions: "  " }).prompt).not.toContain(
+      "preferences for guides",
+    );
   });
 });
 

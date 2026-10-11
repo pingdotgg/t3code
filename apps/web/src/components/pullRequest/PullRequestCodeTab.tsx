@@ -81,7 +81,12 @@ import {
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
+import {
+  getReviewPositionAnchor,
+  PendingReviewCommentCard,
+  ReviewThreadCard,
+  toViewerSide,
+} from "./PullRequestReviewAnnotation";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
@@ -162,28 +167,6 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
-/** The contract's sides named the way the diff viewer names them, and back again. */
-function toViewerSide(side: PullRequestDiffSide) {
-  return side === "left" ? ("deletions" as const) : ("additions" as const);
-}
-
-function getReviewPositionAnchor(position: PullRequestReviewPosition): {
-  line: number;
-  side: PullRequestDiffSide;
-} {
-  switch (position.kind) {
-    case "added":
-      return { line: position.newLine, side: "right" };
-    case "deleted":
-      return { line: position.oldLine, side: "left" };
-    case "context":
-      return {
-        line: position.side === "left" ? position.oldLine : position.newLine,
-        side: position.side,
-      };
-  }
-}
-
 /**
  * Whether the viewer draws this line at all. A line counts the new file on the right and the old
  * one on the left, and each hunk covers one run of each; a line outside every run — a
@@ -208,6 +191,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  revealRequest = null,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -225,6 +209,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /** A file another tab asked to show. A new nonce asks again for the same path. */
+  revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -694,6 +680,19 @@ function PullRequestCodeTab({
     },
     [items, requestTreeReveal, toggleFile],
   );
+  // Answered once the requested file has arrived: a large diff may still be paging when the
+  // request comes in, so it waits for the slice that carries the path rather than dropping it.
+  const answeredReveal = useRef<number | null>(null);
+  useEffect(() => {
+    if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
+    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
+      // The reader is not scrolling toward it, so the sentinel would never ask for its slice.
+      if (canLoadNextSlice) loadNextSlice();
+      return;
+    }
+    answeredReveal.current = revealRequest.nonce;
+    revealFile(revealRequest.path);
+  }, [canLoadNextSlice, items, loadNextSlice, revealFile, revealRequest]);
 
   const toggleAllFiles = () => {
     // Held as an override of the default rather than as the file keys on screen: a diff that is

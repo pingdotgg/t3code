@@ -347,6 +347,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateReviewGuide: () => Effect.succeed({ stops: [] }),
     ...overrides,
   };
 
@@ -395,6 +396,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateReviewGuide: (input) => implementation.generateReviewGuide(input),
   };
 }
 

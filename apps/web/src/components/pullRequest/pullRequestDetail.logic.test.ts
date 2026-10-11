@@ -19,6 +19,7 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
+  buildAskAboutGuideStopHandoff,
   classifyPullRequestChecks,
   groupPullRequestChecks,
   describePullRequestChecks,
@@ -1219,6 +1220,54 @@ describe("asking about a change rather than working on it", () => {
     ]);
     expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
     expect(handoff.reviewComments[1]?.text).toBe("");
+  });
+});
+
+describe("buildAskAboutGuideStopHandoff", () => {
+  const base = {
+    number: 42,
+    title: "Add search",
+    url: "https://github.com/acme/web/pull/42",
+    headBranch: "feat/search",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+  };
+  const stop = {
+    index: 1,
+    title: "The index is built on write",
+    summary: "Writes now update the index.",
+    attention: "A tradeoff: writes get slower.",
+    excerpts: [
+      { path: "src/index.ts", side: "new" as const, start: 10, end: 20 },
+      { path: "src/old.ts", side: "old" as const, start: 3, end: 5 },
+    ],
+  };
+
+  it("carries the stop beside the pull request and asks only for an answer", () => {
+    const handoff = buildAskAboutGuideStopHandoff({ ...base, stop, question: "Why on write?" });
+    expect(handoff.prompt).toBe("Why on write?");
+    expect(handoff.reviewComments.map((entry) => entry.filePath)).toEqual([
+      "PR #42",
+      "Guide stop 2",
+    ]);
+    expect(handoff.reviewComments[0]?.text).toContain("Do not change any code");
+    const chip = handoff.reviewComments[1]?.text ?? "";
+    expect(chip).toContain("Writes now update the index.");
+    expect(chip).toContain("A tradeoff: writes get slower.");
+    expect(chip).toContain("- src/index.ts lines 10-20\n");
+    expect(chip).toContain("- src/old.ts lines 3-5 (removed; numbered as in the base branch)");
+  });
+
+  it("leaves the question to the reader when none was suggested", () => {
+    const handoff = buildAskAboutGuideStopHandoff({
+      ...base,
+      stop: { ...stop, attention: null, excerpts: [] },
+      question: "",
+    });
+    expect(handoff.prompt).toBe("");
+    expect(handoff.reviewComments[1]?.text).not.toContain("judge");
+    expect(handoff.reviewComments[1]?.text).not.toContain("lines it showed");
   });
 });
 
