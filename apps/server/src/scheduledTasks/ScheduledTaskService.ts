@@ -232,9 +232,13 @@ export class ScheduledTaskService extends Context.Service<
     readonly delete: (
       input: ScheduledTaskDeleteInput,
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
+    /** `threadId` is the bound thread, or the thread this run launched (null if the launch failed). */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
-    ) => Effect.Effect<ScheduledTaskRunNowResult, ScheduledTaskError>;
+    ) => Effect.Effect<
+      ScheduledTaskRunNowResult & { readonly threadId: ThreadId | null },
+      ScheduledTaskError
+    >;
     /** Issues a new URL token for a webhook task; the old URL stops working at once. */
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
@@ -722,7 +726,7 @@ export const layer = Layer.effect(
         if (trigger !== "scheduled") {
           return yield* taskError("Schedule task is already running.", { taskId: task.id });
         }
-        return task;
+        return { task, threadId: null };
       }
 
       return yield* Effect.gen(function* () {
@@ -744,7 +748,7 @@ export const layer = Layer.effect(
           if (trigger !== "scheduled") {
             return yield* taskError("Schedule task not found.", { taskId: task.id });
           }
-          return task;
+          return { task, threadId: null };
         }
         // A next_run_at corrupted between the poll read and this re-read must
         // not defect the poll; an unparseable value is treated as not due.
@@ -756,7 +760,7 @@ export const layer = Layer.effect(
             Option.isNone(parsedNextRunAt) ||
             DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
         ) {
-          return active;
+          return { task: active, threadId: null };
         }
         // A queued delivery must not run a task that was paused, deleted and
         // recreated under the same id, or switched to another trigger while
@@ -834,6 +838,12 @@ export const layer = Layer.effect(
         const runSucceeded = result._tag === "Success";
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        const threadId =
+          active.threadId !== null
+            ? ThreadId.make(active.threadId)
+            : result._tag === "Success" && "threadId" in result.value
+              ? result.value.threadId
+              : null;
         // Re-read the task so the next run is computed from the schedule as it
         // is *now* (the user may have edited or deleted it while we ran).
         const current = yield* findTask(task.id);
@@ -861,7 +871,7 @@ export const layer = Layer.effect(
           });
           yield* notifyChanged;
         }
-        return completed;
+        return { task: completed, threadId };
       }).pipe(
         Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause))),
         Effect.ensuring(
@@ -1165,12 +1175,11 @@ export const layer = Layer.effect(
             taskId: input.id,
           });
         }
-        const next = yield* runTask(task, "manual").pipe(
+        return yield* runTask(task, "manual").pipe(
           Effect.mapError((cause) =>
             taskError("Could not run schedule task.", { taskId: input.id, cause }),
           ),
         );
-        return { task: next };
       });
 
     const rotateWebhookToken: ScheduledTaskService["Service"]["rotateWebhookToken"] = (input) =>
@@ -1621,7 +1630,7 @@ export const layer = Layer.effect(
                 Metrics.increment(Metrics.webhookRunsTotal, { outcome }),
               ]);
             yield* runTask(task, "webhook", { deliveryId, prompt: rendered.prompt }).pipe(
-              Effect.flatMap((completed) =>
+              Effect.flatMap(({ task: completed }) =>
                 completed.lastRunStatus === "failed"
                   ? runOutcome("failed").pipe(
                       Effect.andThen(markDeliveryFailed(deliveryId, "The run failed to start.")),
