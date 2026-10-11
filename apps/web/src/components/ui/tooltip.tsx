@@ -3,6 +3,8 @@ import { createContext, use, useEffect, useRef, type ComponentProps, type RefObj
 
 import { cn } from "~/lib/utils";
 
+const TooltipCreateHandle = TooltipPrimitive.createHandle;
+
 const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
@@ -134,4 +136,11 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea };
+export {
+  TooltipCreateHandle,
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipScrollDismissArea,
+};
