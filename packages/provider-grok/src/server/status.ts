@@ -372,7 +372,7 @@ const discoverGrokMetadataViaAcpInitialize = (
 
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+  parentEnvironment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
 ): Effect.fn.Return<
   ServerProviderDraft,
@@ -397,6 +397,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
+
+  // Periodic probes must not run Grok's launch-time updater.
+  const environment: NodeJS.ProcessEnv = { ...parentEnvironment, GROK_DISABLE_AUTOUPDATER: "1" };
 
   const versionResult = yield* runGrokCliCommand(grokSettings, ["--version"], environment).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),

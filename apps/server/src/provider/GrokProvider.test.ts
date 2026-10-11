@@ -402,7 +402,11 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   // A stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
-  const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
+  const writeFakeGrokCli = (input: {
+    readonly modelsOutput: string;
+    readonly acp: boolean;
+    readonly updateLogPath?: string;
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
@@ -411,6 +415,14 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
         directory: dir,
         name: "grok",
         source: [
+          ...(input.updateLogPath
+            ? [
+                'import { appendFileSync as appendUpdateAttempt } from "node:fs";',
+                'if (process.env.GROK_DISABLE_AUTOUPDATER !== "1") {',
+                `  appendUpdateAttempt(${JSON.stringify(input.updateLogPath)}, "update\\n");`,
+                "}",
+              ]
+            : []),
           'if (process.argv[2] === "--version") {',
           '  process.stdout.write("grok 1.0.13\\n");',
           "  process.exit(0);",
@@ -426,21 +438,29 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       });
     });
 
-  it.effect("reports ready with ACP-discovered models when logged in", () =>
+  it.effect("reports ready with ACP-discovered models without running startup updates", () =>
     Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
+      const environment = { ...process.env, XAI_API_KEY: "", GROK_DISABLE_AUTOUPDATER: "0" };
+      const { snapshot, updateRan } = yield* Effect.scoped(
         Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-updater-" });
+          const updateLogPath = NodePath.join(dir, "updates.log");
           const grokPath = yield* writeFakeGrokCli({
             modelsOutput: LOGGED_IN_MODELS_OUTPUT,
             acp: true,
+            updateLogPath,
           });
-          return yield* checkGrokProviderStatus(
+          const snapshot = yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, XAI_API_KEY: "" },
+            environment,
           );
+          return { snapshot, updateRan: yield* fs.exists(updateLogPath) };
         }),
       );
 
+      expect(updateRan).toBe(false);
+      expect(environment.GROK_DISABLE_AUTOUPDATER).toBe("0");
       expect(snapshot.status).toBe("ready");
       expect(snapshot.version).toBe("1.0.13");
       expect(snapshot.auth).toEqual({
