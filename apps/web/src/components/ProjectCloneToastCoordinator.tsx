@@ -96,7 +96,9 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
 
   const openProject = useCallback(
     (projectId: ProjectId) => {
-      void handleNewThread(scopeProjectRef(environmentId, projectId));
+      void handleNewThread(scopeProjectRef(environmentId, projectId), {
+        environmentSelection: "manual",
+      });
     },
     [environmentId, handleNewThread],
   );
