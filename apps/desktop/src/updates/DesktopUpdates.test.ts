@@ -431,8 +431,9 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("logs bounded updater failure context without exposing the cause", () => {
-    const cause = new Error(
-      "request failed for https://user:secret@example.com/update?token=secret",
+    const cause = Object.assign(
+      new Error("request failed for https://user:secret@example.com/update?token=secret"),
+      { code: "HTTP_ERROR_404" },
     );
     const updaterError = new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
       channel: null,
@@ -459,6 +460,7 @@ describe("DesktopUpdates", () => {
         assert.isDefined(loggedAnnotation);
         assert.equal(loggedAnnotation.errorTag, "ElectronUpdaterCheckForUpdatesError");
         assert.isNull(loggedAnnotation.channel);
+        assert.equal(loggedAnnotation.errorCode, "HTTP_ERROR_404");
         assert.notProperty(loggedAnnotation, "error");
         assert.notInclude(Object.values(loggedAnnotation).map(String).join(" "), "secret");
         assert.equal(
@@ -726,6 +728,45 @@ describe("DesktopUpdates", () => {
         assert.equal((yield* updates.getState).errorContext, "install");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("logs the exit status of a refused installer command", () => {
+    const harness = makeHarness();
+    const loggedAnnotations: Array<Record<string, unknown>> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotations = fiber.getRef(References.CurrentLogAnnotations);
+      if (annotations.errorTag === "DesktopUpdaterReportedError") {
+        loggedAnnotations.push(annotations);
+      }
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        yield* updates.install;
+        // electron-updater's DebUpdater reports a dismissed pkexec prompt this way.
+        harness.emit("error", new Error("Command pkexec exited with code 126"));
+        yield* flushCallbacks;
+
+        const loggedAnnotation = loggedAnnotations.at(-1);
+        assert.isDefined(loggedAnnotation);
+        assert.equal(loggedAnnotation.operation, "install");
+        assert.equal(loggedAnnotation.exitStatus, 126);
+        assert.notProperty(loggedAnnotation, "errorCode");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          harness.layer,
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
   });
 
   it.effect("rejects a prepared install when the downloaded version changed", () => {
