@@ -106,7 +106,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       yield* Fiber.interrupt(previousFiber).pipe(Effect.ignore);
     }
 
-    if (!input.enrichSnapshot) {
+    // Enrichment resolves binaries and package-manager state, which a disabled
+    // provider has no use for.
+    if (!input.enrichSnapshot || !snapshot.enabled) {
       return;
     }
 

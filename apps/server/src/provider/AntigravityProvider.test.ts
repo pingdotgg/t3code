@@ -257,31 +257,23 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
-  it.effect("records explicit sign-in while disabled without starting a health probe", () =>
+  it.effect("ignores account updates while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeHarness({ enabled: false });
-        const signedIn = yield* Stream.toPull(
-          harness.provider.snapshot.streamChanges.pipe(
-            Stream.filter(
-              (snapshot) =>
-                snapshot.auth.status === "authenticated" && snapshot.slashCommands.length > 0,
-            ),
-          ),
-        );
         yield* harness.provider.onSessionStarted(started);
         yield* harness.provider.onAvailableCommands(commands);
-        const [snapshot] = yield* signedIn;
+        yield* harness.provider.onSignedOut;
+        const snapshot = yield* harness.provider.snapshot.refresh;
         expect(snapshot).toMatchObject({
           enabled: false,
-          installed: true,
+          installed: false,
           status: "disabled",
-          auth: { status: "authenticated", type: "oauth-personal" },
+          auth: { status: "unknown" },
+          models: [],
+          slashCommands: [],
           workspaceSnapshots: [],
         });
-        expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
-        expect(snapshot.slashCommands).toEqual(expectedCommands);
-        expect((yield* harness.provider.snapshot.refresh).models).toEqual(snapshot.models);
         expect(yield* Ref.get(harness.probeCalls)).toBe(0);
       }),
     ),

@@ -183,6 +183,31 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect("does not enrich a disabled provider's snapshot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let enrichmentCalls = 0;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: false }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          refreshOnInterval: false,
+          initialSnapshot: () => Effect.succeed({ ...initialSnapshot, enabled: false }),
+          checkProvider: Effect.succeed({ ...refreshedSnapshot, enabled: false }),
+          enrichSnapshot: () => {
+            enrichmentCalls += 1;
+            return Effect.void;
+          },
+        });
+
+        yield* provider.refresh;
+
+        assert.strictEqual(enrichmentCalls, 0);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
