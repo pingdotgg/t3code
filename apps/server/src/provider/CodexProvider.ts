@@ -262,6 +262,39 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
+/** Codex's configured service tier is global, so it is the default for every model. */
+export function applyCodexServiceTierDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  serviceTier: string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!serviceTier) return models;
+  return models.map((model) => {
+    if (!model.capabilities?.optionDescriptors) return model;
+    return {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
+          if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
+          // Codex config spells Priority as "fast"; older catalogs advertise "fast" directly.
+          const value = descriptor.options.find(
+            (option) =>
+              option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
+          )?.id;
+          if (!value) return descriptor;
+          return {
+            ...descriptor,
+            currentValue: value,
+            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
+              option.id === value ? { ...option, isDefault: true } : option,
+            ),
+          };
+        }),
+      },
+    };
+  });
+}
+
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
  * the first built-in's descriptors; an entry with its own capabilities keeps
@@ -443,12 +476,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // The shared catalog must exclude config from the server's launch project.
+      client.request("config/read", { includeLayers: false }).pipe(
+        Effect.map((response) => response.config.service_tier ?? undefined),
+        Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+        Effect.map(Option.getOrUndefined),
+        Effect.catch((error) =>
+          Effect.logDebug("Codex config read failed.", { cause: error }).pipe(Effect.as(undefined)),
+        ),
+      ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       input.skipNativeUsage
@@ -480,8 +522,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     ...(rateLimits ? { rateLimits } : {}),
     version,
-    models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+    models: applyCodexServiceTierDefault(
+      applyPreferredCodexDefaultModel(appendCustomCodexModels(models, input.customModels ?? [])),
+      serviceTier,
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;

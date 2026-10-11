@@ -1,6 +1,12 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+
+import {
+  applyCodexServiceTierDefault,
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -111,6 +117,47 @@ it("uses standard routing when the catalog has no default service tier", () => {
       currentValue: "default",
     },
   ]);
+});
+
+it("applies the global Codex service tier to every model", () => {
+  const models = ["gpt-6-luna", "gpt-6-astra"].map((slug) => ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: mapCodexModelCapabilities({
+      additionalSpeedTiers: [],
+      defaultReasoningEffort: "low",
+      defaultServiceTier: null,
+      description: "Test model",
+      displayName: slug,
+      hidden: false,
+      id: slug,
+      isDefault: false,
+      model: slug,
+      serviceTiers: [{ id: "priority", name: "Fast", description: "Lower latency" }],
+      supportedReasoningEfforts: [],
+    }),
+  }));
+
+  for (const [tier, label, expectedValue] of [
+    ["priority", "Fast", "priority"],
+    ["fast", "Fast", "priority"],
+    ["default", "Standard", "default"],
+    [undefined, "Standard", "default"],
+    ["unsupported", "Standard", "default"],
+  ] as const) {
+    const result = applyCodexServiceTierDefault(models, tier);
+    for (const model of result) {
+      const descriptor = model.capabilities?.optionDescriptors?.find(
+        (candidate) => candidate.id === "serviceTier",
+      );
+      assert.equal(getProviderOptionCurrentLabel(descriptor), label);
+      assert.equal(descriptor?.currentValue, expectedValue);
+      if (descriptor?.type === "select") {
+        assert.equal(descriptor.options.find((option) => option.isDefault)?.id, expectedValue);
+      }
+    }
+  }
 });
 
 it("marks the most preferred available model as default", () => {
