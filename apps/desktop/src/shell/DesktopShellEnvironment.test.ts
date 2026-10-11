@@ -9,9 +9,13 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeOS from "node:os";
+import { vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
+
+vi.mock("node:os", { spy: true });
 
 const textEncoder = new TextEncoder();
 
@@ -29,14 +33,14 @@ function envOutput(values: Readonly<Record<string, string>>): string {
     .join("\n");
 }
 
-function makeProcess(output: string): ChildProcessSpawner.ChildProcessHandle {
+function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildProcessHandle {
   const stdout = output.length === 0 ? Stream.empty : Stream.make(textEncoder.encode(output));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
     stdout,
     stderr: Stream.empty,
     all: stdout,
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -67,7 +71,10 @@ function withProcessEnv<A, E, R>(
 function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
-  readonly handler: (command: ChildProcess.Command) => string;
+  readonly userShell?: string;
+  readonly handler: (
+    command: ChildProcess.Command,
+  ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
 }) {
   const layerEnvironment = Layer.succeed(
@@ -78,11 +85,15 @@ function runShellEnvironment(input: {
   );
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) =>
-      input.failure === undefined
-        ? Effect.succeed(makeProcess(input.handler(command)))
-        : Effect.fail(input.failure),
-    ),
+    ChildProcessSpawner.make((command) => {
+      if (input.failure !== undefined) return Effect.fail(input.failure);
+      const result = input.handler(command);
+      return Effect.succeed(
+        typeof result === "string"
+          ? makeProcess(result)
+          : makeProcess(result.output, result.exitCode),
+      );
+    }),
   );
 
   const program = Effect.gen(function* () {
@@ -96,10 +107,88 @@ function runShellEnvironment(input: {
     ),
   );
 
-  return withProcessEnv(input.env, program);
+  return Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi.spyOn(NodeOS, "userInfo").mockReturnValue({
+        ...NodeOS.userInfo(),
+        shell: input.userShell ?? null,
+      }),
+    ),
+    () => withProcessEnv(input.env, program),
+    (spy) => Effect.sync(() => spy.mockRestore()),
+  );
 }
 
 describe("DesktopShellEnvironment", () => {
+  it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
+      const commands: string[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        userShell: "/usr/local/bin/fish",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "/bin/failing"
+            ? { output: envOutput({ PATH: "/failed/bin" }), exitCode: 7 }
+            : envOutput({ PATH: "/home/test/.local/bin:/usr/bin" });
+        },
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
+      assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+    }),
+  );
+
+  it.effect.each(["darwin", "linux"] as const)(
+    "uses the account shell when SHELL is missing on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+        const commands: string[] = [];
+
+        yield* runShellEnvironment({
+          env,
+          platform,
+          userShell: "/usr/local/bin/fish",
+          handler: (command) => {
+            if (command._tag !== "StandardCommand") return "";
+            commands.push(command.command);
+            return envOutput({ PATH: "/home/test/.local/bin:/usr/bin" });
+          },
+        });
+
+        assert.deepEqual(commands, ["/usr/local/bin/fish"]);
+        assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+      }),
+  );
+
+  it.effect("tries the account shell before the platform fallback when SHELL has no PATH", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/missing", PATH: "/usr/bin" };
+      const commands: string[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        userShell: "/usr/local/bin/fish",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "/usr/local/bin/fish"
+            ? envOutput({ PATH: "/home/test/.local/bin:/usr/bin" })
+            : "";
+        },
+      });
+
+      assert.deepEqual(commands, ["/bin/missing", "/usr/local/bin/fish"]);
+      assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+    }),
+  );
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -268,11 +357,13 @@ describe("DesktopShellEnvironment", () => {
           envOutput({
             PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
+            T3CODE_TELEMETRY_ENABLED: "false",
           }),
       });
 
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
+      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
     }),
   );
 

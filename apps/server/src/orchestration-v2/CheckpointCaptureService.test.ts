@@ -28,7 +28,7 @@ import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerProjectionStoreTest = Layer.mergeAll(
@@ -277,6 +277,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                         IdAllocator.layer,
                         NodeCrypto.layer,
                         Layer.mock(CheckpointStore.CheckpointStore)({
+                          listAuthoredPaths: () => Effect.succeed(null),
                           isGitRepository: () => Effect.succeed(true),
                           captureCheckpoint: () => Effect.void,
                           hasCheckpointRef: () =>

@@ -10,6 +10,7 @@ import {
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import { observeResize } from "../../lib/observeResize";
 
 /**
  * Owns the available conversation space. Cards only report where they sit; the
@@ -17,10 +18,12 @@ import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLay
  */
 export function ChatCanvas({
   composerOverlayElement,
+  detailsCardTopInset = 0,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
   composerOverlayElement: HTMLElement | null;
+  detailsCardTopInset?: number;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -39,11 +42,14 @@ export function ChatCanvas({
   const [measurements, setMeasurements] = useState({
     width: 0,
     height: 0,
-    padding: 20,
+    padding: 48,
     maxChatWidth: 768,
     minChatWidth: 640,
     composerHeight: 0,
     timelineGutter: 0,
+    findBarLeft: 0,
+    findBarRight: 0,
+    findBarBottom: 0,
   });
   const reportPreview = useCallback((next: ChatCanvasPreview) => {
     setPreview((current) =>
@@ -66,9 +72,16 @@ export function ChatCanvas({
     const element = elementRef.current;
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
+    const findBar =
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
     const measure = () => {
+      const canvasBounds = element.getBoundingClientRect();
+      const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
       const next = {
+        findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
+        findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
+        findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
         width: element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
@@ -88,26 +101,48 @@ export function ChatCanvas({
       );
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    observer.observe(probe);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    if (timelineElement) observer.observe(timelineElement);
-    return () => observer.disconnect();
-  }, [composerOverlayElement, timelineElement]);
+    const observed: Element[] = [element, probe];
+    if (findBar) observed.push(findBar);
+    if (composerOverlayElement) observed.push(composerOverlayElement);
+    if (timelineElement) observed.push(timelineElement);
+    return observeResize(observed, measure);
+  }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
+    const findBar =
+      detailsCardTopInset > 0
+        ? {
+            left: measurements.findBarLeft,
+            right: measurements.findBarRight,
+            bottom: measurements.findBarBottom,
+          }
+        : null;
     return {
       container,
       lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
+      layout: resolveChatCanvasLayout({
+        ...measurements,
+        container,
+        preview,
+        detailsCard,
+        findBar,
+      }),
       previewKey: preview?.key ?? null,
       reportPreview,
       clearPreview,
       registerTimeline,
       reportDetailsCard,
+      detailsCardTopInset: findBar?.bottom ?? 0,
     };
-  }, [measurements, preview, detailsCard, reportPreview, clearPreview, reportDetailsCard]);
+  }, [
+    measurements,
+    preview,
+    detailsCard,
+    reportPreview,
+    clearPreview,
+    reportDetailsCard,
+    detailsCardTopInset,
+  ]);
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
@@ -128,7 +163,7 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
         />
         {children}
       </div>

@@ -88,6 +88,7 @@ import {
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  pullRequestHostActions,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
   pullRequestListPreferences,
@@ -1592,6 +1593,22 @@ function PullRequestsRouteView() {
   ]);
   /** What is actually on screen once the reader's pending answers are on the rows. */
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
+  // The provider list is the workspace's hosts, not the filtered ones, so switching to a host
+  // cannot make the switcher that got you there disappear.
+  const [hosts, setHosts] = useState<PullRequestListResult["providers"]>([]);
+  useEffect(() => {
+    // Only from an answer to these filters. Rows carried over from the previous ones bring the
+    // host summaries of the question they answered, and coming back from one host to all of them
+    // would take the switcher's other hosts out of it on the strength of the narrowed answer.
+    if (answered === null) return;
+    // An unfiltered response is the full set of hosts. A filtered one only seeds the switcher
+    // when there is nothing to seed it with, which is a link that arrived already scoped.
+    setHosts((previous) =>
+      search.host === undefined || previous.length === 0 ? answered.providers : previous,
+    );
+  }, [answered, search.host]);
+  const showProvider = hosts.length > 1;
+  const hostActionsOf = useMemo(() => pullRequestHostActions(hosts), [hosts]);
   const [closeSweepKeys, setCloseSweepKeys] = useState<ReadonlySet<string>>(() => new Set());
   const closeSensorRef = useRef<SidebarPointerSensor | null>(null);
   const closeSweepRows = useMemo(
@@ -1605,8 +1622,14 @@ function PullRequestsRouteView() {
       ),
     [displayGroups],
   );
-  const closeSweepRef = useRef({ displayGroups, closeSweepRows, closingKeys, closeBatch });
-  closeSweepRef.current = { displayGroups, closeSweepRows, closingKeys, closeBatch };
+  const closeSweepRef = useRef({
+    displayGroups,
+    closeSweepRows,
+    closingKeys,
+    closeBatch,
+    hostActionsOf,
+  });
+  closeSweepRef.current = { displayGroups, closeSweepRows, closingKeys, closeBatch, hostActionsOf };
   useEffect(() => () => closeSensorRef.current?.cancel(), [filterKey, search.q, sort]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1632,7 +1655,7 @@ function PullRequestsRouteView() {
       return (
         row?.groupKey === group.key &&
         row.entry.state === "open" &&
-        row.entry.provider === "github" &&
+        closeSweepRef.current.hostActionsOf(row.entry).has("close") &&
         !closeSweepRef.current.closingKeys.has(key) &&
         !scrollRef.current?.querySelector(
           `[data-pull-request-key="${CSS.escape(key)}"] [data-pull-request-action-pending="true"]`,
@@ -1766,21 +1789,6 @@ function PullRequestsRouteView() {
     selectSurfaceInUrl(selectedPullRequestSurface);
   };
 
-  // The provider list is the workspace's hosts, not the filtered ones, so switching to a host
-  // cannot make the switcher that got you there disappear.
-  const [hosts, setHosts] = useState<PullRequestListResult["providers"]>([]);
-  useEffect(() => {
-    // Only from an answer to these filters. Rows carried over from the previous ones bring the
-    // host summaries of the question they answered, and coming back from one host to all of them
-    // would take the switcher's other hosts out of it on the strength of the narrowed answer.
-    if (answered === null) return;
-    // An unfiltered response is the full set of hosts. A filtered one only seeds the switcher
-    // when there is nothing to seed it with, which is a link that arrived already scoped.
-    setHosts((previous) =>
-      search.host === undefined || previous.length === 0 ? answered.providers : previous,
-    );
-  }, [answered, search.host]);
-  const showProvider = hosts.length > 1;
   // The workspace's own projects already name their hosts, so the row's shape is known before
   // the list is. Only its shape: which hosts can actually be read still comes from the server.
   const expectedHosts = useMemo(() => {
@@ -1843,7 +1851,6 @@ function PullRequestsRouteView() {
       threadPanelOpen={false}
       threadPanelPresentation="inline"
       threadPanelShortcutLabel={null}
-      threadPanelHasAttention={false}
       onToggleThreadPanel={() => undefined}
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
@@ -1943,6 +1950,7 @@ function PullRequestsRouteView() {
                     }
                     onSelect={selectEntry}
                     speedMode={speedMode}
+                    hostActions={hostActionsOf(entry)}
                     onActed={onSpeedAction}
                     closing={closingKeys.has(entryKey)}
                     sweeping={closeSweepKeys.has(entryKey)}
@@ -2215,6 +2223,8 @@ function PullRequestsRouteView() {
           <RightPanelTabs
             mode="inline"
             open={rightPanelState.isOpen}
+            keybindings={keybindings}
+            getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:pull-request-panel-width"
             // Default to roughly half the viewport: the PR list needs more
             // room than a chat, so the 540px chat-preview default squashes
@@ -2240,6 +2250,10 @@ function PullRequestsRouteView() {
               if (surface.kind === "pull-request") closeSurfacesToRight(surface);
             }}
             onCloseAllSurfaces={closeAllSurfaces}
+            onMoveSurface={(surfaceId, toIndex) => {
+              if (rightPanelRef !== null)
+                useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex);
+            }}
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}
             onAddBrowserInProfile={() => undefined}

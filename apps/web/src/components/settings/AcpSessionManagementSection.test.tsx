@@ -32,6 +32,12 @@ const commands = vi.hoisted(() => ({
   logout: vi.fn(),
 }));
 
+const grants = vi.hoisted(() => ({ scopes: new Set<string>() }));
+vi.mock("~/state/session", async (original) => ({
+  ...(await original<typeof import("~/state/session")>()),
+  useEnvironmentScope: (_id: unknown, scope: string) => grants.scopes.has(scope),
+  readEnvironmentScope: (_id: unknown, scope: string) => grants.scopes.has(scope),
+}));
 const dialogs = vi.hoisted(() => ({ confirm: vi.fn() }));
 
 vi.mock("react", async (importOriginal) => {
@@ -105,14 +111,14 @@ const provider = {
   skills: [],
 } satisfies ServerProvider;
 
-function render(): ReactElement<Record<string, unknown>> {
+function render(readOnly = false): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
   return AcpSessionManagementSection({
     environmentId,
     instanceId,
     provider,
     projects: [{ id: projectId, title: "Antigravity", workspaceRoot: session.cwd }],
-    readOnly: false,
+    readOnly,
   }) as ReactElement<Record<string, unknown>>;
 }
 
@@ -139,55 +145,56 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("AcpSessionManagementSection", () => {
-  beforeEach(() => {
-    hooks.reset();
-    commands.list.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: {
-        sessions: [session],
-        nextCursor: null,
-        canLoad: true,
-        canResume: true,
-        canDelete: true,
-      },
-    });
-    commands.import.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: { threadId: ThreadId.make("thread-imported"), imported: true },
-    });
-    commands.delete.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: { deleted: true },
-    });
-    commands.listProviders.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: {
-        providers: [
-          {
-            providerId: "google",
-            supported: ["openai"],
-            required: false,
-            current: { apiType: "openai", baseUrl: "https://api.example.test/v1" },
-          },
-        ],
-      },
-    });
-    commands.setProvider.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: { configured: true },
-    });
-    commands.disableProvider.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: { disabled: true },
-    });
-    commands.logout.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: { loggedOut: true },
-    });
-    dialogs.confirm.mockReset().mockResolvedValue(true);
+beforeEach(() => {
+  hooks.reset();
+  grants.scopes = new Set(["orchestration:read", "orchestration:operate", "providers:manage"]);
+  commands.list.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: {
+      sessions: [session],
+      nextCursor: null,
+      canLoad: true,
+      canResume: true,
+      canDelete: true,
+    },
   });
+  commands.import.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { threadId: ThreadId.make("thread-imported"), imported: true },
+  });
+  commands.delete.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { deleted: true },
+  });
+  commands.listProviders.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: {
+      providers: [
+        {
+          providerId: "google",
+          supported: ["openai"],
+          required: false,
+          current: { apiType: "openai", baseUrl: "https://api.example.test/v1" },
+        },
+      ],
+    },
+  });
+  commands.setProvider.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { configured: true },
+  });
+  commands.disableProvider.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { disabled: true },
+  });
+  commands.logout.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { loggedOut: true },
+  });
+  dialogs.confirm.mockReset().mockResolvedValue(true);
+});
 
+describe("AcpSessionManagementSection", () => {
   it("lists and imports native sessions through the owning environment", async () => {
     const initial = render();
     (findByLabel(initial, "List sessions").props.onClick as (() => void) | undefined)?.();
@@ -291,4 +298,34 @@ describe("AcpSessionManagementSection", () => {
       input: { instanceId, projectId, providerId: "google" },
     });
   });
+});
+
+it("imports with task access even when provider configuration is read-only", async () => {
+  grants.scopes.delete("providers:manage");
+  (findByLabel(render(true), "List sessions").props.onClick as () => void)();
+  await flushPromises();
+  (findByLabel(render(true), "Import").props.onClick as () => void)();
+  await flushPromises();
+  expect(commands.import).toHaveBeenCalledOnce();
+});
+
+it("does not import with provider management alone", async () => {
+  grants.scopes.delete("orchestration:operate");
+  (findByLabel(render(), "List sessions").props.onClick as () => void)();
+  await flushPromises();
+  (findByLabel(render(), "Import").props.onClick as () => void)();
+  await flushPromises();
+  expect(commands.import).not.toHaveBeenCalled();
+});
+
+it("rechecks task access after confirming deletion", async () => {
+  (findByLabel(render(), "List sessions").props.onClick as () => void)();
+  await flushPromises();
+  dialogs.confirm.mockImplementationOnce(async () => {
+    grants.scopes.delete("orchestration:operate");
+    return true;
+  });
+  (findByLabel(render(), "Delete").props.onClick as () => void)();
+  await flushPromises();
+  expect(commands.delete).not.toHaveBeenCalled();
 });

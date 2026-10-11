@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { GrokSettings } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 
 import {
   buildGrokModelCapabilities,
@@ -17,9 +17,9 @@ import {
   checkGrokProviderStatus,
   grokSlashCommandsFromInitialize,
   parseGrokModelsCliOutput,
-} from "./GrokProvider.ts";
-import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
-import { grokUsageResponseToLimits, readGrokAccount } from "./grokUsageLimits.ts";
+} from "@t3tools/provider-grok/testing";
+import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import { grokUsageResponseToLimits, readGrokAccount } from "@t3tools/provider-grok/testing";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -380,7 +380,6 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
             directory: dir,
             name: "grok",
             source: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               `process.stderr.write(${JSON.stringify(`${secretStderr}\n`)});`,
               "process.exit(2);",
               "",
@@ -417,7 +416,6 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
           "  process.exit(0);",
           "}",

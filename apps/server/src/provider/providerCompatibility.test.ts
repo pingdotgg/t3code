@@ -12,8 +12,8 @@ import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as Schema from "effect/Schema";
 import {
@@ -165,6 +165,26 @@ describe("provider compatibility", () => {
       resolveProviderCompatibility([policy], driver, "2.0.0-a1b2c3d")?.status,
       "unknown",
     );
+  });
+
+  it("compares Muse versions by their release, ignoring the revision suffix", () => {
+    const muse = ProviderDriverKind.make("muse");
+    for (const [version, expected] of [
+      ["1.4.3-R5018.1", "supported"],
+      ["1.4.2-R4684", "supported"],
+      ["1.4.1-R4100.2", "unknown"],
+      ["1.4.3-beta.1", "unknown"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          muse,
+          version,
+          V2_RELEASE,
+        )?.status,
+        expected,
+      );
+    }
   });
 
   it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {

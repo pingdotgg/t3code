@@ -1,7 +1,8 @@
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -30,13 +31,14 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 
@@ -264,6 +266,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
 
 export function NewTaskBranchPickerRouteScreen() {
   const flow = useNewTaskFlow();
+  const canWriteSourceControl = useEnvironmentScope(
+    flow.selectedProject?.environmentId ?? null,
+    AuthSourceControlWriteScope,
+  );
   const navigation = useNavigation();
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
@@ -291,7 +297,12 @@ export function NewTaskBranchPickerRouteScreen() {
 
   const selectBranch = useCallback(
     async (branch: VcsRef) => {
-      if (selectingBranchNameRef.current !== null) {
+      const needsCheckout = shouldCheckoutNewTaskBranch({
+        branchIsCurrent: branch.current,
+        branchWorktreePath: branch.worktreePath,
+        workspaceMode: flow.workspaceMode,
+      });
+      if (selectingBranchNameRef.current !== null || (needsCheckout && !canWriteSourceControl)) {
         return;
       }
       selectingBranchNameRef.current = branch.name;
@@ -336,6 +347,7 @@ export function NewTaskBranchPickerRouteScreen() {
       }
     },
     [
+      canWriteSourceControl,
       flow.selectBranch,
       flow.selectedProject,
       flow.setBranchQuery,
@@ -401,7 +413,7 @@ export function BranchPickerScreen(props: {
 }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const selectedBranchName =
     props.selectedBranchName ??
     props.branches.find((branch) => branch.current)?.name ??

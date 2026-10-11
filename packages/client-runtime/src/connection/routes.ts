@@ -1,6 +1,7 @@
 import {
   isLocalLoopbackHost,
   isPrivateNetworkHost,
+  isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
@@ -15,12 +16,19 @@ import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
 
 /**
  * A saved environment can hold several routes: T3 Connect, direct URLs (LAN,
- * tailnet, public), and SSH. The client connects over the first route in
+ * tailnet, other VPNs, public), and SSH. The client connects over the first route in
  * preference order that answers as the expected environment, and moves back
  * to a better one when it becomes reachable again.
  */
 
-export type ConnectionRouteKind = "relay" | "loopback" | "lan" | "tailnet" | "public" | "ssh";
+export type ConnectionRouteKind =
+  | "relay"
+  | "loopback"
+  | "lan"
+  | "tailnet"
+  | "vpn"
+  | "public"
+  | "ssh";
 
 /** An environment has at most one T3 Connect route, so it needs no per-route id. */
 export const RELAY_ROUTE_ID = "relay";
@@ -96,7 +104,11 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
       const hostname = routeHostname(route);
       if (hostname === null) return "public";
       if (isLocalLoopbackHost(hostname)) return "loopback";
-      if (isTailnetHost(hostname)) return "tailnet";
+      const profile = Option.getOrNull(route.profile);
+      const tailscale =
+        profile?._tag === "BearerConnectionProfile" && profile.network === "tailscale";
+      if (tailscale || isTailnetHost(hostname)) return "tailnet";
+      if (isSharedAddressSpaceHost(hostname)) return "vpn";
       return isPrivateNetworkHost(hostname) ? "lan" : "public";
     }
   }
@@ -106,6 +118,7 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   loopback: 0,
   lan: 1,
   tailnet: 2,
+  vpn: 2,
   public: 3,
   ssh: 4,
   relay: 5,
@@ -166,7 +179,7 @@ function routeAddressKey(route: ConnectionRoute): string | null {
   }
 }
 
-/** Short user-facing route description: "LAN", "Tailscale", "T3 Connect", a URL, or an SSH host. */
+/** Short user-facing route description: "LAN", "Tailscale", "VPN", "T3 Connect", a URL, or an SSH host. */
 export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
@@ -177,6 +190,8 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
       return "LAN";
     case "tailnet":
       return "Tailscale";
+    case "vpn":
+      return "VPN";
     case "ssh": {
       const profile = Option.getOrNull(route.profile);
       return profile?._tag === "SshConnectionProfile"
@@ -212,13 +227,16 @@ export function hasRelayRoute(
  * in use: the paired token for a bearer route, the T3 Connect credential for
  * relay. A learned route the server still reports keeps its place, so the
  * user's order holds; one it no longer reports is dropped, so a changed LAN
- * address replaces the old one. Routes the user saved are never touched, and
- * an address already saved is not learned twice.
+ * address replaces the old one. Routes the user saved are never removed or
+ * moved, and an address already saved is not learned twice. Any direct route
+ * the server reports is marked as Tailscale while the server finds it on its
+ * Tailscale interface, so a route paired by its numeric Tailscale address keeps
+ * that label.
  */
 export function mergeLearnedRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
   readonly activeRoute: ConnectionRoute;
-  readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
+  readonly reported: ReadonlyArray<ReportedEndpoint>;
   /** Plain HTTP routes are unusable from an HTTPS page (mixed content). */
   readonly allowInsecure: boolean;
 }): ReadonlyArray<ConnectionRoute> | null {
@@ -245,6 +263,7 @@ export function mergeLearnedRoutes(input: {
 
   // Usable reported addresses, by origin.
   const reported = new Map<string, URL>();
+  const tailscaleOrigins = new Set<string>();
   for (const endpoint of input.reported) {
     let url: URL;
     try {
@@ -257,6 +276,7 @@ export function mergeLearnedRoutes(input: {
     // A loopback address names whichever device opens it, never the server.
     if (isLocalLoopbackHost(url.hostname)) continue;
     reported.set(url.origin, url);
+    if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
   }
   const normalized = (url: string) => url.replace(/\/+$/, "");
   const known = new Set(
@@ -265,12 +285,18 @@ export function mergeLearnedRoutes(input: {
       return url === null || isLearned(route) ? [] : [normalized(url)];
     }),
   );
-  const kept = saved.filter((route) => {
-    if (!isLearned(route)) return true;
+  const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
     const url = routeHttpBaseUrl(route);
-    if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return false;
+    if (!isLearned(route)) {
+      return [
+        url === null || !reported.has(normalized(url))
+          ? route
+          : withNetwork(route, tailscaleOrigins.has(normalized(url))),
+      ];
+    }
+    if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
     known.add(normalized(url));
-    return true;
+    return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
   });
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
@@ -296,6 +322,7 @@ export function mergeLearnedRoutes(input: {
           wsBaseUrl: `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}/`,
           learned: true,
           ...(authorization === undefined ? {} : { authorization }),
+          ...(tailscaleOrigins.has(url.origin) ? { network: "tailscale" as const } : {}),
         }),
       ),
     });
@@ -303,9 +330,40 @@ export function mergeLearnedRoutes(input: {
   // Compare addresses too: a scheme or port change keeps no id stable.
   const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
     routes
-      .map((route) => `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""}`)
+      .map(
+        (route) =>
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+      )
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
+}
+
+/** A direct address the server reports, as `ServerDirectEndpoint`. */
+export interface ReportedEndpoint {
+  readonly httpBaseUrl: string;
+  readonly kind?: string;
+}
+
+/** The direct route with its Tailscale mark set or cleared; the same route when unchanged. */
+function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {
+  const profile = Option.getOrNull(route.profile);
+  if (profile?._tag !== "BearerConnectionProfile") return route;
+  if ((profile.network === "tailscale") === tailscale) return route;
+  return {
+    target: route.target,
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId: profile.connectionId,
+        environmentId: profile.environmentId,
+        label: profile.label,
+        httpBaseUrl: profile.httpBaseUrl,
+        wsBaseUrl: profile.wsBaseUrl,
+        ...(profile.learned === undefined ? {} : { learned: profile.learned }),
+        ...(profile.authorization === undefined ? {} : { authorization: profile.authorization }),
+        ...(tailscale ? { network: "tailscale" as const } : {}),
+      }),
+    ),
+  };
 }
 
 /**

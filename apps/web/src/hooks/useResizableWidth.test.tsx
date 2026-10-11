@@ -2,12 +2,19 @@ import { act, useLayoutEffect, type PointerEvent } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useResizableWidth } from "./useResizableWidth";
+import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "./useResizableWidth";
 
 let renderer: ReactTestRenderer;
 let result: ReturnType<typeof useResizableWidth>;
 let captured = false;
+const hostStyle = new Map<string, string>();
 const target = {
+  parentElement: {
+    style: {
+      setProperty: (property: string, value: string) => hostStyle.set(property, value),
+      removeProperty: (property: string) => hostStyle.delete(property),
+    },
+  },
   setPointerCapture: () => {
     captured = true;
   },
@@ -65,6 +72,7 @@ function Panel({
 
 beforeEach(async () => {
   savedWidths.clear();
+  hostStyle.clear();
   captured = false;
   frame = undefined;
   style.cursor = "";
@@ -102,7 +110,9 @@ describe("panel resize cleanup", () => {
         result.handlers.onPointerMove(pointer(50));
       });
       await act(() => frame?.(0));
-      expect(result.width).toBe(450);
+      expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("450px");
+      expect(hostStyle.get("transition-property")).toBe("none");
+      expect(result.width).toBe(400);
       // Queue another move to check that interruption cancels pending work too.
       await act(() => result.handlers.onPointerMove(pointer(25)));
       expect(style.cursor).toBe("col-resize");
@@ -116,6 +126,7 @@ describe("panel resize cleanup", () => {
       expect(style.cursor).toBe("");
       expect(style.userSelect).toBe("");
       expect(captured).toBe(false);
+      expect(hostStyle.has("transition-property")).toBe(false);
       expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
       if (reason === "unmount") {
         expect(setItem).not.toHaveBeenCalled();
@@ -151,11 +162,11 @@ describe("panel resize cleanup", () => {
       result.handlers.onPointerMove(pointer(-200));
     });
     await act(() => frame?.(0));
-    expect(result.width).toBe(Math.min(700, initialMax));
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe(`${Math.min(700, initialMax)}px`);
     await act(() => renderer.update(<Panel maxWidth={nextMax} />));
     await act(() => result.handlers.onPointerMove(pointer(-250)));
     await act(() => frame?.(0));
-    expect(result.width).toBe(Math.min(750, nextMax));
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe(`${Math.min(750, nextMax)}px`);
     await act(() => result.handlers.onPointerUp(pointer(-300)));
     expect(result.width).toBe(nextMax);
     expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", String(nextMax));
@@ -225,10 +236,11 @@ describe("panel width storage changes", () => {
       result.handlers.onPointerMove(pointer(50));
     });
     await act(() => frame?.(0));
-    expect(result.width).toBe(450);
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("450px");
     await act(() => result.handlers.onPointerMove(pointer(25)));
     await act(() => renderer.update(<Panel storageKey="thread-b" />));
     expect(result.width).toBe(650);
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("650px");
     expect(captured).toBe(false);
     expect(style.cursor).toBe("");
     await act(() => {

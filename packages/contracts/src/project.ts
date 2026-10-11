@@ -36,6 +36,8 @@ export const ProjectScript = Schema.Struct({
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
+  /** Run in the thread's worktree each time the thread settles. */
+  runOnSettle: Schema.optional(Schema.Boolean),
   /** Start the agent while setup runs unless explicitly disabled. */
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
@@ -95,7 +97,7 @@ const ProjectMonogramIcon = Schema.Struct({
 /** A workspace-relative image a project may use as its favicon. */
 export const ProjectFaviconPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
-  Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
+  Schema.isPattern(/\.(?:avif|gif|icns|ico|jpe?g|png|svg|webp)$/i),
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 

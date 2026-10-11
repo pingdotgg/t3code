@@ -64,11 +64,14 @@ another link to share.
 
 ### Reach one machine several ways
 
-A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
-T3 Connect. To add one, choose **Add route** in the machine's route list, or
-next to it in the T3 Connect list. Pairing the same machine again over another
-address also adds a route instead of a second machine. A new route is placed by
-speed, in that order, and you can reorder routes at any time.
+A machine can have more than one route: LAN, Tailscale, another VPN, a public
+URL, SSH, or T3 Connect. Tailscale shares its `100.64.0.0/10` address range with
+other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
+unless the machine confirms it is on Tailscale. To add a route, choose **Add
+route** in the machine's route list, or next to it in the T3 Connect list.
+Pairing the same machine again over another address also adds a route instead
+of a second machine. A new route is placed by speed, in that order, and you can
+reorder routes at any time.
 
 While connected through T3 Connect or a paired address, T3 Code also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
@@ -90,6 +93,13 @@ On web and desktop, select the route count under the machine's name in
 or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
+
+Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
+in the mobile route details, to see what your current connection can do on that
+environment. For a remote environment, this is in its route details. Permissions
+shown there apply only to the route marked **In use**; other routes are not
+checked. Direct pairing and T3 Connect have separate sessions and may grant
+different permissions.
 
 ### Balance new threads across machines
 
@@ -213,12 +223,19 @@ sudo t3 browser setup
 
 The server shows the exact line for how you started it, such as
 `sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
-for your user. It allows Chrome's sandbox with an AppArmor profile and installs
+for your user. Where `t3` is not on your `PATH`, such as with only the
+desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries with apt. It is safe to run again. Without `sudo`, it
 only reports what it would change.
 
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
+
+## Connect an outside agent
+
+Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive
+threads on an environment through its MCP server. See
+[outside agents](./outside-agents.md) for setup.
 
 ## Manage or revoke access
 
@@ -229,6 +246,46 @@ management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
 expires.
+
+To choose a token's permissions, pass `--scope` once for each scope you want:
+
+```sh
+npx t3 pair --scope orchestration:read --scope relay:read
+```
+
+The selected scopes replace the default permissions. The same option works with
+`npx t3 auth pairing create` and `npx t3 auth session issue`; each command's
+`--help` lists the available scopes. Without `--scope`, pairing tokens retain
+standard client permissions and issued bearer sessions retain administrative
+permissions.
+
+To change an existing client's permissions, create a fresh pairing link with the
+scopes it needs. In a browser opened directly on the environment, open that link
+to replace the browser's current grant. For mobile or a saved remote environment
+in web or desktop, use **Add Environment** with the fresh link or code; pairing
+the same environment replaces its saved grant. Reconnecting alone does not change
+permissions.
+
+Grouping checkouts does not combine their permissions. Shared project settings
+require `orchestration:operate` on every member environment; actions on one
+checkout use that checkout's permissions.
+
+`source-control:write` covers direct Git and pull request changes made from the
+client: pushing, switching or creating branches, cloning, and removing
+worktrees. It does not restrict what a task does. Starting a task in a new
+worktree still creates that branch and worktree with `orchestration:operate`,
+and the agent it runs can use Git however the environment allows.
+
+Settings changes, provider management, and environment maintenance can be granted
+separately from access administration. New standard pairings include these
+permissions. Existing clients can stay connected after an update, but newly separated
+features may require pairing again with the permissions they need. Older clients
+may show controls that the server denies. Create a fresh pairing link to change
+a client's permissions.
+
+`filesystem:read` allows browsing host files, opening workspace files, and viewing
+local changes. Add `filesystem:write` to allow editing files or saving plans to
+the workspace. These scopes control direct file access from the client.
 
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This

@@ -20,7 +20,7 @@ import {
   makeCursorAgentSdkReplayRunner,
 } from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -43,12 +43,12 @@ import {
   projectionFor,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
 import {
-  materializeReplayTranscriptRuntimeInstructions,
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
-} from "./ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
@@ -384,6 +384,13 @@ describe("orchestrator replay recovery", () => {
         assert.lengthOf(childThreads, 1);
         const child = childThreads[0];
         assert.equal(child?.thread.id, subagent?.childThreadId);
+        // The recovered subagent's replies name the model its thread already
+        // holds, so the effort recorded at launch survives the restart.
+        assert.deepEqual(child?.thread.modelSelection, {
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "high" }],
+        });
 
         const conversation = (child?.turnItems ?? [])
           .toSorted((left, right) => left.ordinal - right.ordinal)
