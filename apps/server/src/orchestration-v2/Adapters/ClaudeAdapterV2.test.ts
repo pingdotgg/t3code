@@ -1030,6 +1030,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -1189,6 +1190,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
         }),
       forkSession: () => Effect.die("unused"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      sessionHasMessages: () => Effect.succeed(true),
       assertComplete: Effect.void,
     }),
   );
@@ -1308,6 +1310,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -1532,6 +1535,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -1677,6 +1681,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -1775,6 +1780,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                 return { sessionId: "forked-native-session" };
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -2062,6 +2068,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -2125,6 +2132,123 @@ describe("ClaudeAdapterV2 native session identity", () => {
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
       assert.equal(openedQueries[0]?.options.resume, undefined);
     }),
+  );
+});
+
+describe("ClaudeAdapterV2 resume", () => {
+  const openRuntime = (hasMessages: boolean) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-v2-resume-",
+      });
+      const lookups: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionLookupInput> = [];
+      const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path: yield* Path.Path,
+        idAllocator,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-session-resume"),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused forkSession"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          sessionHasMessages: (input) =>
+            Effect.sync(() => {
+              lookups.push(input);
+              return hasMessages;
+            }),
+          assertComplete: Effect.void,
+        },
+      });
+      const threadId = ThreadId.make("thread-claude-resume");
+      const providerSessionId = ProviderSessionId.make("provider-session-claude-resume");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      return { runtime, providerThread, threadId, providerSessionId, lookups };
+    });
+
+  const testLayer = Layer.merge(IdAllocator.layer, NodeServices.layer);
+
+  it.effect("fails when the CLI has no conversation for the native session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // The first turn was stopped before the CLI persisted anything, so
+        // its native id has no transcript. Resuming it would fail on every
+        // later turn; failing here lets the turn start bind a fresh session.
+        const { runtime, providerThread, threadId, providerSessionId, lookups } =
+          yield* openRuntime(false);
+        const error = yield* Effect.flip(runtime.resumeThread({ providerThread, threadId }));
+        assert.equal(error._tag, "ProviderAdapterResumeThreadError");
+        assert.nestedPropertyVal(error, "providerThreadId", providerThread.id);
+        assert.nestedPropertyVal(error, "cause._tag", "ProviderAdapterProtocolError");
+        assert.match(
+          String(Reflect.get(Reflect.get(error, "cause") as object, "detail")),
+          /no conversation for session native-session-resume/,
+        );
+        assert.deepEqual(lookups, [
+          { sessionId: "native-session-resume", threadId, providerSessionId },
+        ]);
+      }).pipe(Effect.provide(testLayer)),
+    ),
+  );
+
+  it.effect("resumes when the CLI holds the conversation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, providerThread, threadId, lookups } = yield* openRuntime(true);
+        const resumed = yield* runtime.resumeThread({ providerThread, threadId });
+        assert.equal(resumed.id, providerThread.id);
+        assert.equal(resumed.status, "idle");
+        assert.equal(lookups.length, 1);
+      }).pipe(Effect.provide(testLayer)),
+    ),
+  );
+
+  it.effect("does not consult session storage while the native session's query is live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // A live query is the CLI process itself; between its startup and the
+        // first persisted prompt the transcript is empty, which must not be
+        // mistaken for a missing conversation.
+        const { runtime, providerThread, threadId, lookups } = yield* openRuntime(false);
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("run-attempt-claude-resume-live"),
+            text: "Respond with resume ok",
+            attachments: [],
+          }),
+        );
+        const resumed = yield* runtime.resumeThread({ providerThread, threadId });
+        assert.equal(resumed.id, providerThread.id);
+        assert.deepEqual(lookups, []);
+      }).pipe(Effect.provide(testLayer)),
+    ),
   );
 });
 
@@ -2416,6 +2540,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           forkSession: () => Effect.die("unused forkSession"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
+          sessionHasMessages: () => Effect.succeed(true),
           assertComplete: Effect.void,
         },
       });
@@ -4719,6 +4844,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -4974,6 +5100,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              sessionHasMessages: () => Effect.succeed(true),
               assertComplete: Effect.void,
             },
           });
@@ -9699,6 +9826,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -9887,6 +10015,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              sessionHasMessages: () => Effect.succeed(true),
               assertComplete: Effect.void,
             },
           });
@@ -10128,6 +10257,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              sessionHasMessages: () => Effect.succeed(true),
               assertComplete: Effect.void,
             },
           });
@@ -10326,6 +10456,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
@@ -10509,6 +10640,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               },
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              sessionHasMessages: () => Effect.succeed(true),
               assertComplete: Effect.void,
             },
           });
@@ -10647,6 +10779,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               },
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              sessionHasMessages: () => Effect.succeed(true),
               assertComplete: Effect.void,
             },
           });
@@ -10827,6 +10960,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               ),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionHasMessages: () => Effect.succeed(true),
             assertComplete: Effect.void,
           },
         });
