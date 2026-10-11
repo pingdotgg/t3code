@@ -121,19 +121,34 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
-    const topLevelResult = yield* processRunner
-      .run({
-        command: "git",
-        args: ["-C", cwd, "rev-parse", "--show-toplevel"],
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(Effect.option);
-    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
+    const revParse = (...flags: ReadonlyArray<string>) =>
+      processRunner
+        .run({
+          command: "git",
+          args: ["-C", cwd, "rev-parse", ...flags],
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.option);
+
+    const topLevelResult = yield* revParse("--show-toplevel");
+    // Skip the bare probe after a timeout or spawn failure; it would likely fail the same way.
+    if (topLevelResult._tag === "None" || topLevelResult.value.timedOut) {
       return null;
     }
+    if (topLevelResult.value.code === 0) {
+      const candidate = topLevelResult.value.stdout.trim();
+      return candidate.length > 0 ? candidate : null;
+    }
 
-    const candidate = topLevelResult.value.stdout.trim();
-    return candidate.length > 0 ? candidate : null;
+    // A bare repository has no work tree, so its git dir is the key; `git remote
+    // -v` works there. The "true" check keeps a checkout's .git folder null.
+    // Output: "true\n/home/me/t3code/.bare\n" -> "/home/me/t3code/.bare"
+    const bareResult = yield* revParse("--is-bare-repository", "--absolute-git-dir");
+    if (bareResult._tag === "None" || bareResult.value.code !== 0) {
+      return null;
+    }
+    const [isBare, gitDir = ""] = bareResult.value.stdout.split("\n").map((line) => line.trim());
+    return isBare === "true" && gitDir.length > 0 ? gitDir : null;
   },
 );
 
