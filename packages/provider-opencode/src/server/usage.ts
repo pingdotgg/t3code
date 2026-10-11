@@ -14,7 +14,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -94,13 +93,28 @@ export interface OpenCodeUsageReadResult {
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
 const MESSAGE_PAGE_SIZE = 64;
 
+/** Whether the path is itself a symlink, without following it. */
+const isSymbolicLink = Effect.fnUntraced(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* Effect.isSuccess(fileSystem.readLink(path));
+});
+
 /** Stat of a regular file or directory; a symlink reports as itself and is never followed. */
 const entryInfo = Effect.fn("entryInfo")(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const link = yield* Effect.exit(fileSystem.readLink(path));
-  if (Exit.isSuccess(link)) return { type: "SymbolicLink" as const, mtime: Option.none<Date>() };
+  if (yield* isSymbolicLink(path))
+    return { type: "SymbolicLink" as const, mtime: Option.none<Date>() };
   return yield* fileSystem.stat(path);
 });
+
+/**
+ * Stats run in the libuv thread pool, so a few at a time cut the walk's wall
+ * time without lengthening any event-loop turn.
+ */
+const LEGACY_STAT_CONCURRENCY = 4;
+
+/** Entries stat'd before any is processed, so one huge directory is not held in memory at once. */
+const LEGACY_STAT_BATCH = 256;
 
 /** Reads current SQLite and pre-migration JSON stores without modifying either. */
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
@@ -234,34 +248,61 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   while (directories.length > 0) {
     const directory = directories.pop()!;
     yield* Effect.gen(function* () {
-      for (const name of yield* fileSystem.readDirectory(directory)) {
-        const entry = path.join(directory, name);
-        const info = yield* entryInfo(entry).pipe(
-          Effect.catchTags({
-            PlatformError: (cause) =>
-              isNotFound(cause) ? Effect.succeed(null) : Effect.fail(cause),
-          }),
+      const names = yield* fileSystem.readDirectory(directory);
+      for (let start = 0; start < names.length; start += LEGACY_STAT_BATCH) {
+        const batch = names.slice(start, start + LEGACY_STAT_BATCH);
+        const entries = batch.map((name) => path.join(directory, name));
+        // `stat` follows symlinks and `readLink` fails, expensively, for
+        // everything else. Stat a batch, then ask whether an entry is a symlink
+        // only where the answer changes the result.
+        const infos = yield* Effect.forEach(
+          entries,
+          (entry) =>
+            fileSystem.stat(entry).pipe(
+              Effect.catchTags({
+                // A symlink whose target cannot be stat'd is skipped, not an error.
+                PlatformError: (cause) =>
+                  isNotFound(cause)
+                    ? Effect.succeed(null)
+                    : isSymbolicLink(entry).pipe(
+                        Effect.flatMap((link) =>
+                          link ? Effect.succeed(null) : Effect.fail(cause),
+                        ),
+                      ),
+              }),
+              Effect.exit,
+            ),
+          { concurrency: LEGACY_STAT_CONCURRENCY },
         );
-        if (info?.type === "Directory") {
-          directories.push(entry);
-        } else if (info?.type === "File" && name.endsWith(".json")) {
-          found = true;
-          const id = name.slice(0, -5);
-          if (seen.has(`opencode:${id}`)) continue;
-          // A message cannot be created after its file was last written, so a
-          // file untouched since the window opened holds nothing in range.
-          if (Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs)) continue;
-          const file = { path: entry, records: [] as UsageRecord[] };
-          files.push(file);
-          yield* fileSystem.readFileString(entry).pipe(
-            Effect.map((source) => append(file.records, parseOpenCodeMessage(source, { id }))),
-            Effect.catchTags({
-              PlatformError: (cause) => {
-                if (!isNotFound(cause)) error = true;
-                return Effect.void;
-              },
-            }),
-          );
+        for (const [index, name] of batch.entries()) {
+          const entry = entries[index]!;
+          const info = yield* infos[index]!;
+          if (info?.type === "Directory") {
+            if (!(yield* isSymbolicLink(entry))) directories.push(entry);
+          } else if (info?.type === "File" && name.endsWith(".json")) {
+            const id = name.slice(0, -5);
+            // A message cannot be created after its file was last written, so a
+            // file untouched since the window opened holds nothing in range.
+            const skip =
+              seen.has(`opencode:${id}`) ||
+              Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs);
+            // A skipped file only matters as proof that the store exists.
+            if (found && skip) continue;
+            if (yield* isSymbolicLink(entry)) continue;
+            found = true;
+            if (skip) continue;
+            const file = { path: entry, records: [] as UsageRecord[] };
+            files.push(file);
+            yield* fileSystem.readFileString(entry).pipe(
+              Effect.map((source) => append(file.records, parseOpenCodeMessage(source, { id }))),
+              Effect.catchTags({
+                PlatformError: (cause) => {
+                  if (!isNotFound(cause)) error = true;
+                  return Effect.void;
+                },
+              }),
+            );
+          }
         }
       }
     }).pipe(
