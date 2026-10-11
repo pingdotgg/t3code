@@ -333,6 +333,23 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
+  it("restores escaped backslashes in prose Windows paths", () => {
+    const markdown = String.raw`Saved to C:\Users\me\.t3\_build\shot.png and (C:\.scratch) and C:\folder\(draft. Keep \*this\*.`;
+    const node: MarkdownNode = {
+      type: "paragraph",
+      children: [
+        {
+          type: "text",
+          content: String.raw`Saved to C:\Users\me.t3_build\shot.png and (C:.scratch) and C:\folder(draft. Keep *this*.`,
+        },
+      ],
+    };
+
+    expect(nativeMarkdownWithAuthoredWindowsPaths(node, markdown).children?.[0]?.content).toBe(
+      String.raw`Saved to C:\Users\me\.t3\_build\shot.png and (C:\.scratch) and C:\folder\(draft. Keep *this*.`,
+    );
+  });
+
   it("leaves a Windows path as parsed when two written paths could have produced it", () => {
     const markdown = [
       String.raw`\`![example](C:\Users\me\.t3\shot.png)\``,
