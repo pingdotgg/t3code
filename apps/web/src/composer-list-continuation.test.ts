@@ -64,8 +64,57 @@ describe("composer list continuation", () => {
     expect(listContinuationForEnter(value, cursor)).toBeNull();
   });
 
-  it("indents list items on Tab", () => {
-    expect(applyEdit("- foo", listIndentForTab("- foo", 2, 2)!)).toBe("  - foo");
+  it.each([
+    ["1. a\n   1. ", "1. a\n2. "],
+    ["1) a\n   1) x\n   2) ", "1) a\n   1) x\n2) "],
+    ["- a\n  1. ", "- a\n- "],
+    ["1. a\n   - [ ] ", "1. a\n2. "],
+    ["1. a\n   1. x\n      1. ", "1. a\n   1. x\n   2. "],
+  ])("leaves one level of nesting on an empty nested item in %j", (value, expected) => {
+    expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(expected);
+  });
+
+  it("exits the list on an empty item indented with no parent", () => {
+    expect(applyEdit("  - ", listContinuationForEnter("  - ", 4)!)).toBe("");
+  });
+});
+
+describe("listIndentForTab", () => {
+  function tab(value: string, cursor = value.length) {
+    const edit = listIndentForTab(value, cursor, cursor);
+    return edit && { value: applyEdit(value, edit), cursor: edit.cursor };
+  }
+
+  it.each([
+    // Children nest at the item's content column, so Markdown reads them as nested.
+    ["1. a\n2. ", "1. a\n   1. "],
+    ["1. a\n2. b", "1. a\n   1. b"],
+    ["10) a\n11) ", "10) a\n    1) "],
+    ["1. a\n   1. x\n2. ", "1. a\n   1. x\n   2. "],
+    ["1. a\n   1. x\n      1. y\n2. ", "1. a\n   1. x\n      1. y\n   2. "],
+    ["1. a\n   - x\n2. ", "1. a\n   - x\n   1. "],
+    ["1. a\n  1. x\n2. ", "1. a\n  1. x\n  2. "],
+    ["- a\n- ", "- a\n  - "],
+    ["- [ ] a\n- [ ] ", "- [ ] a\n  - [ ] "],
+    ["- a\n1. ", "- a\n  1. "],
+  ])("nests the last item of %j", (value, expected) => {
+    const result = tab(value);
+    expect(result?.value).toBe(expected);
+    expect(result?.cursor).toBe(expected.length);
+  });
+
+  it("keeps the caret on the item text", () => {
+    const value = "1. a\n2. bc";
+    expect(tab(value, value.length - 1)).toEqual({ value: "1. a\n   1. bc", cursor: 12 });
+  });
+
+  it("indents by two spaces with no item to nest under", () => {
+    expect(tab("- foo", 2)).toEqual({ value: "  - foo", cursor: 4 });
+    expect(tab("text\n1. ")).toEqual({ value: "text\n  1. ", cursor: 10 });
+    expect(tab("1. a\n   1. ")).toEqual({ value: "1. a\n     1. ", cursor: 13 });
+  });
+
+  it("ignores non-list lines and ranged selections", () => {
     expect(listIndentForTab("plain", 2, 2)).toBeNull();
     expect(listIndentForTab("- foo", 1, 3)).toBeNull();
   });
