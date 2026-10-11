@@ -2118,6 +2118,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
+      assert.equal(
+        (mac.extendInfo as Record<string, unknown>).NSLocationUsageDescription,
+        "T3 Code uses your location when a website requests it.",
+      );
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
@@ -2141,6 +2145,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(
         (config.dmg as Record<string, unknown>).background,
         "dmg/dmg-background-nightly.png",
+      );
+      assert.equal(
+        ((config.mac as Record<string, unknown>).extendInfo as Record<string, unknown>)
+          .NSLocationUsageDescription,
+        "T3 Code uses your location when a website requests it.",
       );
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );

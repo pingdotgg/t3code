@@ -2823,6 +2823,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        NSLocationUsageDescription: "T3 Code uses your location when a website requests it.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [

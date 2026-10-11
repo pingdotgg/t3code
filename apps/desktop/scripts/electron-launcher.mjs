@@ -272,6 +272,7 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     NSScreenCaptureUsageDescription:
       "T3 Code captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
+    NSLocationUsageDescription: "T3 Code uses your location when a website requests it.",
   };
 }
 
@@ -362,6 +363,10 @@ function buildMacLauncher(electronBinaryPath) {
     iconMtimeMs: NodeFS.statSync(iconPath).mtimeMs,
     appBundleId: APP_BUNDLE_ID,
     appProtocolSchemes: APP_PROTOCOL_SCHEMES,
+    // Rebuild cached bundles when protected-resource disclosures change.
+    infoPlistStrings: resolveMacBundleInfoPlistStrings(
+      isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
+    ),
   };
 
   const currentMetadata = readJson(metadataPath);

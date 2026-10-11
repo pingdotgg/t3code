@@ -1,13 +1,23 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { fromPartition, sessions } = vi.hoisted(() => ({
+const {
+  fromPartition,
+  sessions,
+  loadMacLocationAuthorization,
+  isMacLocationAuthorized,
+  requestMacLocationAuthorization,
+} = vi.hoisted(() => ({
   fromPartition: vi.fn(),
+  loadMacLocationAuthorization: vi.fn(),
+  isMacLocationAuthorized: vi.fn<() => boolean>(),
+  requestMacLocationAuthorization: vi.fn<() => Promise<boolean>>(),
   sessions: new Map<
     string,
     {
@@ -31,6 +41,7 @@ vi.mock("electron", () => ({
     fromPartition,
   },
 }));
+vi.mock("../electron/MacLocationAuthorization.ts", () => ({ loadMacLocationAuthorization }));
 
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as BrowserSession from "./BrowserSession.ts";
@@ -47,14 +58,25 @@ const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
     Effect.sync(() => ({ response: showMessageBox(options, owner), checkboxChecked: false })),
   showErrorBox: () => Effect.void,
 });
-const layer = BrowserSession.layer.pipe(
-  Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
-);
+const layerForPlatform = (platform: NodeJS.Platform) =>
+  BrowserSession.layer.pipe(
+    Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
+    Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+  );
+const layer = layerForPlatform("linux");
 
 describe("BrowserSession", () => {
   beforeEach(() => {
     sessions.clear();
     fromPartition.mockReset();
+    loadMacLocationAuthorization.mockReset();
+    isMacLocationAuthorized.mockReset();
+    isMacLocationAuthorized.mockReturnValue(false);
+    requestMacLocationAuthorization.mockReset();
+    loadMacLocationAuthorization.mockResolvedValue({
+      isAuthorized: isMacLocationAuthorized,
+      request: requestMacLocationAuthorization,
+    });
     fromPartition.mockImplementation((partition: string) => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
@@ -207,74 +229,158 @@ describe("BrowserSession", () => {
           `check handler should deny ${permission}`,
         );
       }
+      assert.strictEqual(loadMacLocationAuthorization.mock.calls.length, 0);
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("opens custom-scheme links externally only after the user confirms", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
-      yield* browserSessions.getSession("scope-a");
-      const requestHandler =
-        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
-      assert.isFunction(requestHandler);
+  it.effect.each(["linux", "darwin"] as const)(
+    "opens custom-scheme links externally only after the user confirms on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+        const requestHandler =
+          sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+        assert.isFunction(requestHandler);
 
-      const request = (externalURL: string) =>
-        Effect.callback<boolean>((resume) => {
-          requestHandler(
-            null,
-            "openExternal",
-            (granted: boolean) => resume(Effect.succeed(granted)),
-            { externalURL },
-          );
-        });
+        const request = (externalURL: string) =>
+          Effect.callback<boolean>((resume) => {
+            requestHandler(
+              null,
+              "openExternal",
+              (granted: boolean) => resume(Effect.succeed(granted)),
+              { externalURL },
+            );
+          });
 
-      showMessageBox.mockReset();
-      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
-      assert.isTrue(yield* request("slack://open?team=T1"));
-      assert.isFalse(yield* request("zoommtg://zoom.us/join"));
-      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+        assert.isTrue(yield* request("slack://open?team=T1"));
+        assert.isFalse(yield* request("zoommtg://zoom.us/join"));
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
 
-      for (const url of ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x"]) {
-        assert.isFalse(yield* request(url), `${url} must never open externally`);
-      }
-      assert.strictEqual(showMessageBox.mock.calls.length, 2);
-    }).pipe(Effect.provide(layer)),
+        for (const url of ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x"]) {
+          assert.isFalse(yield* request(url), `${url} must never open externally`);
+        }
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      }).pipe(Effect.provide(layerForPlatform(platform))),
   );
 
   // A prompt without an owner can open behind the app window, leaving the one
   // prompt slot taken and every later link silently denied.
-  it.effect("attaches the open-externally prompt to the window hosting the preview", () =>
+  it.effect.each(["linux", "darwin"] as const)(
+    "attaches the open-externally prompt to the window hosting the preview on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+        const requestHandler =
+          sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+        assert.isFunction(requestHandler);
+
+        const hostWindow = { id: 7 } as unknown as Electron.BrowserWindow;
+        const host = { isDestroyed: () => false };
+        const guest = { isDestroyed: () => false, hostWebContents: host };
+        fromWebContents.mockImplementation((webContents) =>
+          webContents === host ? hostWindow : null,
+        );
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValueOnce(1);
+
+        yield* Effect.callback<boolean>((resume) => {
+          requestHandler(
+            guest,
+            "openExternal",
+            (granted: boolean) => resume(Effect.succeed(granted)),
+            {
+              externalURL: "slack://open?team=T1",
+            },
+          );
+        });
+
+        assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
+      }).pipe(Effect.provide(layerForPlatform(platform))),
+  );
+
+  it.effect.each([true, false])("waits for macOS geolocation authorization %s", (granted) =>
     Effect.gen(function* () {
+      const authorization = Promise.withResolvers<boolean>();
+      const permission = Promise.withResolvers<boolean>();
+      const answers: boolean[] = [];
+      requestMacLocationAuthorization.mockReturnValueOnce(authorization.promise);
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      const requestHandler = browserSession?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession?.setPermissionCheckHandler.mock.calls[0]?.[0];
+
+      assert.isFalse(checkHandler(null, "geolocation") as boolean);
+      requestHandler(null, "geolocation", (answer: boolean) => {
+        answers.push(answer);
+        permission.resolve(answer);
+      });
+      assert.deepEqual(answers, []);
+      assert.isFalse(checkHandler(null, "geolocation") as boolean);
+      isMacLocationAuthorized.mockReturnValue(granted);
+      authorization.resolve(granted);
+      assert.equal(yield* Effect.promise(() => permission.promise), granted);
+      assert.deepEqual(answers, [granted]);
+      assert.equal(checkHandler(null, "geolocation") as boolean, granted);
+    }).pipe(Effect.provide(layerForPlatform("darwin"))),
+  );
+
+  it.effect("denies geolocation when macOS authorization cannot be requested", () =>
+    Effect.gen(function* () {
+      requestMacLocationAuthorization.mockRejectedValueOnce(new Error("native API unavailable"));
+      const permission = Promise.withResolvers<boolean>();
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-a");
       yield* browserSessions.getSession("scope-a");
       const requestHandler =
         sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
-      assert.isFunction(requestHandler);
+      requestHandler(null, "geolocation", permission.resolve);
+      assert.isFalse(yield* Effect.promise(() => permission.promise));
+      const checkHandler = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isFalse(checkHandler(null, "geolocation") as boolean);
+    }).pipe(Effect.provide(layerForPlatform("darwin"))),
+  );
 
-      const hostWindow = { id: 7 } as unknown as Electron.BrowserWindow;
-      const host = { isDestroyed: () => false };
-      const guest = { isDestroyed: () => false, hostWebContents: host };
-      fromWebContents.mockImplementation((webContents) =>
-        webContents === host ? hostWindow : null,
-      );
-      showMessageBox.mockReset();
-      showMessageBox.mockReturnValueOnce(1);
+  it.effect("denies geolocation when the macOS authorization bridge cannot load", () => {
+    loadMacLocationAuthorization.mockRejectedValueOnce(new Error("native API unavailable"));
+    return Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      const requestHandler = browserSession?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      const answer = vi.fn();
 
-      yield* Effect.callback<boolean>((resume) => {
-        requestHandler(
-          guest,
-          "openExternal",
-          (granted: boolean) => resume(Effect.succeed(granted)),
-          {
-            externalURL: "slack://open?team=T1",
-          },
-        );
-      });
+      requestHandler(null, "geolocation", answer);
+      assert.deepEqual(answer.mock.calls, [[false]]);
+      assert.isFalse(checkHandler(null, "geolocation") as boolean);
+      assert.isTrue(checkHandler(null, "clipboard-sanitized-write") as boolean);
+      assert.strictEqual(requestMacLocationAuthorization.mock.calls.length, 0);
+    }).pipe(Effect.provide(layerForPlatform("darwin")));
+  });
 
-      assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
-    }).pipe(Effect.provide(layer)),
+  it.effect("checks the current macOS grant after revocation and restoration", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const checkHandler = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+
+      for (const granted of [true, false, true]) {
+        isMacLocationAuthorized.mockReturnValue(granted);
+        assert.equal(checkHandler(null, "geolocation") as boolean, granted);
+      }
+      assert.isFalse(checkHandler(null, "midi") as boolean);
+      assert.strictEqual(requestMacLocationAuthorization.mock.calls.length, 0);
+    }).pipe(Effect.provide(layerForPlatform("darwin"))),
   );
 
   it.effect("preserves partition scope and the platform failure chain", () => {
