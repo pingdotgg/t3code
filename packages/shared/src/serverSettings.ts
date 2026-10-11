@@ -1,4 +1,8 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -8,6 +12,8 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -69,6 +75,38 @@ export function isModelSelectionProviderEnabled(
   }
 
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
+}
+
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+].map((driver) => ProviderDriverKind.make(driver));
+
+/**
+ * The text generation model on the first built-in default instance, in
+ * preference order, that `isEnabled` accepts. `null` when none is.
+ */
+export function fallbackTextGenerationModelSelection(
+  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
+): ModelSelection | null {
+  const driver = TEXT_GENERATION_FALLBACK_DRIVERS.find((candidate) =>
+    isEnabled(defaultInstanceIdForDriver(candidate), candidate),
+  );
+  return driver === undefined
+    ? null
+    : {
+        instanceId: defaultInstanceIdForDriver(driver),
+        model:
+          DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+          DEFAULT_MODEL_BY_PROVIDER[driver] ??
+          DEFAULT_TEXT_GENERATION_MODEL,
+      };
 }
 
 export function resolveSourceControlWriterModelSelection(

@@ -14,6 +14,7 @@ import {
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "./path.ts";
+import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
 
 /**
  * Where a project-scoped value came from. The order is the priority order:
@@ -190,6 +191,15 @@ function resolveProjectOverrides(
     }
     effective[key] = value;
     sources[key] = "project";
+  }
+  // Like the environment guard, text generation never runs on an instance
+  // this project turned off.
+  const textGeneration = effective.textGenerationModelSelection as ModelSelection;
+  if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
+    const fallback = fallbackTextGenerationModelSelection((instanceId) =>
+      resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
+    );
+    if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }
   return { settings: effective as ServerSettings, sources, overrides };
 }
