@@ -145,7 +145,9 @@ export function FontFamilyPicker({
     return enumeration.families;
   }, [enumeration]);
 
-  const items = useMemo(() => {
+  const collectionItems = useMemo(() => [DEFAULT_FONT_VALUE, ...families], [families]);
+
+  const filteredItems = useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase();
     const result: string[] = [];
     if (trimmedQuery.length === 0) result.push(DEFAULT_FONT_VALUE);
@@ -196,8 +198,8 @@ export function FontFamilyPicker({
 
   return (
     <Combobox
-      items={items}
-      filteredItems={items}
+      items={collectionItems}
+      filteredItems={filteredItems}
       autoHighlight
       virtualized
       open={open}
@@ -228,12 +230,16 @@ export function FontFamilyPicker({
             <ComboboxListVirtualized>
               <LegendList<string>
                 ref={listRef}
-                data={items}
+                data={filteredItems}
+                // LegendList memoizes rows by item identity. Invalidate them
+                // when filtering moves a surviving item to a different index,
+                // because Base UI highlights and selects virtualized items by index.
+                extraData={filteredItems}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}
                 drawDistance={360}
-                style={{ height: Math.min(items.length * 30, 288) }}
+                style={{ height: Math.min(filteredItems.length * 30, 288) }}
               />
             </ComboboxListVirtualized>
           </div>
