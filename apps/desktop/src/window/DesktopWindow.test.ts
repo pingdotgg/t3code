@@ -56,6 +56,7 @@ import {
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -90,10 +91,12 @@ function makeFakeBrowserWindow() {
     once: vi.fn<(eventName: string, listener: (...args: readonly unknown[]) => void) => void>(),
     openDevTools: vi.fn(),
     reload: vi.fn(),
+    reloadIgnoringCache: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
     setBackgroundThrottling: vi.fn(),
     setWindowOpenHandler: vi.fn(),
+    toggleDevTools: vi.fn(),
   };
 
   const window = {
@@ -138,6 +141,8 @@ function makeFakeBrowserWindow() {
     maximize: window.maximize,
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
+    reloadIgnoringCache: webContents.reloadIgnoringCache,
+    toggleDevTools: webContents.toggleDevTools,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
@@ -227,6 +232,7 @@ function layerTest(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly focusedWindow?: Electron.BrowserWindow;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -273,7 +279,10 @@ function layerTest(input: {
       ),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
-    focusedMainOrFirst: Ref.get(input.mainWindow),
+    focusedMainOrFirst:
+      input.focusedWindow === undefined
+        ? Ref.get(input.mainWindow)
+        : Effect.succeedSome(input.focusedWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
     prepareReveal: () => Effect.succeed(false),
@@ -317,6 +326,11 @@ function layerTest(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
+        Layer.mock(PreviewPasskeys.PreviewPasskeys)({
+          bridgeEnabled: false,
+          installSessionHandlers: () => {},
+          attachGuest: () => () => {},
+        }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
@@ -425,6 +439,11 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
+          Layer.mock(PreviewPasskeys.PreviewPasskeys)({
+            bridgeEnabled: false,
+            installSessionHandlers: () => {},
+            attachGuest: () => () => {},
+          }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
@@ -449,6 +468,10 @@ describe("DesktopWindow", () => {
       let focusedContents: unknown = host.window.webContents;
       const makeContents = () => {
         const contents = Object.assign(new NodeEvents.EventEmitter(), {
+          mainFrame: {
+            routingId: 7,
+            isDestroyed: vi.fn(() => false),
+          } as unknown as Electron.WebFrameMain,
           isDestroyed: vi.fn(() => false),
           focus: vi.fn(() => {
             focusedContents = contents;
@@ -527,7 +550,7 @@ describe("DesktopWindow", () => {
             { preventDefault },
             {
               ...params,
-              frame: null,
+              frame: contents.mainFrame,
               misspelledWord: "",
               dictionarySuggestions: [],
               mediaType: "image",
@@ -535,7 +558,7 @@ describe("DesktopWindow", () => {
             },
           );
           const imageMenu = (yield* Queue.take(menus)).input;
-          assert.isUndefined(imageMenu.frame);
+          assert.strictEqual(imageMenu.frame, contents.mainFrame);
           const copyImage = imageMenu.template.find((item) => item.label === "Copy Image");
           const copyLink = imageMenu.template.find((item) => item.label === "Copy Link");
           assert.isDefined(copyImage?.click);
@@ -778,6 +801,37 @@ describe("DesktopWindow", () => {
         // Recorded after the window level moved, so the preview is put back at
         // its own zoom on every step rather than left on the inherited one.
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reloads and inspects the main window even when a popup has focus", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const popup = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        focusedWindow: popup.window,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        yield* desktopWindow.runMainContentsCommand("reload");
+        yield* desktopWindow.runMainContentsCommand("forceReload");
+        yield* desktopWindow.runMainContentsCommand("toggleDevTools");
+
+        assert.equal(fakeWindow.reload.mock.calls.length, 1);
+        assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
+        assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
+        assert.equal(popup.reload.mock.calls.length, 0);
+        assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
+        assert.equal(popup.toggleDevTools.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

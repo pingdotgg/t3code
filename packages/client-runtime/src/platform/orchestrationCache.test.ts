@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
@@ -102,7 +103,7 @@ describe("orchestration cache envelopes", () => {
     expect(projection).not.toBeNull();
     if (projection === null) throw new Error("Expected live notice projection");
     const encoded = encodeStoredThreadSnapshotJson({
-      schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+      schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       environmentId,
       threadId: v2ThreadId,
       snapshot: { snapshotSequence: 5, projection },
@@ -121,7 +122,7 @@ describe("orchestration cache envelopes", () => {
       });
       const shell = decodeStoredShellSnapshotJson(encodedShell);
       const encodedThread = encodeStoredThreadSnapshotJson({
-        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId: v2ThreadId,
         snapshot: { snapshotSequence: 4, projection: v2Projection },
@@ -158,6 +159,23 @@ describe("orchestration cache envelopes", () => {
       expect(thread.snapshot.snapshotSequence).toBe(4);
     }),
   );
+
+  it("rejects thread snapshots saved before queued-run items were kept, but not shells", () => {
+    // Version 3 thread windows may have dropped a queued run's items (#16987).
+    const staleThread = encodeStoredThreadSnapshotJson({
+      schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+      environmentId,
+      threadId: v2ThreadId,
+      snapshot: { snapshotSequence: 4, projection: v2Projection },
+    }).replace(`"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`, `"schemaVersion":3`);
+    expect(() => decodeStoredThreadSnapshotJson(staleThread)).toThrow();
+    const shell = encodeStoredShellSnapshot({
+      schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+      environmentId,
+      snapshot: v2ShellSnapshot,
+    });
+    expect(decodeStoredShellSnapshotSync(shell).schemaVersion).toBe(3);
+  });
 
   it.effect("discards V1-versioned cache envelopes after a decode failure", () =>
     Effect.gen(function* () {

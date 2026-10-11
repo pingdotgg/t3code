@@ -1,4 +1,5 @@
 import {
+  AuthSettingsWriteScope,
   ENVIRONMENT_MACHINE_KINDS,
   isEnvironmentMachineKind,
   resolveEnvironmentMachineKind,
@@ -6,11 +7,8 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 
-import { isElectron } from "../../env";
-import { usePrimarySessionState } from "../../environments/primary";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentSessionState } from "../../state/session";
+import { useEnvironmentScope } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   MenuItem,
@@ -21,10 +19,6 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "../ui/menu";
-import {
-  resolvePrimaryOperateAccess,
-  resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
 
 /**
  * Why the picker is inert, in the order the user can do something about it.
@@ -40,35 +34,10 @@ export function resolveEnvironmentIconPickerLock(input: {
   if (input.serverConfig.environment.capabilities.environmentIcon !== true) {
     return "This environment's server is too old to keep an icon. Update it to choose one.";
   }
-  if (input.operateAccess === "denied") {
+  if (input.operateAccess !== "granted") {
     return "Your session on this environment cannot change its settings.";
   }
   return null;
-}
-
-// Same split the provider settings use: the desktop app owns its primary
-// server outright, a browser session on the primary checks its cookie
-// session's scopes, and a remote checks the scopes its own server reports.
-function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
-  const isPrimary = usePrimaryEnvironmentId() === environmentId;
-  const primarySession = usePrimarySessionState();
-  const remoteSession = useEnvironmentSessionState(environmentId);
-  if (isPrimary) {
-    return isElectron
-      ? "granted"
-      : resolvePrimaryOperateAccess({
-          isPrimary: true,
-          hasDesktopBridge: false,
-          session: primarySession.data,
-          isPending: primarySession.isPending,
-          hasError: primarySession.error !== null,
-        });
-  }
-  return resolveRemoteOperateAccess({
-    session: remoteSession.data,
-    isPending: remoteSession.isPending,
-    hasError: remoteSession.hasError,
-  });
 }
 
 /**
@@ -86,7 +55,9 @@ export function EnvironmentIconMenu({
   readonly serverConfig: ServerConfig | null;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const operateAccess = useEnvironmentOperateAccess(environmentId);
+  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
+    ? "granted"
+    : "denied";
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
   // With no detection the server falls back to "server", so picking that
   // kind clears the override the same way picking the detected kind does.

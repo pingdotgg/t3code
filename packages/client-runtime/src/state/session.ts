@@ -1,20 +1,25 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type { HttpClient } from "effect/http";
+import { HttpClient } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment } from "./environmentStreams.ts";
+
+/** @public Required to name the error in consumers' inferred session results. */
+export class SessionHttpClientUnavailable extends Data.TaggedError(
+  "SessionHttpClientUnavailable",
+) {}
 
 function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
@@ -53,7 +58,7 @@ export const fetchEnvironmentSessionState = Effect.fn(
     ...input,
     group: "auth",
     method: "GET",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/session"),
+    url: (urls) => urls.session(),
     timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
     request: ({ client, headers }) => client.session({ headers }),
     // This endpoint returns 200 with authenticated:false for expired credentials.
@@ -61,8 +66,8 @@ export const fetchEnvironmentSessionState = Effect.fn(
   });
 });
 
-export function createEnvironmentSessionAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+function makeEnvironmentSessionAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
   const initialConfigAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
@@ -137,7 +142,13 @@ export function createEnvironmentSessionAtoms<R, E>(
           const remoteAuthorization = yield* Effect.serviceOption(
             RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
           );
-          return yield* fetchEnvironmentSessionState({ prepared, signer, remoteAuthorization });
+          const client = yield* Effect.serviceOption(HttpClient.HttpClient);
+          if (Option.isNone(client)) return yield* new SessionHttpClientUnavailable();
+          return yield* fetchEnvironmentSessionState({
+            prepared,
+            signer,
+            remoteAuthorization,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
         });
       })
       .pipe(
@@ -162,4 +173,17 @@ export function createEnvironmentSessionAtoms<R, E>(
     sessionStateAtom,
     sessionStateValueAtom,
   };
+}
+
+const sessionAtomsByRuntime = new WeakMap<object, ReturnType<typeof makeEnvironmentSessionAtoms>>();
+
+/** Commands and UI share one session fetch and the same reconnect invalidation. */
+export function createEnvironmentSessionAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
+): ReturnType<typeof makeEnvironmentSessionAtoms<R, E>> {
+  const existing = sessionAtomsByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makeEnvironmentSessionAtoms<R, E>>;
+  const atoms = makeEnvironmentSessionAtoms(runtime);
+  sessionAtomsByRuntime.set(runtime, atoms);
+  return atoms;
 }

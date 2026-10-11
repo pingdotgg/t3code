@@ -12,7 +12,7 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 
 /**
  * Exactly the hosts the credential is for. Everything a redirect leads to — the presigned
@@ -37,8 +37,6 @@ const isCredentialedHost = (url: string) => {
 const MAX_REDIRECTS = 3;
 /** Following the redirect here, rather than in `fetch`, is what keeps the token on GitHub. */
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-const TOKEN_CACHE_TTL_MS = 5 * 60_000;
-const TOKEN_CACHE_MAX_ENTRIES = 32;
 /** Passed through so a seek in a long video costs one upstream range request, not a full download. */
 const FORWARDED_REQUEST_HEADERS = ["range", "if-range"] as const;
 const FORWARDED_RESPONSE_HEADERS = [
@@ -57,45 +55,14 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 /**
- * A media request per image and one per video seek, each of which would otherwise spawn `gh`.
- * The token is what `gh auth token` would print again on the next call, and it is held no longer
- * than a signed asset URL lives.
+ * The github.com credential, or null without one: a public asset still loads, and a private one
+ * fails the way it does in a browser that is not signed in.
  */
-const tokenCache = new Map<string, { readonly at: number; readonly token: Redacted.Redacted }>();
-
-const githubToken = Effect.fn("GitHubMediaFetch.githubToken")(function* (input: {
-  readonly cwd: string;
-  readonly host: string;
-}) {
-  // `gh` stores a token per host, not per repository, so the directory it runs in is not part
-  // of the answer and must not fragment the cache a client could otherwise churn. This route
-  // pins no credential; if it ever does, the pin belongs in this key.
-  const key = input.host;
-  const now = yield* Clock.currentTimeMillis;
-  const cached = tokenCache.get(key);
-  if (cached !== undefined && now - cached.at < TOKEN_CACHE_TTL_MS) return cached.token;
-  const github = yield* GitHubCli.GitHubCli;
-  // No credential is a normal state: a public asset still loads, and a private one fails the way
-  // it does in a browser that is not signed in.
-  const token = yield* github
-    .execute({
-      cwd: input.cwd,
-      args: ["auth", "token", "--hostname", input.host],
-      env: { GH_DEBUG: "" },
-    })
-    .pipe(
-      Effect.map((output) => output.stdout.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
-  // A login or recovered CLI failure must take effect on the next media request.
-  if (token.length === 0) return null;
-  if (tokenCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
-    tokenCache.delete(tokenCache.keys().next().value!);
-  }
-  const redacted = Redacted.make(token);
-  tokenCache.set(key, { at: now, token: redacted });
-  return redacted;
-});
+const githubToken = GitHubCredentials.GitHubCredentials.pipe(
+  Effect.flatMap((credentials) => credentials.get("github.com")),
+  Effect.map((credential) => credential.token),
+  Effect.orElseSucceed(() => null),
+);
 
 /**
  * Follows GitHub's redirect to the signed object itself, and never carries the credential off
@@ -146,7 +113,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  const token = yield* githubToken({ cwd: asset.cwd, host: "github.com" });
+  const token = yield* githubToken;
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = requestHeaders[name];

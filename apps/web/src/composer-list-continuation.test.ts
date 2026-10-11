@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { listContinuationForEnter, listIndentForTab } from "./composer-list-continuation";
+import {
+  listContinuationForEnter,
+  listIndentForTab,
+  nextOrderedMarkerText,
+} from "./composer-list-continuation";
 
 function applyEdit(value: string, edit: { start: number; end: number; replacement: string }) {
   return value.slice(0, edit.start) + edit.replacement + value.slice(edit.end);
@@ -64,5 +68,18 @@ describe("composer list continuation", () => {
     expect(applyEdit("- foo", listIndentForTab("- foo", 2, 2)!)).toBe("  - foo");
     expect(listIndentForTab("plain", 2, 2)).toBeNull();
     expect(listIndentForTab("- foo", 1, 3)).toBeNull();
+  });
+});
+
+describe("nextOrderedMarkerText", () => {
+  it.each([
+    ["1.", "2."],
+    ["1)", "2)"],
+    ["09.", "10."],
+    ["001)", "002)"],
+    ["99.", "100."],
+    ["99999999999999999999.", "99999999999999999999."],
+  ])("counts %s up to %s", (marker, expected) => {
+    expect(nextOrderedMarkerText(marker)).toBe(expected);
   });
 });

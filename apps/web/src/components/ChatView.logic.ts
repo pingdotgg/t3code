@@ -38,7 +38,7 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@t3tools/shared/codexArtifactTemplates";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   type ChatMessage,
@@ -185,7 +185,10 @@ export function resolveProactiveTurnDiffAction(input: {
   isGitRepo: boolean | undefined;
   activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
-  if (input.activeSurfaceKind === "pull-request") return "ignore";
+  // An open diff already shows the work; reopening it would reset the chosen scope.
+  if (input.activeSurfaceKind === "pull-request" || input.activeSurfaceKind === "diff") {
+    return "ignore";
+  }
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (

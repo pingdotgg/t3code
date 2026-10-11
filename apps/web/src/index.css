@@ -373,6 +373,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Paint find results without changing rendered markdown or copied text. */
+::highlight(t3-thread-find) {
+  color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
+
+  @variant dark {
+    color: var(--app-theme-search-match-foreground, oklch(0.970151 0 0));
+    background-color: var(--app-theme-search-match-background, oklch(0.55 0.1 85));
+  }
+}
+
+::highlight(t3-thread-find-active) {
+  color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(
+    --app-theme-search-match-active-background,
+    oklch(0.774202 0.151946 74.331)
+  );
+}
+
 @utility dialog-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -665,6 +684,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   * {
     @apply border-border outline-ring/50;
   }
+  /* The app's 2px outlines stay inside controls at clipped and scrollport edges. */
+  *,
+  ::before,
+  ::after {
+    outline-offset: -2px;
+  }
   :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus,
   :where(
     [data-slot="menu-popup"],
@@ -868,10 +893,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   @keyframes settings-search-target-pulse {
     0%,
     100% {
-      box-shadow: 0 0 0 0 transparent;
+      box-shadow: inset 0 0 0 0 transparent;
     }
     50% {
-      box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
+      box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
     }
   }
 
@@ -996,14 +1021,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .settings-slider:focus-visible::-webkit-slider-thumb {
     box-shadow:
-      0 0 0 3px var(--background),
-      0 0 0 5px var(--ring);
+      inset 0 0 0 1px var(--background),
+      inset 0 0 0 3px var(--ring);
   }
 
   .settings-slider:focus-visible::-moz-range-thumb {
     box-shadow:
-      0 0 0 3px var(--background),
-      0 0 0 5px var(--ring);
+      inset 0 0 0 1px var(--background),
+      inset 0 0 0 3px var(--ring);
   }
 
   @media (forced-colors: active) {
@@ -1422,7 +1447,7 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
 /* Chat code blocks join the other code surfaces on the code tokens. The
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
   background-color: var(--code-background);
   border-color: var(--contrast-border);
   color: var(--code-foreground);
@@ -1433,11 +1458,11 @@ html[data-theme-id] .chat-markdown pre {
   color: var(--code-foreground);
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
+html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock pre {
   background-color: transparent;
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header {
+html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1685,7 +1710,7 @@ code {
    Inline code stays relative to its sentence so it never towers over prose;
    diffs and file previews take the size through --diffs-font-size. */
 .chat-markdown .chat-markdown-shiki .shiki,
-.chat-markdown pre code {
+:is(.chat-markdown, .composer-tiptap) pre code {
   font-size: var(--font-size-code, inherit);
 }
 
@@ -1755,45 +1780,47 @@ code {
 .chat-markdown ol,
 .chat-markdown blockquote,
 .chat-markdown pre,
-.chat-markdown .chat-markdown-table-container {
+.chat-markdown .chat-markdown-table-container,
+.composer-tiptap ul,
+.composer-tiptap ol {
   margin: 0.65rem 0;
 }
 
-.chat-markdown h1,
-.chat-markdown h2,
-.chat-markdown h3,
-.chat-markdown h4,
-.chat-markdown h5,
-.chat-markdown h6 {
+:is(.chat-markdown, .composer-tiptap) h1,
+:is(.chat-markdown, .composer-tiptap) h2,
+:is(.chat-markdown, .composer-tiptap) h3,
+:is(.chat-markdown, .composer-tiptap) h4,
+:is(.chat-markdown, .composer-tiptap) h5,
+:is(.chat-markdown, .composer-tiptap) h6 {
   margin: 1.25rem 0 0.5rem;
   font-weight: 600;
   line-height: 1.3;
   color: var(--contrast-foreground);
 }
 
-.chat-markdown h1 {
+:is(.chat-markdown, .composer-tiptap) h1 {
   font-size: 1.25rem;
 }
 
-.chat-markdown h2 {
+:is(.chat-markdown, .composer-tiptap) h2 {
   font-size: 1.125rem;
 }
 
-.chat-markdown h3 {
+:is(.chat-markdown, .composer-tiptap) h3 {
   font-size: 1rem;
 }
 
-.chat-markdown h4,
-.chat-markdown h5,
-.chat-markdown h6 {
+:is(.chat-markdown, .composer-tiptap) h4,
+:is(.chat-markdown, .composer-tiptap) h5,
+:is(.chat-markdown, .composer-tiptap) h6 {
   font-size: 0.875rem;
 }
 
-.chat-markdown h6 {
+:is(.chat-markdown, .composer-tiptap) h6 {
   color: var(--contrast-muted-foreground);
 }
 
-.chat-markdown ul {
+:is(.chat-markdown, .composer-tiptap) ul {
   /* Reset for nested uls under a widened ol. --list-gutter is an inherited
      custom property, so without this a task-list under a multi-digit ordered
      list would inherit the outer gutter instead of its own default. */
@@ -1807,21 +1834,27 @@ code {
    widest marker has multiple characters so it isn't clipped by list-style-position:
    outside painting the marker past the padding box. Reset it here too so a
    nested ol without its own widened marker doesn't inherit the outer one. */
-.chat-markdown ol {
+:is(.chat-markdown, .composer-tiptap) ol {
   --list-gutter: 1.25rem;
   padding-left: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
 
-.chat-markdown ol > li::marker {
+:is(.chat-markdown, .composer-tiptap) ol > li::marker {
   font-variant-numeric: tabular-nums;
 }
 
-.chat-markdown ul ul {
+/* The composer shows the marker the source has, `3)` or a nested `7.`, not the
+   browser counter. Browsers without ::marker content fall back to `start`. */
+.composer-tiptap ol > li[data-marker]::marker {
+  content: attr(data-marker) " ";
+}
+
+:is(.chat-markdown, .composer-tiptap) ul ul {
   list-style-type: circle;
 }
 
-.chat-markdown ul ul ul {
+:is(.chat-markdown, .composer-tiptap) ul ul ul {
   list-style-type: square;
 }
 
@@ -1862,18 +1895,36 @@ code {
   color: var(--info-foreground);
 }
 
-.chat-markdown a:not(.chat-markdown-file-link):hover,
-.chat-markdown a:not(.chat-markdown-file-link):focus-visible {
+.chat-markdown a:not(.chat-markdown-file-link, [data-markdown-image-link]):hover,
+.chat-markdown a:not(.chat-markdown-file-link, [data-markdown-image-link]):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
   background-position: left bottom;
   background-repeat: repeat-x;
   background-size: 4px 2px;
 }
 
-.chat-markdown blockquote {
+:is(.chat-markdown, .composer-tiptap) blockquote {
   border-left: 2px solid var(--contrast-border);
   padding-left: 0.8rem;
   color: var(--contrast-muted-foreground);
+}
+
+/* A quote in the composer is text the user is still writing; muting it reads
+   as disabled in an input, so the border alone carries the quote. */
+.composer-tiptap blockquote {
+  margin: 0.65rem 0;
+  color: var(--foreground);
+}
+
+/* Preflight already draws the 1px rule, as it does in chat; only the block
+   spacing needs to match. */
+.composer-tiptap hr {
+  margin: 0.65rem 0;
+}
+
+/* A heading at the top of a draft should not push the first line down. */
+.composer-tiptap :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
 }
 
 .chat-markdown section[data-footnotes] {
@@ -1907,6 +1958,8 @@ code {
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--contrast-border);
   border-radius: 0.375rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
@@ -1939,23 +1992,23 @@ code {
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
-.chat-markdown .chat-markdown-codeblock-header {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
 }
 
-.chat-markdown .chat-markdown-codeblock pre {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock pre {
   margin: 0;
   border: none;
   border-radius: 0;
   background: transparent;
 }
 
-.chat-markdown .chat-markdown-codeblock[data-wrap="true"] pre {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock[data-wrap="true"] pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.chat-markdown .chat-markdown-shiki .shiki {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki .shiki {
   background: transparent !important;
 }
 
@@ -2059,6 +2112,14 @@ code {
   overflow: clip;
   background: var(--code-background);
   color: var(--code-foreground);
+}
+
+/* Pierre's find panel and match highlights read these. */
+.diff-render-surface {
+  --diffs-search-panel-bg: var(--popover);
+  --diffs-search-panel-fg: var(--popover-foreground);
+  --diffs-search-panel-accent: var(--primary);
+  --diffs-search-panel-font: var(--font-sans);
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -2181,7 +2242,7 @@ code {
   outline: none;
 }
 
-.composer-tiptap code {
+.composer-tiptap :not(pre) > code {
   font-family: var(--font-mono);
   font-size: 0.92em;
   background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
@@ -2202,7 +2263,7 @@ code {
 /* Selected chips (node selection from arrowing into or clicking a chip). */
 .composer-tiptap .ProseMirror-selectednode {
   outline: 2px solid var(--ring);
-  outline-offset: 1px;
+  outline-offset: -2px;
   border-radius: 6px;
 }
 
@@ -2284,25 +2345,24 @@ code {
       0.75rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
     );
   }
-  .chat-scroll-to-bottom {
+  .chat-scroll-to-bottom,
+  .chat-banner-lane {
     inset-inline-start: var(--chat-lane-inset-start, 0px);
     inset-inline-end: var(--chat-lane-inset-end, 0px);
   }
   @media (min-width: 640px) {
     .chat-composer-lane {
       padding-inline-start: calc(
-        env(safe-area-inset-left) + 1.25rem + var(--chat-lane-inset-start, 0px)
+        env(safe-area-inset-left) + 3rem + var(--chat-lane-inset-start, 0px)
       );
-      padding-inline-end: calc(
-        env(safe-area-inset-right) + 1.25rem + var(--chat-lane-inset-end, 0px)
-      );
+      padding-inline-end: calc(env(safe-area-inset-right) + 3rem + var(--chat-lane-inset-end, 0px));
     }
     [data-chat-canvas] .messages-timeline-scroll {
       padding-inline-start: calc(
-        1.25rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
+        3rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
       );
       padding-inline-end: calc(
-        1.25rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
+        3rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
       );
     }
   }

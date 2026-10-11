@@ -74,3 +74,50 @@ export function newProjectFolderName(name: string): string {
   if (slug.length === 0) return "project";
   return WINDOWS_RESERVED_NAME.test(slug) ? `${slug}-project` : slug;
 }
+
+const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
+
+/** Browser URL parsers write `C:/foo` as `/C:/foo` for file URLs. */
+export function stripSlashPrefixedWindowsDrive(path: string): string {
+  return SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path) ? path.slice(1) : path;
+}
+
+export function fileBasename(path: string): string {
+  // A trailing separator is a valid way to write a directory. Trim it before
+  // taking the final segment so the label is never empty.
+  const trimmed = path.replace(/[/\\]+$/, "");
+  if (trimmed.length === 0) return path;
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+}
+
+export function workspaceRelativeFilePath(
+  path: string,
+  workspaceRoot: string | null | undefined,
+): string | null {
+  if (!workspaceRoot) return null;
+  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
+  const normalizedRoot = stripSlashPrefixedWindowsDrive(
+    workspaceRoot.replaceAll("\\", "/"),
+  ).replace(/\/+$/, "");
+  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
+  const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
+  const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
+  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
+  return normalizedPath.slice(normalizedRoot.length + 1);
+}
+
+export function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || isWindowsAbsolutePath(value);
+}
+
+/** Resolve a literal filesystem path without interpreting file-link positions.
+ * Home-relative paths stay intact for the server to expand. */
+export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
+  if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
+  const base = workspaceRoot.replace(/[/\\]+$/, "");
+  return isWindowsAbsolutePath(workspaceRoot)
+    ? `${base}\\${path.replaceAll("/", "\\")}`
+    : `${base}/${path}`;
+}

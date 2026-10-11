@@ -1,5 +1,5 @@
 import { vi } from "vite-plus/test";
-import { historyResponseItems } from "../ContextHandoffBudget.ts";
+import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -34,13 +34,16 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
-import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
+import {
+  ClaudeBackgroundWorkBlocksQueryReplacementError,
+  ClaudeProviderCapabilitiesV2,
+} from "../Adapters/ClaudeAdapterV2.ts";
 import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../Adapters/CodexAdapterV2.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
-import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
+import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -49,15 +52,8 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
-import {
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2HistoricalContext,
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -65,7 +61,8 @@ import {
   GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -91,7 +88,7 @@ interface CapturedTurn {
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  return Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeTestAdapter(input: {
@@ -104,13 +101,15 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  /** Starts left to refuse the way Claude does while background work runs. */
+  readonly refuseStarts?: Ref.Ref<number>;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
-  readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
+  readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
@@ -119,7 +118,7 @@ function makeTestAdapter(input: {
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
-}): ProviderAdapterV2Shape {
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
@@ -127,7 +126,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -142,7 +141,7 @@ function makeTestAdapter(input: {
           lastError: null,
         };
 
-        const runtime: ProviderAdapterV2SessionRuntime = {
+        const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: input.instanceId,
           driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
@@ -198,7 +197,7 @@ function makeTestAdapter(input: {
           ...(input.injectedHistory === undefined
             ? {}
             : {
-                injectHistory: (history: ProviderAdapterV2HistoricalContext) =>
+                injectHistory: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
                   Ref.update(input.injectedHistory!, (current) => [
                     ...current,
                     ...historyResponseItems(history.messages, history.context),
@@ -226,6 +225,17 @@ function makeTestAdapter(input: {
                 (yield* Ref.getAndSet(input.failStartOnce, false))
               )
                 return yield* unimplemented(input.driver, "turn start failed after injection");
+              if (
+                input.refuseStarts !== undefined &&
+                (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
+              )
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+                });
               yield* Effect.yieldNow;
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
@@ -263,7 +273,7 @@ function makeTestAdapter(input: {
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.driver} response for run ${turnInput.runOrdinal}`;
-              const providerEvents: ReadonlyArray<ProviderAdapterV2Event> = [
+              const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,
@@ -1186,6 +1196,101 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("keeps the native session after turns refused before reaching the provider", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const refuseStarts = yield* Ref.make(0);
+        const generation = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            refuseStarts,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`refused-start:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`refused-start:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("refused-start:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Refused start",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(yield* run(1), "completed");
+          // Run 3 carries run 2's missed request as a handoff and is refused too.
+          yield* Ref.set(refuseStarts, 2);
+          assert.equal(yield* run(2), "failed");
+          assert.equal(yield* run(3), "failed");
+          assert.equal(yield* run(4), "completed");
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 2);
+          // Nothing reached the provider, so the next turn continues the same
+          // native session instead of replacing it with a summary.
+          assert.equal(yield* Ref.get(generation), 1);
+          assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.include(turns[1]?.text, "Request 2");
+          assert.include(turns[1]?.text, "Request 3");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "refused-start-keeps-native",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(

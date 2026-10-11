@@ -17,7 +17,10 @@ import {
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
 } from "./AntigravityProtocol.ts";
-import { mergeToolCallState, parseSessionUpdateEvent } from "./AcpRuntimeModel.ts";
+import {
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+} from "@t3tools/provider-acp/server/runtimeModel";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
