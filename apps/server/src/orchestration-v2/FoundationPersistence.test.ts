@@ -128,7 +128,7 @@ function threadCreatedEvent(input: {
   readonly id: string;
   readonly thread: OrchestrationV2AppThread;
   readonly now: DateTime.Utc;
-}): OrchestrationV2DomainEvent {
+}): Extract<OrchestrationV2DomainEvent, { readonly type: "thread.created" }> {
   return {
     id: EventId.make(input.id),
     type: "thread.created",
@@ -138,6 +138,160 @@ function threadCreatedEvent(input: {
     payload: input.thread,
   };
 }
+
+it.effect.each([
+  ["completed", "waiting"],
+  ["failed", "preparing"],
+  ["failed", "running"],
+  ["rolled_back", "waiting"],
+  ["rolled_back", "completed"],
+  ["interrupted", "interrupted"],
+  ["cancelled", "cancelled"],
+] as const)(
+  "keeps %s checkpoint after stale %s delivery and allows a new attempt",
+  ([status, incomingStatus]) =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:checkpoint-child-race"), now);
+      const waiting: OrchestrationV2Run = {
+        id: RunId.make("run:checkpoint-child-race"),
+        threadId: thread.id,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:checkpoint-child-race"),
+        rootNodeId: null,
+        activeAttemptId: RunAttemptId.make("attempt:checkpoint-child-race"),
+        status: "waiting",
+        queuePosition: null,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const completed: OrchestrationV2Run = {
+        ...waiting,
+        status,
+        completedAt: now,
+        checkpointId: CheckpointId.make("checkpoint:child-race"),
+      };
+      const staleDelivery: OrchestrationV2Run = {
+        ...waiting,
+        status: incomingStatus,
+        delegatedCompletion: {
+          disposition: "open",
+          nextGeneration: 1,
+          delivery: null,
+        },
+      };
+      const event = (id: string, payload: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+        id: EventId.make(id),
+        type: "run.updated",
+        threadId: thread.id,
+        runId: waiting.id,
+        occurredAt: now,
+        payload,
+      });
+      const attemptEvent = (
+        id: string,
+        run: OrchestrationV2Run,
+        attemptOrdinal: number,
+      ): OrchestrationV2DomainEvent => ({
+        id: EventId.make(id),
+        type: "run-attempt.created",
+        threadId: thread.id,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: run.activeAttemptId!,
+          runId: run.id,
+          attemptOrdinal,
+          rootNodeId: NodeId.make(`node:child-race:${attemptOrdinal}`),
+          providerInstanceId,
+          providerThreadId: ProviderThreadId.make("provider-thread:child-race"),
+          providerTurnId: null,
+          reason: attemptOrdinal === 1 ? "initial" : "steering_restart",
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      const created = threadCreatedEvent({ id: "event:child-race:thread", thread, now });
+      const events = [
+        created,
+        event("event:child-race:waiting", waiting),
+        attemptEvent("event:child-race:attempt1", waiting, 1),
+        event("event:child-race:checkpoint", completed),
+        event("event:child-race:delivery", staleDelivery),
+      ];
+      yield* sink.write({ events });
+      const persisted = (yield* store.getThreadProjection(thread.id)).runs[0]!;
+      const workspaceRetry = status === "failed" && incomingStatus === "preparing";
+      assert.equal(persisted.status, workspaceRetry ? incomingStatus : status);
+      assert.deepEqual(persisted.completedAt, workspaceRetry ? null : now);
+      assert.equal(persisted.checkpointId, completed.checkpointId);
+      assert.deepEqual(persisted.delegatedCompletion, staleDelivery.delegatedCompletion);
+      const replayed = events.reduce(
+        ProjectionStore.applyToProjection,
+        ProjectionStore.emptyProjection(created),
+      );
+      assert.deepEqual(replayed.runs[0], persisted);
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ status: string; completed_at: string | null }>`
+      SELECT status, completed_at FROM orchestration_v2_projection_runs WHERE run_id = ${waiting.id}
+    `;
+      assert.equal(rows[0]?.status, workspaceRetry ? incomingStatus : status);
+      assert.equal(rows[0]?.completed_at, workspaceRetry ? null : DateTime.formatIso(now));
+      const restart: OrchestrationV2Run = {
+        ...waiting,
+        status: "starting",
+        activeAttemptId: RunAttemptId.make("attempt:checkpoint-child-race:retry"),
+      };
+      yield* sink.write({
+        events: [
+          event("event:child-race:retry", restart),
+          attemptEvent("event:child-race:attempt2", restart, 2),
+        ],
+      });
+      const restarted = (yield* store.getThreadProjection(thread.id)).runs[0]!;
+      assert.equal(restarted.status, "starting");
+      assert.equal(restarted.checkpointId, null);
+      assert.equal(restarted.completedAt, null);
+      const restartedRows = yield* sql<{ status: string; completed_at: string | null }>`
+        SELECT status, completed_at FROM orchestration_v2_projection_runs WHERE run_id = ${waiting.id}
+      `;
+      assert.equal(restartedRows[0]?.status, "starting");
+      assert.equal(restartedRows[0]?.completed_at, null);
+      yield* sink.write({ events: [event("event:child-race:late-attempt1", completed)] });
+      const afterStaleAttempt = (yield* store.getThreadProjection(thread.id)).runs[0]!;
+      assert.deepEqual(afterStaleAttempt, restarted);
+      const replayedRestart = [
+        ...events,
+        event("event:child-race:retry", restart),
+        attemptEvent("event:child-race:attempt2", restart, 2),
+        event("event:child-race:late-attempt1", completed),
+      ].reduce(ProjectionStore.applyToProjection, ProjectionStore.emptyProjection(created));
+      assert.deepEqual(replayedRestart.runs[0], restarted);
+      const metadata = { disposition: "open", nextGeneration: 2, delivery: null } as const;
+      const lateMetadata = { ...completed, delegatedCompletion: metadata };
+      const latePreattempt = { ...completed, activeAttemptId: null };
+      const tail = [
+        event("event:child-race:late-metadata", lateMetadata),
+        event("event:child-race:pre-attempt", latePreattempt),
+      ];
+      yield* sink.write({ events: tail });
+      const expected = { ...restarted, delegatedCompletion: metadata };
+      assert.deepEqual((yield* store.getThreadProjection(thread.id)).runs[0], expected);
+      assert.deepEqual(
+        tail.reduce(ProjectionStore.applyToProjection, replayedRestart).runs[0],
+        expected,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("rebuilds event history one bounded page at a time", () =>
   Effect.gen(function* () {
