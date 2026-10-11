@@ -268,6 +268,9 @@ export function layerWithRegistry<Error>(
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
+    // Replaces the continuation request queue, for example to hold the
+    // continuation worker between an offer and its dispatch.
+    readonly continuationRequests?: typeof ProviderContinuationRequests.layer;
     // Reconcile a previous runtime's state before the effect worker starts,
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
@@ -294,7 +297,9 @@ export function layerWithRegistry<Error>(
   // One queue shared by the adapters, the orchestrator, and the worker, like
   // runtimeLayer.ts; layer memoization keeps it a single instance.
   const layerContinuationRequests =
-    options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
+    options.runContinuationWorker === true
+      ? (options.continuationRequests ?? ProviderContinuationRequests.layer)
+      : Layer.empty;
   const layerProvidedRegistry = registryLayer.pipe(
     Layer.provide(Layer.merge(layerContinuationRequests, McpProviderSessions.layer)),
   );
