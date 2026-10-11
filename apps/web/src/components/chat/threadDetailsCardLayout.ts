@@ -16,8 +16,8 @@ export function resolveThreadDetailsCardDensity(
 }
 
 /**
- * The card pins to the top right while a readable chat lane fits beside it.
- * The chat canvas decides whether chat moves over to make room.
+ * The card pins to the top right only while the full centered chat fits beside
+ * it, so docking never moves chat. Otherwise it opens as a popover.
  */
 export function resolveThreadDetailsCardLayout({
   container,
@@ -27,7 +27,7 @@ export function resolveThreadDetailsCardLayout({
   topInset = 0,
 }: {
   container: { width: number; height: number };
-  lane: { padding: number; minChatWidth: number };
+  lane: { padding: number; maxChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
   /** Space taken above the card, such as the open find bar. */
@@ -36,7 +36,8 @@ export function resolveThreadDetailsCardLayout({
   const gap = THREAD_DETAILS_CARD_GAP;
   const width = THREAD_DETAILS_CARD_WIDTH;
   const x = container.width - width - gap;
-  if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
+  const centeredRight = (container.width + lane.maxChatWidth) / 2;
+  if (centeredRight + DETAILS_CARD_CLEARANCE > x) return null;
   const y = gap + topInset;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.

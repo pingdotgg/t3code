@@ -45,17 +45,8 @@ export function resolveChatCanvasLayout({
   findBar?: PreviewMiniPlayerObstacles["detailsCard"];
 }) {
   const centeredWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
-  // A workspace card that does not fit beside the centered chat first moves
-  // chat left, only as far as it needs. Chat narrows only after it reaches the
-  // left padding.
-  const laneRight = detailsCard
-    ? detailsCard.left - DETAILS_CARD_CLEARANCE
-    : container.width - padding;
-  const normalWidth = Math.max(0, Math.min(centeredWidth, laneRight - padding));
-  const normalLeft = Math.max(
-    padding,
-    Math.min((container.width - normalWidth) / 2, laneRight - normalWidth),
-  );
+  const normalWidth = centeredWidth;
+  const normalLeft = Math.max(padding, (container.width - normalWidth) / 2);
   let chat = {
     left: normalLeft,
     width: normalWidth,
