@@ -1435,6 +1435,11 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       resolved = yield* makeClaudeEnvironment(config.value, resolved).pipe(
         Effect.provideService(Path.Path, input.path),
       );
+      // Keep terminal sessions on the same fork-subagent setting as SDK-run
+      // threads (see createClaudeAdapterV2).
+      if (config.value.forkSubagents) {
+        resolved = { ...resolved, CLAUDE_CODE_FORK_SUBAGENT: "1" };
+      }
     }
   }
 

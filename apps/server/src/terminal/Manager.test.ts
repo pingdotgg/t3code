@@ -2386,6 +2386,58 @@ it.layer(
     ),
   );
 
+  it.effect("sets CLAUDE_CODE_FORK_SUBAGENT when Claude fork subagents are enabled", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "claudeAgent",
+        env: undefined,
+      });
+
+      expect(environment.CLAUDE_CODE_FORK_SUBAGENT).toBe("1");
+    }).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { forkSubagents: true },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("omits CLAUDE_CODE_FORK_SUBAGENT when Claude fork subagents are disabled", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "claudeAgent",
+        env: undefined,
+      });
+
+      expect(environment.CLAUDE_CODE_FORK_SUBAGENT).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: {},
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("resolves an empty Codex default slot with default config", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

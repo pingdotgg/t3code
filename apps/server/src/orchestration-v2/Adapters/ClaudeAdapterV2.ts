@@ -8521,6 +8521,14 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
+    // Fork subagents are opt-in per instance: the Claude CLI only exposes the
+    // Agent tool's fork subagent type when CLAUDE_CODE_FORK_SUBAGENT is set,
+    // and while it is set subagents run in the background. The instance-level
+    // environment list can still set the variable when the toggle is off; the
+    // toggle wins when both are present.
+    const adapterEnvironment = config.forkSubagents
+      ? { ...claudeEnvironment, CLAUDE_CODE_FORK_SUBAGENT: "1" }
+      : claudeEnvironment;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(
@@ -8530,7 +8538,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     return yield* makeClaudeAdapterV2({
       instanceId,
       settings: { ...config, enabled, binaryPath },
-      environment: claudeEnvironment,
+      environment: adapterEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,

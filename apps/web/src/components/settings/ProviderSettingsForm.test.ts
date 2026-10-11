@@ -94,16 +94,22 @@ describe("ProviderSettingsForm helpers", () => {
     expect(fields.find((field) => field.key === "apiKey")?.control).toBe("password");
   });
 
-  it("shows the auto-compaction threshold for Claude providers", () => {
+  it("shows the auto-compaction threshold and fork-subagents switch for Claude providers", () => {
     const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
     expect(claude).toBeDefined();
 
-    expect(deriveProviderSettingsFields(claude!).map((field) => field.key)).toEqual([
+    const fields = deriveProviderSettingsFields(claude!);
+    expect(fields.map((field) => field.key)).toEqual([
       "binaryPath",
       "homePath",
       "autoCompactWindow",
       "launchArgs",
+      "forkSubagents",
     ]);
+    expect(fields.find((field) => field.key === "forkSubagents")).toMatchObject({
+      control: "switch",
+      clearWhenEmpty: "omit",
+    });
   });
 
   it("preserves unknown config keys while omitting empty configurable fields", () => {

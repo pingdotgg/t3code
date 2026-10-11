@@ -37,6 +37,7 @@ import {
   ProviderDriverKind,
   type ProviderReplayTranscript,
   type ProviderApprovalDecision,
+  type ProviderInstanceEnvironment,
   ProviderSessionId,
   ProviderTurnId,
   RunAttemptId,
@@ -1264,6 +1265,156 @@ describe("ClaudeAdapterV2 executable path", () => {
         );
 
         assert.deepEqual(executablePaths, [packageExe]);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+// Opens a session with the given instance config, runs one turn, and returns
+// the process environments the SDK was asked to spawn with. The host
+// environment is pinned so a machine-level CLAUDE_CODE_FORK_SUBAGENT cannot
+// leak into the assertions.
+const captureSdkQueryEnvironments = Effect.fn("captureSdkQueryEnvironments")(function* (
+  config: ClaudeSettings,
+  environment: ProviderInstanceEnvironment = [],
+) {
+  const environments: Array<NodeJS.ProcessEnv | undefined> = [];
+  const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
+    {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      displayName: undefined,
+      environment,
+      enabled: true,
+      config,
+    },
+    {},
+  ).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-claude-fork-subagents-",
+      }),
+    ),
+    Effect.provideService(ClaudeAdapterV2.ClaudeAgentSdkQueryRunner, {
+      allocateSessionId: Effect.succeed("native-thread-claude-fork-subagents"),
+      open: (input) =>
+        Effect.sync(() => {
+          environments.push(input.options.env);
+          return {
+            messages: Stream.never,
+            offer: () => Effect.void,
+            setModel: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            interrupt: Effect.void,
+            close: Effect.void,
+          };
+        }),
+      forkSession: () => Effect.die("unused"),
+      subagentLaunchToolUseId: () => Effect.succeed(null),
+      assertComplete: Effect.void,
+    }),
+    Effect.provideService(HostProcess.Environment, { PATH: "/usr/bin" }),
+  );
+  const threadId = ThreadId.make("thread-claude-fork-subagents");
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-claude-fork-subagents"),
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  yield* runtime.startTurn(
+    makeClaudeTestTurnInput({
+      threadId,
+      providerThread,
+      now: yield* DateTime.now,
+      attemptId: RunAttemptId.make("attempt-claude-fork-subagents"),
+      text: "hello",
+      attachments: [],
+    }),
+  );
+  return environments;
+});
+
+describe("ClaudeAdapterV2 fork subagents", () => {
+  it.effect("omits CLAUDE_CODE_FORK_SUBAGENT when fork subagents are disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environments = yield* captureSdkQueryEnvironments({
+          ...DEFAULT_CLAUDE_SETTINGS,
+          binaryPath: "~/bin/claude",
+        });
+
+        assert.equal(environments.length, 1);
+        assert.equal(environments[0]?.CLAUDE_CODE_FORK_SUBAGENT, undefined);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("sets CLAUDE_CODE_FORK_SUBAGENT when fork subagents are enabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environments = yield* captureSdkQueryEnvironments({
+          ...DEFAULT_CLAUDE_SETTINGS,
+          binaryPath: "~/bin/claude",
+          forkSubagents: true,
+        });
+
+        assert.equal(environments.length, 1);
+        assert.equal(environments[0]?.CLAUDE_CODE_FORK_SUBAGENT, "1");
+        // The rest of the merged environment must survive the injection.
+        assert.equal(environments[0]?.PATH, "/usr/bin");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("prefers the fork-subagents toggle over a conflicting instance environment value", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environments = yield* captureSdkQueryEnvironments(
+          {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            binaryPath: "~/bin/claude",
+            forkSubagents: true,
+          },
+          [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "0", sensitive: false }],
+        );
+
+        assert.equal(environments.length, 1);
+        assert.equal(environments[0]?.CLAUDE_CODE_FORK_SUBAGENT, "1");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("passes an instance environment variable through when the toggle is off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environments = yield* captureSdkQueryEnvironments(
+          { ...DEFAULT_CLAUDE_SETTINGS, binaryPath: "~/bin/claude" },
+          [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false }],
+        );
+
+        assert.equal(environments.length, 1);
+        assert.equal(environments[0]?.CLAUDE_CODE_FORK_SUBAGENT, "1");
       }),
     ).pipe(
       Effect.provide(

@@ -707,9 +707,18 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    forkSubagents: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Fork subagents",
+        description:
+          "Let Claude spawn fork subagents that inherit the full conversation and share its prompt cache. While on, subagents run in the background. Sets CLAUDE_CODE_FORK_SUBAGENT for this instance's sessions.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs", "forkSubagents"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

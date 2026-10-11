@@ -255,6 +255,20 @@ describe("ClaudeSettings auto-compaction", () => {
   );
 });
 
+describe("ClaudeSettings fork subagents", () => {
+  it("defaults to disabled for existing settings", () => {
+    expect(decodeClaudeSettings({}).forkSubagents).toBe(false);
+  });
+
+  it("round-trips an explicit opt-in", () => {
+    expect(decodeClaudeSettings({ forkSubagents: true }).forkSubagents).toBe(true);
+  });
+
+  it.each(["true", 1, null])("rejects an invalid fork-subagents value %s", (forkSubagents) => {
+    expect(() => decodeClaudeSettings({ forkSubagents })).toThrow();
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
