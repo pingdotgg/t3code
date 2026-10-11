@@ -1,4 +1,4 @@
-import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
@@ -23,7 +23,7 @@ import {
   historyResponseItems,
   selectHistory,
   historicalMessage,
-} from "./ContextHandoffBudget.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 
@@ -501,7 +501,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 16_000,
         alreadyDeliveredItemIds: new Set<string>(),
-        inject: (value: ProviderAdapterV2HistoricalContext) =>
+        inject: (value: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
           Effect.sync(() => {
             history.push(...historyResponseItems(value.messages, value.context));
             return true;
@@ -588,7 +588,7 @@ describe("handoff delivery", () => {
         ...handoff,
         id: ContextHandoffId.make(`handoff:retry:${index}`),
       }));
-      let captured: ProviderAdapterV2HistoricalContext | undefined;
+      let captured: ProviderAdapter.ProviderAdapterV2HistoricalContext | undefined;
       const result = yield* deliverContextHandoffs({
         handoffs: many,
         providerThread,

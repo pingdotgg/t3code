@@ -30,12 +30,17 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
       // Server (`effect-span`) records.
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
       // Browser (`otlp-span`) records. Effect's OTLP tracer writes code "2" for
-      // errors and code "1" with message "Interrupted" for interrupts.
+      // errors. It marks interrupts with an `effect.fiber.interrupted`
+      // attribute; clients before Effect 4.0.2 wrote code "1" with message
+      // "Interrupted" instead.
       status: Schema.optional(
         Schema.Struct({
           code: Schema.optional(Schema.String),
           message: Schema.optional(Schema.String),
         }),
+      ),
+      attributes: Schema.optional(
+        Schema.Struct({ "effect.fiber.interrupted": Schema.optional(Schema.Unknown) }),
       ),
     }),
   ),
@@ -77,7 +82,11 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
     lastEndMs = Math.max(lastEndMs, endMs);
     const stats = byName.get(span.name) ?? { durations: [], interrupted: 0, failures: 0 };
     stats.durations.push(span.durationMs);
-    if (span.exit?._tag === "Interrupted" || span.status?.message === "Interrupted") {
+    if (
+      span.exit?._tag === "Interrupted" ||
+      span.attributes?.["effect.fiber.interrupted"] === true ||
+      span.status?.message === "Interrupted"
+    ) {
       stats.interrupted += 1;
     }
     if (span.exit?._tag === "Failure" || span.status?.code === "2") stats.failures += 1;

@@ -3,9 +3,10 @@ import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
+import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it } from "vite-plus/test";
 
-import { collapseExpandedComposerCursor } from "./composer-logic";
+import { collapseExpandedComposerCursor, pastedPathQueryLength } from "./composer-logic";
 
 import {
   buildDocJson,
@@ -134,6 +135,53 @@ function roundTripPlain(value: string) {
   const doc = ProseMirrorNode.fromJSON(plainSchema, json);
   return serializeEditorDoc(doc);
 }
+
+describe("literal editor answers", () => {
+  const makeDoc = (value: string) =>
+    ProseMirrorNode.fromJSON(
+      plainSchema,
+      buildDocJson(value, (name) => ({ label: name, description: null }), {
+        literalText: true,
+      }),
+    );
+
+  it.each([
+    "",
+    "\n\n",
+    "  - [X] done\n\n**keep** €my-skill @README.md  \n",
+    "line one\r\nline two\r\n",
+    `- [X] done\n${"  detail €my-skill @README.md\n".repeat(100)}`,
+  ])("preserves the complete answer through selection and serialization", (value) => {
+    const doc = makeDoc(value);
+    doc.check();
+    const serialized = serializeEditorDoc(doc);
+    expect(serialized.value).toBe(value);
+    expect(serialized.contextIds).toEqual([]);
+    expect(serializeSelection(doc, 1, doc.content.size - 1)).toBe(value);
+    for (let offset = 0; offset <= value.length; offset += 1) {
+      expect(flatToCollapsed(serialized, offset)).toBe(offset);
+    }
+  });
+
+  it("edits literal Markdown, inserts a newline, and preserves an explicitly cleared answer", () => {
+    const value = "  - [X] done €my-skill @README.md  ";
+    const doc = makeDoc(value);
+    let state = EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, doc.content.size - 1),
+    });
+    state = state.apply(state.tr.insertText(" edited"));
+    expect(
+      splitBlockKeepMarks(state, (transaction) => {
+        state = state.apply(transaction);
+      }),
+    ).toBe(true);
+    state = state.apply(state.tr.insertText("second line  "));
+    expect(serializeEditorDoc(state.doc).value).toBe(`${value} edited\nsecond line  `);
+    state = state.apply(state.tr.delete(1, state.doc.content.size - 1));
+    expect(serializeEditorDoc(state.doc).value).toBe("");
+  });
+});
 
 describe("composer rich text document model", () => {
   it.each(["€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
@@ -891,6 +939,94 @@ describe("pasting into a list item or quote", () => {
     expect(first.content[0]).toMatchObject({ text: "bold", marks: [{ type: "bold" }] });
     expect(JSON.stringify(content[1])).toContain("- item");
     expect(JSON.stringify(content[2])).toContain("> quote");
+  });
+});
+
+describe("pasting into a path query", () => {
+  const skillLabelFor = (name: string) => ({ label: name, description: null });
+
+  // Inserts `pasted` at the end of a one-line prompt the way the composer's
+  // paste handler does. `prompt` may be a document, to place the caret after a chip.
+  function paste(prompt: string | ProseMirrorNode, pasted: string, pathQueryActive = true) {
+    const promptDoc =
+      typeof prompt === "string"
+        ? ProseMirrorNode.fromJSON(schema, buildDocJson(prompt, skillLabelFor))
+        : prompt;
+    const line = promptDoc.lastChild!;
+    const lineBefore = line.textBetween(0, line.content.size, undefined, "\uFFFC");
+    const literalLength = pastedPathQueryLength(lineBefore, pasted, pathQueryActive);
+    const blocks = buildTiptapContent(pasted, skillLabelFor, { literalLength });
+    const [first, ...rest] = blocks.map((block) => ProseMirrorNode.fromJSON(schema, block));
+    const head = promptDoc.lastChild!.content.append(first!.content);
+    const doc = schema.node("doc", null, [first!.copy(head), ...rest]);
+    doc.check();
+    return doc;
+  }
+
+  function boldText(doc: ProseMirrorNode) {
+    const bold: string[] = [];
+    doc.descendants((node) => {
+      if (node.isText && node.marks.some((mark) => mark.type.name === "bold")) {
+        bold.push(node.text!);
+      }
+    });
+    return bold;
+  }
+
+  it.each(["src/__test__.tsx", "src/__tests__/a.ts", "pkg/__init__.py", "a/**b**/c"])(
+    "keeps %s literal after @ so file search can match it",
+    (path) => {
+      const doc = paste("Open @", path);
+      expect(boldText(doc)).toEqual([]);
+      expect(serializeEditorDoc(doc).value).toBe(`Open @${path}`);
+    },
+  );
+
+  it("still styles the text after the path", () => {
+    const doc = paste("Open @", "src/__test__.tsx and **this**\n- [ ] then __that__");
+    expect(boldText(doc)).toEqual(["this", "that"]);
+    expect(doc.lastChild!.type.name).toBe("taskList");
+    expect(serializeEditorDoc(doc).value).toBe(
+      "Open @src/__test__.tsx and **this**\n- [ ] then **that**",
+    );
+  });
+
+  it("parses markdown after Escape dismisses the path query", () => {
+    const doc = paste("Open @", "__hello__ world", false);
+    expect(boldText(doc)).toEqual(["hello"]);
+    expect(serializeEditorDoc(doc).value).toBe("Open @**hello** world");
+  });
+
+  it("keeps the rest of the path's line on that line", () => {
+    const doc = paste("Open @", "src/a.ts - not a list item");
+    expect(doc.childCount).toBe(1);
+    expect(serializeEditorDoc(doc).value).toBe("Open @src/a.ts - not a list item");
+  });
+
+  it("parses markdown when the paste does not continue a path query", () => {
+    expect(boldText(paste("Open ", "src/__test__.tsx"))).toEqual(["test"]);
+    expect(boldText(paste("Open @a ", "__b__"))).toEqual(["b"]);
+    expect(boldText(paste("Open @", " __b__"))).toEqual(["b"]);
+  });
+
+  it("keeps a path literal after a partly styled query", () => {
+    const doc = paste("Open @**src/**", "__test__.tsx");
+    expect(boldText(doc)).toEqual(["src/"]);
+    expect(serializeEditorDoc(doc).value).toBe("Open @**src/**__test__.tsx");
+  });
+
+  it("parses markdown pasted right after a mention chip", () => {
+    const withSpace = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson("Open @README.md ", skillLabelFor),
+    );
+    const paragraph = withSpace.firstChild!;
+    expect(paragraph.lastChild!.text).toBe(" ");
+    const chipLast = schema.node("doc", null, [
+      paragraph.copy(paragraph.content.cut(0, paragraph.content.size - 1)),
+    ]);
+    expect(chipLast.firstChild!.lastChild!.type.name).toBe("composer-mention");
+    expect(boldText(paste(chipLast, "__b__"))).toEqual(["b"]);
   });
 });
 

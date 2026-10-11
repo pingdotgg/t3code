@@ -534,11 +534,23 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
   return json;
 }
 
+/**
+ * Document content for a prompt. `literalLength` keeps that many leading
+ * characters as plain text, for a paste that continues a path query: markers
+ * inside a path such as `src/__init__.py` must reach file search unstyled.
+ */
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean; blocks?: boolean },
+  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
 ): Record<string, unknown>[] {
+  // Editor answers are verbatim text, including Markdown and context-token sources.
+  if (options?.literalText) {
+    return value.split("\n").map((line) => ({
+      type: "paragraph",
+      ...(line ? { content: [{ type: "text", text: line }] } : {}),
+    }));
+  }
   const styling = options?.styling ?? true;
   // Inline marks without block structure: text pasted into a list item or
   // quote, which has no line to write a nested block into.
@@ -553,7 +565,8 @@ export function buildTiptapContent(
   // Code fences hold no chips, so their lines put the original source back in
   // place of the sentinel rather than building an atom for it.
   const atomSources: string[] = [];
-  const text = splitPromptIntoComposerSegments(value)
+  const literal = value.slice(0, options?.literalLength ?? 0);
+  const text = splitPromptIntoComposerSegments(value.slice(literal.length))
     .map((segment) => {
       if (segment.type === "text") return segment.text;
       atoms.push(atomJsonForSegment(segment, skillLabelFor));
@@ -601,6 +614,14 @@ export function buildTiptapContent(
 
   for (let index = 0; index < sourceLines.length; index += 1) {
     const line = sourceLines[index]!;
+    // The rest of the literal's line continues the text before the caret, so
+    // it cannot open a block.
+    if (index === 0 && literal) {
+      entries.push({
+        line: { list: null, inline: [textJsonForSpan(literal, []), ...buildInline(line)] },
+      });
+      continue;
+    }
     const opening = blockSyntax ? parseOpeningFence(line) : null;
     if (!opening) {
       // A thematic break outranks a list: `- - -` and `* * *` are rules, and
@@ -759,7 +780,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean },
+  options?: { styling?: boolean; literalText?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   // The empty line the rule extension keeps after a final rule.

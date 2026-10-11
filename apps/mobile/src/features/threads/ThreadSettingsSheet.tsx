@@ -73,8 +73,8 @@ import {
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
@@ -90,6 +90,7 @@ import {
   providerSectionIsCollapsed,
   toggleModelFavorite,
 } from "./thread-settings-sheet-state";
+import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
 /**
  * Everyday harnesses start expanded; every other provider (OpenRouter catalogs
@@ -566,6 +567,11 @@ type ThreadSettingsCatalogItem =
       readonly isLast: boolean;
     }
   | {
+      readonly kind: "notice";
+      readonly key: string;
+      readonly text: string;
+    }
+  | {
       readonly kind: "empty";
       readonly key: "empty";
     }
@@ -657,7 +663,12 @@ function useThreadSettingsCatalogItems(
           ),
           session.favoriteKeys,
         );
-        if (visibleModels.length === 0) {
+        // Favorites list only selectable models, so it never explains gated ones.
+        const updateRequiredNotice =
+          group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
+            ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
+            : null;
+        if (visibleModels.length === 0 && !updateRequiredNotice) {
           return [];
         }
         const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
@@ -695,6 +706,15 @@ function useThreadSettingsCatalogItems(
             isFirst: index === 0,
             isLast: index === provider.models.length - 1,
           })),
+          ...(!collapsed && updateRequiredNotice
+            ? [
+                {
+                  kind: "notice" as const,
+                  key: `notice:${group.providerKey}`,
+                  text: updateRequiredNotice,
+                },
+              ]
+            : []),
         ];
       }),
     [
@@ -722,10 +742,10 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
-  const bottomToolbarInset =
-    Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
-      ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
-      : 0;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const bottomToolbarInset = usesNativeMailSearchToolbar
+    ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
+    : 0;
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
@@ -853,6 +873,8 @@ function ThreadSettingsMainContent(props: {
             option={item.option}
           />
         );
+      } else if (item.kind === "notice") {
+        content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
       } else if (item.kind === "empty") {
         content = (
           <View className="items-center px-8 py-14">
@@ -1085,7 +1107,7 @@ function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
-  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useCallback(() => {
     if (!session.commitPendingModel()) return;

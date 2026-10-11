@@ -13,7 +13,9 @@ public final class T3NativeControlsModule: Module {
   public func definition() -> ModuleDefinition {
     Constants {
       if #available(iOS 26.0, *) {
-        return ["supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil]
+        return [
+          "supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil,
+        ]
       }
       return ["supportsWorkspaceColumns": false]
     }
@@ -52,6 +54,15 @@ public final class T3NativeControlsModule: Module {
         view.sources = self.presentationSources
         view.identifier = identifier
       }
+    }
+
+    View(T3FrostedCutoutView.self) {
+      ViewName("FrostedCutout")
+      Prop("cutoutTop") { (view: T3FrostedCutoutView, value: Double) in view.cutoutTop = CGFloat(value) }
+      Prop("cutoutWidth") { (view: T3FrostedCutoutView, value: Double) in view.cutoutWidth = CGFloat(value) }
+      Prop("cutoutHeight") { (view: T3FrostedCutoutView, value: Double) in view.cutoutHeight = CGFloat(value) }
+      Prop("cutoutRadius") { (view: T3FrostedCutoutView, value: Double) in view.cutoutRadius = CGFloat(value) }
+      Prop("appearance") { (view: T3FrostedCutoutView, value: String) in view.appearance = value }
     }
 
     View(T3ContextSheetSizeView.self) {

@@ -1,7 +1,7 @@
 // Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
 // Numbers form a session with shared repository-permission caches. Browser and
 // service caches are excluded. Uses real GitHub reads, without a server or database.
-// Every GraphQL read carries `rateLimit`, so its cost is read off its own answer.
+// Each GraphQL read asks for `rateLimit` here, so its cost is read off its own answer.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
@@ -10,14 +10,19 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
-import * as GitHubPullRequestCli from "../src/pullRequest/GitHubPullRequestCli.ts";
-import * as GitHubPullRequestProvider from "../src/pullRequest/GitHubPullRequestProvider.ts";
-import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
-import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as ServerConfig from "../src/config.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
-import * as GitHubGraphQlBudget from "../src/sourceControl/githubGraphQlBudget.ts";
-import * as SourceControlRateLimit from "../src/sourceControl/SourceControlRateLimit.ts";
+import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as ServerSourceControlHost from "../src/sourceControl/ServerSourceControlHost.ts";
+import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
 
 const [repository, ...numbers] = process.argv.slice(2);
 if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.test(number))) {
@@ -33,6 +38,25 @@ const decodeCost = Schema.decodeUnknownOption(
     }),
   ),
 );
+/** The query with GitHub's own count of what it cost, for a read rather than a mutation. */
+function withRateLimit(query: string): string {
+  const end = query.lastIndexOf("}");
+  return query.trimStart().startsWith("mutation") || end === -1
+    ? query
+    : `${query.slice(0, end)}\n  rateLimit { cost }\n${query.slice(end)}`;
+}
+
+// The server's host port over default settings: gh's own account choice, no saved token.
+const sourceControlHost = ServerSourceControlHost.layer.pipe(
+  Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+  Layer.provide(GitVcsDriver.layer),
+  Layer.provide(ServerSettings.layerTest()),
+  // A scratch state directory, so nothing here touches a real T3 home.
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-measure-pr-preview-" })),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
 const measuredApi = Layer.effect(
   GitHubApi.GitHubApi,
   Effect.gen(function* () {
@@ -40,7 +64,7 @@ const measuredApi = Layer.effect(
     return GitHubApi.GitHubApi.of({
       ...api,
       graphql: (input) =>
-        api.graphql(input).pipe(
+        api.graphql({ ...input, query: withRateLimit(input.query) }).pipe(
           Effect.tap((body) =>
             Effect.sync(() =>
               reads.push({
@@ -65,18 +89,15 @@ const measuredApi = Layer.effect(
     });
   }),
 ).pipe(
-  Layer.provide(GitHubCredentials.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
-  Layer.provide(GitHubGraphQlBudget.layer),
+  Layer.provide(GitHubCredentials.layer),
+  Layer.provide(GitHubQuota.layer),
   Layer.provide(SourceControlRateLimit.layer),
   Layer.provide(FetchHttpClient.layer),
-  Layer.provide(VcsProcess.layer),
-  Layer.provide(NodeServices.layer),
 );
 
-const services = GitHubPullRequestCli.layer.pipe(
+const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(measuredApi),
-  Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(sourceControlHost),
 );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));

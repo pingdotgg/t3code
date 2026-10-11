@@ -44,6 +44,33 @@ export function nativeWorkspacePopAction(
     : null;
 }
 
+/** A native card pop must preserve pushes made before its completion event reaches JS. */
+export function nativeStackPopAction(
+  state: Pick<NavigationState, "key" | "index" | "routes">,
+  dismissedKey: string,
+  destinationKey?: string,
+) {
+  const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
+  const destinationIndex =
+    destinationKey === undefined
+      ? sourceIndex - 1
+      : state.routes.findIndex((route) => route.key === destinationKey);
+  if (
+    sourceIndex <= 0 ||
+    sourceIndex > state.index ||
+    destinationIndex < 0 ||
+    destinationIndex >= sourceIndex
+  ) {
+    return null;
+  }
+  return {
+    type: "POP" as const,
+    payload: { count: sourceIndex - destinationIndex },
+    source: dismissedKey,
+    target: state.key,
+  };
+}
+
 /** Group pushes with the modal that owns their native stack. */
 export function partitionStackPresentations<T>(
   routes: readonly T[],
@@ -57,17 +84,18 @@ export function partitionStackPresentations<T>(
   return groups;
 }
 
-/** Preserve UIKit's outgoing screens, before newly pushed screens, until dismissal. */
+/** Keep outgoing screens in place until dismissal; Fabric moves enqueue native pop/push operations. */
 export function reconcileStackScreens<T extends { readonly key: string }>(
   previous: readonly T[],
   current: readonly T[],
   completedNativeDismissals: ReadonlySet<string> = new Set(),
 ): T[] {
   const active = new Set(current.map((route) => route.key));
-  return [
-    ...previous.filter(
-      (route) => !active.has(route.key) && !completedNativeDismissals.has(route.key),
-    ),
-    ...current,
-  ];
+  const screens = [...current];
+  previous.forEach((route, index) => {
+    if (!active.has(route.key) && !completedNativeDismissals.has(route.key)) {
+      screens.splice(Math.min(index, screens.length), 0, route);
+    }
+  });
+  return screens;
 }

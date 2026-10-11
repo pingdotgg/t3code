@@ -15,7 +15,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -215,6 +215,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.id_token?.chatgpt_account_id?.trim()
+        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
+        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {

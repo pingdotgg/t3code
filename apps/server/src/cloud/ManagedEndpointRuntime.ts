@@ -2,6 +2,7 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -55,11 +56,13 @@ export class CloudManagedEndpointRuntime extends Context.Service<
 
 interface ActiveConnector {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
+  readonly executable: RelayClient.AvailableRelayClient;
   readonly scope: Scope.Closeable;
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
-  readonly connected: Ref.Ref<boolean>;
+  /** Completes when the connector first registers a tunnel connection. */
+  readonly registered: Deferred.Deferred<void>;
 }
 
 // A connector that exits before running this long is treated as part of a
@@ -77,6 +80,24 @@ const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 // Ask for recovery after this long, and again at this interval while it stays
 // unconnected; the relay hands back the same tunnel when it is still live.
 const CONNECTOR_REGISTRATION_TIMEOUT = Duration.minutes(3);
+// A failed background install of the pinned relay client is retried no sooner
+// than this, so a crash-looping connector or an offline host does not redownload
+// on every reconcile.
+const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
+
+/**
+ * A linked host converges on the pinned managed release when it has no relay
+ * client or runs another managed release. A PATH binary or an explicit override
+ * is the user's choice, and the CLI asks before downloading, so both stay put.
+ */
+function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): boolean {
+  return (
+    executable.status === "missing" ||
+    (executable.status === "available" &&
+      executable.source === "managed" &&
+      !RelayClient.isPinnedManagedRelayClient(executable))
+  );
+}
 
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
@@ -148,6 +169,11 @@ export const make = Effect.gen(function* () {
   const reconcileSemaphore = yield* Semaphore.make(1);
   const restartDelayRef = yield* Ref.make(0);
   const linkStateSemaphore = yield* Semaphore.make(1);
+  const runtimeScope = yield* Effect.scope;
+  const installInFlightRef = yield* Ref.make(false);
+  const lastInstallFailureAtRef = yield* Ref.make<number | null>(null);
+  const prunedRef = yield* Ref.make(false);
+  const retryLoopRunningRef = yield* Ref.make(false);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
@@ -228,12 +254,133 @@ export const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
+  // Installs the pinned relay client in the background, then moves the connector
+  // to it. The new connector starts next to the old one on the same tunnel, and
+  // the old one stops only once the new one registers, so clients never see the
+  // relay lose this host during the swap.
+  const installPinnedRelayClient = Effect.gen(function* () {
+    if (yield* Ref.getAndSet(installInFlightRef, true)) return;
+    yield* Effect.logInfo("Installing the pinned relay client", {
+      version: RelayClient.CLOUDFLARED_VERSION,
+    });
+    yield* relayClient.install.pipe(
+      Effect.tap(() => Ref.set(lastInstallFailureAtRef, null)),
+      Effect.flatMap((installed) =>
+        reconcileSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const desiredConfig = yield* Ref.get(desiredConfigRef);
+            if (!desiredConfig || desiredConfig.providerKind !== "cloudflare_tunnel") return;
+            const active = yield* Ref.get(activeRef);
+            // A self-updated binary in the pinned folder shares the installed path,
+            // so the version decides whether the running connector is current.
+            if (
+              active?.executable.executablePath === installed.executablePath &&
+              active.executable.version === installed.version
+            ) {
+              return;
+            }
+            // A fresh binary can fail its probe while a scanner holds it; restarting
+            // then would land on the same older binary, so leave it to the retry.
+            const resolved = yield* relayClient.resolve;
+            if (
+              resolved.status !== "available" ||
+              resolved.executablePath !== installed.executablePath ||
+              resolved.version !== installed.version
+            ) {
+              return;
+            }
+            yield* Effect.logInfo("Relay client installed; moving the connector to it", {
+              version: installed.version,
+              previousVersion: active?.executable.version,
+            });
+            // Detach the old connector so the reconcile starts a new one beside it.
+            const previous = yield* Ref.getAndSet(activeRef, null);
+            const status = yield* reconcileConfig(desiredConfig);
+            const next = yield* Ref.get(activeRef);
+            if (!next) {
+              yield* Effect.logWarning("Relay client did not start after the update", status);
+              // A still-running old connector keeps serving and the retry loop
+              // tries the pin again. One that exited while detached was skipped
+              // by its supervisor, so ask for recovery like an exited connector.
+              const previousRunning = previous
+                ? yield* previous.child.isRunning.pipe(Effect.orElseSucceed(() => false))
+                : false;
+              if (previous && previousRunning) {
+                yield* Ref.set(activeRef, previous);
+              } else {
+                yield* stopConnector(previous);
+                yield* Queue.offer(recoveryRequests, desiredConfig);
+              }
+              return;
+            }
+            // Runs in the new connector's scope: the old one stops when the new
+            // one registers, or as soon as the new one is stopped or replaced.
+            if (previous) {
+              yield* Deferred.await(next.registered).pipe(
+                Effect.ensuring(stopConnector(previous)),
+                Effect.forkIn(next.scope),
+              );
+            }
+          }),
+        ),
+      ),
+      Effect.catchTags({
+        RelayClientInstallError: (error) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((failedAt) => Ref.set(lastInstallFailureAtRef, failedAt)),
+            Effect.andThen(
+              Effect.logWarning("Could not install the pinned relay client", {
+                reason: error.reason,
+                message: error.message,
+                cause: error.cause,
+              }),
+            ),
+          ),
+      }),
+      Effect.ensuring(Ref.set(installInFlightRef, false)),
+    );
+  });
+
+  // Reconciles call this; a recent failure skips the attempt so a crash-looping
+  // connector or an offline host does not redownload on every restart.
+  const ensurePinnedRelayClient = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const lastFailureAt = yield* Ref.get(lastInstallFailureAtRef);
+    if (lastFailureAt !== null && now - lastFailureAt < RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS) {
+      return;
+    }
+    yield* installPinnedRelayClient;
+  }).pipe(Effect.forkIn(runtimeScope), Effect.asVoid);
+
+  // Until the host runs the pinned release, retry the install every interval.
+  // applyConfig returns early while an older connector is healthy, and some
+  // activations never retry a missing client, so one runtime loop covers both.
+  // It paces itself, so it skips the failure gate above.
+  const retryPinnedRelayClientInstall = Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(Duration.millis(RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS));
+      const desiredConfig = yield* Ref.get(desiredConfigRef);
+      if (!desiredConfig || desiredConfig.providerKind !== "cloudflare_tunnel") return;
+      // Stop only once a connector runs on the pin. The pin can be on disk while
+      // an older connector still runs, or while none runs because a post-install
+      // probe failed; another install call then finds it and starts the connector.
+      const active = yield* Ref.get(activeRef);
+      if (active && !needsPinnedRelayClient(active.executable)) return;
+      yield* installPinnedRelayClient;
+    }
+  }).pipe(Effect.ensuring(Ref.set(retryLoopRunningRef, false)));
+
+  const startPinnedRelayClientRetries = Effect.gen(function* () {
+    if (yield* Ref.getAndSet(retryLoopRunningRef, true)) return;
+    yield* Effect.forkIn(retryPinnedRelayClientInstall, runtimeScope);
+  });
+
   // Requests recovery while the connector has not registered a connection,
   // once per timeout, until it connects or is replaced.
   const watchConnectorRegistration = (connector: ActiveConnector) =>
     Effect.gen(function* () {
       yield* Effect.sleep(CONNECTOR_REGISTRATION_TIMEOUT);
-      if (yield* Ref.get(connector.connected)) return true;
+      if (yield* Deferred.isDone(connector.registered)) return true;
       yield* Effect.logWarning(
         "Relay client has not registered a tunnel connection; requesting recovery",
         {
@@ -265,11 +412,20 @@ export const make = Effect.gen(function* () {
         switch (classifyRelayClientOutput(line)) {
           case "connected":
             rejectedRegistrations = 0;
-            return Ref.set(connector.connected, true).pipe(
+            return Deferred.succeed(connector.registered, undefined).pipe(
               Effect.andThen(
                 Effect.logInfo("Relay client tunnel connection registered", attributes),
               ),
               Effect.andThen(Queue.offer(tunnelConnections, undefined)),
+              Effect.andThen(
+                RelayClient.isPinnedManagedRelayClient(connector.executable)
+                  ? Ref.getAndSet(prunedRef, true).pipe(
+                      Effect.flatMap((pruned) =>
+                        pruned ? Effect.void : relayClient.pruneManagedVersions,
+                      ),
+                    )
+                  : Effect.void,
+              ),
               Effect.asVoid,
             );
           case "warning":
@@ -328,6 +484,10 @@ export const make = Effect.gen(function* () {
     yield* stopActive;
 
     const executable = yield* relayClient.resolve;
+    if (needsPinnedRelayClient(executable)) {
+      yield* ensurePinnedRelayClient;
+      yield* startPinnedRelayClientRetries;
+    }
     if (executable.status !== "available") {
       return {
         status: "failed",
@@ -365,6 +525,8 @@ export const make = Effect.gen(function* () {
         Effect.tap((child) =>
           Effect.logInfo("Relay client process started; waiting for tunnel connection", {
             pid: Number(child.pid),
+            source: executable.source,
+            version: executable.version,
             tunnelId: config.tunnelId,
             tunnelName: config.tunnelName,
           }),
@@ -395,11 +557,12 @@ export const make = Effect.gen(function* () {
     if (!("status" in child)) {
       const connector = {
         child,
+        executable,
         scope: connectorScope,
         configKey: nextConfigKey,
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
-        connected: yield* Ref.make(false),
+        registered: yield* Deferred.make<void>(),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);

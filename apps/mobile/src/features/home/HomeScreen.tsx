@@ -36,8 +36,12 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { nativeHeaderScrollEdgeEffects } from "../../native/scrollEdgeEffects";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import {
+  useNativeColumnLayoutMetrics,
+  useNativeLayoutMetrics,
+} from "../../native/native-layout-metrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
@@ -67,7 +71,7 @@ import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-s
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
-  sortHomeProjectScopes,
+  findHomeProjectScope,
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
@@ -264,6 +268,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const primaryColumn = use(NativePrimaryColumnContext);
   const contentBackground = primaryColumn ? "bg-drawer" : "bg-screen";
   const containerClassName = cn(
@@ -277,6 +282,10 @@ export function HomeScreen(props: HomeScreenProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
+  const screenMetrics = useNativeLayoutMetrics();
+  const contentSideInsets = usesNativeWorkspaceColumns
+    ? (columnMetrics ?? screenMetrics)?.safeArea
+    : undefined;
   // UIKit's column safe area already includes its bottom toolbar.
   const iosBottomClearance = Math.max(columnMetrics?.safeArea.bottom ?? insets.bottom, 24);
   const searchEnvironmentIds = useMemo(
@@ -386,42 +395,14 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const v2ScopeProjects = useMemo(
-    () =>
-      sortHomeProjectScopes({
-        scopes: projectScopes,
-        threads: props.threads,
-        pendingTasks: props.pendingTasks,
-        projectSortOrder: props.projectSortOrder,
-      }),
-    [
-      props.pendingTasks,
-      props.projects,
-      props.projectSortOrder,
-      props.selectedEnvironmentId,
-      props.threads,
-      projectScopes,
-    ],
-  );
   const v2ScopedProjectGroup = useMemo(
-    () =>
-      v2ProjectScopeKey === null
-        ? null
-        : (v2ScopeProjects.find(
-            (scope) =>
-              scope.key === v2ProjectScopeKey ||
-              scope.projectRefs.some(
-                (projectRef) =>
-                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
-                  v2ProjectScopeKey,
-              ),
-          ) ?? null),
-    [v2ProjectScopeKey, v2ScopeProjects],
+    () => findHomeProjectScope(projectScopes, v2ProjectScopeKey),
+    [v2ProjectScopeKey, projectScopes],
   );
   const v2ProjectTitleByProjectKey = useMemo(
     () =>
       new Map(
-        v2ScopeProjects.flatMap((scope) =>
+        projectScopes.flatMap((scope) =>
           scope.projectRefs.map(
             (projectRef) =>
               [
@@ -431,7 +412,7 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
         ),
       ),
-    [v2ScopeProjects],
+    [projectScopes],
   );
   const v2ScopedProjectKeys = useMemo(
     () =>
@@ -936,6 +917,8 @@ export function HomeScreen(props: HomeScreenProps) {
           style={{
             paddingBottom: Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
             paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
+            paddingLeft: 32 + (contentSideInsets?.left ?? 0),
+            paddingRight: 32 + (contentSideInsets?.right ?? 0),
           }}
         >
           <View className="w-full max-w-[430px]">
@@ -1066,7 +1049,8 @@ export function HomeScreen(props: HomeScreenProps) {
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
-              paddingHorizontal: primaryColumn ? 8 : 0,
+              paddingLeft: (contentSideInsets?.left ?? 0) + (primaryColumn ? 8 : 0),
+              paddingRight: (contentSideInsets?.right ?? 0) + (primaryColumn ? 8 : 0),
               paddingBottom:
                 Platform.OS === "ios"
                   ? iosBottomClearance

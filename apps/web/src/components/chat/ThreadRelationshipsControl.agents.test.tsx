@@ -53,9 +53,13 @@ afterEach(async () => {
   state.projection = null;
 });
 
-it.each(["codex", "claudeAgent"])(
-  "stops only active app-owned %s subagents without opening their thread",
-  async (driver) => {
+it.each([
+  { driver: "codex", origin: "app_owned" },
+  { driver: "claudeAgent", origin: "app_owned" },
+  { driver: "claudeAgent", origin: "provider_native" },
+])(
+  "stops active $origin $driver subagents without opening their thread",
+  async ({ driver, origin }) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const parent = {
       id: "parent",
@@ -70,7 +74,9 @@ it.each(["codex", "claudeAgent"])(
     const agent = {
       id: "agent",
       childThreadId: "child",
-      origin: "app_owned",
+      origin,
+      threadId: "parent",
+      nativeTaskRef: { driver, nativeId: "claude-task", strength: "strong" },
       driver,
       providerInstanceId: "codex",
       title: "Worker",
@@ -106,7 +112,10 @@ it.each(["codex", "claudeAgent"])(
     await act(async () => stopButton().props.onClick());
     expect(state.command).toHaveBeenCalledWith({
       environmentId: "test",
-      input: { threadId: "child" },
+      input:
+        origin === "provider_native"
+          ? { threadId: "parent", subagentId: "agent" }
+          : { threadId: "child" },
     });
     expect(state.navigate).not.toHaveBeenCalled();
 
@@ -132,6 +141,12 @@ it.each(["codex", "claudeAgent"])(
       );
       state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
       await act(async () => renderer.update(cloneElement(panel)));
+      if (origin === "provider_native") {
+        expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(
+          0,
+        );
+        continue;
+      }
       await act(async () => stopButton().props.onClick());
       expect(state.command).toHaveBeenCalledTimes(1);
       expect(state.command).toHaveBeenLastCalledWith({
@@ -152,7 +167,7 @@ it.each(["codex", "claudeAgent"])(
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
     state.projection = {
       ...projection,
-      subagents: [{ ...agent, origin: "provider_native", driver: "claudeAgent" }],
+      subagents: [{ ...agent, origin: "provider_native", driver: "codex" }],
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
@@ -579,6 +594,39 @@ it("shows readable models and only differing workspace details in agent tooltips
   expect(text(true)).toContain("My GPT · Work account · high");
   expect(text()).toContain("My GPT · Work account · Fast mode onhigh");
   expect(text()).not.toContain("Personal account");
+  state.shells = [];
+  for (const status of ["running", "completed", "failed"] as const) {
+    state.projection = {
+      ...projection,
+      subagents: [
+        {
+          ...projection.subagents[0],
+          origin: "provider_native",
+          status,
+          modelSelection: {
+            instanceId: "codex",
+            model: "gpt-5.4",
+            options: [
+              { id: "reasoningEffort", value: "low" },
+              { id: "serviceTier", value: "ultrafast" },
+            ],
+          },
+        },
+      ],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    if (status === "completed") {
+      await act(async () =>
+        renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
+      );
+    }
+    expect(text()).toContain("My GPT · Work account · Ultrafast mode onlow");
+    expect(text()).not.toContain(" · high");
+  }
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": true }).props.onClick(),
+  );
+  state.projection = projection;
   state.configs.set("test", speedConfig);
   child.modelSelection.options = [{ id: "reasoningEffort", value: "high" }];
   state.shells = [

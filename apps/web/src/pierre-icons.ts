@@ -4,6 +4,7 @@ import {
   type FileTreeIcons,
 } from "@pierre/trees";
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
+import { fileIconPathForMimeType } from "@t3tools/shared/filePreview";
 
 export interface PierreIconResolution {
   name: string;
@@ -27,6 +28,10 @@ const T3_FILE_ICON_SPRITE = `
   <symbol id="t3-file-icon-pnpm" viewBox="0 0 32 32">
     <path fill="#f9ad00" d="M30 10.75h-8.749V2H30Zm-9.626 0h-8.75V2h8.75Zm-9.625 0H2V2h8.749ZM30 20.375h-8.749v-8.75H30Z" />
     <path fill="currentColor" d="M20.374 20.375h-8.75v-8.75h8.75Zm0 9.625h-8.75v-8.75h8.75ZM30 30h-8.749v-8.75H30Zm-19.251 0H2v-8.75h8.749Z" />
+  </symbol>
+  <!-- Lucide Loader Circle icon, ISC license. -->
+  <symbol id="t3-tree-icon-loading" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 12a9 9 0 1 1-6.219-8.56" />
   </symbol>
   <!-- Lucide Diff icon, ISC license. -->
   <symbol id="t3-file-icon-diff" viewBox="0 0 24 24">
@@ -145,12 +150,6 @@ export function basenameOfPath(pathValue: string): string {
   return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
 }
 
-export function inferEntryKindFromPath(pathValue: string): "file" | "directory" {
-  const base = basenameOfPath(pathValue);
-  if (base.startsWith(".") && !base.slice(1).includes(".")) return "directory";
-  return base.includes(".") ? "file" : "directory";
-}
-
 /** Languages whose files are recognised by name rather than by extension. */
 const LANGUAGE_FILE_NAMES: Record<string, string> = {
   dockerfile: "Dockerfile",
@@ -167,9 +166,16 @@ export function syntheticFileNameForLanguageId(languageId: string): string {
 export function resolvePierreIconForEntry(
   pathValue: string,
   kind: "file" | "directory",
+  mimeType?: string,
 ): PierreIconResolution | null {
   if (kind === "directory") return null;
-  return completeIconResolver.resolveIcon("file-tree-icon-file", pathValue);
+  const icon = completeIconResolver.resolveIcon("file-tree-icon-file", pathValue);
+  return icon?.token === "default" && mimeType
+    ? completeIconResolver.resolveIcon(
+        "file-tree-icon-file",
+        fileIconPathForMimeType(pathValue, mimeType),
+      )
+    : icon;
 }
 
 export function hasSpecificPierreIconForFileName(fileName: string): boolean {

@@ -12,6 +12,7 @@ import {
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "./path.ts";
 import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
 
 /**
@@ -188,6 +189,42 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
+/**
+ * The workspace mode a new thread starts in. A project the environment made
+ * from just a name (a folder directly inside `ServerConfig.newProjectsRoot`)
+ * has only its first commit, so until it has a thread, a new thread works in
+ * the project checkout even when the environment default is a new worktree.
+ * Only that environment default is replaced: a project override still wins,
+ * and so does a t3.json when the environment sets no default (the usual
+ * precedence; the scaffold writes no t3.json).
+ */
+export function resolveNewThreadEnvMode(input: {
+  readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
+  readonly workspaceRoot: string | null;
+  readonly newProjectsRoot: string | null | undefined;
+  readonly projectHasThreads: boolean;
+}): ThreadEnvMode {
+  const configured = input.projectSettings.settings.defaultThreadEnvMode;
+  if (
+    configured === "local" ||
+    input.projectHasThreads ||
+    input.projectSettings.sources.defaultThreadEnvMode !== "environment" ||
+    input.workspaceRoot === null ||
+    input.newProjectsRoot == null
+  ) {
+    return configured;
+  }
+  const root = normalizeProjectPathForComparison(input.newProjectsRoot);
+  const folder = normalizeProjectPathForComparison(input.workspaceRoot);
+  const separator = root.includes("\\") ? "\\" : "/";
+  const prefix = root.endsWith(separator) ? root : `${root}${separator}`;
+  const isNewProjectFolder =
+    folder.startsWith(prefix) &&
+    folder.length > prefix.length &&
+    !folder.slice(prefix.length).includes(separator);
+  return isNewProjectFolder ? "local" : configured;
+}
+
 /** Replace the project's entry, dropping it entirely when nothing is overridden. */
 export function withProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
@@ -220,12 +257,24 @@ export function resolveWorktreeCleanup(
   if (policy?.mode === "custom") return policy.rules;
   if (policy?.mode === "off")
     return {
+      worktreeKeepWhen: settings.storageCleanup.worktreeKeepWhen,
       worktreeAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
     };
-  const { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged } =
-    settings.storageCleanup;
-  return { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged };
+  const {
+    worktreeKeepWhen,
+    worktreeAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  } = settings.storageCleanup;
+  return {
+    worktreeKeepWhen,
+    worktreeAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  };
 }

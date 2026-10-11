@@ -42,12 +42,46 @@ vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
 
+  function key(
+    surface: GhosttyTerminalSurface,
+    key: string,
+    code: string,
+    modifiers: Partial<
+      Pick<
+        KeyboardEvent,
+        | "altKey"
+        | "ctrlKey"
+        | "metaKey"
+        | "shiftKey"
+        | "isComposing"
+        | "keyCode"
+        | "getModifierState"
+      >
+    > = {},
+    type = "keydown",
+  ) {
+    const event = Object.assign(new Event(type, { cancelable: true }), {
+      key,
+      code,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      isComposing: false,
+      keyCode: 0,
+      getModifierState: () => false,
+      ...modifiers,
+    });
+    surface.input.dispatchEvent(event);
+    return event;
+  }
+
   // Keep the real surface, renderer, and WASM core. Only browser layout and
   // scheduling are replaced so tests can count work while the terminal is hidden.
   function createHarness() {
     vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
-    const resizeCallbacks = new Set<() => void>();
+    const resizeTargets = new Map<(entries: { target: Element }[]) => void, Set<Element>>();
     const paint = vi.fn((_operation: string, _args: ReadonlyArray<unknown>) => {});
     let frameId = 0;
     const requestFrame = vi.fn((callback: FrameRequestCallback) => {
@@ -135,12 +169,17 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(private readonly callback: () => void) {
-          resizeCallbacks.add(callback);
+        constructor(private readonly callback: (entries: { target: Element }[]) => void) {
+          resizeTargets.set(callback, new Set());
         }
-        observe() {}
+        observe(target: Element) {
+          resizeTargets.get(this.callback)?.add(target);
+        }
+        unobserve(target: Element) {
+          resizeTargets.get(this.callback)?.delete(target);
+        }
         disconnect() {
-          resizeCallbacks.delete(this.callback);
+          resizeTargets.delete(this.callback);
         }
       },
     );
@@ -165,7 +204,9 @@ describe("GhosttyTerminalSurface visibility", () => {
         for (const callback of queued) callback(0);
       },
       resize() {
-        for (const callback of resizeCallbacks) callback();
+        for (const [callback, targets] of resizeTargets) {
+          callback([...targets].map((target) => ({ target })));
+        }
       },
       pointer(
         type: string,
@@ -214,6 +255,183 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { platform: "Linux x86_64", primary: { ctrlKey: true } },
+    { platform: "MacIntel", primary: { metaKey: true } },
+  ])(
+    "navigates history from terminal input without sending keys ($platform)",
+    async ({ platform, primary }) => {
+      vi.stubGlobal("navigator", { platform });
+      const harness = createHarness();
+      const surface = await harness.create({ beforeKey: () => true });
+      surface.write(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\r\n"));
+      harness.flushFrame();
+      const latest = harness.renderedSnapshot.rowData[0]?.text;
+      expect(surface.isAtBottom()).toBe(true);
+
+      expect(key(surface, "PageUp", "PageUp", { shiftKey: true }).defaultPrevented).toBe(true);
+      harness.flushFrame();
+      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("line 8");
+      expect(surface.isAtBottom()).toBe(false);
+      key(surface, "PageDown", "PageDown", { shiftKey: true });
+      harness.flushFrame();
+      expect(harness.renderedSnapshot.rowData[0]?.text).toBe(latest);
+
+      key(surface, "Home", "Home", { ...primary, shiftKey: true });
+      harness.flushFrame();
+      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("line 0");
+      key(surface, "End", "End", { ...primary, shiftKey: true });
+      harness.flushFrame();
+      expect(harness.renderedSnapshot.rowData[0]?.text).toBe(latest);
+      expect(surface.isAtBottom()).toBe(true);
+      expect(harness.onData).not.toHaveBeenCalled();
+    },
+  );
+
+  it("forwards navigation presses and releases when scrollback state is unavailable", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("history\x1b[>31u");
+    vi.spyOn(GhosttyTerminalCore.prototype, "scrollbarState").mockReturnValue(null);
+
+    for (const [name, modifiers] of [
+      ["PageUp", { shiftKey: true }],
+      ["Home", { ctrlKey: true, shiftKey: true }],
+    ] as const) {
+      key(surface, name, name, modifiers);
+      key(surface, name, name, modifiers, "keyup");
+    }
+    expect(harness.onData).toHaveBeenCalledTimes(4);
+    expect(harness.onData.mock.calls[1]?.[0]).toContain(":3");
+    expect(harness.onData.mock.calls[3]?.[0]).toContain(":3");
+  });
+
+  it("selects full history and keeps selection coordinates available outside the viewport", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
+    surface.write(lines.join("\r\n"));
+    harness.flushFrame();
+    surface.selectAll();
+    harness.flushFrame();
+    expect(surface.getSelection()).toBe(lines.join("\n"));
+    expect(surface.getSelectionPosition()).toMatchObject({ start: { x: 0, y: 0 } });
+    expect(surface.getSelectionPosition()?.end.y).toBe(19);
+    expect(surface.getSelectionEndClientRect()).not.toBeNull();
+    expect(harness.renderedSnapshot.rowData.every((row) => row.cells[0]?.selected)).toBe(true);
+
+    key(surface, "Home", "Home", { ctrlKey: true, shiftKey: true });
+    harness.flushFrame();
+    surface.selectAll();
+    expect(surface.getSelection()).toBe(lines.join("\n"));
+    expect(surface.getSelectionPosition()?.end.y).toBe(19);
+    expect(surface.getSelectionEndClientRect()).toBeNull();
+    surface.clearSelection();
+    expect(surface.getSelection()).toBe("");
+    expect(surface.getSelectionPosition()).toBeNull();
+  });
+
+  it.each([
+    { platform: "Linux x86_64", modifiers: { ctrlKey: true, shiftKey: true } },
+    { platform: "MacIntel", modifiers: { metaKey: true } },
+  ])("selects all through the local shortcut ($platform)", async ({ platform, modifiers }) => {
+    vi.stubGlobal("navigator", { platform });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("hello\r\nworld");
+    harness.flushFrame();
+    expect(key(surface, "a", "KeyA", modifiers).defaultPrevented).toBe(true);
+    expect(surface.getSelection()).toBe("hello\nworld");
+    expect(surface.getSelectionPosition()).not.toBeNull();
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
+  it("preserves shell Ctrl+A and ordinary application navigation", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "a", "KeyA", { ctrlKey: true });
+    key(surface, "PageUp", "PageUp");
+    key(surface, "PageDown", "PageDown");
+    key(surface, "Home", "Home");
+    key(surface, "End", "End");
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
+      "\x01",
+      "\x1b[5~",
+      "\x1b[6~",
+      "\x1b[H",
+      "\x1b[F",
+    ]);
+    expect(surface.hasSelection()).toBe(false);
+  });
+
+  it("leaves modified history keys with alternate-screen applications", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("\x1b[?1049happ");
+    key(surface, "PageUp", "PageUp", { shiftKey: true });
+    key(surface, "End", "End", { ctrlKey: true, shiftKey: true });
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[5;2~", "\x1b[1;6F"]);
+    surface.selectAll();
+    expect(surface.getSelection()).toBe("app");
+    surface.write("\x1b[?1049l");
+    expect(surface.getSelection()).toBe("");
+  });
+
+  it("suppresses local shortcut releases in Kitty sessions, including read-only observers", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.input.readOnly = true;
+    surface.write("history\x1b[>31u");
+    for (const [name, code, modifiers] of [
+      ["PageUp", "PageUp", { shiftKey: true }],
+      ["Home", "Home", { ctrlKey: true, shiftKey: true }],
+      ["a", "KeyA", { ctrlKey: true, shiftKey: true }],
+    ] as const) {
+      key(surface, name, code, modifiers);
+      key(surface, name, code, modifiers, "keyup");
+    }
+    expect(surface.getSelection()).toBe("history");
+    expect(harness.onData).not.toHaveBeenCalled();
+
+    // An ordinary application key still has both press and release reports.
+    key(surface, "PageUp", "PageUp");
+    key(surface, "PageUp", "PageUp", {}, "keyup");
+    expect(harness.onData).toHaveBeenCalledTimes(2);
+    expect(harness.onData.mock.calls[1]?.[0]).toContain(":3");
+  });
+
+  it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    let allow = false;
+    const surface = await harness.create({ beforeKey: () => allow });
+    surface.write("hello\x1b[>31u");
+    key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
+    key(surface, "a", "KeyA", {}, "keyup");
+    expect(surface.hasSelection()).toBe(false);
+    allow = true;
+    surface.input.value = "候補";
+    key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true, isComposing: true });
+    key(surface, "a", "KeyA", {}, "keyup");
+    key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true, keyCode: 229 });
+    key(surface, "a", "KeyA", {}, "keyup");
+    key(surface, "a", "KeyA", {
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: true,
+      getModifierState: (modifier) => modifier === "AltGraph",
+    });
+    key(surface, "a", "KeyA", {}, "keyup");
+    expect(surface.input.value).toBe("候補");
+    expect(surface.hasSelection()).toBe(false);
+    expect(harness.onData).not.toHaveBeenCalled();
   });
 
   it.each([

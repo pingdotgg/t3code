@@ -304,8 +304,6 @@ export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInp
 
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
-  /** Paste this whenever you mention the thread, so the user can click to open it. */
-  link: Schema.String,
   title: Schema.String,
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
@@ -353,8 +351,6 @@ export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInp
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
   threadId: ThreadId,
-  /** Paste this whenever you mention the thread, so the user can click to open it. */
-  link: Schema.String,
   projectId: ProjectId,
   title: Schema.String,
   createdBy: OrchestrationV2Actor,
@@ -438,6 +434,8 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   runId: RunId,
+  /** Fresh task for a follow-up to an app-owned child; the previous task stays terminal. */
+  taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });

@@ -9,11 +9,12 @@ import {
   connectionRoutes,
   isLearned,
 } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
+import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -25,6 +26,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectionTone } from "../connection/connectionTone";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
@@ -35,6 +37,7 @@ const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
   loopback: "desktopcomputer",
   lan: "wifi",
   tailnet: "point.3.connected.trianglepath.dotted",
+  vpn: { ios: "lock.shield", android: "lock" },
   public: "globe",
   ssh: "terminal",
 };
@@ -56,6 +59,9 @@ export function EnvironmentRoutesSection({
 }) {
   const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(environmentId);
   const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
+  const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
+  const session = Option.getOrNull(AsyncResult.value(sessionResult));
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "route reorder");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "route removal");
   const [editing, setEditing] = useState(false);
@@ -146,6 +152,36 @@ export function EnvironmentRoutesSection({
         ) : undefined
       }
     >
+      <SettingsActionRow
+        icon="checkmark.circle"
+        label="Your permissions"
+        onPress={() => setPermissionsOpen((open) => !open)}
+      />
+      {permissionsOpen ? (
+        <View className="gap-2 px-4 py-3">
+          {activeRouteId !== null &&
+          sessionResult._tag !== "Failure" &&
+          !sessionResult.waiting &&
+          session?.authenticated ? (
+            <>
+              <Text className="text-sm text-foreground-muted">
+                Applies to the route marked In use. Other routes may have different permissions and
+                have not been checked.
+              </Text>
+              {AUTH_SCOPE_OPTIONS.map(({ scope, title }) => (
+                <Text key={scope} className="text-sm text-foreground">
+                  {title}: {sessionGrantsScope(session, scope) ? "Allowed" : "Not granted"}
+                </Text>
+              ))}
+            </>
+          ) : (
+            <Text className="text-sm text-foreground-muted">
+              Permissions not checked. Connect to this environment to view this session’s
+              permissions.
+            </Text>
+          )}
+        </View>
+      ) : null}
       {routes.map((route, index) => {
         const id = connectionRouteId(route.target);
         // Rows between the lifted row and its drop slot shift to make room.
@@ -288,7 +324,7 @@ function RouteRow(props: {
         </View>
       </View>
       {props.editing ? (
-        <DragHandle
+        <SettingsDragHandle
           title={label}
           canMoveUp={props.position > 1}
           canMoveDown={props.position < props.count}
@@ -299,64 +335,5 @@ function RouteRow(props: {
         />
       ) : null}
     </Reanimated.View>
-  );
-}
-
-/** Pan recognition wins over the settings scroll view only inside the handle. */
-function DragHandle(props: {
-  readonly title: string;
-  readonly canMoveUp: boolean;
-  readonly canMoveDown: boolean;
-  readonly onStart: () => void;
-  readonly onMove: (translation: number) => void;
-  readonly onEnd: (translation: number, cancelled: boolean) => void;
-  readonly onStep: (direction: "up" | "down") => void;
-}) {
-  const latest = useRef(props);
-  useEffect(() => {
-    latest.current = props;
-  });
-  const translation = useRef(0);
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() => {
-          translation.current = 0;
-          latest.current.onStart();
-        })
-        .onUpdate((event) => {
-          translation.current = event.translationY;
-          latest.current.onMove(event.translationY);
-        })
-        .onFinalize((_, success) => latest.current.onEnd(translation.current, !success)),
-    [],
-  );
-  return (
-    <GestureDetector gesture={gesture}>
-      <View
-        collapsable={false}
-        accessible
-        accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityActions={[
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
-        ]}
-        onAccessibilityAction={({ nativeEvent }) => {
-          if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");
-          if (nativeEvent.actionName === "increment" && props.canMoveDown) props.onStep("down");
-        }}
-        style={{ width: 48, alignSelf: "stretch", alignItems: "center", justifyContent: "center" }}
-      >
-        <SymbolView
-          name="line.3.horizontal"
-          size={20}
-          tintColorClassName="accent-foreground-muted"
-        />
-      </View>
-    </GestureDetector>
   );
 }

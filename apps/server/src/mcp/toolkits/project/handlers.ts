@@ -1,8 +1,8 @@
 import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -58,7 +58,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     (input, { runtimeMode, interactionMode }) =>
       Effect.gen(function* () {
         const context = yield* readCaller();
-        const { caller, scope } = context;
+        const { caller } = context;
         const commandId = yield* newCommandId();
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
@@ -104,6 +104,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
+        // A launch is accepted before its worktree is provisioned, so a base
+        // ref that cannot resolve is refused while the agent can still act on it.
+        const strategy = input.workspaceStrategy;
+        if (strategy?.type === "worktree")
+          yield* ThreadLaunch.ThreadLaunchService.pipe(
+            Effect.flatMap((launches) =>
+              launches.checkWorktreeBase({ projectId, workspaceStrategy: strategy }),
+            ),
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
+                    strategy.startFromOrigin === true
+                      ? "; the project has no origin remote to fetch it from."
+                      : ", or set startFromOrigin:true if it exists only on origin."
+                  }`,
+                }),
+            ),
+          );
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
@@ -147,11 +167,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
-          link: formatThreadLink({
-            environmentId: scope.environmentId,
-            threadId: thread.id,
-            title: thread.title,
-          }),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,

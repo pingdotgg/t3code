@@ -20,7 +20,7 @@ import {
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
 import { use, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -33,8 +33,13 @@ import {
   V5CardStackView,
   V5StackView,
 } from "../../native/createV5StackNavigator.ios";
-import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
+import {
+  useNativeWorkspaceColumnsReady,
+  useNativeWorkspaceColumnsSupported,
+} from "../../native/NativeWorkspaceColumns";
 import { V5StackHeader } from "../../native/V5StackHeader.ios";
+import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
+import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   nativeWorkspacePopAction,
   projectWorkspaceStack,
@@ -89,7 +94,12 @@ function ColumnScreen(props: {
             canGoBack={!props.primary}
             primary={props.primary}
           />
-          <ColumnContent primary={props.primary}>
+          <ColumnContent
+            primary={props.primary}
+            insetHorizontally={
+              (descriptor.options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
+            }
+          >
             <NativePrimaryColumnContext value={primaryColumn}>
               {descriptor.render()}
             </NativePrimaryColumnContext>
@@ -107,6 +117,8 @@ function WorkspaceColumns(
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
+  const compactColumn = activeDetailKey ? "secondary" : "primary";
+  const shownCompactColumn = useRef(compactColumn);
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
   const selectedThreadKey =
     threadParams &&
@@ -131,9 +143,12 @@ function WorkspaceColumns(
   useEffect(() => {
     // In compact size classes UIKit exposes one column. Selecting a thread
     // changes the visible column without rebuilding either navigation stack.
-    if (layout.usesSplitView) return;
-    hostRef.current?.show(activeDetailKey ? "secondary" : "primary");
-  }, [activeDetailKey, layout.usesSplitView]);
+    // The initial column is a native prop, so it is applied before the host
+    // attaches. Commands only handle later navigation changes.
+    if (layout.usesSplitView || shownCompactColumn.current === compactColumn) return;
+    shownCompactColumn.current = compactColumn;
+    hostRef.current?.show(compactColumn);
+  }, [compactColumn, layout.usesSplitView]);
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
@@ -142,6 +157,7 @@ function WorkspaceColumns(
       ref={hostRef}
       testID="adaptive-workspace-layout"
       preferredSplitBehavior="tile"
+      topColumnForCollapsing={compactColumn}
       preferredDisplayMode={
         panes.primarySidebarVisible || !activeDetailKey ? "oneBesideSecondary" : "secondaryOnly"
       }
@@ -153,7 +169,7 @@ function WorkspaceColumns(
       }}
       columnMetrics={{
         minimumPrimaryColumnWidth: 280,
-        maximumPrimaryColumnWidth: 380,
+        maximumPrimaryColumnWidth: Math.max(380, layout.listPaneWidth ?? 0),
         preferredPrimaryColumnWidthOrFraction: layout.listPaneWidth ?? 320,
         minimumSecondaryColumnWidth: 320,
       }}
@@ -179,6 +195,37 @@ function WorkspaceColumns(
               options={{
                 headerShown: true,
                 title: "",
+                unstable_headerRightItems: () =>
+                  Platform.OS === "ios" && !Platform.isPad && layout.usesSplitView
+                    ? [
+                        ...(!panes.primarySidebarVisible
+                          ? [
+                              {
+                                type: "button" as const,
+                                axisBehavior: "verticalPreferred" as const,
+                                accessibilityLabel: "Search threads",
+                                label: "Search threads",
+                                icon: {
+                                  type: "sfSymbol" as const,
+                                  name: "magnifyingglass" as const,
+                                },
+                                onPress: () => {
+                                  dispatchHardwareKeyboardCommand("focusSearch");
+                                },
+                              },
+                            ]
+                          : []),
+                        {
+                          type: "button",
+                          axisBehavior: "verticalPreferred",
+                          accessibilityLabel: "New task",
+                          label: "New task",
+                          icon: { type: "sfSymbol", name: "square.and.pencil" },
+                          onPress: () =>
+                            props.navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
+                        },
+                      ]
+                    : [],
                 unstable_headerLeftItems: () => [
                   {
                     type: "button",
@@ -247,6 +294,7 @@ function WorkspaceStackView(props: ViewProps) {
   const routes = [baseRoute, ...overlays.map((group) => group[0]!)];
   return (
     <NativeStackView
+      presentationEnvelope
       {...props}
       state={{ ...props.state, routes, index: routes.length - 1, preloadedRoutes: [] }}
       descriptors={{
@@ -292,6 +340,8 @@ function WorkspaceStackNavigator({
   UNSTABLE_router,
   ...rest
 }: NativeStackNavigatorProps) {
+  const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
+  const nativeWorkspaceColumnsReady = useNativeWorkspaceColumnsReady();
   const { state, describe, descriptors, navigation, NavigationContent } = useNavigationBuilder<
     StackNavigationState<ParamListBase>,
     StackRouterOptions,
@@ -309,9 +359,10 @@ function WorkspaceStackNavigator({
     screenLayout,
     UNSTABLE_router,
   });
-  const WorkspaceView = NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? WorkspaceStackView : V5StackView;
+  if (!nativeWorkspaceColumnsReady) return null;
+  const WorkspaceView = usesNativeWorkspaceColumns ? WorkspaceStackView : V5StackView;
   return (
-    <NativeWorkspaceModeContext value={NATIVE_WORKSPACE_COLUMNS_SUPPORTED}>
+    <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
       <NavigationContent>
         <WorkspaceView
           {...rest}

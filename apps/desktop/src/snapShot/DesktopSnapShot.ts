@@ -88,6 +88,7 @@ import {
   snapShotShortcutRegistrationFailureMessage,
   snapShotShortcutSystemConflict,
 } from "./snapShot.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
@@ -727,6 +728,7 @@ export const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(context);
   const captureDirectory = path.join(environment.stateDir, "snap-shots");
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
+  const home = yield* HostProcess.HomeDirectory;
   let shortcutVerified = false;
   const gnomeSetupPaths = {
     bundle: environment.isPackaged
@@ -757,7 +759,7 @@ export const make = Effect.gen(function* () {
     dataHome: path.dirname(environment.linuxApplicationsDir),
   };
   const shiftShortcutWorkerPath = path.join(__dirname, "snapShot", "GlobalShiftShortcutWorker.cjs");
-  const shortcutConfig = new CaptureShortcutConfig();
+  const shortcutConfig = new CaptureShortcutConfig(home);
   const accessibilityWorkerPath = path.join(
     __dirname,
     "snapShot",
@@ -1184,7 +1186,7 @@ export const make = Effect.gen(function* () {
         shortcut,
         shortcutRegistered: false,
         shortcutBinding: niriCaptureBinding(linuxAppId),
-        shortcutConfigPath: niriCaptureConfigPath(),
+        shortcutConfigPath: niriCaptureConfigPath(home),
         shortcutActionRegistered: registered,
         shortcutMessage: registered
           ? "Set up the shortcut to add it to your Niri config."
@@ -1474,8 +1476,8 @@ export const make = Effect.gen(function* () {
         const configPath =
           selectedPath ??
           (desktop === "niri"
-            ? niriCaptureConfigPath()
-            : (await hyprlandCaptureShortcut(linuxAppId)).shortcutConfigPath);
+            ? niriCaptureConfigPath(home)
+            : (await hyprlandCaptureShortcut(linuxAppId, home)).shortcutConfigPath);
         return shortcutConfig.preview({ desktop, path: configPath, appId: linuxAppId }, request);
       },
       catch: (cause) =>
@@ -1593,7 +1595,7 @@ export const make = Effect.gen(function* () {
               : undefined;
           const hyprlandShortcut =
             state.linuxBackend === "hyprland"
-              ? yield* Effect.promise(() => hyprlandCaptureShortcut(linuxAppId))
+              ? yield* Effect.promise(() => hyprlandCaptureShortcut(linuxAppId, home))
               : undefined;
           return {
             ...state,
@@ -1609,7 +1611,7 @@ export const make = Effect.gen(function* () {
               : {}),
             ...hyprlandShortcut,
             ...(state.linuxBackend === "niri"
-              ? { shortcutConfigPath: niriCaptureConfigPath() }
+              ? { shortcutConfigPath: niriCaptureConfigPath(home) }
               : {}),
             ...(kdeHelper
               ? {
