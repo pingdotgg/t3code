@@ -881,6 +881,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestHostOptions = (url: string) => {
+    const host = URL.parse(url)?.host;
+    return host ? { host } : {};
+  };
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
@@ -911,6 +916,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1008,6 +1014,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
