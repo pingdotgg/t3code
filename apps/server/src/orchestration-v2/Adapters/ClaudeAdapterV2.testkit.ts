@@ -929,6 +929,7 @@ function replayQueryRunnerService(
       catch: (cause) => replayQueryRunnerError(transcript, cause),
     });
   return ClaudeAdapterV2.ClaudeAgentSdkQueryRunner.of({
+    hasSession: () => Effect.succeed(true),
     allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
