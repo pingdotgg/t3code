@@ -92,6 +92,7 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
+  const formRef = useRef<HTMLFormElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
@@ -103,19 +104,25 @@ export function PreviewChromeRow({
     node.focus();
   }, [focusUrlNonce]);
 
+  // Blurring would drop focus to the body, where mod+r falls through to the
+  // desktop app's Reload menu item and reloads the whole window.
+  const leaveUrlInput = () => formRef.current?.focus({ preventScroll: true });
+
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
     const next = draft.trim();
     if (next.length === 0) return;
     onSubmit(next);
-    inputRef.current?.blur();
+    leaveUrlInput();
   };
 
   return (
     <div className="relative">
       <form
+        ref={formRef}
+        tabIndex={-1}
         onSubmit={submit}
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center outline-none gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
@@ -195,7 +202,7 @@ export function PreviewChromeRow({
                     if (event.key === "Escape") {
                       event.preventDefault();
                       setDraft(url);
-                      inputRef.current?.blur();
+                      leaveUrlInput();
                     }
                   }}
                   placeholder="Search or enter URL"
