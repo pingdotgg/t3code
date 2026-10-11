@@ -783,9 +783,11 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.id === right?.id &&
   (left.variant ?? "default") === (right?.variant ?? "default");
 
-/** OpenCode's own agents for T3's interaction modes; plan mode is its read-only `plan` agent. */
+/** Plan mode takes precedence over the selected workspace agent. */
 const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
+  input.runtimePolicy.interactionMode === "plan"
+    ? "plan"
+    : (getModelSelectionStringOptionValue(input.modelSelection, "agent") ?? "build");
 
 /** `/name args` naming one of the workspace's commands, which OpenCode expands itself. */
 const commandOf = (text: string) => {

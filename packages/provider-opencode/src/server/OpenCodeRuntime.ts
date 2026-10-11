@@ -209,6 +209,12 @@ export const loadOpenCodeCommands = (client: OpencodeClient) =>
     ),
   );
 
+/** Lists agents in the SDK client's directory, including project-local definitions. */
+export const loadOpenCodeAgents = (client: OpencodeClient) =>
+  runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
+    Effect.map((result) => result.data ?? []),
+  );
+
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
@@ -948,12 +954,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       ),
     );
 
-  const loadAgents = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
-      Effect.map((result) => result.data ?? []),
-      Effect.orElseSucceed((): ReadonlyArray<Agent> => []),
-    );
-
   const loadOpenCodeSkills: OpenCodeRuntime["Service"]["loadOpenCodeSkills"] = (client) =>
     runOpenCodeSdk("app.skills", (signal) => client.app.skills(undefined, { signal })).pipe(
       Effect.map((result) =>
@@ -971,7 +971,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     Effect.all(
       [
         loadProviders(client),
-        loadAgents(client),
+        loadOpenCodeAgents(client).pipe(Effect.orElseSucceed((): ReadonlyArray<Agent> => [])),
         loadSkills(client),
         loadOpenCodeCommands(client).pipe(Effect.orElseSucceed(() => [])),
       ],

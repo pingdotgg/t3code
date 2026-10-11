@@ -1125,6 +1125,7 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   hasCurrentProviderWorkspaceSnapshot,
+  resolveProviderForCwd,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -2129,12 +2130,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Instance-aware projection of the wire provider list. One entry per
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
+  const workspaceProviders = useMemo(
+    () => providerStatuses.map((provider) => resolveProviderForCwd(provider, gitCwd)),
+    [providerStatuses, gitCwd],
+  );
   const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(workspaceProviders), settings),
       ),
-    [providerStatuses, settings],
+    [workspaceProviders, settings],
   );
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
@@ -2204,7 +2209,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
-    providers: providerStatuses,
+    providers: workspaceProviders,
     selectedProvider,
     selectedInstanceId,
     threadModelSelection: activeThreadModelSelection,

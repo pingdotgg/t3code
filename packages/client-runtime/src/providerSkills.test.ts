@@ -13,6 +13,7 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   hasCurrentProviderWorkspaceSnapshot,
+  resolveProviderForCwd,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
@@ -302,5 +303,66 @@ describe("workspace provider snapshots", () => {
     expect(hasCurrentProviderWorkspaceSnapshot(provider, "/workspace/project-b", scannedAt)).toBe(
       false,
     );
+  });
+});
+
+describe("resolveProviderForCwd", () => {
+  it("replaces only workspace option ids and leaves the global catalog untouched", () => {
+    const variant = {
+      id: "variant",
+      label: "Reasoning",
+      type: "select" as const,
+      options: [{ id: "high", label: "High" }],
+    };
+    const globalAgent = {
+      id: "agent",
+      label: "Agent",
+      type: "select" as const,
+      options: [{ id: "build", label: "Build" }],
+    };
+    const catalog: ServerProvider = {
+      ...provider,
+      models: [
+        {
+          slug: "openai/gpt-5.4",
+          name: "GPT-5.4",
+          isCustom: false,
+          capabilities: { optionDescriptors: [variant, globalAgent] },
+        },
+        { slug: "custom/model", name: "Custom", isCustom: true, capabilities: null },
+      ],
+      workspaceSnapshots: ["readonly", "audit"].map((name) => ({
+        ...provider.workspaceSnapshots[0]!,
+        cwd: "/workspace/" + name,
+        optionDescriptors: [{ ...globalAgent, options: [{ id: name, label: name }] }],
+      })),
+    };
+    for (const name of ["readonly", "audit"]) {
+      const scoped = resolveProviderForCwd(catalog, "/workspace/" + name);
+      expect(scoped.models[0]?.capabilities?.optionDescriptors).toEqual([
+        variant,
+        { ...globalAgent, options: [{ id: name, label: name }] },
+      ]);
+      expect(scoped.models[1]?.capabilities?.optionDescriptors).toEqual([
+        { ...globalAgent, options: [{ id: name, label: name }] },
+      ]);
+    }
+    expect(catalog.models[0]?.capabilities?.optionDescriptors).toEqual([variant, globalAgent]);
+    expect(resolveProviderForCwd(catalog, "/workspace/unknown")).toBe(catalog);
+    expect(resolveProviderForCwd(catalog, null)).toBe(catalog);
+    expect(resolveProviderForCwd(provider, "/workspace/project-a")).toBe(provider);
+    const emptyAgents: ServerProvider = {
+      ...catalog,
+      workspaceSnapshots: [
+        {
+          ...provider.workspaceSnapshots[0]!,
+          optionDescriptors: [{ ...globalAgent, options: [] }],
+        },
+      ],
+    };
+    expect(
+      resolveProviderForCwd(emptyAgents, "/workspace/project-a").models[0]?.capabilities
+        ?.optionDescriptors,
+    ).toEqual([variant, { ...globalAgent, options: [] }]);
   });
 });

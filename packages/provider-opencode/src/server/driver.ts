@@ -39,6 +39,7 @@ import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
+  openCodeAgentOptionDescriptor,
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
@@ -337,6 +338,10 @@ export const OpenCodeDriver: ProviderDriver<
             return yield* loadOpenCode2Workspace(
               Effect.all(
                 {
+                  agents: client.agent.list({ location }).pipe(
+                    Effect.map((list) => list.data),
+                    Effect.orElseSucceed(() => []),
+                  ),
                   skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
                   commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
                 },
@@ -402,6 +407,7 @@ export const OpenCodeDriver: ProviderDriver<
       ) =>
         Effect.all(
           {
+            agents: OpenCodeRuntime.loadOpenCodeAgents(client).pipe(Effect.orElseSucceed(() => [])),
             skills: openCodeRuntime.loadOpenCodeSkills(client),
             commands: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
               Effect.timeout("10 seconds"),
@@ -508,8 +514,18 @@ export const OpenCodeDriver: ProviderDriver<
                     ),
                   ),
                 ]).pipe(
-                  Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                  Effect.map(([machineSnapshot, { agents, skills, commands }]) => ({
                     ...machineSnapshot,
+                    // A failed agent listing keeps the machine-wide agents.
+                    ...(agents.length > 0
+                      ? {
+                          optionDescriptors: [
+                            openCodeAgentOptionDescriptor(
+                              agents.map((agent) => ({ ...agent, name: agent.id })),
+                            ),
+                          ],
+                        }
+                      : {}),
                     skills: openCode2SkillsToServerProviderSkills(skills),
                     slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
                   })),
@@ -518,8 +534,11 @@ export const OpenCodeDriver: ProviderDriver<
                   snapshot.getSnapshot,
                   loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
                 ]).pipe(
-                  Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                  Effect.map(([machineSnapshot, { agents, skills, commands }]) => ({
                     ...machineSnapshot,
+                    ...(agents.length > 0
+                      ? { optionDescriptors: [openCodeAgentOptionDescriptor(agents)] }
+                      : {}),
                     skills: openCodeSkillsToServerProviderSkills(skills),
                     slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
                   })),

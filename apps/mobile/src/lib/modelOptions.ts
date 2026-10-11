@@ -1,3 +1,4 @@
+import { resolveProviderForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
@@ -167,10 +168,12 @@ export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
   providerInstanceId?: ModelSelection["instanceId"],
+  cwd?: string | null,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
-  for (const provider of config?.providers ?? []) {
+  for (const snapshot of config?.providers ?? []) {
+    const provider = resolveProviderForCwd(snapshot, cwd);
     if (
       (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
       !provider.enabled ||

@@ -578,14 +578,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
+  const modelCwd =
+    (workspaceMode === "worktree"
+      ? selectedProject?.workspaceRoot
+      : (selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
         draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        undefined,
+        modelCwd,
       ),
     [
       selectedEnvironmentServerConfig,
+      modelCwd,
       draftModelSelection,
       projectDefaultModelSelection,
       stickyModelSelection,

@@ -115,6 +115,31 @@ export function hasCurrentProviderWorkspaceSnapshot(
   );
 }
 
+/** Applies workspace options without changing the provider's machine-wide catalog. */
+export function resolveProviderForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider {
+  const descriptors = resolveProviderWorkspaceSnapshot(provider, cwd)?.optionDescriptors;
+  if (descriptors === undefined) return provider;
+  const overridden = new Set(descriptors.map((descriptor) => descriptor.id));
+  return {
+    ...provider,
+    models: provider.models.map((model) => ({
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: [
+          ...(model.capabilities?.optionDescriptors ?? []).filter(
+            (descriptor) => !overridden.has(descriptor.id),
+          ),
+          ...descriptors,
+        ],
+      },
+    })),
+  };
+}
+
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
