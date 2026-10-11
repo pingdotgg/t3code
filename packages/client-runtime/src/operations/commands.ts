@@ -25,6 +25,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type TurnItemId,
   type UploadChatAttachment,
 } from "@t3tools/contracts";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -219,6 +220,11 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
+  /**
+   * Fork through this response instead of the whole run. Only for a response
+   * that is not its run's last assistant message, such as one a steer cut off.
+   */
+  readonly turnItemId?: TurnItemId;
   readonly title?: string;
 }
 
@@ -961,7 +967,10 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     creationSource: input.creationSource ?? "web",
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
-    sourcePoint: { type: "run", runId: input.runId },
+    sourcePoint:
+      input.turnItemId === undefined
+        ? { type: "run", runId: input.runId }
+        : { type: "turn_item", runId: input.runId, turnItemId: input.turnItemId },
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });

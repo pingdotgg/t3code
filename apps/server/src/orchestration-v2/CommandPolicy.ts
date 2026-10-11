@@ -197,6 +197,7 @@ export interface CommandPolicyV2Shape {
   readonly ensureNativeFork: (
     input: CapabilityCheckInput & {
       readonly fromSpecificTurn: boolean;
+      readonly fromSpecificItem?: boolean;
     },
   ) => Effect.Effect<void, CommandPolicyV2Error>;
   readonly decideForkExecution: (
@@ -205,6 +206,8 @@ export interface CommandPolicyV2Shape {
       readonly hasStrongNativeSource: boolean;
       readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
+      /** The fork ends at a response inside the run, e.g. one a steer cut off. */
+      readonly fromSpecificItem?: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
   readonly ensureRollback: (
@@ -291,6 +294,11 @@ const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
       ),
     );
   }
+  if (input.fromSpecificItem === true && input.capabilities.threads.canForkFromItem !== true) {
+    return Effect.fail(
+      unsupported(input, "fork_from_turn", "providerInstanceId cannot fork inside a turn"),
+    );
+  }
   if (input.capabilities.identity.nativeThreadIds !== "strong") {
     return Effect.fail(
       unsupported(
@@ -371,6 +379,8 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     input.hasStrongNativeSource &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
+    // A native fork that can only cut at turn ends would keep a steer made after the response.
+    (input.fromSpecificItem !== true || input.capabilities.threads.canForkFromItem === true) &&
     input.capabilities.identity.nativeThreadIds === "strong";
 
   if (canForkNatively) {

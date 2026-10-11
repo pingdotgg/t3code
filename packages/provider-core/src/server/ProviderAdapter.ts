@@ -482,6 +482,8 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly sourceProviderThread: OrchestrationV2ProviderThread;
   readonly sourceProviderTurns?: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly providerTurnId?: ProviderTurnId;
+  /** Cut inside the provider turn, through this item. Only sent when `canForkFromItem`. */
+  readonly throughTurnItem?: OrchestrationV2TurnItem;
   readonly targetThreadId: ThreadId;
   readonly ownerNodeId?: NodeId;
   readonly modelSelection?: ModelSelection;

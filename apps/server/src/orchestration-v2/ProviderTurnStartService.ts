@@ -630,6 +630,21 @@ export const layer: Layer.Layer<
               cause: `Native fork transfer ${nativeForkTransfer.id} has no source provider execution.`,
             });
           }
+          const throughTurnItemId = nativeForkTransfer.sourcePoint.turnItemId;
+          const throughTurnItem =
+            throughTurnItemId === undefined
+              ? undefined
+              : yield* projectionStore.getTurnItem({
+                  threadId: nativeForkTransfer.sourceThreadId,
+                  itemId: throughTurnItemId,
+                });
+          if (throughTurnItem === null) {
+            // Forking at the turn end instead would keep what the user cut off.
+            return yield* new ProviderTurnStartError({
+              runId,
+              cause: `Native fork transfer ${nativeForkTransfer.id} ends at item ${throughTurnItemId}, which no longer exists.`,
+            });
+          }
           return yield* loadFromProvider(
             session.forkThread({
               sourceProviderThread,
@@ -640,6 +655,7 @@ export const layer: Layer.Layer<
               ...(sourceProviderTurn === undefined
                 ? {}
                 : { providerTurnId: sourceProviderTurn.id }),
+              ...(throughTurnItem === undefined ? {} : { throughTurnItem }),
             }),
           );
         }

@@ -223,6 +223,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     canRollbackThread: true,
     canForkThread: true,
     canForkFromTurn: true,
+    canForkFromItem: true,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -1301,6 +1302,25 @@ const getNativeConversationHeadId = Effect.fnUntraced(function* (
 
 const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpToMessageId")(
   function* (input: ProviderAdapter.ProviderAdapterV2ForkThreadInput) {
+    // Assistant items carry the SDK message uuid, which forkSession accepts as
+    // an inclusive cut, so a fork can end before a steer in the same turn.
+    const throughItem = input.throughTurnItem;
+    if (throughItem !== undefined) {
+      const nativeId = throughItem.nativeItemRef?.nativeId;
+      if (
+        throughItem.type !== "assistant_message" ||
+        throughItem.nativeItemRef?.driver !== CLAUDE_PROVIDER ||
+        nativeId === undefined ||
+        nativeId === null
+      ) {
+        return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
+          driver: CLAUDE_PROVIDER,
+          providerThreadId: input.sourceProviderThread.id,
+          cause: `Cannot fork Claude thread at item ${throughItem.id}: it has no SDK assistant message id.`,
+        });
+      }
+      return nativeId;
+    }
     if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
       return undefined;
     }

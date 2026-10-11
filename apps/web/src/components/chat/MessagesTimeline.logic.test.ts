@@ -4505,6 +4505,125 @@ describe("streaming v2 row projection", () => {
   });
 });
 
+describe("assistant meta in steered runs", () => {
+  const runId = RunId.make("steered-run");
+  const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+  const message = (
+    id: string,
+    second: number,
+    role: "user" | "assistant",
+    inputIntent?: "turn_start" | "steer",
+  ): TimelineEntry => ({
+    kind: "message",
+    id,
+    createdAt: time(second),
+    message: {
+      id: MessageId.make(id),
+      role,
+      text: id,
+      runId,
+      ...(inputIntent === undefined ? {} : { inputIntent }),
+      createdAt: time(second),
+      updatedAt: time(second),
+      streaming: false,
+    },
+  });
+  const createdThread: TimelineEntry = {
+    kind: "event",
+    id: "created",
+    createdAt: time(3),
+    projectedItem: {
+      item: { id: "created", type: "thread_created", runId },
+    } as OrchestrationV2ProjectedTurnItem,
+  };
+  const settledRows = (timelineEntries: TimelineEntry[], expanded: boolean) =>
+    deriveMessagesTimelineRows({
+      timelineEntries,
+      latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(20) },
+      isWorking: false,
+      expandedRunIds: expanded ? new Set([runId]) : new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+  const metaFor = (rows: MessagesTimelineRow[], id: string) => {
+    const row = rows.find((candidate) => candidate.id === id);
+    return row?.kind === "message"
+      ? { meta: row.showAssistantMeta, midRun: row.assistantMidRun === true }
+      : null;
+  };
+
+  it("gives the cut-off response and the final one meta, marking only the cut-off as mid-run", () => {
+    const rows = settledRows(
+      [
+        message("prompt", 0, "user", "turn_start"),
+        message("cut-off", 2, "assistant"),
+        message("steer", 5, "user", "steer"),
+        message("final", 20, "assistant"),
+      ],
+      true,
+    );
+
+    expect(metaFor(rows, "cut-off")).toEqual({ meta: true, midRun: true });
+    expect(metaFor(rows, "final")).toEqual({ meta: true, midRun: false });
+  });
+
+  it("marks a response as mid-run when a steer follows it with no reply yet", () => {
+    const rows = settledRows(
+      [
+        message("prompt", 0, "user", "turn_start"),
+        message("cut-off", 2, "assistant"),
+        message("steer", 5, "user", "steer"),
+      ],
+      true,
+    );
+
+    expect(metaFor(rows, "cut-off")).toEqual({ meta: true, midRun: true });
+  });
+
+  it("keeps meta on only the last assistant message of an unsteered run", () => {
+    const rows = settledRows(
+      [
+        message("prompt", 0, "user", "turn_start"),
+        message("commentary", 2, "assistant"),
+        message("final", 20, "assistant"),
+      ],
+      true,
+    );
+
+    expect(metaFor(rows, "commentary")).toEqual({ meta: false, midRun: false });
+    expect(metaFor(rows, "final")).toEqual({ meta: true, midRun: false });
+  });
+
+  it("attaches created-thread summaries once, after the run's final response", () => {
+    const timelineEntries = [
+      message("prompt", 0, "user", "turn_start"),
+      message("cut-off", 2, "assistant"),
+      createdThread,
+      message("steer", 5, "user", "steer"),
+      message("final", 20, "assistant"),
+    ];
+
+    expect(settledRows(timelineEntries, true).map((row) => row.id)).toEqual([
+      "prompt",
+      `turn-fold:${runId}`,
+      "cut-off",
+      "created",
+      "steer",
+      "final",
+      "summary:created",
+      "assistant-meta:final",
+    ]);
+    expect(settledRows(timelineEntries, false).map((row) => row.id)).toEqual([
+      "prompt",
+      `turn-fold:${runId}`,
+      "steer",
+      "final",
+      "summary:created",
+      "assistant-meta:final",
+    ]);
+  });
+});
+
 describe("linked timeline resources", () => {
   const runId = RunId.make("resource-run");
   const event = (id: string, type: "subagent" | "thread_created", eventRunId = runId) => ({

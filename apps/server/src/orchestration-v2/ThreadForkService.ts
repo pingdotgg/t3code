@@ -101,6 +101,9 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             type: "run",
             threadId: input.sourceProjection.thread.id,
             runId: input.sourceRun.id,
+            ...(input.canonicalSourcePoint.turnItemId === undefined
+              ? {}
+              : { throughTurnItemId: input.canonicalSourcePoint.turnItemId }),
           },
           createdAt: input.createdAt,
           updatedAt: input.createdAt,

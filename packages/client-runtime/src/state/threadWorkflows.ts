@@ -167,7 +167,12 @@ export function canForkProjectedAssistantItem(input: {
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
 }): boolean {
   const item = input.projectedItem.item;
-  if (item.type !== "assistant_message" || item.runId === null || item.status !== "completed") {
+  if (
+    item.type !== "assistant_message" ||
+    item.runId === null ||
+    // A reply the user stopped mid-stream is still a settled point to fork from.
+    (item.status !== "completed" && item.status !== "interrupted")
+  ) {
     return false;
   }
   if (input.capabilities === undefined) {
