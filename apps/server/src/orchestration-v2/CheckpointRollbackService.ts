@@ -23,6 +23,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProviderMaintenanceCoordinator from "../provider/providerMaintenanceCommandCoordinator.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -101,6 +102,7 @@ export const layer: Layer.Layer<
     const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
+    const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
     const runtimePolicy = yield* RuntimePolicyV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectStore.ProjectStoreV2;
@@ -183,6 +185,8 @@ export const layer: Layer.Layer<
       const existingSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerThread.providerSessionId,
       );
+      // Opening a session can launch the provider CLI; wait out a background install.
+      yield* admission.withPermit(Effect.void);
       const session = yield* sessions.open({
         threadId: input.threadId,
         providerSessionId: providerThread.providerSessionId,

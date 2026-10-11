@@ -1045,6 +1045,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         driver: ProviderDriverKind.make("codex"),
         config: { binaryPath: "/x" },
       });
+      // An unreadable file may hold an opt-out, so background updates stay off.
+      assert.equal(settings.automaticUpdates, false);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );
