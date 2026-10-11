@@ -16,6 +16,11 @@ import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
+import {
+  injectMcpAppCsp,
+  injectMcpAppThemeBootstrap,
+  MCP_APP_MAX_HTML_BYTES,
+} from "@t3tools/shared/mcpApp";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 
 import * as ServerConfig from "./config.ts";
@@ -29,6 +34,70 @@ import {
   withUntracedRequests,
 } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+
+describe("MCP app asset responses", () => {
+  it.effect(
+    "transforms existing snapshots only with explicit render intent and fresh metadata",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-theme-" });
+        const file = path.join(directory, "app.html");
+        const html = injectMcpAppCsp(
+          "<html><head><script>vendor()</script></head><body>☃</body></html>",
+          undefined,
+        );
+        yield* fs.writeFileString(file, html);
+        for (const method of ["GET", "HEAD"] as const) {
+          const response = HttpServerResponse.toWeb(
+            yield* assetFileResponse(
+              { path: file, mimeType: "text/html", renderIntent: "mcp-app" },
+              "bytes=0-1",
+              undefined,
+              method,
+            ),
+          );
+          const expected = injectMcpAppThemeBootstrap(html);
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-length")).toBe(
+            String(new TextEncoder().encode(expected).byteLength),
+          );
+          expect(response.headers.get("etag")).toBeNull();
+          expect(response.headers.get("last-modified")).toBeNull();
+          expect(response.headers.get("content-security-policy")).toBe(
+            "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+          );
+          expect(yield* Effect.promise(() => response.text())).toBe(
+            method === "HEAD" ? "" : expected,
+          );
+        }
+        for (const download of [false, true]) {
+          const response = HttpServerResponse.toWeb(
+            yield* assetFileResponse({
+              path: file,
+              mimeType: "text/html",
+              download,
+              ...(download ? { renderIntent: "mcp-app" as const } : {}),
+            }),
+          );
+          expect(yield* Effect.promise(() => response.text())).toBe(html);
+        }
+      }).pipe(Effect.provide(layerFileResponse)),
+  );
+
+  it.effect("rejects oversized captures before transforming them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-theme-size-" });
+      const file = path.join(directory, "app.html");
+      yield* fs.writeFileString(file, "x".repeat(MCP_APP_MAX_HTML_BYTES + 128 * 1024 + 1));
+      const response = yield* assetFileResponse({ path: file, renderIntent: "mcp-app" });
+      expect(response.status).toBe(413);
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+});
 
 describe("untraced requests", () => {
   it.effect("drops the HTTP server span for browser trace exports, query string included", () => {

@@ -1,7 +1,9 @@
+import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   injectMcpAppCsp,
+  injectMcpAppThemeBootstrap,
   mcpAppContentSecurityPolicy,
   mcpAppToolCallableByApp,
   readMcpAppCsp,
@@ -38,6 +40,65 @@ describe("injectMcpAppCsp", () => {
     );
     expect(injected.indexOf("connect-src 'none'")).toBeLessThan(injected.indexOf("<script>"));
     expect(injectMcpAppCsp("<p>hi</p>", undefined).startsWith("<!doctype html><meta")).toBe(true);
+  });
+});
+
+describe("injectMcpAppThemeBootstrap", () => {
+  it("keeps stored CSP before the bootstrap and vendor scripts after it", () => {
+    const snapshot = injectMcpAppCsp(
+      "<html><head><script>vendor()</script></head></html>",
+      undefined,
+    );
+    const html = injectMcpAppThemeBootstrap(snapshot);
+    expect(html.indexOf("Content-Security-Policy")).toBeLessThan(html.indexOf("<script>"));
+    expect(html.indexOf("window.addEventListener")).toBeLessThan(html.indexOf("vendor()"));
+    expect(html.endsWith(snapshot.slice(snapshot.indexOf("<html>")))).toBe(true);
+  });
+
+  it("applies parent initialize and theme changes while ignoring unrelated or invalid messages", () => {
+    const html = injectMcpAppThemeBootstrap(injectMcpAppCsp("<p>app</p>", undefined));
+    const script = html.slice(html.indexOf("<script>") + 8, html.indexOf("</script>"));
+    const parent = {};
+    const style = { colorScheme: "normal" };
+    let receive: ((event: { source: object; data: unknown }) => void) | undefined;
+    NodeVM.runInNewContext(script, {
+      window: {
+        parent,
+        addEventListener: (_type: string, callback: typeof receive) => {
+          receive = callback;
+        },
+      },
+      document: { documentElement: { style } },
+    });
+    const send = (data: unknown, source = parent) => receive?.({ source, data });
+    const initialized = { jsonrpc: "2.0", id: 1, result: { hostContext: { theme: "dark" } } };
+    send(initialized, {});
+    expect(style.colorScheme).toBe("normal");
+    send(initialized);
+    expect(style.colorScheme).toBe("dark");
+    for (const data of [
+      null,
+      "bad",
+      {},
+      { ...initialized, jsonrpc: "1.0" },
+      { jsonrpc: "2.0", method: "other", params: { theme: "light" } },
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/host-context-changed",
+        params: { theme: "normal" },
+      },
+      { jsonrpc: "2.0", result: { hostContext: { theme: "light" } } },
+    ])
+      send(data);
+    expect(style.colorScheme).toBe("dark");
+    send({
+      jsonrpc: "2.0",
+      method: "ui/notifications/host-context-changed",
+      params: { theme: "light" },
+    });
+    expect(style.colorScheme).toBe("light");
+    send(initialized);
+    expect(style.colorScheme).toBe("dark");
   });
 });
 
