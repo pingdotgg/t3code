@@ -887,6 +887,57 @@ describe("DesktopUpdates", () => {
     },
   );
 
+  it.effect("releases the channel and install on quit when macOS staging fails", () => {
+    const harness = makeHarness({
+      // MacUpdater emits update-downloaded before Squirrel staging rejects the download.
+      downloadUpdate: Effect.sync(() =>
+        harness.emit("update-downloaded", { version: "1.2.4" }),
+      ).pipe(
+        Effect.andThen(flushCallbacks),
+        Effect.andThen(Effect.die(new Error("Squirrel staging failed"))),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isFalse(result.completed);
+        assert.isNull(result.state.downloadedVersion);
+        assert.isFalse(harness.autoInstallOnAppQuit());
+        assert.equal((yield* updates.setChannel("nightly")).channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps a downloaded update for quit instead of polling for a newer one", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      checkForUpdates: Effect.sync(() => {
+        harness.emit("update-available", { version: "1.2.5" });
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        yield* TestClock.adjust(Duration.minutes(5));
+        assert.equal(harness.checkCount(), 0);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+        assert.isTrue(harness.autoInstallOnAppQuit());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("never installs .deb updates on quit because dpkg asks for a password", () => {
     const harness = makeHarness({ platform: "linux", packageType: "deb" });
 

@@ -399,8 +399,8 @@ available.
 - `apps/desktop/src/main.ts` only wires the updater layers into the desktop runtime.
 - Update UX:
   - Background checks run on startup delay + interval.
-  - No automatic download or install.
-  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+  - Updates found by background checks download automatically and install when the app quits (except `.deb`, where dpkg asks for a password).
+  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install right away.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.

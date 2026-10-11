@@ -481,6 +481,18 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    // A failed download leaves nothing to install on quit: electron-updater drops
+    // the previous installer, and on macOS update-downloaded fires before Squirrel
+    // stages the download, so a later failure means nothing was staged.
+    const stagedBefore = yield* Ref.get(nativeUpdateStagedRef);
+    const releaseFailedDownload = Effect.all(
+      [
+        Ref.set(nativeUpdateStagedRef, stagedBefore),
+        electronUpdater.setAutoInstallOnAppQuit(false),
+      ],
+      { discard: true },
+    );
+
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
@@ -493,6 +505,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
           function* (error) {
+            yield* releaseFailedDownload;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
             );
@@ -515,6 +528,7 @@ export const make = Effect.gen(function* () {
         }
         const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
         return Effect.gen(function* () {
+          yield* releaseFailedDownload;
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
@@ -531,8 +545,11 @@ export const make = Effect.gen(function* () {
 
   // Updates the background pollers find download on their own; a check someone
   // started keeps its Download button. A failed download waits for a newer release.
+  // A downloaded update installs on quit, so the pollers leave it alone: a new
+  // download would discard its installer, and the next launch finds newer releases.
   const checkAndDownloadInBackground = Effect.fn("desktop.updates.checkAndDownloadInBackground")(
     function* (reason: "startup" | "poll") {
+      if ((yield* Ref.get(updateStateRef)).downloadedVersion !== null) return;
       if (!(yield* checkForUpdates(reason)) || (yield* Ref.get(desktopState.quitting))) return;
       const version = (yield* Ref.get(updateStateRef)).availableVersion;
       if (version === null || version === (yield* Ref.get(failedBackgroundDownloadRef))) return;
