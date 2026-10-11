@@ -3449,6 +3449,147 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("tracks automatic compaction before its boundary and deduplicates status updates", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-auto-compact-attempt"),
+          text: "Continue working.",
+          attachments: [],
+        }),
+      );
+      for (const index of [1, 2]) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: `00000000-0000-4000-8000-00000000021${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000000213",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000214",
+          result: "Work complete.",
+        }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const updates = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(updates, 2);
+      const [running, completed] = updates;
+      assert.equal(running?.status, "running");
+      assert.isNull(running?.completedAt);
+      assert.equal(completed?.status, "completed");
+      assert.equal(completed?.id, running?.id);
+      assert.equal(completed?.ordinal, running?.ordinal);
+      assert.deepEqual(completed?.startedAt, running?.startedAt);
+      assert.equal(completed?.beforeTokenCount, 1500);
+      assert.equal(completed?.afterTokenCount, 400);
+      assert.isNotNull(completed?.completedAt);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["completed", "failed", "interrupted", "stop", "query_exit"] as const)(
+    "settles an unfinished compaction on %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const attemptId = RunAttemptId.make(`claude-compact-${outcome}`);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000000221",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        if (outcome === "query_exit") {
+          yield* Queue.shutdown(harness.sdkMessages);
+        } else if (outcome === "stop") {
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          });
+        } else {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000222",
+              result: "Stopped before the boundary.",
+              ...(outcome === "failed" ? { isError: true, terminalReason: "api_error" } : {}),
+              ...(outcome === "interrupted" ? { terminalReason: "aborted_streaming" } : {}),
+            }),
+          );
+        }
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(
+          terminal.status,
+          outcome === "stop" ? "interrupted" : outcome === "query_exit" ? "failed" : outcome,
+        );
+        const updates = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.lengthOf(updates, 2);
+        assert.equal(updates[0]?.status, "running");
+        assert.equal(updates[1]?.id, updates[0]?.id);
+        assert.equal(
+          updates[1]?.status,
+          terminal.status === "completed" ? "failed" : terminal.status,
+        );
+        assert.isNotNull(updates[1]?.completedAt);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect("titles Claude reads, searches, and skills on tool completion", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

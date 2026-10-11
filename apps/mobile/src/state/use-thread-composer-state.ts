@@ -377,6 +377,14 @@ export function useThreadComposerState() {
     if (queuedCompact) return true;
     const activeRunId = selectedThreadRuntime?.activeRunId;
     if (!activeRunId || !threadRuntimeIsActive(selectedThreadRuntime)) return false;
+    if (
+      selectedThreadVisibleTurnItems.some(
+        ({ item }) =>
+          item.runId === activeRunId && item.type === "compaction" && item.status === "running",
+      )
+    ) {
+      return true;
+    }
     const compactMessage = selectedThreadVisibleTurnItems.findLast(
       ({ item }) =>
         item.runId === activeRunId &&
@@ -389,7 +397,10 @@ export function useThreadComposerState() {
       ({ item }) =>
         item.runId === activeRunId &&
         item.type === "compaction" &&
-        (item.status === "completed" || item.status === "failed"),
+        (item.status === "completed" ||
+          item.status === "failed" ||
+          item.status === "interrupted" ||
+          item.status === "cancelled"),
     );
   }, [
     dispatchingQueuedMessageId,

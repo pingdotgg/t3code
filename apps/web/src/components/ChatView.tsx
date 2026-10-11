@@ -3608,12 +3608,21 @@ export default function ChatView(props: ChatViewProps) {
     ({ item }) =>
       item.type === "compaction" &&
       item.runId === activeActivityRun?.runId &&
-      item.status === "completed",
+      (item.status === "completed" ||
+        item.status === "failed" ||
+        item.status === "interrupted" ||
+        item.status === "cancelled"),
+  );
+  const compactionRunning = serverVisibleTurnItems.some(
+    ({ item }) =>
+      item.type === "compaction" &&
+      item.runId !== null &&
+      item.runId === activeRuntime?.activeRunId &&
+      item.status === "running",
   );
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
-    compactRequestIsActive &&
-    !compactionSettled;
+    (compactionRunning || (compactRequestIsActive && !compactionSettled));
   // A rewind is not agent work: the composer shows "Rewinding conversation"
   // instead of the timeline growing a Thinking row.
   const isWorking =
