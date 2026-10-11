@@ -2,6 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+// A supervisor must not restart a server refused by the state-directory owner.
+export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
+
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
   noBrowser: Schema.Boolean,
