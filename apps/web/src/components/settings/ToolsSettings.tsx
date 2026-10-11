@@ -169,16 +169,18 @@ function usePersistToolsPatch() {
   );
 }
 
-/**
- * Replace one key of a project's override entry, dropping the key (or the entry) when empty.
- * The rest of the entry is resent as stored, since the patch replaces the whole entry.
- */
+/** Settings → Tools: the skills and MCP servers agents get, as two tabs. */
 export function ToolsSettings({
   tab = "skills",
+  skill,
   onTabChange,
+  onOpenSkill,
 }: {
   readonly tab?: ToolsTab;
+  /** The skill whose page is open in place of the list; the header names it. */
+  readonly skill?: string;
   readonly onTabChange: (tab: ToolsTab) => void;
+  readonly onOpenSkill: (name: string | null) => void;
 }) {
   const selectTab = onTabChange;
   return (
@@ -197,14 +199,24 @@ export function ToolsSettings({
           <Toggle value="mcp">MCP servers</Toggle>
         </ToggleGroup>
       </div>
-      {tab === "mcp" ? <McpServersPanel /> : <SkillsPanel />}
+      {tab === "mcp" ? (
+        <McpServersPanel />
+      ) : (
+        <SkillsPanel openName={skill ?? null} onOpen={onOpenSkill} />
+      )}
     </SettingsPageContainer>
   );
 }
 
 // ── Skills ───────────────────────────────────────────────────────────
 
-function SkillsPanel() {
+function SkillsPanel({
+  openName,
+  onOpen,
+}: {
+  openName: string | null;
+  onOpen: (name: string | null) => void;
+}) {
   const { scope, target } = useSettingsScope();
   const environmentId = target?.environmentId ?? null;
   const targets = useToolsTargets();
@@ -220,8 +232,6 @@ function SkillsPanel() {
   });
   const [query, setQuery] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
-  // The skill whose page is open in place of the list.
-  const [openName, setOpenName] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const enabledProviders = useMemo(
     () => providers.filter((provider) => provider.enabled),
@@ -407,12 +417,22 @@ function SkillsPanel() {
           row={opened}
           details={detailsOf(opened)}
           agents={agents}
-          groupLabel={SKILL_GROUP_LABELS[opened.group]}
           environmentId={environmentId}
-          onBack={() => setOpenName(null)}
+          onBack={() => onOpen(null)}
           onUpdate={updateOf(opened)}
           onRemove={removeOf(opened)}
         />
+      ) : openName !== null ? (
+        // A link or Back to a skill that isn't here (yet, or any more).
+        <SettingsSection title="Skills">
+          <SettingsRow
+            title={
+              refreshing || rows.length === 0
+                ? "Loading skills…"
+                : `No skill named “${openName}” here.`
+            }
+          />
+        </SettingsSection>
       ) : (
         <>
           <SettingsSection
@@ -504,7 +524,7 @@ function SkillsPanel() {
                 agents={agents}
                 canWrite={canWrite}
                 onToggle={(skillRows, enabled) => setSkillsDisabled(skillRows, !enabled)}
-                onOpen={setOpenName}
+                onOpen={onOpen}
               />
             ))
           )}
@@ -543,7 +563,7 @@ function SkillsPanel() {
               onClick={() => {
                 if (removingSkill) {
                   void runSkillAction("remove", removingSkill);
-                  if (removingSkill.name === openName) setOpenName(null);
+                  if (removingSkill.name === openName) onOpen(null);
                 }
                 setRemovingSkill(null);
               }}

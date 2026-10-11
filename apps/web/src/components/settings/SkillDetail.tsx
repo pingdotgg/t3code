@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { AlertTriangleIcon, ArrowLeftIcon, MoreHorizontalIcon } from "lucide-react";
+import { AlertTriangleIcon, MoreHorizontalIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useEffectEvent, useState } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
@@ -49,14 +49,14 @@ function useEscapeToList(onBack: () => void) {
 }
 
 /**
- * One skill: what it says, which agents load it, and its files. Adapted from
- * the skill page in #17513.
+ * One skill: what it says, which agents load it, and its files. The settings
+ * header names it and leads back to the list. Adapted from the skill page in
+ * #17513.
  */
 export function SkillDetail({
   row,
   details,
   agents,
-  groupLabel,
   environmentId,
   onBack,
   onUpdate,
@@ -65,8 +65,6 @@ export function SkillDetail({
   row: SkillRow;
   details: SkillRowDetails;
   agents: ReadonlyArray<SkillAgent>;
-  /** The list section the skill came from, for the breadcrumb. */
-  groupLabel: string;
   environmentId: EnvironmentId;
   onBack: () => void;
   onUpdate: (() => void) | null;
@@ -98,17 +96,6 @@ export function SkillDetail({
 
   return (
     <section aria-label={`${row.name} details`} className="min-w-0 space-y-4 px-3 sm:px-4">
-      <nav
-        aria-label="Breadcrumb"
-        className="flex items-center gap-1 text-xs text-muted-foreground"
-      >
-        <Button size="xs" variant="ghost-muted" onClick={onBack}>
-          <ArrowLeftIcon className="sm:hidden" />
-          <span className="sm:hidden">Back</span>
-          <span className="hidden sm:inline">Skills</span>
-        </Button>
-        <span>/ {groupLabel}</span>
-      </nav>
       <div className="space-y-3 rounded-xl border border-border/60 bg-card/40 px-3 py-3 sm:px-4">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold break-words">{row.name}</h2>

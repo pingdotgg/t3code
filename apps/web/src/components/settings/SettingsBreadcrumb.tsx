@@ -1,3 +1,5 @@
+import { Link, useSearch } from "@tanstack/react-router";
+
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -16,8 +18,11 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 
+/** `Settings / Section`, or `Settings / Tools / skill` on a skill's page, where Tools leads back. */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const sectionLabel = settingsBreadcrumbLabel(pathname);
+  const skill = useSearch({ strict: false, select: (search) => search.skill });
+  const page = pathname === "/settings/tools" ? skill : undefined;
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
@@ -27,8 +32,23 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
+      {page !== undefined && sectionLabel ? (
+        <>
+          <WorkspaceBreadcrumbItem>
+            {/* The settings route keeps the scope on a link without search. */}
+            <Link
+              to="/settings/tools"
+              replace
+              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {sectionLabel}
+            </Link>
+          </WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbSeparator />
+        </>
+      ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
+        {page ?? sectionLabel ?? "Settings"}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>
   );

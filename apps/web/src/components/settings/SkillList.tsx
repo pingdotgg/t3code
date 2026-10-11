@@ -2,7 +2,7 @@ import { ChevronRightIcon } from "lucide-react";
 import { memo, useState, type MouseEvent } from "react";
 
 import { cn } from "../../lib/utils";
-import { GitHubIcon } from "../Icons";
+import { getSourceControlPresentationForKind } from "../../sourceControlPresentation";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -22,6 +22,8 @@ import {
  * The Skills list: dense one-line rows grouped by section and by the source a
  * pack was installed from. Adapted from the skills list in #17513.
  */
+
+const GitHubIcon = getSourceControlPresentationForKind("github").Icon;
 
 /** Keeps a click on a control inside a clickable row from also opening the row. */
 const stopRowClick = (event: MouseEvent) => event.stopPropagation();
@@ -148,7 +150,7 @@ function SourceGroup({
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {github ? (
-              <GitHubIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <GitHubIcon className="size-3.5 shrink-0 text-muted-foreground" />
             ) : null}
             <span className="min-w-0 truncate text-sm font-medium">From {source}</span>
             <Badge variant="secondary" size="sm">
