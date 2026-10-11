@@ -145,7 +145,12 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+`--tailscale-serve-port`. T3 Code preserves an existing handler on that port;
+choose another port if it cannot safely reuse the mapping. See `t3 pair --help`
+for other pairing options.
+
+If your own old mapping points at a stopped server, inspect it with
+`tailscale serve status --json` and remove that mapping before retrying.
 
 ### Hosted web app
 

@@ -5,14 +5,19 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthStandardClientScopes, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import { cli } from "../binCli.ts";
 import {
@@ -29,9 +34,14 @@ import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
+  resolveTailscalePairingBase,
 } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
+
+const decodeExecutionEnvironmentDescriptor = Schema.decodeUnknownSync(
+  ExecutionEnvironmentDescriptor,
+);
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -119,6 +129,174 @@ const testDescriptor = {
   serverVersion: "0.0.1",
   capabilities: { repositoryIdentity: true },
 };
+
+const pairServeConfig = (proxy: string) => ({
+  TCP: { "443": { HTTPS: true } },
+  Web: { "workstation.example:443": { Handlers: { "/": { Proxy: proxy } } } },
+});
+
+const pairTailscaleLayer = (input: {
+  config: unknown;
+  calls: Array<ReadonlyArray<string>>;
+  probe?: "dns-failure" | number;
+}) => {
+  let probes = 0;
+  const client = HttpClient.make((request) => {
+    if (probes++ === 0 && input.probe !== undefined) {
+      if (input.probe === "dns-failure") {
+        return Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, cause: new Error("ENOTFOUND") }),
+          }),
+        );
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(null, { status: input.probe })),
+      );
+    }
+    return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(testDescriptor)));
+  });
+  const spawner = ChildProcessSpawner.make((command) => {
+    const args = "args" in command ? command.args : [];
+    input.calls.push(args);
+    const status =
+      args[0] === "status" ? { Self: { DNSName: "workstation.example." } } : input.config;
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode(JSON.stringify(status))),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    );
+  });
+  return Layer.mergeAll(
+    Layer.succeed(HttpClient.HttpClient, client),
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Layer.succeed(HostProcess.Platform, "linux"),
+  );
+};
+
+const pairTarget = (state: PersistedServerRuntimeState = baseState) => ({
+  baseDir: "/unused",
+  variant: "userdata" as const,
+  state,
+  descriptor: decodeExecutionEnvironmentDescriptor(testDescriptor),
+});
+
+const pairStatusCalls = [
+  ["status", "--json"],
+  ["serve", "status", "--json"],
+];
+
+describe("pair tailscale handler preservation", () => {
+  it.effect.each(["dns-failure", 502, 503, 504] as const)(
+    "preserves a foreign handler after %s",
+    (probe) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        const error = yield* resolveTailscalePairingBase({
+          target: pairTarget(),
+          servePort: 443,
+        }).pipe(Effect.flip);
+        assert.equal(error._tag, "ServePortOccupiedError");
+        assert.include(error.message, "--tailscale-serve-port");
+        assert.deepEqual(calls, pairStatusCalls);
+      }).pipe(
+        Effect.provide(
+          pairTailscaleLayer({ config: pairServeConfig("http://127.0.0.1:9000"), probe, calls }),
+        ),
+      );
+    },
+  );
+
+  it.effect("configures an unoccupied port after a DNS failure", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      const result = yield* resolveTailscalePairingBase({ target: pairTarget(), servePort: 443 });
+      assert.equal(result.baseUrl, "https://workstation.example/");
+      assert.deepEqual(calls, [
+        ...pairStatusCalls,
+        ["serve", "--bg", "--https=443", "http://127.0.0.1:3773"],
+      ]);
+    }).pipe(Effect.provide(pairTailscaleLayer({ config: null, probe: "dns-failure", calls })));
+  });
+
+  it.effect.each(["http://127.0.0.1:3773", "http://localhost:3773"])(
+    "reuses a verified regular-server mapping to %s without modifying Serve",
+    (proxy) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return Effect.gen(function* () {
+        yield* resolveTailscalePairingBase({ target: pairTarget(), servePort: 443 });
+        assert.deepEqual(calls, [["status", "--json"]]);
+      }).pipe(Effect.provide(pairTailscaleLayer({ config: pairServeConfig(proxy), calls })));
+    },
+  );
+
+  const matching = pairServeConfig("http://127.0.0.1:3773");
+  const protectedHandlers = [
+    ["Funnel", { ...matching, AllowFunnel: { "workstation.example:443": true } }],
+    [
+      "additional routes",
+      {
+        ...matching,
+        Web: {
+          "workstation.example:443": {
+            Handlers: {
+              "/": { Proxy: "http://127.0.0.1:3773" },
+              "/api": { Proxy: "http://127.0.0.1:9000" },
+            },
+          },
+        },
+      },
+    ],
+    ["foreground session", { Foreground: { session: matching } }],
+  ] as const;
+  it.effect.each(
+    protectedHandlers.flatMap(([name, config]) =>
+      [false, true].map((dev) => ({ name, config, dev, environment: dev ? "dev" : "regular" })),
+    ),
+  )("preserves $name with a matching $environment environment", ({ config, dev }) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      const state = dev ? { ...baseState, devUrl: "http://localhost:5733" } : baseState;
+      const resolved = resolveTailscalePairingBase({
+        target: pairTarget(state),
+        servePort: 443,
+      });
+      if (dev) {
+        const error = yield* resolved.pipe(Effect.flip);
+        assert.equal(error._tag, "ServePortOccupiedError");
+        assert.deepEqual(calls, pairStatusCalls);
+      } else {
+        const result = yield* resolved;
+        assert.equal(result.baseUrl, "https://workstation.example/");
+        assert.deepEqual(calls, [["status", "--json"]]);
+      }
+    }).pipe(Effect.provide(pairTailscaleLayer({ config, calls })));
+  });
+
+  it.effect("repoints a verified simple dev handler to the web origin", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      yield* resolveTailscalePairingBase({
+        target: pairTarget({ ...baseState, devUrl: "http://localhost:5733" }),
+        servePort: 443,
+      });
+      assert.deepEqual(calls, [
+        ...pairStatusCalls,
+        ["serve", "--bg", "--https=443", "http://127.0.0.1:5733"],
+      ]);
+    }).pipe(Effect.provide(pairTailscaleLayer({ config: matching, calls })));
+  });
+});
 
 const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(

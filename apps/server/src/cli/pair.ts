@@ -117,16 +117,16 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   { servePort: Schema.Number, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
+    return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve status --json\` by hand to check Tailscale access and inspect its configuration.`;
   }
 }
 
 export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
   "ServePortOccupiedError",
-  { servePort: Schema.Number },
+  { servePort: Schema.Number, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `HTTPS port ${String(this.servePort)} on the tailnet already has a handler that T3 Code cannot safely reuse or replace. Pass --tailscale-serve-port to publish this one on another port. If it is your own stale mapping, inspect \`tailscale serve status --json\` and remove it with \`tailscale serve --https=${String(this.servePort)} off\` before retrying.`;
   }
 }
 
@@ -194,7 +194,7 @@ const formatPairOutput = (input: {
 
 /**
  * Three outcomes, because they drive different decisions: a T3 descriptor
- * (pair with it), nothing answering (safe to configure Tailscale Serve), or
+ * (pair with it), nothing answering (inspect Serve configuration), or
  * something answering that is not a T3 server (do NOT overwrite its mapping).
  */
 type EnvironmentProbeResult =
@@ -213,10 +213,8 @@ const probeEnvironmentDescriptor = (
       // Transport failure or timeout: nothing (reachable) is listening there.
       Effect.mapError(() => ({ _tag: "unreachable" }) as const),
     );
-    // Bad-gateway family means a proxy (Tailscale Serve) answered for a
-    // backend that is gone — a stale mapping, not a live occupant. Treating
-    // it as unreachable lets `t3 pair --tailscale` repair its own mapping
-    // after the server's port changed.
+    // A gateway failure says the proxy cannot reach its backend, not who
+    // owns the mapping. Serve configuration is still checked before mutation.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
       return { _tag: "unreachable" } as const;
     }
@@ -360,7 +358,7 @@ const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
   return last;
 });
 
-const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
+export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
   function* (input: { readonly target: DiscoveredPairTarget; readonly servePort: number }) {
     const notes: Array<string> = [];
     const status = yield* readTailscaleStatus.pipe(
@@ -374,10 +372,10 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       servePort: input.servePort,
     });
 
-    // Only an unreachable port, or a mapping already fronting this exact
-    // environment, is safe to (re)configure. Any other responder — T3 or not
-    // — must not have its mapping silently replaced.
+    // A matching regular server can be reused without changing Serve.
+    // Any configuration change still requires inspecting the selected port.
     const existing = yield* probeEnvironmentDescriptor(baseUrl);
+    let replaceVerifiedHandler = false;
     if (existing._tag === "descriptor") {
       if (existing.descriptor.environmentId !== input.target.descriptor.environmentId) {
         return yield* new ServesOtherEnvironmentError({ servePort: input.servePort });
@@ -385,11 +383,12 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       // Matching environment id proves the mapping reaches this server, but
       // not through which port: for a dev server it may front the backend
       // (whose /.well-known also answers) while /pair only renders through
-      // the web origin. Reuse as-is for regular servers; fall through and
-      // repoint our own mapping at the web port for dev servers.
+      // the web origin. Keep existing regular-server mappings untouched;
+      // only dev servers may need their simple root proxy repointed.
       if (input.target.state.devUrl === undefined) {
         return { baseUrl, notes };
       }
+      replaceVerifiedHandler = true;
     }
     if (existing._tag === "not-a-t3-server") {
       return yield* new ServePortOccupiedError({ servePort: input.servePort });
@@ -402,10 +401,13 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,
+      replaceVerifiedHandler,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
+      Effect.mapError((cause) =>
+        cause._tag === "TailscaleServePortOccupiedError"
+          ? new ServePortOccupiedError({ servePort: input.servePort, cause })
+          : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
       ),
     );
     notes.push(

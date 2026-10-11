@@ -822,11 +822,20 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
-                      }),
+                ? disableTailscaleServe({
+                    localPort: configured.localPort,
+                    servePort: configured.servePort,
+                    localHost: "127.0.0.1",
+                  }).pipe(
+                    Effect.tap((cleared) =>
+                      Effect.logInfo(
+                        cleared
+                          ? "Tailscale Serve disabled"
+                          : "Tailscale Serve handler changed; leaving it configured",
+                        {
+                          servePort: configured.servePort,
+                        },
+                      ),
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {

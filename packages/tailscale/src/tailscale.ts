@@ -135,6 +135,106 @@ const TailscaleStatusJson = Schema.Struct({
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
+export class TailscaleServeStatusParseError extends Schema.TaggedError<TailscaleServeStatusParseError>()(
+  "TailscaleServeStatusParseError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to decode tailscale serve status JSON.";
+  }
+}
+
+export class TailscaleServePortOccupiedError extends Schema.TaggedError<TailscaleServePortOccupiedError>()(
+  "TailscaleServePortOccupiedError",
+  { servePort: Schema.Number },
+) {
+  override get message(): string {
+    return `Tailscale Serve HTTPS port ${this.servePort} already has another handler. Choose another Serve port.`;
+  }
+}
+
+const ServeConfigFields = {
+  TCP: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        HTTPS: Schema.optional(Schema.Boolean),
+        HTTP: Schema.optional(Schema.Boolean),
+        TCPForward: Schema.optional(Schema.String),
+        TerminateTLS: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            Proxy: Schema.optional(Schema.String),
+            Path: Schema.optional(Schema.String),
+            Text: Schema.optional(Schema.String),
+            AcceptAppCaps: Schema.optional(Schema.Array(Schema.String)),
+            Redirect: Schema.optional(Schema.String),
+          }),
+        ),
+      }),
+    ),
+  ),
+  AllowFunnel: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+};
+const ServeConfig = Schema.Struct(ServeConfigFields);
+const ServeStatus = Schema.NullOr(
+  Schema.Struct({
+    ...ServeConfigFields,
+    Foreground: Schema.optional(Schema.Record(Schema.String, ServeConfig)),
+  }),
+);
+
+// Reachability does not establish ownership: a DNS failure or a stopped
+// backend can hide a foreign mapping. Inspect the selected port's config.
+function servePortState(status: typeof ServeStatus.Type, servePort: number, target: string) {
+  const port = String(servePort);
+  const onPort = (authority: string) => authority.endsWith(`:${port}`);
+  const hasPort = (config: typeof ServeConfig.Type) =>
+    config.TCP?.[port] !== undefined ||
+    Object.keys(config.Web ?? {}).some(onPort) ||
+    Object.keys(config.AllowFunnel ?? {}).some(onPort);
+  if (status === null) return "empty";
+  if (Object.values(status.Foreground ?? {}).some(hasPort)) return "occupied";
+  if (
+    Object.entries(status.AllowFunnel ?? {}).some(
+      ([authority, allowed]) => onPort(authority) && allowed,
+    )
+  )
+    return "occupied";
+  const tcp = status.TCP?.[port];
+  const web = Object.entries(status.Web ?? {}).filter(([authority]) => onPort(authority));
+  if (tcp === undefined && web.length === 0) return "empty";
+  if (
+    tcp?.HTTPS !== true ||
+    tcp.HTTP === true ||
+    tcp.TCPForward ||
+    tcp.TerminateTLS ||
+    web.length !== 1
+  )
+    return "occupied";
+  const handlers = web[0]?.[1].Handlers;
+  const root = handlers?.["/"];
+  if (
+    handlers === undefined ||
+    Object.keys(handlers).length !== 1 ||
+    root?.Proxy === undefined ||
+    root.Path ||
+    root.Text ||
+    root.Redirect ||
+    (root.AcceptAppCaps?.length ?? 0) > 0
+  )
+    return "occupied";
+  return root.Proxy.replace(/\/$/u, "") === target ? "matching" : "replaceable";
+}
+
 export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 
 export interface TailscaleStatus {
@@ -288,7 +388,7 @@ export function buildTailscaleHttpsBaseUrl(input: {
 const runTailscaleCommand = (
   args: readonly string[],
   timeoutInput: Duration.Input,
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<string, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostPlatform = yield* HostProcess.Platform;
@@ -306,8 +406,12 @@ const runTailscaleCommand = (
           Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
         ),
       );
-      const [stderr, exitCode] = yield* Effect.all(
-        [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectStdout(child.stdout),
+          collectStderr(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
@@ -322,6 +426,7 @@ const runTailscaleCommand = (
             : {}),
         });
       }
+      return stdout;
     }).pipe(
       Effect.scoped,
       Effect.timeout(timeout),
@@ -338,29 +443,52 @@ const runTailscaleCommand = (
     );
   });
 
-export const ensureTailscaleServe = (input: {
+const readServeStatus = runTailscaleCommand(
+  ["serve", "status", "--json"],
+  TAILSCALE_STATUS_TIMEOUT,
+).pipe(
+  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ServeStatus))),
+  Effect.catchTags({
+    SchemaError: (cause) => Effect.fail(new TailscaleServeStatusParseError({ cause })),
+  }),
+);
+
+export const ensureTailscaleServe = Effect.fnUntraced(function* (input: {
   readonly localPort: number;
   readonly servePort?: number;
   readonly localHost?: string;
-}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+  // Only pairing may set this, after the old handler answers with the same
+  // environment id. It never permits replacing complex or public handlers.
+  readonly replaceVerifiedHandler?: boolean;
+}) {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
-  const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
-};
+  const target = `http://${localHost}:${input.localPort}`;
+  const state = servePortState(yield* readServeStatus, servePort, target);
+  if (state === "matching") return;
+  if (state === "occupied" || (state === "replaceable" && !input.replaceVerifiedHandler)) {
+    return yield* new TailscaleServePortOccupiedError({ servePort });
+  }
+  yield* runTailscaleCommand(
+    ["serve", "--bg", `--https=${servePort}`, target],
+    TAILSCALE_SERVE_TIMEOUT,
+  );
+});
 
-export const disableTailscaleServe = (
-  input: {
-    readonly servePort?: number;
-  } = {},
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-    return yield* runTailscaleCommand(
-      ["serve", `--https=${servePort}`, "off"],
-      TAILSCALE_SERVE_TIMEOUT,
-    );
-  });
+/** Returns whether the selected port is clear; leaves nonmatching handlers alone. */
+export const disableTailscaleServe = Effect.fnUntraced(function* (input: {
+  readonly localPort: number;
+  readonly localHost?: string;
+  readonly servePort?: number;
+}) {
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  const target = `http://${input.localHost ?? "127.0.0.1"}:${input.localPort}`;
+  const state = servePortState(yield* readServeStatus, servePort, target);
+  if (state === "empty") return true;
+  if (state !== "matching") return false;
+  yield* runTailscaleCommand(["serve", `--https=${servePort}`, "off"], TAILSCALE_SERVE_TIMEOUT);
+  return true;
+});
 
 export const probeTailscaleHttpsEndpoint = (input: {
   readonly baseUrl: string;
