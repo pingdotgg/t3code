@@ -18,6 +18,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -497,6 +498,41 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(fake.closeCount(), 0);
       yield* startConversation(harness, fake);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("pins Windows turns to Muse's verbatim root and starts Muse in the plain path", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      let hostCwd: string | undefined;
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        cwd: "C:\\work\\repo",
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+        {
+          createHost: async (options) => {
+            hostCwd = options.cwd;
+            return fake.host;
+          },
+        },
+      );
+      yield* startConversation(harness, fake);
+      const turnStart = fake.calls.find((call) => call.method === "turn/start");
+      // Muse 1.4.3 rejects any other form: "expected a canonical path (resolves to \\?\C:\…)".
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
+      // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
+      assert.strictEqual(hostCwd, "C:\\work\\repo");
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.scoped,
+      Effect.provide(testLayer),
+    ),
   );
 
   it.effect("skips an unreadable usage notification without ending the turn", () =>

@@ -383,7 +383,31 @@ export interface OpenCode2Model {
   readonly providerID: string;
   readonly id: string;
   readonly name: string;
+  /**
+   * Name of the provider the model belongs to, when the server names it. One
+   * OpenCode instance fronts several: OpenCode Zen, OpenCode Go, and whatever
+   * the user added themselves.
+   */
+  readonly providerName?: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
+}
+
+/**
+ * One OpenCode instance fronts several providers, and their catalogues
+ * overlap: OpenCode Zen and OpenCode Go both list Step 5 Preview Free. Naming
+ * the sub-provider is what tells two such rows apart. The label only earns its
+ * place when it adds to the instance name the row already shows, which is why a
+ * provider called plain "OpenCode" keeps none, and the id stands in while the
+ * server has not named its providers yet.
+ */
+function subProviderLabelFor(input: {
+  readonly providerID: string;
+  readonly providerName?: string;
+}): string | undefined {
+  const label = nonEmptyTrimmed(input.providerName) ?? input.providerID;
+  return label.toLowerCase() === OPENCODE_PRESENTATION.displayName.toLowerCase()
+    ? undefined
+    : label;
 }
 
 /**
@@ -541,12 +565,16 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   }
   const models = providerModelsFromSettings(
     result.value
-      .map((model) => ({
-        slug: `${model.providerID}/${model.id}`,
-        name: model.name,
-        isCustom: false,
-        capabilities: openCode2ModelCapabilities(model),
-      }))
+      .map((model) => {
+        const subProvider = subProviderLabelFor(model);
+        return {
+          slug: `${model.providerID}/${model.id}`,
+          name: model.name,
+          ...(subProvider ? { subProvider } : {}),
+          isCustom: false,
+          capabilities: openCode2ModelCapabilities(model),
+        };
+      })
       .toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,

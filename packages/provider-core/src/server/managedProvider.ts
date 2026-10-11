@@ -155,12 +155,29 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
+        // A failed read keeps the last good limits only for the same account,
+        // and they keep the workspace they were read for.
+        const previous = state.snapshot.auth;
+        const differs = (a: string | undefined, b: string | undefined) =>
+          a !== undefined && b !== undefined && a !== b;
+        // Limits read without a workspace cannot be attributed to a new one.
+        const switchedAccount =
+          differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+          (probedSnapshot.auth.workspaceId !== undefined &&
+            probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        const usageLimits = switchedAccount
+          ? probedSnapshot.usageLimits
+          : resolveUsageLimitsAfterProbe({
+              published: state.snapshot.usageLimits,
+              probed: probedSnapshot.usageLimits,
+            });
+        const workspaceId =
+          usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const snapshot = withUsageLimits(
-          probedSnapshot,
-          resolveUsageLimitsAfterProbe({
-            published: state.snapshot.usageLimits,
-            probed: probedSnapshot.usageLimits,
-          }),
+          workspaceId && !probedSnapshot.auth.workspaceId
+            ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
+            : probedSnapshot,
+          usageLimits,
         );
         return [
           { snapshot, generation },

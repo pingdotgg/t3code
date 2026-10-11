@@ -10,6 +10,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type OrchestrationV2Command,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -480,6 +481,7 @@ it.effect.each([
           {
             id: "subagent:background",
             runId,
+            origin: "provider_native",
             driver,
             providerInstanceId: instanceId,
             status: "running",
@@ -606,9 +608,9 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
   }),
 );
 
-const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
+const continuationDispatches = (projection: OrchestrationV2ThreadProjection) =>
   Effect.gen(function* () {
-    const texts: Array<string> = [];
+    const dispatches: Array<Extract<OrchestrationV2Command, { type: "message.dispatch" }>> = [];
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
       Effect.provide(
         Layer.merge(
@@ -616,7 +618,7 @@ const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
             getThreadRecords: () => Effect.succeed(projection),
             recoverDelegatedTask: () => Effect.void,
             dispatch: (command) => {
-              if (command.type === "message.dispatch") texts.push(command.text);
+              if (command.type === "message.dispatch") dispatches.push(command);
               return Effect.succeed({} as never);
             },
           }),
@@ -624,8 +626,13 @@ const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
         ),
       ),
     );
-    return texts;
+    return dispatches;
   });
+
+const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>
+  continuationDispatches(projection).pipe(
+    Effect.map((dispatches) => dispatches.map((command) => command.text)),
+  );
 
 const cutMidTurn = (extra: Record<string, unknown> = {}) => {
   const base = makeProjection();
@@ -737,6 +744,18 @@ it.effect("tells a turn cut mid-way about the background work it lost", () =>
     assert.lengthOf(texts, 1);
     assert.include(texts[0]!, "Background reviewer");
     assert.isTrue(texts[0]!.endsWith("Continue where you left off."));
+  }),
+);
+
+it.effect("shows a continuation as a T3 Code notice whose detail is the prompt", () =>
+  Effect.gen(function* () {
+    const [resumed] = yield* continuationDispatches(cutMidTurn());
+    assert.deepEqual(resumed?.notification, {
+      source: { kind: "system" },
+      outcome: "updated",
+      summary: "T3 Code restarted and resumed this turn",
+      detail: "Continue where you left off.",
+    });
   }),
 );
 

@@ -42,7 +42,8 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
@@ -97,7 +98,7 @@ export {
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
-const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
+const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -1117,10 +1118,19 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
+// eslint-disable-next-line no-control-regex -- Terminal sequence introducers must reach the parser.
+const HISTORY_SEQUENCE_START = /[\u001b\u0090\u009b\u009d\u009e\u009f]/;
+
 function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
 ): { visibleText: string; pendingControlSequence: string } {
+  // Plain output has nothing to filter. A pending sequence still needs the parser
+  // even when this chunk only contains its final bytes.
+  if (pendingControlSequence.length === 0 && !HISTORY_SEQUENCE_START.test(data)) {
+    return { visibleText: data, pendingControlSequence: "" };
+  }
+
   const input = `${pendingControlSequence}${data}`;
   let visibleText = "";
   let index = 0;
@@ -1320,6 +1330,7 @@ function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv: Record<string, string> | null | undefined,
   platform: NodeJS.Platform,
+  home: string,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1334,7 +1345,7 @@ function createTerminalSpawnEnv(
           ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
           : undefined;
       spawnEnv[existingKey ?? key] =
-        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value) : value;
+        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
     }
   }
   // An explicit empty override opts out for terminals started without a client.
@@ -1411,7 +1422,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
     return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
   }
 
-  let resolved = mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
+  let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
@@ -1480,8 +1491,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const agentScope = yield* AgentScope;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
   // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
@@ -2182,10 +2194,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const launch = yield* agentScope.wrap({
+      command: candidate.shell,
+      args: candidate.args ?? [],
+      name: "terminal",
+      env: spawnEnv,
+    });
     const attempt = yield* Effect.result(
       options.ptyAdapter.spawn({
-        shell: candidate.shell,
-        ...(candidate.args ? { args: candidate.args } : {}),
+        shell: launch.command,
+        ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
         cwd: session.cwd,
         cols: session.cols,
         rows: session.rows,
@@ -2247,7 +2265,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform);
+            const terminalEnv = createTerminalSpawnEnv(
+              baseEnv,
+              session.runtimeEnv,
+              platform,
+              yield* HostProcess.HomeDirectory,
+            );
             // Append (never prepend) managed ACP agent install directories so
             // `kimi login` and friends resolve by name without shadowing any
             // system or user tool of the same name.
