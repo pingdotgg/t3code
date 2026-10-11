@@ -248,6 +248,13 @@ describe("OpenCodeAdapterV2", () => {
     (status) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
+        const livePart = {
+          type: "text",
+          id: "part-live",
+          sessionID: "root",
+          messageID: "assistant-gap",
+          text: "live",
+        };
         let prompts = 0;
         const harness = yield* makeOpenCodeRuntimeHarness(`restart-${status}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -255,37 +262,45 @@ describe("OpenCodeAdapterV2", () => {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             status: async () => ({ data: { root: { type: status } } }),
-            messages: async () => ({
-              data: [
-                {
-                  info: {
-                    id: "original-prompt",
-                    role: "user",
-                    sessionID: "root",
-                    time: { created: 1 },
-                  },
-                  parts: [],
-                },
-                {
-                  info: {
-                    id: "assistant-gap",
-                    role: "assistant",
-                    sessionID: "root",
-                    parentID: "original-prompt",
-                    time: { created: 2 },
-                  },
-                  parts: [
-                    {
-                      type: "text",
-                      id: "part-gap",
+            messages: async () => {
+              // A live update lands while history loads; the older snapshot must not undo it.
+              await nativeEvents.push({
+                type: "message.part.updated",
+                properties: { sessionID: "root", part: { ...livePart, text: "live, then more" } },
+              });
+              return {
+                data: [
+                  {
+                    info: {
+                      id: "original-prompt",
+                      role: "user",
                       sessionID: "root",
-                      messageID: "assistant-gap",
-                      text: "work during restart",
+                      time: { created: 1 },
                     },
-                  ],
-                },
-              ],
-            }),
+                    parts: [],
+                  },
+                  {
+                    info: {
+                      id: "assistant-gap",
+                      role: "assistant",
+                      sessionID: "root",
+                      parentID: "original-prompt",
+                      time: { created: 2 },
+                    },
+                    parts: [
+                      {
+                        type: "text",
+                        id: "part-gap",
+                        sessionID: "root",
+                        messageID: "assistant-gap",
+                        text: "work during restart",
+                      },
+                      livePart,
+                    ],
+                  },
+                ],
+              };
+            },
             promptAsync: async () => {
               prompts++;
               return { data: true };
@@ -314,14 +329,14 @@ describe("OpenCodeAdapterV2", () => {
           );
           const collected = yield* Fiber.join(terminal);
           assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-          assert.include(
-            collected.flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-                ? [event.turnItem.text]
-                : [],
-            ),
-            "work during restart",
+          const texts = collected.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text]
+              : [],
           );
+          assert.include(texts, "work during restart");
+          assert.include(texts, "live, then more");
+          assert.notInclude(texts, "live");
         }
       }).pipe(
         Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),

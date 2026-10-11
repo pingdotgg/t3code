@@ -3273,6 +3273,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       properties: { sessionID: sessionId, info: entry.info },
                     });
                     for (const part of entry.parts) {
+                      // Live events since this turn became active already
+                      // hold a newer copy; the snapshot would roll it back.
+                      if (
+                        part.type === "tool"
+                          ? turn.toolNamesByCallId.has(part.callID)
+                          : turn.parts.has(part.id)
+                      )
+                        continue;
                       yield* handlePartUpdated({
                         id: part.id,
                         type: "message.part.updated",
