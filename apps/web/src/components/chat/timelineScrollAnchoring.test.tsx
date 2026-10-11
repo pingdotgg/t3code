@@ -1,11 +1,11 @@
-import { MessageId, RunId } from "@t3tools/contracts";
+import { MessageId, RunId, RunAttemptId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   observeTimelineRun,
   getAnchoredTurnMetrics,
   getRowBottom,
-  readTimelinePosition,
-  rememberTimelinePosition,
+  readTimelineDisclosures,
+  rememberTimelineDisclosures,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 
@@ -267,18 +267,23 @@ describe("observeTimelineRun", () => {
   });
 });
 
-describe("remembered timeline positions", () => {
-  it("keeps reading positions and end-follow independent across threads and environments", () => {
-    const reading = { rowId: "message-4", offsetWithinRow: 32, scrollOffset: 932, atEnd: false };
-    const following = { rowId: "message-9", offsetWithinRow: 10, scrollOffset: 2010, atEnd: true };
-    rememberTimelinePosition("scroll-test-a:thread-1", reading);
-    rememberTimelinePosition("scroll-test-a:thread-2", following);
-    rememberTimelinePosition("scroll-test-b:thread-1", following);
-    expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(reading);
-    expect(readTimelinePosition("scroll-test-a:thread-2")).toEqual(following);
-    expect(readTimelinePosition("scroll-test-b:thread-1")).toEqual(following);
-    expect(readTimelinePosition("scroll-test-a:unvisited")).toBeUndefined();
-    rememberTimelinePosition("scroll-test-a:thread-1", following);
-    expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(following);
+describe("remembered timeline disclosures", () => {
+  it("keeps disclosure state independent across threads and environments", () => {
+    const first = {
+      runs: new Set([RunId.make("run-4")]),
+      workGroups: new Set<string>(),
+      attempts: new Set<RunAttemptId>(),
+      workGroupState: { scrollPositions: new Map(), expandedEntries: new Set<string>() },
+    };
+    const second = { ...first, runs: new Set([RunId.make("run-9")]) };
+    rememberTimelineDisclosures("scroll-test-a:thread-1", first);
+    rememberTimelineDisclosures("scroll-test-a:thread-2", second);
+    rememberTimelineDisclosures("scroll-test-b:thread-1", second);
+    expect(readTimelineDisclosures("scroll-test-a:thread-1")).toEqual(first);
+    expect(readTimelineDisclosures("scroll-test-a:thread-2")).toEqual(second);
+    expect(readTimelineDisclosures("scroll-test-b:thread-1")).toEqual(second);
+    expect(readTimelineDisclosures("scroll-test-a:unvisited")).toBeUndefined();
+    rememberTimelineDisclosures("scroll-test-a:thread-1", second);
+    expect(readTimelineDisclosures("scroll-test-a:thread-1")).toEqual(second);
   });
 });

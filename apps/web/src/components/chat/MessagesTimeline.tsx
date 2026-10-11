@@ -181,8 +181,8 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  readTimelinePosition,
-  rememberTimelinePosition,
+  readTimelineDisclosures,
+  rememberTimelineDisclosures,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -475,11 +475,13 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  onScrollNodeMount?: (node: HTMLElement) => () => void;
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
+  entryThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   parentThreadLink?: {
@@ -531,7 +533,6 @@ interface MessagesTimelineProps {
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   findOpen?: boolean;
-  cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
@@ -589,11 +590,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeFindMatch = null,
   findNavigationId = 0,
   findPositionReaderRef,
+  onScrollNodeMount,
   latestRun,
   runningRunId = null,
   turnDiffSummaries,
   routeThreadKey,
   displayThreadKey,
+  entryThreadKey = routeThreadKey,
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
@@ -625,47 +628,40 @@ const ConversationTimeline = memo(function ConversationTimeline({
   liveFollowEnabled,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
-  cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
-  const rememberedPosition = useMemo(
-    () => readTimelinePosition(listIdentityKey),
+  const rememberedDisclosures = useMemo(
+    () => readTimelineDisclosures(listIdentityKey),
     [listIdentityKey],
   );
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
-    () => rememberedPosition?.disclosures?.runs ?? new Set(),
+    () => rememberedDisclosures?.runs ?? new Set(),
   );
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
-    () => rememberedPosition?.disclosures?.workGroups ?? new Set(),
+    () => rememberedDisclosures?.workGroups ?? new Set(),
   );
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
-    () => rememberedPosition?.disclosures?.attempts ?? new Set(),
+    () => rememberedDisclosures?.attempts ?? new Set(),
   );
-  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
-    rememberedPosition?.atEnd === false ? null : listIdentityKey,
-  );
-  const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
-  // The list stays mounted across thread switches. Its first end pins on the
-  // new thread must snap, not glide, even if that thread is mid-turn.
-  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
+  // The new thread must open with an instant end pin, even mid-turn.
+  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
-    setPositionedThreadKey(null);
     previousLatestRunRef.current = latestRun;
     setSettlingListIdentity(listIdentityKey);
-    paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
-    paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
-    paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
+    paintedExpandedRunIds = rememberedDisclosures?.runs ?? new Set();
+    paintedExpandedWorkGroupIds = rememberedDisclosures?.workGroups ?? new Set();
+    paintedExpandedAttemptIds = rememberedDisclosures?.attempts ?? new Set();
     setExpandedRunIds(paintedExpandedRunIds);
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedAttemptIds(paintedExpandedAttemptIds);
@@ -675,14 +671,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
-  // Nested tool state shares the bounded thread-position cache.
+  // Nested tool state shares the bounded disclosure cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () =>
-      rememberedPosition?.disclosures?.workGroupState ?? {
+      rememberedDisclosures?.workGroupState ?? {
         scrollPositions: new Map(),
         expandedEntries: new Set(),
       },
-    [listIdentityKey, rememberedPosition],
+    [listIdentityKey, rememberedDisclosures],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -792,7 +788,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const onToggleWorkGroup = useCallback(
     (groupId: string, anchorKey: string) => {
-      suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+      suspendEndScrollMaintenanceForDisclosure(anchorKey, paintedExpandedWorkGroupIds.has(groupId));
       setExpandedWorkGroupIds((existing) => {
         const next = new Set(existing);
         if (next.has(groupId)) {
@@ -803,7 +799,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         return next;
       });
     },
-    [expandedWorkGroupIds, suspendEndScrollMaintenanceForDisclosure],
+    [paintedExpandedWorkGroupIds, suspendEndScrollMaintenanceForDisclosure],
   );
   const onToggleAttemptFold = useCallback(
     (attemptId: RunAttemptId) => {
@@ -912,7 +908,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         expandedRunIds: visibleExpandedRunIds,
         expandedAttemptIds: visibleExpandedAttemptIds,
-        expandedWorkGroupIds,
+        expandedWorkGroupIds: paintedExpandedWorkGroupIds,
         isWorking,
         runlessWorkActive,
         activeTurnStartedAt,
@@ -935,7 +931,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     visibleExpandedRunIds,
     visibleExpandedAttemptIds,
-    expandedWorkGroupIds,
+    paintedExpandedWorkGroupIds,
     isWorking,
     runlessWorkActive,
     activeTurnStartedAt,
@@ -948,139 +944,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
-  const restoreRowIndex =
-    restoringThreadPosition && rememberedPosition?.atEnd === false
-      ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
-      : -1;
-  const restoringAlwaysRender = useMemo(
-    () =>
-      restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
-    [restoreRowIndex, restoringThreadPosition],
-  );
-  useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0) return;
-    const list = listRef.current;
-    if (!list) return;
-    if (citationRequest !== null) {
-      setPositionedThreadKey(listIdentityKey);
-      return;
-    }
-    let cancelled = false;
-    let settleFrame: number | null = null;
-    const viewport: HTMLElement | null = list.getScrollableNode();
-    const cancelRestoration = () => {
-      if (cancelled) return;
-      cancelled = true;
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      // Supersede any pending estimated-index scroll before the browser applies the gesture.
-      if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
-      setPositionedThreadKey(listIdentityKey);
-    };
-    const cancelForNavigation = () => {
-      cancelRestoration();
-      onManualNavigation();
-    };
-    const onScrollKey = (event: globalThis.KeyboardEvent) => {
-      if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
-      )
-        cancelForNavigation();
-    };
-    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
-    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
-    const position = rememberedPosition;
-    const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
-    if (position?.atEnd === false) onManualNavigation();
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
-    const scrolling =
-      position?.atEnd === false
-        ? index >= 0
-          ? list.scrollToIndex({
-              index,
-              animated: false,
-              viewPosition: 0,
-              viewOffset: -position.offsetWithinRow,
-            })
-          : list.scrollToOffset({ offset: position.scrollOffset, animated: false })
-        : list.scrollToEnd({ animated: false });
-    void Promise.resolve(scrolling).then(() => {
-      if (cancelled) return;
-      if (position?.atEnd !== false || index < 0) {
-        setPositionedThreadKey(listIdentityKey);
-        return;
-      }
-      // Index scrolling starts from estimates. Keep the saved row mounted
-      // until its measured position and the DOM agree for two layout frames.
-      let stableFrames = 0;
-      const reconcile = () => {
-        if (cancelled) return;
-        const state = list.getState();
-        const rowIndex = state.indexByKey(position.rowId);
-        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-        const element = list.getScrollableNode();
-        if (!row || !element) return;
-        const offset = Math.max(
-          0,
-          Math.min(
-            element.scrollTop +
-              row.getBoundingClientRect().top -
-              element.getBoundingClientRect().top +
-              position.offsetWithinRow,
-            element.scrollHeight - element.clientHeight,
-          ),
-        );
-        if (Math.abs(element.scrollTop - offset) > 1) {
-          stableFrames = 0;
-          void list.scrollToOffset({ offset, animated: false }).then(() => {
-            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
-          });
-          return;
-        }
-        if (++stableFrames >= 2) {
-          setPositionedThreadKey(listIdentityKey);
-        } else {
-          settleFrame = requestAnimationFrame(reconcile);
-        }
-      };
-      settleFrame = requestAnimationFrame(reconcile);
-    });
-    return () => {
-      cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
-    };
-  }, [
-    citationRequest,
-    cancelPositionRestoreRef,
-    listIdentityKey,
-    listRef,
-    onManualNavigation,
-    rememberedPosition,
-    restoringThreadPosition,
-    rows,
-  ]);
-
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const [findListReady, setFindListReady] = useState(false);
+  const hasTimelineList =
+    rows.length > 0 ||
+    isWorking ||
+    parentThreadLink !== null ||
+    historyControls !== undefined ||
+    footer !== null;
+  if (!hasTimelineList && findListReady) setFindListReady(false);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
-    onListLoad: onCitationListLoad,
     alwaysRender: citationAlwaysRender,
   } = useAssistantCitationTarget({
     request: citationRequest,
@@ -1088,37 +967,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows,
     listRef,
     viewport: timelineViewportElement,
+    listLoaded: findListReady,
     historyLoading: citationHistoryLoading,
     loadEarlier,
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
-  const [findListReady, setFindListReady] = useState(false);
-  const handleListLoad = useCallback(() => {
-    onCitationListLoad();
-    setFindListReady(true);
-  }, [onCitationListLoad]);
+  const handleListLoad = useCallback(() => setFindListReady(true), []);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [fullscreenAppRowId, setFullscreenAppRowId] = useState<string | null>(null);
   // Only the row that holds the pin can release it.
   const onAppFullscreenChange = useCallback((rowId: string, fullscreen: boolean) => {
     setFullscreenAppRowId((current) => (fullscreen ? rowId : current === rowId ? null : current));
   }, []);
-  // Every pin holds at once, so navigating to a citation or restoring a
-  // position never drops a full-screen app's row. The app is pinned by key,
+  // Citation navigation never drops a full-screen app's row. The app is pinned by key,
   // which stays right as earlier rows load in.
   const alwaysRender = useMemo(() => {
-    const indices = restoringAlwaysRender?.indices ?? [];
     const keys = [
       ...(citationAlwaysRender?.keys ?? []),
       ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
     ];
-    if (indices.length === 0 && keys.length === 0) return undefined;
-    return {
-      ...(indices.length === 0 ? {} : { indices }),
-      ...(keys.length === 0 ? {} : { keys }),
-    };
-  }, [citationAlwaysRender, restoringAlwaysRender, fullscreenAppRowId]);
+    if (keys.length === 0) return undefined;
+    return { keys };
+  }, [citationAlwaysRender, fullscreenAppRowId]);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1210,29 +1081,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
-    if (restoringThreadPosition || state?.data !== rows) return;
+    if (state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
-    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && isAtEnd !== undefined) {
-      const index = state.indexByKey(position.rowId);
-      const row = index === undefined ? undefined : state.elementAtIndex(index);
-      const element = listRef.current?.getScrollableNode();
-      if (row && element) {
-        rememberTimelinePosition(listIdentityKey, {
-          ...position,
-          // DOM geometry includes the header and the virtualizer's layout adjustment.
-          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
-          scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
-          disclosures: {
-            runs: paintedExpandedRunIds,
-            workGroups: paintedExpandedWorkGroupIds,
-            attempts: paintedExpandedAttemptIds,
-            workGroupState: workGroupViewState,
-          },
-        });
-      }
-    }
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
@@ -1276,13 +1126,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
   }, [
     citationPositioning,
-    paintedExpandedRunIds,
-    paintedExpandedWorkGroupIds,
-    paintedExpandedAttemptIds,
-    workGroupViewState,
     rows,
-    listIdentityKey,
-    restoringThreadPosition,
     listRef,
     minimapItems,
     minimapStripMap,
@@ -1291,9 +1135,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
   ]);
 
   useEffect(() => {
+    rememberTimelineDisclosures(listIdentityKey, {
+      runs: paintedExpandedRunIds,
+      workGroups: paintedExpandedWorkGroupIds,
+      attempts: paintedExpandedAttemptIds,
+      workGroupState: workGroupViewState,
+    });
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+  }, [
+    handleScroll,
+    listIdentityKey,
+    paintedExpandedRunIds,
+    paintedExpandedWorkGroupIds,
+    paintedExpandedAttemptIds,
+    workGroupViewState,
+    rows.length,
+  ]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1473,10 +1331,52 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const setTimelineList = useCallback(
     (list: LegendListRef | null) => {
       listRef.current = list;
-      registerTimeline?.(list?.getScrollableNode() ?? null);
+      const node = list?.getScrollableNode() ?? null;
+      registerTimeline?.(node);
+      const removeListeners = node ? onScrollNodeMount?.(node) : undefined;
+      return () => {
+        removeListeners?.();
+        listRef.current = null;
+        registerTimeline?.(null);
+      };
     },
-    [listRef, registerTimeline],
+    [listRef, onScrollNodeMount, registerTimeline],
   );
+
+  const entryNavigationRef = useRef({
+    requested: entryThreadKey,
+    displayed: listIdentityKey,
+    pending: false,
+  });
+  useLayoutEffect(() => {
+    const navigation = entryNavigationRef.current;
+    if (navigation.requested !== entryThreadKey || navigation.displayed !== listIdentityKey) {
+      navigation.requested = entryThreadKey;
+      navigation.displayed = listIdentityKey;
+      navigation.pending = true;
+    }
+    // Keep the outgoing thread's position until the incoming timeline is ready.
+    if (!navigation.pending || entryThreadKey !== listIdentityKey) return;
+    if (findActive || citationRequest !== null) {
+      navigation.pending = false;
+      return;
+    }
+    if (!liveFollowEnabled || !listRef.current) return;
+    navigation.pending = false;
+    setSettlingListIdentity(listIdentityKey);
+    void listRef.current.scrollToOffset({
+      offset: listRef.current.getState().contentLength,
+      animated: false,
+    });
+  }, [
+    entryThreadKey,
+    listIdentityKey,
+    findActive,
+    citationRequest,
+    liveFollowEnabled,
+    listRef,
+    rows.length,
+  ]);
 
   useLayoutEffect(() => {
     if (!findPositionReaderRef || !timelineViewportElement) return;
@@ -1571,14 +1471,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [],
   );
 
-  if (
-    rows.length === 0 &&
-    !isWorking &&
-    parentThreadLink === null &&
-    historyControls === undefined &&
-    // A status line (settled, snoozed) still needs the list, whose footer renders it.
-    footer === null
-  ) {
+  if (!hasTimelineList) {
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
@@ -1617,9 +1510,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               getItemType={getItemType}
               renderItem={renderItem}
               estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
+              initialScrollAtEnd={!findActive && citationRequest === null}
               // Legend needs a data refresh to mount new pins without a scroll event.
               dataVersion={readyCitationRequest?.key ?? listIdentityKey}
               {...(alwaysRender ? { alwaysRender } : {})}
@@ -1628,7 +1519,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
                 citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
@@ -1639,13 +1529,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
                     : TIMELINE_MAINTAIN_SCROLL_AT_END
               }
               maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
+                findActive || citationPositioning ? false : maintainVisibleContentPosition
               }
-              maintainScrollAtEndThreshold={1}
+              // Manual navigation disables follow explicitly. Measuring a tall row
+              // must not break follow merely because its end moved beyond the viewport.
+              maintainScrollAtEndThreshold={liveFollowEnabled ? Number.MAX_SAFE_INTEGER : 1}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
               className={cn(

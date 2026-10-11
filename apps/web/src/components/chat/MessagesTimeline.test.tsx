@@ -13,6 +13,9 @@ import {
   act,
   createRef,
   useLayoutEffect,
+  useState,
+  useRef,
+  useCallback,
   type ReactNode,
   type Ref,
   type ReactElement,
@@ -20,15 +23,21 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
+import {
+  cancelTimelineProgrammaticScroll,
+  observeTimelineScrollNavigation,
+} from "./timelineScrollAnchoring";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef } from "@legendapp/list/react";
+import type { LegendListRef, MaintainVisibleContentPositionConfig } from "@legendapp/list/react";
 
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
   expandedRuns: false,
   subagentTooltips: false,
+  nativeList: false,
+  onListLoad: null as (() => void) | null,
 }));
 
 // Expose tooltip contents in the renderer without requiring a browser portal.
@@ -82,25 +91,28 @@ vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
 });
 
 beforeEach(() => {
+  activityTestState.nativeList = false;
+  activityTestState.onListLoad = null;
   activityTestState.subagentTooltips = false;
   activityTestState.expanded = false;
   activityTestState.expandedRuns = false;
 });
 
-vi.mock("@legendapp/list/react", async () => {
+vi.mock("@legendapp/list/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@legendapp/list/react")>();
   const legendListTestId = "legend-list";
 
   const LegendList = (props: {
     data: Array<{ id: string }>;
     keyExtractor: (item: { id: string }) => string;
     renderItem: (args: { item: { id: string } }) => ReactNode;
-    ListHeaderComponent?: ReactNode;
-    ListFooterComponent?: ReactNode;
+    ListHeaderComponent?: ReactElement | null;
+    ListFooterComponent?: ReactElement | null;
     anchoredEndSpace?: {
       anchorIndex: number;
       anchorMaxSize?: number;
       anchorOffset?: number;
-      onReady?: (info: { anchorIndex: number }) => void;
+      onReady?: (info: { anchorIndex: number | undefined }) => void;
       onSizeChanged?: (size: number) => void;
     };
     maintainScrollAtEnd?:
@@ -113,17 +125,14 @@ vi.mock("@legendapp/list/react", async () => {
             layout?: boolean;
           };
         };
-    maintainVisibleContentPosition?:
-      | boolean
-      | {
-          data?: boolean;
-          size?: boolean;
-          shouldRestorePosition?: boolean;
-        };
+    maintainVisibleContentPosition?: boolean | MaintainVisibleContentPositionConfig<{ id: string }>;
     className?: string;
     contentInsetEndAdjustment?: number;
     ref?: Ref<LegendListRef>;
+    onLoad?: () => void;
   }) => {
+    if (activityTestState.nativeList) return <actual.LegendList {...props} />;
+    activityTestState.onListLoad = props.onLoad ?? null;
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
@@ -2789,6 +2798,570 @@ describe("MessagesTimeline", () => {
       ).toHaveLength(0);
     } finally {
       await act(() => renderer?.unmount());
+    }
+  });
+});
+
+describe("disclosure state across thread switches", () => {
+  it("remembers an expanded turn without waiting for a scroll or animation frame", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const runId = RunId.make("disclosure-switch-run");
+    const entries = ["Earlier response", "Final response"].map((text, index) => {
+      const entry = buildAssistantTimelineEntry(text);
+      return {
+        ...entry,
+        id: `disclosure-switch-entry-${index}`,
+        message: { ...entry.message, id: MessageId.make(`disclosure-switch-${index}`), runId },
+      };
+    });
+    const renderThread = async (threadKey: string) => {
+      await act(async () => {
+        root.render(
+          <MessagesTimeline
+            {...buildProps()}
+            routeThreadKey={threadKey}
+            timelineEntries={entries}
+          />,
+        );
+      });
+    };
+    try {
+      await renderThread("disclosure-switch:thread-a");
+      expect(container.textContent).not.toContain("Earlier response");
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[data-timeline-row-kind="turn-fold"] button',
+      );
+      expect(toggle).not.toBeNull();
+      await act(async () => toggle!.click());
+      expect(container.textContent).toContain("Earlier response");
+      await renderThread("disclosure-switch:thread-b");
+      expect(container.textContent).not.toContain("Earlier response");
+      await renderThread("disclosure-switch:thread-a");
+      expect(container.textContent).toContain("Earlier response");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("thread search across retained list updates", () => {
+  type Event = "load" | "switch" | "empty";
+  async function checkSequence(events: readonly Event[], sequenceId: string) {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onLoadEarlier = vi.fn();
+    const props = buildProps();
+    const renderThread = async (key: string) => {
+      await act(async () => {
+        root.render(
+          <MessagesTimeline
+            {...props}
+            routeThreadKey={key}
+            timelineEntries={[buildUserTimelineEntry("recent message")]}
+            findExpanded
+            findQuery="needle"
+            activeFindMatch={{ entryId: `older-match-${key}`, runId: null, occurrence: 0 }}
+            historyControls={{ hasMoreHistory: true, loading: false, error: null, onLoadEarlier }}
+          />,
+        );
+      });
+    };
+    let threadIndex = 0;
+    let listLoaded = false;
+    try {
+      await renderThread(`search-load:${sequenceId}:${threadIndex}`);
+      expect(onLoadEarlier).not.toHaveBeenCalled();
+      for (const event of events) {
+        onLoadEarlier.mockClear();
+        if (event === "empty") {
+          listLoaded = false;
+          await act(async () => root.render(<MessagesTimeline {...props} timelineEntries={[]} />));
+          expect(onLoadEarlier, events.join(" → ")).not.toHaveBeenCalled();
+        } else if (event === "switch") {
+          threadIndex += 1;
+          await renderThread(`search-load:${sequenceId}:${threadIndex}`);
+          expect(onLoadEarlier, events.join(" → ")).toHaveBeenCalledTimes(listLoaded ? 1 : 0);
+        } else {
+          if (container.querySelector('[data-testid="legend-list"]') === null) continue;
+          await act(async () => activityTestState.onListLoad!());
+          expect(onLoadEarlier, events.join(" → ")).toHaveBeenCalledTimes(listLoaded ? 0 : 1);
+          listLoaded = true;
+        }
+      }
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it("waits for the list to load and reuses readiness when switching threads", async () => {
+    await checkSequence(["load", "switch", "load"], "regression");
+    await checkSequence(["load", "load", "switch"], "repeated-load-regression");
+    await checkSequence(["load", "empty", "switch", "load"], "actual-remount-regression");
+  });
+
+  it("never pages before the retained list loads across all three-event orderings", async () => {
+    // Repeated load callbacks and switches exercise the two independent actors.
+    const events: readonly Event[] = ["load", "switch", "empty"];
+    for (const first of events) {
+      for (const second of events) {
+        for (const third of events) {
+          const sequence = [first, second, third];
+          await checkSequence(sequence, sequence.join("-"));
+        }
+      }
+    }
+  });
+});
+
+describe("thread entry with the real virtualizer", () => {
+  it("returns a previously scrolled thread to its measured end", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    activityTestState.nativeList = true;
+    vi.useFakeTimers();
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const observers = new Set<{ callback: ResizeObserverCallback; elements: Set<Element> }>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        elements = new Set<Element>();
+        constructor(readonly callback: ResizeObserverCallback) {
+          observers.add(this);
+        }
+        observe(element: Element) {
+          this.elements.add(element);
+        }
+        unobserve(element: Element) {
+          this.elements.delete(element);
+        }
+        disconnect() {
+          this.elements.clear();
+          observers.delete(this);
+        }
+      },
+    );
+    // jsdom supplies no layout. Give the real virtualizer a 600px viewport
+    // and 180px message rows, twice its 90px estimate.
+    let lastRowHeight = 180;
+    const rowHeights = new Map<number, number>();
+    let pendingScrollHeight: number | undefined;
+    let pendingViewportHeight: number | undefined;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const rowIndex = Number(
+          this.querySelector("[data-message-id]")
+            ?.getAttribute("data-message-id")
+            ?.match(/^message-(\d+)$/)?.[1],
+        );
+        const height = this.classList.contains("messages-timeline-scroll")
+          ? 600
+          : this.firstElementChild?.classList.contains("messages-timeline-row-frame")
+            ? rowHeights.has(rowIndex)
+              ? rowHeights.get(rowIndex)!
+              : this.textContent?.includes("Message 39") ||
+                  this.textContent?.includes("Thread B message 39")
+                ? lastRowHeight
+                : 180
+            : this.style.height.endsWith("px")
+              ? Number.parseFloat(this.style.height)
+              : 0;
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 800,
+          bottom: height,
+          width: 800,
+          height,
+          toJSON() {},
+        };
+      });
+    const heightSpy = vi
+      .spyOn(HTMLElement.prototype, "clientHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains("messages-timeline-scroll")
+          ? (pendingViewportHeight ?? 600)
+          : 0;
+      });
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+    const scrollHeightSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        if (
+          pendingScrollHeight !== undefined &&
+          this.classList.contains("messages-timeline-scroll")
+        ) {
+          return pendingScrollHeight;
+        }
+        return Math.max(
+          600,
+          ...Array.from(this.querySelectorAll<HTMLElement>("div")).map((node) =>
+            node.style.height.endsWith("px") ? Number.parseFloat(node.style.height) : 0,
+          ),
+        );
+      });
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number,
+      y?: number,
+    ) {
+      this.scrollTop = Math.max(
+        0,
+        Math.min(
+          this.scrollHeight - this.clientHeight,
+          typeof options === "number" ? (y ?? 0) : (options?.top ?? this.scrollTop),
+        ),
+      );
+      this.dispatchEvent(new Event("scroll"));
+    };
+    const originalScrollBy = HTMLElement.prototype.scrollBy;
+    HTMLElement.prototype.scrollBy = function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number,
+      y?: number,
+    ) {
+      this.scrollTo({
+        top: this.scrollTop + (typeof options === "number" ? (y ?? 0) : (options?.top ?? 0)),
+      });
+    };
+    const flushLayout = async () => {
+      for (let i = 0; i < 12; i++) {
+        await act(async () => {
+          for (const observer of observers) {
+            observer.callback(
+              Array.from(observer.elements).map(
+                (target) =>
+                  ({
+                    target,
+                    contentRect: target.getBoundingClientRect(),
+                  }) as ResizeObserverEntry,
+              ),
+              observer as unknown as ResizeObserver,
+            );
+          }
+        });
+        await act(async () => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(i * 16));
+          vi.advanceTimersByTime(16);
+        });
+      }
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    let root = createRoot(container);
+    const props = buildProps();
+    const entries = Array.from({ length: 40 }, (_, index) => {
+      const entry = buildUserTimelineEntry(`Message ${index}`);
+      return {
+        ...entry,
+        id: `entry-${index}`,
+        message: { ...entry.message, id: MessageId.make(`message-${index}`) },
+      };
+    });
+    const entriesB = entries.slice(0, 24).map((entry, index) => ({
+      ...entry,
+      id: `thread-b-entry-${index}`,
+      message: {
+        ...entry.message,
+        id: MessageId.make(`thread-b-message-${index}`),
+        text: `Thread B message ${index}`,
+      },
+    }));
+    const renderThread = async (key: string, displayThreadKey = key) => {
+      const previousViewport = props.listRef.current?.getScrollableNode();
+      await act(async () =>
+        root.render(
+          <MessagesTimeline
+            {...props}
+            routeThreadKey={displayThreadKey}
+            displayThreadKey={displayThreadKey}
+            entryThreadKey={key}
+            timelineEntries={displayThreadKey.endsWith("thread-b") ? entriesB : entries}
+          />,
+        ),
+      );
+      if (previousViewport) {
+        expect(props.listRef.current!.getScrollableNode()).toBe(previousViewport);
+        expect(previousViewport.isConnected).toBe(true);
+        const row = previousViewport.querySelector(".messages-timeline-row-frame");
+        expect(row).not.toBeNull();
+        for (
+          let node = row?.parentElement;
+          node && node !== previousViewport;
+          node = node.parentElement
+        ) {
+          expect(node.style.opacity).not.toBe("0");
+        }
+      }
+      await flushLayout();
+    };
+    try {
+      await renderThread("entry-test:thread-a");
+      const firstViewport = props.listRef.current!.getScrollableNode();
+      expect(firstViewport.scrollTop).toBeGreaterThan(3000);
+      await act(async () => {
+        firstViewport.scrollTop = 100;
+        firstViewport.dispatchEvent(new Event("scroll"));
+      });
+      // B has no cached history yet, so the client keeps A visible while B loads.
+      props.liveFollowEnabled = false;
+      await renderThread("entry-test:thread-b", "entry-test:thread-a");
+      expect(firstViewport.scrollTop).toBe(100);
+      props.liveFollowEnabled = true;
+      await renderThread("entry-test:thread-a");
+      const viewport = props.listRef.current!.getScrollableNode();
+      expect(viewport.scrollTop).toBeGreaterThan(3000);
+      expect(
+        Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+      ).toBeLessThanOrEqual(1);
+      expect(container.textContent).toContain("Message 39");
+      lastRowHeight = 2800;
+      await flushLayout();
+      expect(
+        Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+      ).toBeLessThanOrEqual(1);
+      expect(viewport.scrollTop).toBeGreaterThan(5600);
+      props.liveFollowEnabled = false;
+      await renderThread("entry-test:thread-a");
+      await act(async () => {
+        // Use the production cancellation path before the browser's user scroll.
+        await props.listRef.current!.scrollToItem({ item: {} as never, animated: false });
+        viewport.scrollTop = 100;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      lastRowHeight = 4000;
+      await flushLayout();
+      expect(viewport.scrollTop).toBe(100);
+      props.liveFollowEnabled = true;
+      await renderThread("entry-test:thread-b");
+      expect(container.textContent).toContain("Thread B message 23");
+      await renderThread("entry-test:thread-a");
+      const reopened = props.listRef.current!.getScrollableNode();
+      expect(
+        Math.abs(reopened.scrollHeight - reopened.clientHeight - reopened.scrollTop),
+      ).toBeLessThanOrEqual(1);
+
+      const unsignaledNavigation = vi.fn();
+      let appendMessage = () => {};
+      function UnsignaledNavigationTimeline() {
+        const [follow, setFollow] = useState(true);
+        const [readingEntries, setReadingEntries] = useState(entries);
+        appendMessage = () => {
+          const next = buildUserTimelineEntry("New streamed message");
+          setReadingEntries([
+            ...entries,
+            {
+              ...next,
+              id: "entry-streamed",
+              message: { ...next.message, id: MessageId.make("message-streamed") },
+            },
+          ]);
+        };
+        const following = useRef(follow);
+        following.current = follow;
+        const mountScrollNode = useCallback(
+          (node: HTMLElement) =>
+            observeTimelineScrollNavigation(
+              node,
+              () => following.current,
+              () => {
+                unsignaledNavigation();
+                following.current = false;
+                cancelTimelineProgrammaticScroll(props.listRef.current);
+                setFollow(false);
+              },
+              () => props.listRef.current?.getState().scroll,
+            ),
+          [],
+        );
+
+        return (
+          <MessagesTimeline
+            {...props}
+            routeThreadKey="unsignaled-navigation:thread"
+            entryThreadKey="unsignaled-navigation:thread"
+            timelineEntries={readingEntries}
+            liveFollowEnabled={follow}
+            onScrollNodeMount={mountScrollNode}
+          />
+        );
+      }
+      for (const geometryChange of ["none", "shrink", "resize"] as const) {
+        unsignaledNavigation.mockClear();
+        lastRowHeight = 180;
+        await act(async () => root.render(<UnsignaledNavigationTimeline key={geometryChange} />));
+        await flushLayout();
+        expect(unsignaledNavigation).not.toHaveBeenCalled();
+        const readingViewport = props.listRef.current!.getScrollableNode();
+        lastRowHeight = 4000;
+        await flushLayout();
+        lastRowHeight = 180;
+        await flushLayout();
+        expect(unsignaledNavigation).not.toHaveBeenCalled();
+        expect(
+          Math.abs(
+            readingViewport.scrollHeight - readingViewport.clientHeight - readingViewport.scrollTop,
+          ),
+        ).toBeLessThanOrEqual(1);
+        if (geometryChange === "none") {
+          // Native visible-position corrections must not be mistaken for navigation.
+          const aboveRow = Math.min(
+            ...Array.from(readingViewport.querySelectorAll("[data-message-id]"))
+              .map((row) =>
+                Number(row.getAttribute("data-message-id")?.match(/^message-(\d+)$/)?.[1]),
+              )
+              .filter(Number.isFinite),
+          );
+          expect(aboveRow).toBeLessThan(39);
+          for (const tailGrowth of [60, 0, 240]) {
+            rowHeights.set(aboveRow, 60);
+            lastRowHeight = 180 + tailGrowth;
+            await flushLayout();
+            expect(unsignaledNavigation).not.toHaveBeenCalled();
+            expect(
+              Math.abs(
+                readingViewport.scrollHeight -
+                  readingViewport.clientHeight -
+                  readingViewport.scrollTop,
+              ),
+            ).toBeLessThanOrEqual(1);
+            rowHeights.clear();
+            lastRowHeight = 180;
+            await flushLayout();
+          }
+        }
+        await act(async () => {
+          // A shrink and external navigation can coalesce into one scroll event.
+          // The browser first clamps the old offset, then the reader moves farther up.
+          if (geometryChange === "shrink") pendingScrollHeight = readingViewport.scrollHeight - 100;
+          if (geometryChange === "resize") pendingViewportHeight = 700;
+          readingViewport.scrollTop = readingViewport.scrollHeight - readingViewport.clientHeight;
+          readingViewport.scrollTop = 100;
+          readingViewport.dispatchEvent(new Event("scroll"));
+        });
+        pendingScrollHeight = undefined;
+        pendingViewportHeight = undefined;
+        await flushLayout();
+        // Newly visible rows replace their estimates before subsequent streaming.
+        const readingOffset = readingViewport.scrollTop;
+        expect(readingOffset).toBeLessThan(300);
+        expect(unsignaledNavigation).toHaveBeenCalledTimes(1);
+        await act(async () => appendMessage());
+        lastRowHeight = 4000;
+        await flushLayout();
+        expect(readingViewport.scrollTop).toBe(readingOffset);
+      }
+
+      // Interrupt a native entry target before its completion frames, then measure a tall tail.
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      const { LegendList } =
+        await vi.importActual<typeof import("@legendapp/list/react")>("@legendapp/list/react");
+      const nativeRef = createRef<LegendListRef>();
+      const a = Array.from({ length: 40 }, (_, index) => ({
+        id: `a-${index}`,
+        text: `A ${index}`,
+      }));
+      const b = a.map((item, index) => ({
+        ...item,
+        id: `b-${index}`,
+        text: `Thread B message ${index}`,
+      }));
+      function NativeEntry({ data, follow }: { data: typeof a; follow: boolean }) {
+        useLayoutEffect(() => {
+          if (data === b) void nativeRef.current?.scrollToEnd({ animated: false });
+        }, [data]);
+        return (
+          <LegendList
+            ref={nativeRef}
+            data={data}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <div className="messages-timeline-row-frame">{item.text}</div>
+            )}
+            estimatedItemSize={90}
+            className="messages-timeline-scroll"
+            initialScrollAtEnd
+            maintainScrollAtEnd={
+              follow
+                ? { animated: false, on: { dataChange: true, itemLayout: true, layout: true } }
+                : false
+            }
+            maintainScrollAtEndThreshold={follow ? Number.MAX_SAFE_INTEGER : 1}
+            maintainVisibleContentPosition={{ data: true, size: true }}
+          />
+        );
+      }
+      lastRowHeight = 180;
+      await act(async () => root.render(<NativeEntry data={a} follow />));
+      await flushLayout();
+      await act(async () => root.render(<NativeEntry data={b} follow />));
+      const interrupted = nativeRef.current!.getScrollableNode();
+      await act(async () => {
+        cancelTimelineProgrammaticScroll(nativeRef.current);
+        root.render(<NativeEntry data={b} follow={false} />);
+      });
+      await act(async () => {
+        interrupted.scrollTop = 100;
+        interrupted.dispatchEvent(new Event("scroll"));
+      });
+      lastRowHeight = 4000;
+      await flushLayout();
+      expect(interrupted.scrollTop).toBe(100);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      rectSpy.mockRestore();
+      heightSpy.mockRestore();
+      widthSpy.mockRestore();
+      scrollHeightSpy.mockRestore();
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+      HTMLElement.prototype.scrollBy = originalScrollBy;
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      activityTestState.nativeList = false;
     }
   });
 });
