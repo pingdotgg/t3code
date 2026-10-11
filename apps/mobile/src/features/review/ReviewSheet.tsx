@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -282,9 +283,11 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
       </Text>
       <View className="mt-1 flex-row gap-2">
         <Text className="text-2xs font-t3-bold text-adaptive-emerald-700-300">
-          +{file.additions}
+          +{formatDiffCount(file.additions)}
         </Text>
-        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">-{file.deletions}</Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">
+          -{formatDiffCount(file.deletions)}
+        </Text>
       </View>
     </Pressable>
   );

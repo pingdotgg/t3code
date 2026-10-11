@@ -970,6 +970,25 @@ index 84c7915..d1930bf 100644
  	if (hasCustomHeader) managedOptions.renderCustomHeader = noopRender;
  	if (hasGutterRenderer) managedOptions.renderGutterUtility = noopRender;
  	if (hasCodeViewHeader) managedOptions.renderCodeViewHeader = noopRender;
+diff --git a/dist/utils/createFileHeaderElement.js b/dist/utils/createFileHeaderElement.js
+index 39fe30e..600442e 100644
+--- a/dist/utils/createFileHeaderElement.js
++++ b/dist/utils/createFileHeaderElement.js
+@@ -73,12 +73,12 @@ function createMetadataElement(fileDiff) {
+ 		}
+ 		if (deletions > 0 || additions === 0) children.push(createHastElement({
+ 			tagName: "span",
+-			children: [createTextNodeElement(`-${deletions}`)],
++			children: [createTextNodeElement(`-${deletions.toLocaleString()}`)],
+ 			properties: { "data-deletions-count": "" }
+ 		}));
+ 		if (additions > 0 || deletions === 0) children.push(createHastElement({
+ 			tagName: "span",
+-			children: [createTextNodeElement(`+${additions}`)],
++			children: [createTextNodeElement(`+${additions.toLocaleString()}`)],
+ 			properties: { "data-additions-count": "" }
+ 		}));
+ 	}
 diff --git a/package.json b/package.json
 index d9dc7b5..3c37bae 100644
 --- a/package.json
