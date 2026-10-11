@@ -182,7 +182,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   timeoutMs: Schema.optional(Schema.Number).annotate({
     description:
-      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+      "Wait budget for mode=wait only. Defaults to 30 seconds and is capped at 45 seconds to return task handles before common MCP client timeouts. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
@@ -444,7 +444,10 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Number).annotate({
+    description:
+      "Wait budget. Defaults to 30 seconds and is capped at 45 seconds. Elapsing it does not interrupt the thread.",
+  }),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 

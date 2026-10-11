@@ -94,8 +94,11 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
-const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
+// Return recoverable handles before common MCP client timeouts expire.
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+const MAX_WAIT_TIMEOUT_MS = 45_000;
+const DEFAULT_SECRET_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
+const MAX_SECRET_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000;
 // Events that can make a delegated task terminal: the parent's task record,
 // and the child's runs, nested tasks, and pending provider background work.
 const TASK_WAKE_EVENTS = [
@@ -1777,7 +1780,10 @@ const make = Effect.gen(function* () {
         }).pipe(
           Effect.timeoutOption(
             Duration.millis(
-              Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
+              Math.min(
+                input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
+                MAX_SECRET_REQUEST_TIMEOUT_MS,
+              ),
             ),
           ),
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
