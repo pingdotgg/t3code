@@ -5,6 +5,7 @@ import type { MarkdownFileContextMenu } from "@t3tools/mobile-markdown-text/type
 import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 
 import {
+  expandHomeFilePath,
   isAbsolutePath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
@@ -19,16 +20,17 @@ export interface FileChipTarget {
   readonly relativePath?: string;
 }
 
-/** Null when the link is not a file or resolves nowhere the feed can open, such as `~/x` or `../x`. */
+/** Null when the link is not a file or resolves nowhere the feed can open, such as `../x`. */
 export function resolveFileChipTarget(
   href: string,
   workspaceRoot: string | null | undefined,
 ): FileChipTarget | null {
   const presentation = resolveMarkdownLinkPresentation(href);
   if (presentation.kind !== "file") return null;
-  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, presentation.path);
-  const fullPath = isAbsolutePath(presentation.path)
-    ? presentation.path
+  const path = expandHomeFilePath(presentation.path, workspaceRoot);
+  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
+  const fullPath = isAbsolutePath(path)
+    ? path
     : workspaceRoot && relativePath
       ? resolveWorkspaceFilePath(workspaceRoot, relativePath)
       : undefined;

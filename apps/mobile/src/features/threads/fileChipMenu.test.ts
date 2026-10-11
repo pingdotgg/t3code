@@ -17,6 +17,26 @@ describe("resolveFileChipTarget", () => {
     });
   });
 
+  it("expands home paths outside the workspace and strips their position suffix", () => {
+    const target = resolveFileChipTarget("~/.agents/AGENTS.md:4:2", "/Users/tommy/repo");
+    expect(target).toEqual({ fullPath: "/Users/tommy/.agents/AGENTS.md" });
+    expect(fileChipMenu(target!).actions).toEqual([
+      { id: "copy-full-path", title: "Copy full path" },
+      { id: "open-file", title: "Open in file viewer" },
+    ]);
+  });
+
+  it("resolves home paths inside the workspace to both paths", () => {
+    expect(resolveFileChipTarget("~/repo/src/app.ts", "/Users/tommy/repo")).toEqual({
+      fullPath: "/Users/tommy/repo/src/app.ts",
+      relativePath: "src/app.ts",
+    });
+  });
+
+  it.each([null, undefined, "/repo"])("rejects home paths without a known home for %s", (root) => {
+    expect(resolveFileChipTarget("~/.zshrc", root)).toBeNull();
+  });
+
   it("keeps only the relative path when the workspace root is unknown", () => {
     expect(resolveFileChipTarget("src/app.ts", null)).toEqual({ relativePath: "src/app.ts" });
   });

@@ -1,3 +1,4 @@
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -16,6 +17,11 @@ function isWindowsAbsolutePath(value: string): boolean {
 /** A file route holding an absolute path shows a host file outside the workspace. */
 export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
+}
+
+/** Expand host-home paths using the same workspace-root inference as web. */
+export function expandHomeFilePath(path: string, workspaceRoot: string | null | undefined): string {
+  return workspaceRoot && path.startsWith("~/") ? resolvePathLinkTarget(path, workspaceRoot) : path;
 }
 
 /** Route segments that `normalizeRoutePath` joins back into the same path, root included. */

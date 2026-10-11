@@ -213,6 +213,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   basename,
+  expandHomeFilePath,
   fileRoutePathSegments,
   isAbsolutePath,
   resolveWorkspaceRelativeFilePath,
@@ -2343,7 +2344,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         });
         return;
       }
-      const presentation = resolveMarkdownLinkPresentation(href);
+      const linkPresentation = resolveMarkdownLinkPresentation(href);
+      const presentation =
+        linkPresentation.kind === "file"
+          ? {
+              ...linkPresentation,
+              path: expandHomeFilePath(linkPresentation.path, props.workspaceRoot),
+            }
+          : linkPresentation;
       if (presentation.kind === "file") {
         const relativePath = resolveWorkspaceRelativeFilePath(
           props.workspaceRoot,

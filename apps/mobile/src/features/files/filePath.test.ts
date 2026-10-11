@@ -1,11 +1,40 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  expandHomeFilePath,
   fileRoutePathSegments,
   isSvgImagePreviewFile,
   resolveWorkspaceRelativeFilePath,
   fileHeaderSubtitle,
 } from "./filePath";
+
+describe("expandHomeFilePath", () => {
+  it.each([
+    ["/Users/tommy/repo", "/Users/tommy/.zshrc"],
+    ["/home/tommy/repo", "/home/tommy/.zshrc"],
+    ["C:\\Users\\tommy\\repo", "C:\\Users\\tommy\\.zshrc"],
+  ])("expands host-home paths inferred from %s", (workspaceRoot, expected) => {
+    expect(expandHomeFilePath("~/.zshrc", workspaceRoot)).toBe(expected);
+  });
+
+  it.each([null, undefined, "/repo"])(
+    "keeps home paths when home cannot be inferred from %s",
+    (root) => {
+      expect(expandHomeFilePath("~/.zshrc", root)).toBe("~/.zshrc");
+    },
+  );
+
+  it.each(["src/app.ts", "/tmp/report.md"])("preserves existing file paths: %s", (path) => {
+    expect(expandHomeFilePath(path, "/Users/tommy/repo")).toBe(path);
+  });
+
+  it("routes a home path inside the workspace as a workspace file", () => {
+    const root = "/Users/tommy/repo";
+    expect(
+      resolveWorkspaceRelativeFilePath(root, expandHomeFilePath("~/repo/src/app.ts", root)),
+    ).toBe("src/app.ts");
+  });
+});
 
 describe("fileRoutePathSegments", () => {
   it("round-trips workspace-relative and host paths through the route", () => {
