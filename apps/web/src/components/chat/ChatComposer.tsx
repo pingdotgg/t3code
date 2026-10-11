@@ -225,6 +225,7 @@ import {
 } from "~/lib/composerContextReferences";
 import {
   asKnownContextRecord,
+  attachmentContextRecord,
   composerContextImportLookupIds,
   isSameComposerContextPayload,
   uploadedAttachmentContextRecord,
@@ -243,6 +244,10 @@ import {
   threadContextRecord,
   threadContextReference,
 } from "~/lib/composerContextRecords";
+import {
+  copiedComposerAttachmentFile,
+  rememberCopiedComposerAttachments,
+} from "~/lib/copiedComposerAttachments";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell, useThreadShells } from "~/state/entities";
@@ -3134,9 +3139,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  /** Runs on copy and cut: also remembers the copied attachments' bytes for same-client pastes. */
   const buildContextClipboardFragment = useCallback(
     (contextIds: ReadonlyArray<string>): string | null => {
       const wanted = new Set(contextIds);
+      const copiedFiles = new Map<string, File>();
       // An annotation's screenshot is referenced by the annotation record, not by the copied
       // text. Pull it in so the round-trip keeps the image the annotation points at.
       for (const annotation of composerPreviewAnnotations) {
@@ -3168,19 +3175,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             wanted.has(toKindScopedComposerContextId(attachment.type, attachment.id)),
           )
           .flatMap((attachment) => {
-            const record = uploadedAttachmentContextRecord(
-              attachment,
-              uploadsByImageId[attachment.id],
-            );
-            return record ? [record] : [];
+            // An upload still in flight has no server id yet. The draft id stands in: a paste on
+            // this client takes the remembered bytes, and anywhere else reports it unavailable.
+            const record =
+              uploadedAttachmentContextRecord(attachment, uploadsByImageId[attachment.id]) ??
+              (attachment.file
+                ? attachmentContextRecord({ attachment, attachmentId: attachment.id })
+                : null);
+            if (!record) return [];
+            if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
+            return [record];
           }),
       ];
       if (records.length === 0) return null;
-      return encodeComposerContextFragment({
+      const fragment = encodeComposerContextFragment({
         version: 1,
         source: { environmentId, ...(activeThread ? { threadId: activeThread.id } : {}) },
         records,
       });
+      if (fragment) rememberCopiedComposerAttachments(environmentId, copiedFiles);
+      return fragment;
     },
     [
       activeThread,
@@ -3195,8 +3209,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   /**
-   * Bytes for a pasted image or file come back through the source environment's asset URL
-   * (the client is the only party that can reach both) and re-enter this draft as a normal
+   * Bytes for a pasted image or file come from this client's latest composer copy when it has
+   * them, otherwise through the source environment's asset URL (the client is the only party
+   * that can reach both). Either way they re-enter this draft as a normal
    * attachment under a fresh id. The pasted chip is rewritten to that id and reads as
    * unresolved until the bytes land; a failed transfer says so and leaves the chip to remove.
    */
@@ -3214,33 +3229,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: `${reason} Remove the chip or attach the file again.`,
         });
       };
-      const sourceConnection = readPreparedConnection(sourceEnvironmentId);
-      if (!sourceConnection) {
-        fail("The environment it came from is not connected.");
-        return;
-      }
-      const result = await createAssetUrl({
-        environmentId: sourceEnvironmentId,
-        input: { resource: { _tag: "attachment", attachmentId: record.attachmentId } },
-      });
-      const url =
-        result._tag === "Success"
-          ? resolveAssetUrl(sourceConnection.httpBaseUrl, result.value.relativeUrl)
-          : null;
-      if (!url) {
-        fail("The original attachment is no longer available.");
-        return;
-      }
-      let blob: Blob;
-      try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        blob = await response.blob();
-      } catch {
-        fail("Downloading it from the source failed.");
-        return;
-      }
-      const file = new File([blob], record.name, { type: record.mimeType || blob.type });
+      const download = async (): Promise<File | null> => {
+        const sourceConnection = readPreparedConnection(sourceEnvironmentId);
+        if (!sourceConnection) {
+          fail("The environment it came from is not connected.");
+          return null;
+        }
+        const result = await createAssetUrl({
+          environmentId: sourceEnvironmentId,
+          input: { resource: { _tag: "attachment", attachmentId: record.attachmentId } },
+        });
+        const url =
+          result._tag === "Success"
+            ? resolveAssetUrl(sourceConnection.httpBaseUrl, result.value.relativeUrl)
+            : null;
+        if (!url) {
+          fail("The original attachment is no longer available.");
+          return null;
+        }
+        try {
+          const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const blob = await response.blob();
+          return new File([blob], record.name, { type: record.mimeType || blob.type });
+        } catch {
+          fail("Downloading it from the source failed.");
+          return null;
+        }
+      };
+      // Copied on this client: the bytes are still here even if the source upload is not.
+      const file =
+        copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId) ??
+        (await download());
+      if (!file) return;
       // The draft these bytes belong to may have been sent or switched away from while they
       // downloaded. Dropping them here keeps them out of whatever draft is open now.
       if (attachmentTargetKeyRef.current !== importTargetKey) return;
@@ -3323,6 +3344,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           const found = composerContextRecords.get(contextId);
           return found ? [found] : [];
         })[0];
+        // Pasting a copied attachment back into the draft that still holds its bytes is the
+        // same attachment, whether or not its upload has finished since the copy.
+        if (
+          sourceEnvironmentId !== null &&
+          (record.kind === "image" || record.kind === "file") &&
+          (existing?.kind === "image" || existing?.kind === "file") &&
+          existing.record.file !== null &&
+          existing.record.file ===
+            copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId)
+        ) {
+          continue;
+        }
         const existingRecord =
           existing?.kind === "terminal"
             ? terminalContextRecord(existing.record)
