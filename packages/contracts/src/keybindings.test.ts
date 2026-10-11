@@ -89,6 +89,13 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedUsageOpen.command, "usage.open");
 
+    const parsedPullRequestsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+p",
+      command: "pullRequests.open",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedPullRequestsOpen.command, "pullRequests.open");
+
     const parsedThemeEditor = yield* decode(KeybindingRule, {
       key: "mod+alt+shift+t",
       command: "themeEditor.toggle",
