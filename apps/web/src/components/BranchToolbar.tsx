@@ -6,6 +6,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
+  CloudIcon,
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
@@ -28,6 +29,9 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
 import {
+  applyRunOnSelection,
+  CLOUD_RUN_VALUE,
+  type CloudRunOption,
   type EnvMode,
   type EnvironmentOption,
   resolveContextStripLabelsCompact,
@@ -99,6 +103,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  /** Offers the selected provider's cloud under Run on. */
+  cloudRun?: CloudRunOption | undefined;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
 }
@@ -151,6 +157,7 @@ interface RunContextSelectorProps {
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
+  cloudRun: CloudRunOption | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
@@ -172,6 +179,7 @@ const RunContextSelector = memo(function RunContextSelector({
   showEnvironmentPicker,
   showEnvironmentIndicator,
   onEnvironmentChange,
+  cloudRun,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
@@ -197,8 +205,12 @@ const RunContextSelector = memo(function RunContextSelector({
       : effectiveEnvMode === "worktree"
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const runOnLabel = cloudRun?.selected
+    ? cloudRun.label
+    : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on");
+  const canPickRunOn = showEnvironmentPicker || cloudRun?.onChange !== undefined;
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  const isLocked = envLocked || (envModeLocked && (!isPanel || !canPickRunOn));
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -234,7 +246,12 @@ const RunContextSelector = memo(function RunContextSelector({
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-          {autoEnvironmentLabel ? (
+          {cloudRun?.selected ? (
+            <CloudIcon
+              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+              aria-hidden="true"
+            />
+          ) : autoEnvironmentLabel ? (
             <ScaleIcon
               className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
               aria-hidden="true"
@@ -246,7 +263,7 @@ const RunContextSelector = memo(function RunContextSelector({
             />
           )}
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{runOnLabel}</TooltipPopup>
       </Tooltip>
       {workspaceIcon}
     </span>
@@ -257,8 +274,7 @@ const RunContextSelector = memo(function RunContextSelector({
     <>
       {icon}
       <ComposerContextLabel displayMode={displayMode}>
-        {autoEnvironmentLabel ??
-          (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
+        {showEnvironmentIndicator ? runOnLabel : workspaceLabel}
       </ComposerContextLabel>
     </>
   );
@@ -296,7 +312,7 @@ const RunContextSelector = memo(function RunContextSelector({
         aria-label={isPanel ? "Run context" : undefined}
         data-composer-context-control
         data-composer-shortcut={[
-          showEnvironmentPicker && !envLocked ? "composer.host" : "",
+          canPickRunOn && !envLocked ? "composer.host" : "",
           !envModeLocked ? "composer.workspace" : "",
         ].join(" ")}
       >
@@ -315,16 +331,26 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         {...(!isPanel ? composerFloatingLayerProps : {})}
       >
-        {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
+        {canPickRunOn ? (
           <>
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={autoEnvironmentLabel ? "auto" : environmentId}
+                value={
+                  cloudRun?.selected
+                    ? CLOUD_RUN_VALUE
+                    : autoEnvironmentLabel
+                      ? "auto"
+                      : environmentId
+                }
                 onValueChange={(value) =>
-                  value === "auto"
-                    ? onAutoEnvironment?.()
-                    : onEnvironmentChange(value as EnvironmentId)
+                  applyRunOnSelection({
+                    value,
+                    environmentId,
+                    cloudRun,
+                    onAutoEnvironment,
+                    onEnvironmentChange,
+                  })
                 }
               >
                 {onAutoEnvironment && (
@@ -344,10 +370,12 @@ const RunContextSelector = memo(function RunContextSelector({
                     </span>
                   </MenuRadioItem>
                 )}
-                {availableEnvironments.map((env) => (
+                {(availableEnvironments ?? []).map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
-                    disabled={envLocked}
+                    disabled={
+                      envLocked || (env.environmentId !== environmentId && !onEnvironmentChange)
+                    }
                     value={env.environmentId}
                     closeOnClick
                   >
@@ -357,6 +385,21 @@ const RunContextSelector = memo(function RunContextSelector({
                     </span>
                   </MenuRadioItem>
                 ))}
+                {cloudRun ? (
+                  <MenuRadioItem
+                    disabled={envLocked || !cloudRun.onChange}
+                    value={CLOUD_RUN_VALUE}
+                    onClick={() => {
+                      if (cloudRun.selected) cloudRun.onChange?.(true);
+                    }}
+                    closeOnClick
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <CloudIcon className="size-3" aria-hidden="true" />
+                      <span className="min-w-0 truncate">{cloudRun.label}</span>
+                    </span>
+                  </MenuRadioItem>
+                ) : null}
               </MenuRadioGroup>
             </MenuGroup>
             <MenuSeparator />
@@ -614,6 +657,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  cloudRun,
   composerControlsHostRef,
   contextStripVisible = true,
 }: BranchToolbarProps) {
@@ -699,10 +743,12 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: showEnvironmentPicker,
-  });
+  const showEnvironmentIndicator =
+    cloudRun?.selected === true ||
+    shouldShowEnvironmentIndicator({
+      activeEnvironment: activeEnvironmentOption,
+      canPickEnvironment: showEnvironmentPicker || cloudRun?.onChange !== undefined,
+    });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
@@ -723,8 +769,11 @@ export const BranchToolbar = memo(function BranchToolbar({
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
             showEnvironmentPicker={showEnvironmentPicker}
-            showEnvironmentIndicator={activeEnvironmentOption !== null}
+            showEnvironmentIndicator={
+              activeEnvironmentOption !== null || cloudRun?.selected === true
+            }
             onEnvironmentChange={onEnvironmentChange}
+            cloudRun={cloudRun}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
@@ -779,6 +828,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentPicker={showEnvironmentPicker}
             showEnvironmentIndicator={showEnvironmentIndicator}
             onEnvironmentChange={onEnvironmentChange}
+            cloudRun={cloudRun}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
@@ -805,6 +855,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                cloudRun={cloudRun}
               />
               {showGitControls ? (
                 <Separator

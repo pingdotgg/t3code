@@ -1,3 +1,4 @@
+import { useComposerCloudRun } from "./chat/useComposerCloudRun";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -84,6 +85,9 @@ import {
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
+  type ProviderCloudConfiguration,
+  type ProviderOptionSelection,
+  withCloudRunOptions,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -377,6 +381,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
+  useEffectiveComposerModelState,
   DraftId,
 } from "../composerDraftStore";
 import {
@@ -3273,6 +3278,85 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const { modelOptions: composerModelOptionsByInstance, selectedModel: composerSelectedModel } =
+    useEffectiveComposerModelState({
+      threadRef: composerDraftTarget,
+      providers: providerStatuses,
+      selectedProvider,
+      selectedInstanceId: activeProviderInstanceId,
+      threadModelSelection: activeThread?.modelSelection,
+      projectModelSelection: activeProjectDefaultModelSelection,
+      settings,
+    });
+  const activeModelOptions = activeProviderInstanceId
+    ? composerModelOptionsByInstance?.[activeProviderInstanceId]
+    : undefined;
+  const setActiveModelOptions = useCallback(
+    (options: ReadonlyArray<ProviderOptionSelection>) => {
+      if (!activeProviderInstanceId) return;
+      setProviderModelOptions(composerDraftTarget, selectedProvider, options, {
+        instanceId: activeProviderInstanceId,
+        model: composerSelectedModel,
+      });
+    },
+    [
+      activeProviderInstanceId,
+      composerDraftTarget,
+      composerSelectedModel,
+      selectedProvider,
+      setProviderModelOptions,
+    ],
+  );
+  const openCloudSetupDraft = useCallback(
+    (config: ProviderCloudConfiguration) => {
+      if (!activeProject || !activeProviderInstanceId) return;
+      const nextDraftId = newDraftId();
+      const store = useComposerDraftStore.getState();
+      const projectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
+      const logicalKey = `${deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)}:cloud-setup:${config.id}`;
+      store.setLogicalProjectDraftThreadId(logicalKey, projectRef, nextDraftId, {
+        threadId: newThreadId(),
+        createdAt: new Date().toISOString(),
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        branch: activeThread?.branch ?? null,
+        worktreePath: null,
+        envMode: "local",
+      });
+      store.setModelSelection(nextDraftId, {
+        instanceId: activeProviderInstanceId,
+        model: composerSelectedModel,
+        options: withCloudRunOptions([], { environment: config.id, setup: true }),
+      });
+      store.setPrompt(
+        nextDraftId,
+        `Use $cloud-environment-onboarding:setup to set up this cloud environment: ${config.name}`,
+      );
+      void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(nextDraftId) });
+    },
+    [
+      activeProject,
+      activeProviderInstanceId,
+      activeThread?.branch,
+      composerSelectedModel,
+      navigate,
+      projectGroupingSettings,
+    ],
+  );
+  const composerCloudRun = useComposerCloudRun({
+    environmentId,
+    projectId: activeProject?.id,
+    repositoryIdentity: activeProject?.repositoryIdentity,
+    provider: activeProviderStatus,
+    instanceId: activeProviderInstanceId,
+    modelOptions: activeModelOptions,
+    envLocked,
+    threadKey: routeThreadKey,
+    setModelOptions: setActiveModelOptions,
+    openSetupDraft: openCloudSetupDraft,
+  });
+  const { cloudRun, bannerItem: cloudSetupBannerItem } = composerCloudRun;
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -7832,12 +7916,14 @@ export default function ChatView(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const cloudSetupItems = cloudSetupBannerItem === null ? [] : [cloudSetupBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...cloudSetupItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
       ];
@@ -7847,6 +7933,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...cloudSetupItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
       {
@@ -7903,6 +7990,7 @@ export default function ChatView(props: ChatViewProps) {
     goalBannerItem,
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
+    cloudSetupBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
     usageLimitsBanner,
@@ -8830,6 +8918,10 @@ export default function ChatView(props: ChatViewProps) {
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
       notifyDirectAnnotationAttached();
+      return;
+    }
+    if (composerCloudRun.sendBlockReason) {
+      composerCloudRun.openEnvironmentPicker();
       return;
     }
     if (needsLoadBalancing) {
@@ -11198,6 +11290,7 @@ export default function ChatView(props: ChatViewProps) {
     isGitRepo,
     envLocked,
     availableEnvironments: logicalProjectEnvironments,
+    cloudRun,
     autoEnvironmentLabel,
     onAutoEnvironment:
       draftId &&
@@ -11696,7 +11789,8 @@ export default function ChatView(props: ChatViewProps) {
                                           ? "Messages loading"
                                           : worktreeSetupBlocksSend
                                             ? "Preparing worktree"
-                                            : projectCloneSendBlockReason
+                                            : (composerCloudRun.sendBlockReason ??
+                                              projectCloneSendBlockReason)
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={
@@ -11886,6 +11980,7 @@ export default function ChatView(props: ChatViewProps) {
                                     : undefined
                                 }
                                 availableEnvironments={logicalProjectEnvironments}
+                                cloudRun={cloudRun}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
                               />
@@ -12136,6 +12231,7 @@ export default function ChatView(props: ChatViewProps) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
+      {composerCloudRun.dialog}
       <LinkPullRequestDialogHost />
       {expandedImage && (
         <ExpandedImageDialog

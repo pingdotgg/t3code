@@ -1,4 +1,4 @@
-import type { ProviderOptionSelection } from "@t3tools/contracts";
+import { isCloudRunOption, type ProviderOptionSelection } from "@t3tools/contracts";
 import { appAtomRegistry } from "./atom-registry";
 import {
   modelOptionMemoryAtom,
@@ -40,11 +40,12 @@ export function rememberModelOptions(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
 ): void {
-  if (options.length === 0) {
+  const modelOptions = options.filter((option) => !isCloudRunOption(option));
+  if (modelOptions.length === 0) {
     return;
   }
   const current = appAtomRegistry.get(modelOptionMemoryAtom);
-  const next = recordModelOptionsInState(current, String(instanceId), model, options);
+  const next = recordModelOptionsInState(current, String(instanceId), model, modelOptions);
   if (next !== current) {
     appAtomRegistry.set(modelOptionMemoryAtom, next);
     schedulePersistComposerState();

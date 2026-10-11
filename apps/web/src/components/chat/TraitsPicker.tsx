@@ -6,6 +6,7 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
+  keepCloudRunOptions,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -336,7 +337,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     planModeEnabled,
   });
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
-    updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
+    const nextOptions = buildProviderOptionSelectionsFromDescriptors(nextDescriptors);
+    // Keep the thread's Run on cloud choice, which no trait descriptor carries.
+    updateModelOptions(keepCloudRunOptions(nextOptions, modelOptions));
   };
 
   const handleSelectChange = (

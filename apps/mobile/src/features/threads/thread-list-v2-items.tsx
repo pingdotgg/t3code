@@ -17,7 +17,11 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  selectsCloudRun,
+  type EnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
@@ -606,6 +610,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
 
+  const cloudRunLabel = selectsCloudRun(thread.modelSelection.options)
+    ? (props.providers?.find(
+        (candidate) => candidate.instanceId === thread.modelSelection.instanceId,
+      )?.cloudRunLabel ?? "Cloud")
+    : null;
+  // A cloud thread names its cloud where other rows name their machine.
+  const locationLabel = cloudRunLabel ?? props.environmentLabel;
   const { providerDrivers, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
@@ -1073,7 +1084,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
-        ) : thread.branch || props.environmentLabel ? (
+        ) : thread.branch || locationLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
              and machine-only fills the row for non-git projects. The glyph
@@ -1103,8 +1114,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   {thread.branch}
                 </Text>
               ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
+              {thread.branch && locationLabel ? "  ·  " : null}
+              {locationLabel ? (
                 <Text
                   className={cn(
                     "text-xs",
@@ -1113,11 +1124,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                       : rowAppearance.tertiaryForegroundClassName,
                   )}
                 >
-                  {props.environmentLabel}
+                  {locationLabel}
                 </Text>
               ) : null}
             </Text>
-            {props.environmentLabel && props.environmentMachine ? (
+            {cloudRunLabel ? (
+              <SymbolView
+                name="cloud"
+                size={11}
+                tintColorClassName={
+                  selected
+                    ? selectedThreadRowColors.mutedIconTintClassName
+                    : rowAppearance.tertiaryIconTintClassName
+                }
+              />
+            ) : props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}
                 size={11}

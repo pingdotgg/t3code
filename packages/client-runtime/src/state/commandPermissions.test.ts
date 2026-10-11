@@ -59,6 +59,32 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "requires the destination operate grant for cloud creation, publishing, and deletion",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const cloud = createCommandPermissions(
+            runtime,
+            WS_METHODS.providerMutateCloudEnvironment,
+          );
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(cloud.permissionAtom(env))).toBe(true);
+          yield* cloud.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(cloud.permissionAtom(other))).toBe(false);
+          expect((yield* cloud.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect((yield* cloud.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+        }),
+      ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

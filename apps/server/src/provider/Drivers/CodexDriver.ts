@@ -21,7 +21,18 @@
  *
  * @module provider/Drivers/CodexDriver
  */
-import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { makeCodexCloud } from "../CodexCloud.ts";
+import {
+  makeCodexCloudClientFactory,
+  withCloudConversationCapabilities,
+} from "../CodexCloudConversation.ts";
+import {
+  CodexSettings,
+  isCloudEnvironmentConfig,
+  ProviderDriverKind,
+  selectedCloudEnvironment,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,6 +49,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   createCodexAdapterV2,
+  CodexAppServerClientFactory,
   type CodexAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -78,6 +90,14 @@ import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  makeCloudAdapterV2,
+  CloudCliError,
+  makeCloudCli,
+  makeCodexCloudBackend,
+  withCloudRun,
+  withCloudRunOption,
+} from "@t3tools/provider-cloud/server";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -158,13 +178,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
       const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
-      const stampIdentity = withInstanceIdentity({
+      const stampInstance = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
+      const stampIdentity: typeof stampInstance = (draft) =>
+        withCloudRunOption(stampInstance(draft), "Codex Cloud", true);
       yield* materializeCodexShadowHome(homeLayout).pipe(
         Effect.mapError(
           (cause) =>
@@ -196,7 +218,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         ),
       );
 
-      const orchestrationAdapter = yield* createCodexAdapterV2(
+      const nativeAdapter = yield* createCodexAdapterV2(
         {
           instanceId,
           displayName,
@@ -217,6 +239,61 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
             }),
         ),
       );
+      const cloudCli = yield* makeCloudCli(effectiveConfig.binaryPath, {
+        ...processEnv,
+        ...(effectiveConfig.homePath ? { CODEX_HOME: effectiveConfig.homePath } : {}),
+      });
+      const cloudEnvironments = yield* makeCodexCloud(
+        instanceId,
+        homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
+      );
+      // Environment configurations run as Codex conversations over the cloud
+      // socket; other environments run as `codex cloud exec` tasks.
+      const conversationAdapter = yield* createCodexAdapterV2({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.map(withCloudConversationCapabilities),
+        Effect.provideService(
+          CodexAppServerClientFactory,
+          makeCodexCloudClientFactory(cloudEnvironments),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build the Codex Cloud conversation adapter.",
+              cause,
+            }),
+        ),
+      );
+      const execAdapter = yield* makeCloudAdapterV2({
+        instanceId,
+        driver: DRIVER_KIND,
+        backend: makeCodexCloudBackend({
+          cli: cloudCli,
+          resolveEnvironment: (requested) =>
+            cloudEnvironments
+              .resolveExecEnvironment(requested)
+              .pipe(Effect.mapError((cause) => new CloudCliError({ detail: cause.detail, cause }))),
+        }),
+      });
+      const cloudAdapterFor = (selection: ModelSelection) =>
+        isCloudEnvironmentConfig(selectedCloudEnvironment(selection.options))
+          ? conversationAdapter
+          : execAdapter;
+      const orchestrationAdapter = withCloudRun(nativeAdapter, {
+        ...execAdapter,
+        capabilitiesFor: (selection) => cloudAdapterFor(selection).getCapabilities(),
+        planSelectionTransition: (input) =>
+          cloudAdapterFor(input.current).planSelectionTransition(input),
+        openSession: (input) => cloudAdapterFor(input.modelSelection).openSession(input),
+      });
 
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
@@ -379,6 +456,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         enabled,
         snapshot,
         snapshotForCwd,
+        cloudEnvironments,
         consumeResetCredit,
         orchestrationAdapter,
         textGeneration,

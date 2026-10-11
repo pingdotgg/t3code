@@ -18,6 +18,7 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
+  readonly cloudEnvironmentByProject?: Readonly<Record<string, string>>;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
@@ -96,6 +97,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    cloudEnvironmentByProject?: Preferences["cloudEnvironmentByProject"];
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
@@ -120,6 +122,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
   } = {};
+
+  if (parsed.cloudEnvironmentByProject && typeof parsed.cloudEnvironmentByProject === "object") {
+    preferences.cloudEnvironmentByProject = Object.fromEntries(
+      Object.entries(parsed.cloudEnvironmentByProject).filter(
+        ([, value]) => typeof value === "string",
+      ),
+    );
+  }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;

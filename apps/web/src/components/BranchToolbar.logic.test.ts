@@ -1,6 +1,7 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  applyRunOnSelection,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -881,5 +882,35 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("applyRunOnSelection", () => {
+  const here = EnvironmentId.make("here");
+  const there = EnvironmentId.make("there");
+  const pick = (value: string, cloudSelected: boolean) => {
+    const calls: Array<string> = [];
+    applyRunOnSelection({
+      value,
+      environmentId: here,
+      cloudRun: {
+        label: "Codex Cloud",
+        selected: cloudSelected,
+        onChange: (cloud) => calls.push(`cloud:${cloud}`),
+      },
+      onAutoEnvironment: () => calls.push("auto"),
+      onEnvironmentChange: (environmentId) => calls.push(`env:${environmentId}`),
+    });
+    return calls;
+  };
+
+  it("picks the cloud without leaving the machine", () => {
+    expect(pick("cloud", false)).toEqual(["cloud:true"]);
+  });
+
+  it("leaves the cloud for the current machine or another one", () => {
+    expect(pick(here, true)).toEqual(["cloud:false"]);
+    expect(pick(there, true)).toEqual(["cloud:false", `env:${there}`]);
+    expect(pick(there, false)).toEqual([`env:${there}`]);
   });
 });

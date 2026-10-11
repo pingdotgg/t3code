@@ -10,7 +10,10 @@ import { Atom } from "effect/reactivity";
 export type ThreadListProvider = Pick<
   ServerProvider,
   "instanceId" | "driver" | "displayName" | "accentColor" | "iconUrl"
->;
+> & {
+  /** Names the provider's cloud, so rows for threads that run there can say so. */
+  readonly cloudRunLabel?: string | undefined;
+};
 
 const capabilityKeys = [
   "threadSettlement",
@@ -25,12 +28,13 @@ const capabilityKeys = [
 function selectEnvironment(config: ServerConfig) {
   return {
     providers: config.providers.map(
-      ({ instanceId, driver, displayName, accentColor, iconUrl }) => ({
+      ({ instanceId, driver, displayName, accentColor, iconUrl, cloudRun }) => ({
         instanceId,
         driver,
         displayName,
         accentColor,
         iconUrl,
+        cloudRunLabel: cloudRun?.label,
       }),
     ),
     machineKind: resolveEnvironmentMachineKind(config),
@@ -53,7 +57,8 @@ function sameProviders(
         provider.driver === other.driver &&
         provider.displayName === other.displayName &&
         provider.accentColor === other.accentColor &&
-        provider.iconUrl === other.iconUrl
+        provider.iconUrl === other.iconUrl &&
+        provider.cloudRunLabel === other.cloudRunLabel
       );
     })
   );

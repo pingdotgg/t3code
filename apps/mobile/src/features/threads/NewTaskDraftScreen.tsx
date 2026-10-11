@@ -1009,9 +1009,12 @@ export function NewTaskDraftScreen(props: {
   ]);
 
   const selectedEnvironmentLabel =
+    (flow.cloudRunSelected ? flow.cloudRunLabel : null) ??
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+    )?.environmentLabel ??
+    "Environment";
+  const canPickRunOn = flow.environments.length > 1 || flow.cloudRunLabel !== null;
   const availableCurrentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
@@ -1242,6 +1245,7 @@ export function NewTaskDraftScreen(props: {
     const initialMessageText = draft.text.trim();
 
     if (
+      flow.cloudSendBlockReason !== null ||
       attachmentBlockReason !== null ||
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
@@ -1390,6 +1394,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    flow.cloudSendBlockReason === null &&
     !isImportingContext &&
     !cloneBlocksStart &&
     taskPermissionReason === null &&
@@ -1508,18 +1513,20 @@ export function NewTaskDraftScreen(props: {
       disabled={isComposerInteractionLocked || voiceInput.isBusy}
       renderIcon={(size) => (
         <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+          kind={
+            flow.cloudRunSelected
+              ? "cloud"
+              : resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)
+          }
           size={size}
           tintColorClassName="accent-icon-muted"
         />
       )}
       label={`on ${selectedEnvironmentLabel}`}
       maxWidth={flow.isScratchDraft ? 170 : 260}
-      onPress={
-        flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
-      }
-      showChevron={flow.environments.length > 1}
-      static={flow.environments.length <= 1}
+      onPress={canPickRunOn ? () => openContextPicker("NewTaskEnvironment") : undefined}
+      showChevron={canPickRunOn}
+      static={!canPickRunOn}
     />
   );
   // A thread without a project has no project to name, so it asks plainly,
@@ -1670,8 +1677,10 @@ export function NewTaskDraftScreen(props: {
       ) : null}
       {flow.canChooseWorkspace ? <View className="pb-1">{workspaceControls}</View> : null}
 
-      {taskPermissionReason ? (
-        <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>
+      {taskPermissionReason || flow.cloudSendBlockReason ? (
+        <Text className="px-3 py-2 text-xs text-muted-foreground">
+          {taskPermissionReason ?? flow.cloudSendBlockReason}
+        </Text>
       ) : null}
 
       {modelUnavailable ? (
@@ -1814,6 +1823,7 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     taskPermissionReason ??
+                    flow.cloudSendBlockReason ??
                     attachmentBlockReason ??
                     (cloneBlocksStart
                       ? projectClone === null || projectClone.phase === "running"

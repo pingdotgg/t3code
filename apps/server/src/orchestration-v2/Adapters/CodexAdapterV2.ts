@@ -1277,6 +1277,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
+    readonly modelSelection: ModelSelection;
     readonly environment: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
@@ -1715,6 +1716,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
+          modelSelection: input.modelSelection,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });

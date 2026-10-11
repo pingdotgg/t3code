@@ -1,8 +1,13 @@
+import { CloudEnvironmentSetup } from "./CloudEnvironmentSetup";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  isCloudEnvironmentConfig,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -207,6 +212,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const serverConfigs = useServerConfigs();
+  const [cloudSetup, setCloudSetup] = useState<"create" | "review" | null>(null);
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <NativeStackScreenOptions
@@ -245,19 +251,120 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     tintColorClassName="accent-icon-muted"
                   />
                 }
-                isLast={index === flow.environments.length - 1}
+                isLast={index === flow.environments.length - 1 && flow.cloudRunLabel === null}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
+                  if (flow.cloudRunSelected) flow.setCloudRun(false);
+                  if (flow.selectedEnvironmentId === environment.environmentId) {
+                    navigation.goBack();
+                    return;
+                  }
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  !flow.cloudRunSelected && flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}
+            {flow.cloudRunLabel !== null ? (
+              <SelectionRow
+                icon={
+                  <EnvironmentMachineSymbol
+                    kind="cloud"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon-muted"
+                  />
+                }
+                isLast
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  flow.setCloudRun(true);
+                  if (!flow.cloudRequiresEnvironment) navigation.goBack();
+                }}
+                selected={flow.cloudRunSelected}
+                title={flow.cloudRunLabel}
+              />
+            ) : null}
           </PickerSurface>
+          {flow.cloudRunSelected && flow.cloudRequiresEnvironment ? (
+            <View className="mt-4 gap-3">
+              <Text className="text-sm text-foreground-muted">
+                Choose a cloud environment. Your choice is remembered for this project.
+              </Text>
+              {flow.cloudEnvironments.isPending ? <ActivityIndicator /> : null}
+              {flow.cloudEnvironments.error ? (
+                <Text accessibilityRole="alert" className="text-sm text-destructive">
+                  {flow.cloudEnvironments.error}
+                </Text>
+              ) : !flow.cloudEnvironments.isPending && flow.cloudEnvironments.data?.length === 0 ? (
+                <Text className="text-sm text-foreground-muted">
+                  No cloud environments found. Create one to get started.
+                </Text>
+              ) : null}
+              {!flow.cloudEnvironments.error && flow.cloudEnvironments.data?.length ? (
+                <PickerSurface>
+                  {flow.cloudEnvironments.data.map((environment, index, environments) => (
+                    <SelectionRow
+                      key={environment.id}
+                      title={environment.label}
+                      {...(environment.repository
+                        ? { subtitle: `Suggested for ${environment.repository}` }
+                        : {})}
+                      selected={flow.cloudEnvironmentId === environment.id}
+                      disabled={flow.cloudEnvironments.isPending}
+                      isLast={index === environments.length - 1}
+                      onPress={() => {
+                        flow.setCloudEnvironment(environment.id);
+                        navigation.goBack();
+                      }}
+                    />
+                  ))}
+                </PickerSurface>
+              ) : null}
+              <PickerSurface>
+                <SelectionRow
+                  title="Create environment"
+                  selected={false}
+                  onPress={() => setCloudSetup("create")}
+                />
+                <SelectionRow
+                  title="Refresh environments"
+                  selected={false}
+                  disabled={flow.cloudEnvironments.isPending}
+                  isLast
+                  onPress={flow.cloudEnvironments.refresh}
+                />
+              </PickerSurface>
+              {isCloudEnvironmentConfig(flow.cloudEnvironmentId) ? (
+                <SelectionRow
+                  title="Review environment"
+                  selected={false}
+                  onPress={() => setCloudSetup("review")}
+                />
+              ) : null}
+              {cloudSetup && flow.selectedProject && flow.selectedModel ? (
+                <CloudEnvironmentSetup
+                  environmentId={flow.selectedProject.environmentId}
+                  instanceId={flow.selectedModel.instanceId}
+                  {...(cloudSetup === "review" && flow.cloudEnvironmentId
+                    ? { configId: flow.cloudEnvironmentId }
+                    : {})}
+                  onSetup={(config) => {
+                    flow.openCloudSetup(config);
+                    setCloudSetup(null);
+                    navigation.goBack();
+                  }}
+                  onChanged={flow.cloudEnvironments.refresh}
+                  onBack={() => setCloudSetup(null)}
+                />
+              ) : null}
+            </View>
+          ) : null}
         </ScrollView>
       </MaterialScreenContent>
     </View>

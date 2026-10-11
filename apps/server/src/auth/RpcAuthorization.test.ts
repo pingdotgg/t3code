@@ -35,6 +35,18 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("separates cloud discovery from environment mutations", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerListCloudRepositories)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerReadCloudConfiguration)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerMutateCloudEnvironment)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,

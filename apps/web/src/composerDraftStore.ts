@@ -24,6 +24,8 @@ import {
   type ScopedThreadRef,
   ThreadId,
   SnapShotSource,
+  keepCloudRun,
+  isCloudRunOption,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -3036,11 +3038,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
-            // survives Composer 2 → 2.5 and new chats.
-            const nextSelection =
-              normalized.options !== undefined
-                ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+            // survives Composer 2 → 2.5 and new chats. Where a chat runs is
+            // picked per chat, so the run location never becomes sticky.
+            const nextSelection = createModelSelection(
+              normalized.instanceId,
+              normalized.model,
+              (normalized.options ?? current?.options)?.filter(
+                (option) => !isCloudRunOption(option),
+              ),
+            );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
@@ -3162,8 +3168,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               if (normalized.options !== undefined || opts?.replaceOptions) {
                 // Explicit options provided (or the caller passed a complete
                 // snapshot whose absent options mean "no options") → use the
-                // selection as-is.
-                nextMap[normalized.instanceId] = normalized as ModelSelection;
+                // selection as-is, keeping a Run on cloud choice.
+                nextMap[normalized.instanceId] = keepCloudRun(
+                  normalized as ModelSelection,
+                  current,
+                );
               } else {
                 // No options in selection → preserve existing options, update provider+model
                 nextMap[normalized.instanceId] = createModelSelection(
@@ -3295,11 +3304,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // itself keeps preserving its current model on trait changes.
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
-              if (providerOpts) {
+              const stickyOptions = providerOpts?.filter((option) => !isCloudRunOption(option));
+              if (stickyOptions?.length) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,
                   stickyBase.model,
-                  providerOpts,
+                  stickyOptions,
                 );
                 // Remember the pick for this model so switching models and
                 // coming back restores it instead of another model's effort.
@@ -3307,7 +3317,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   ...state.stickyOptionsByModelByProvider,
                   [instanceKey]: {
                     ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
+                    [rememberedModel]: stickyOptions,
                   },
                 };
               } else if ((stickyBase.options?.length ?? 0) > 0) {

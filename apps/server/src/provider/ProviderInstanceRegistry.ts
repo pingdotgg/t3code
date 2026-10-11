@@ -51,6 +51,11 @@
 import {
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
+  ProviderSetupError,
+  type ProviderCloudEnvironmentsInput,
+  type ProviderCloudRepositoriesInput,
+  type ProviderCloudConfigurationInput,
+  type ProviderCloudEnvironmentMutation,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   type ProviderDriverKind,
@@ -67,6 +72,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -128,6 +134,51 @@ export class ProviderInstanceRegistry extends Context.Service<
     readonly subscribeChanges: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
 >()("t3/provider/ProviderInstanceRegistry") {}
+
+/** The enabled instance's cloud environments; the RPCs below all go through it. */
+const getCloudEnvironments = Effect.fn("ProviderInstanceRegistry.getCloudEnvironments")(function* (
+  instanceId: ProviderInstanceId,
+) {
+  const registry = yield* ProviderInstanceRegistry;
+  const instance = yield* registry.getInstance(instanceId);
+  if (!instance?.enabled || !instance.cloudEnvironments)
+    return yield* new ProviderSetupError({
+      instanceId,
+      operation: "cloud-environments",
+      detail: "This provider cannot manage cloud environments.",
+    });
+  return instance.cloudEnvironments;
+});
+const cloudSetupError = (instanceId: ProviderInstanceId, cause: ProviderDriverError) =>
+  new ProviderSetupError({ instanceId, operation: "cloud-environments", detail: cause.detail });
+export const listCloudEnvironments = Effect.fn("ProviderInstanceRegistry.listCloudEnvironments")(
+  function* (input: ProviderCloudEnvironmentsInput) {
+    return yield* (yield* getCloudEnvironments(input.instanceId))
+      .list(input.repository)
+      .pipe(Effect.mapError((cause) => cloudSetupError(input.instanceId, cause)));
+  },
+);
+export const listCloudRepositories = Effect.fn("ProviderInstanceRegistry.listCloudRepositories")(
+  function* (input: ProviderCloudRepositoriesInput) {
+    return yield* (yield* getCloudEnvironments(input.instanceId))
+      .listRepositories(input.query)
+      .pipe(Effect.mapError((cause) => cloudSetupError(input.instanceId, cause)));
+  },
+);
+export const readCloudConfiguration = Effect.fn("ProviderInstanceRegistry.readCloudConfiguration")(
+  function* (input: ProviderCloudConfigurationInput) {
+    return yield* (yield* getCloudEnvironments(input.instanceId))
+      .read(input.id)
+      .pipe(Effect.mapError((cause) => cloudSetupError(input.instanceId, cause)));
+  },
+);
+export const mutateCloudEnvironment = Effect.fn("ProviderInstanceRegistry.mutateCloudEnvironment")(
+  function* (input: ProviderCloudEnvironmentMutation) {
+    return yield* (yield* getCloudEnvironments(input.instanceId))
+      .mutate(input)
+      .pipe(Effect.mapError((cause) => cloudSetupError(input.instanceId, cause)));
+  },
+);
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh

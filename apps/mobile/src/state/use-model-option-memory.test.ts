@@ -23,6 +23,16 @@ afterEach(() => {
 });
 
 describe("model option memory state", () => {
+  it("does not carry a cloud destination into another project's model selection", () => {
+    rememberModelOptions("codex", "gpt-5.4", [
+      { id: "cloud", value: true },
+      { id: "cloudEnvironment", value: "project-environment" },
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+    expect(rememberedModelOptions("codex", "gpt-5.4")).toEqual([
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+  });
   it("records and looks up options per instance and model", () => {
     rememberModelOptions("codex", "gpt-5.3-codex", [...XHIGH]);
     rememberModelOptions("codex", "gpt-5.4", [...HIGH]);

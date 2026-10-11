@@ -53,6 +53,90 @@ export const ProviderOptionSelection = Schema.Struct({
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
 /**
+ * Boolean model option that runs a thread's turns in the provider's cloud
+ * instead of on its environment. Clients set it from the Cloud entry under
+ * Run on, offered when the provider snapshot has `cloudRun`; it is never a
+ * model trait, so option editors that rebuild a selection must carry it over.
+ */
+const CLOUD_RUN_OPTION_ID = "cloud";
+const CLOUD_ENVIRONMENT_OPTION_ID = "cloudEnvironment";
+/**
+ * Marks the conversation that sets up or edits a Codex Cloud environment with
+ * the `$cloud-environment-onboarding:setup` skill. Only these threads offer
+ * Edit and Publish environment.
+ */
+const CLOUD_ENVIRONMENT_SETUP_OPTION_ID = "cloudEnvironmentSetup";
+
+/** Whether an option belongs to the run location rather than the model. */
+export const isCloudRunOption = (option: ProviderOptionSelection): boolean =>
+  option.id === CLOUD_RUN_OPTION_ID ||
+  option.id === CLOUD_ENVIRONMENT_OPTION_ID ||
+  option.id === CLOUD_ENVIRONMENT_SETUP_OPTION_ID;
+
+/** Whether a selection's options mark a cloud environment setup conversation. */
+export const selectsCloudEnvironmentSetup = (
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): boolean =>
+  options?.some(
+    (option) => option.id === CLOUD_ENVIRONMENT_SETUP_OPTION_ID && option.value === true,
+  ) ?? false;
+
+/** The Codex Cloud destination saved with a thread's model selection. */
+export function selectedCloudEnvironment(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string | undefined {
+  const value = options?.find((option) => option.id === CLOUD_ENVIRONMENT_OPTION_ID)?.value;
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Where a selection runs in the cloud; `null` runs it on its machine. */
+interface CloudRunPlacement {
+  readonly environment?: string | undefined;
+  readonly setup?: boolean | undefined;
+}
+
+/** Replaces a selection's run location options, keeping its model traits. */
+export function withCloudRunOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  placement: CloudRunPlacement | null,
+): Array<ProviderOptionSelection> {
+  return [
+    ...(options ?? []).filter((option) => !isCloudRunOption(option)),
+    ...(placement
+      ? [
+          { id: CLOUD_RUN_OPTION_ID, value: true },
+          ...(placement.environment
+            ? [{ id: CLOUD_ENVIRONMENT_OPTION_ID, value: placement.environment }]
+            : []),
+          ...(placement.setup ? [{ id: CLOUD_ENVIRONMENT_SETUP_OPTION_ID, value: true }] : []),
+        ]
+      : []),
+  ];
+}
+
+/** Carries run location options through editors that only know model traits. */
+export function keepCloudRunOptions(
+  next: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  current: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (!selectsCloudRun(current)) return next ?? undefined;
+  return withCloudRunOptions(next, {
+    environment: selectedCloudEnvironment(next) ?? selectedCloudEnvironment(current),
+    setup: selectsCloudEnvironmentSetup(current),
+  });
+}
+
+/** Whether a Codex Cloud environment id names an editable configuration, which can be set up and published. */
+export const isCloudEnvironmentConfig = (id: string | null | undefined): id is string =>
+  /(?:^|~)asenvcfg_/.test(id ?? "");
+
+/** Whether a selection's options ask for the provider's cloud. */
+export const selectsCloudRun = (
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): boolean =>
+  options?.some((option) => option.id === CLOUD_RUN_OPTION_ID && option.value === true) ?? false;
+
+/**
  * Legacy on-disk shape for provider option selections, kept readable by the
  * decoder so we can tolerate stored data written before the v3 array shape.
  *

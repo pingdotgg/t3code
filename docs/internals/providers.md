@@ -9,6 +9,16 @@ A driver kind identifies an integration; an instance identifies one configuratio
 lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
 session or catalog state. For a new driver, start with [adding a provider](./adding-a-provider.md).
 
+## Cloud runs
+
+Codex Cloud is a place a thread runs, not a provider. The thread's model
+selection carries the `cloud` option, which clients offer under Run on when the snapshot has
+`cloudRun`; no model descriptor declares it, so option editors must keep it with `keepCloudRun`.
+The driver [wraps its adapter](../../packages/provider-cloud/src/server/cloudRun.ts) to open cloud
+selections on the cloud adapter. Codex shares one native session across threads, so the wrapper's
+`capabilitiesFor` gives each cloud thread its own session and capabilities. Like a machine, the run
+location is fixed once a session exists: the wrapper rejects selection changes that would move it.
+
 ## Process and account isolation
 
 The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP

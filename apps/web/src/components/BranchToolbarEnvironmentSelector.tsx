@@ -2,10 +2,15 @@ import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ScaleIcon } from "lucide-react";
+import { CloudIcon, ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import {
+  applyRunOnSelection,
+  CLOUD_RUN_VALUE,
+  type CloudRunOption,
+  type EnvironmentOption,
+} from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -24,6 +29,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  cloudRun?: CloudRunOption | undefined;
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
@@ -33,6 +39,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
+  cloudRun,
 }: BranchToolbarEnvironmentSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(() => {
@@ -48,8 +55,22 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         value: env.environmentId,
         label: env.label,
       })),
+      ...(cloudRun ? [{ value: CLOUD_RUN_VALUE, label: cloudRun.label }] : []),
     ],
-    [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
+    [availableEnvironments, autoEnvironmentLabel, cloudRun, onAutoEnvironment],
+  );
+  const runOnLabel = cloudRun?.selected
+    ? cloudRun.label
+    : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on");
+  const runOnIcon = cloudRun?.selected ? (
+    <CloudIcon className="size-3 shrink-0" aria-hidden="true" />
+  ) : autoEnvironmentLabel ? (
+    <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
+  ) : (
+    <EnvironmentMachineIcon
+      kind={activeEnvironment?.machine ?? "server"}
+      className="size-3 shrink-0"
+    />
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -57,23 +78,20 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   // the glass seam joining it to the composer assumes a fixed strip height, so
   // a shorter label would drag the seam out of line whenever this label is the
   // only thing in the strip.
-  if (envLocked || onEnvironmentChange === undefined) {
+  if (envLocked || (onEnvironmentChange === undefined && cloudRun?.onChange === undefined)) {
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
-        <EnvironmentMachineIcon
-          kind={activeEnvironment?.machine ?? "server"}
-          className="size-3 shrink-0"
-        />
-        <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
+        {runOnIcon}
+        <ComposerContextLabel>{runOnLabel}</ComposerContextLabel>
       </span>
     );
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{runOnLabel}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -81,9 +99,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? "auto" : environmentId}
+      value={cloudRun?.selected ? CLOUD_RUN_VALUE : autoEnvironmentLabel ? "auto" : environmentId}
       onValueChange={(value) =>
-        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
+        applyRunOnSelection({
+          value: String(value),
+          environmentId,
+          cloudRun,
+          onAutoEnvironment,
+          onEnvironmentChange,
+        })
       }
       items={environmentItems}
     >
@@ -99,19 +123,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             />
           }
         >
-          {autoEnvironmentLabel ? (
-            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
-          ) : (
-            <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0"
-            />
-          )}
+          {runOnIcon}
           <ComposerContextLabel>
             <SelectValue />
           </ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{runOnLabel}</TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
@@ -130,13 +147,31 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             </SelectItem>
           )}
           {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={env.environmentId}>
+            <SelectItem
+              key={env.environmentId}
+              value={env.environmentId}
+              disabled={env.environmentId !== environmentId && !onEnvironmentChange}
+            >
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>
           ))}
+          {cloudRun ? (
+            <SelectItem
+              value={CLOUD_RUN_VALUE}
+              disabled={!cloudRun.onChange}
+              onClick={() => {
+                if (cloudRun.selected) cloudRun.onChange?.(true);
+              }}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <CloudIcon className="size-3" aria-hidden="true" />
+                {cloudRun.label}
+              </span>
+            </SelectItem>
+          ) : null}
         </SelectGroup>
       </SelectPopup>
     </Select>
