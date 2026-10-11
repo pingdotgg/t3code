@@ -2,6 +2,7 @@ import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
 import { Check } from "lucide-react";
 import { Check as CheckGlyph, CircleAlert } from "lucide";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -12,6 +13,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { deviceEnvironment } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
@@ -57,6 +59,7 @@ export function DeviceSetup(props: {
   readonly state: DeviceServiceState;
   readonly onComplete?: () => void;
 }) {
+  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const configure = useAtomCommand(deviceEnvironment.configure);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<"hub" | "check" | "agent" | "complete" | null>(null);
@@ -71,6 +74,7 @@ export function DeviceSetup(props: {
     kind: NonNullable<typeof pending>,
     input: { enabled?: boolean; agentAccessEnabled?: boolean; onboardingCompleted?: boolean },
   ) => {
+    if (!readEnvironmentScope(props.environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
     try {
       const result = await configure({ environmentId: props.environmentId, input });
@@ -103,7 +107,7 @@ export function DeviceSetup(props: {
               <p className="text-muted-foreground">{deviceHubDescription}</p>
               <Switch
                 checked={enabled}
-                disabled={busy || pending !== null}
+                disabled={!canConfigure || busy || pending !== null}
                 aria-label="Enable device hub"
                 onCheckedChange={(checked) =>
                   void update("hub", {
@@ -144,7 +148,7 @@ export function DeviceSetup(props: {
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
               <Switch
                 checked={props.state.agentAccessEnabled}
-                disabled={!enabled || busy || pending !== null}
+                disabled={!canConfigure || !enabled || busy || pending !== null}
                 aria-label="Allow agents to control devices"
                 onCheckedChange={(checked) =>
                   void update("agent", { agentAccessEnabled: Boolean(checked) })
@@ -185,7 +189,7 @@ export function DeviceSetup(props: {
           </Button>
         ) : (
           <Button
-            disabled={props.state.hostStatus !== "ready" || pending !== null}
+            disabled={!canConfigure || props.state.hostStatus !== "ready" || pending !== null}
             onClick={() => void update("complete", { onboardingCompleted: true })}
           >
             {pending === "complete" ? "Saving…" : "Done"}

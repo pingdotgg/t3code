@@ -1,6 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
@@ -30,6 +31,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -57,6 +59,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
+      if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
       const commitMessage = dialogCommitMessage.trim();
       navigation.goBack();
       await gitActions.onRunSelectedThreadGitAction({
@@ -66,7 +69,15 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
     },
-    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
+    [
+      allSelected,
+      canWriteSourceControl,
+      canChangeThreadBranch,
+      dialogCommitMessage,
+      gitActions,
+      navigation,
+      selectedFiles,
+    ],
   );
 
   return (
@@ -124,7 +135,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   Files
                 </Text>
                 <Text className="text-foreground-muted text-xs leading-normal">
-                  {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
+                  {selectedFiles.length} selected · +{formatDiffCount(selectedInsertions)} / -
+                  {formatDiffCount(selectedDeletions)}
                 </Text>
               </View>
               <View className="flex-row items-center gap-2">
@@ -161,10 +173,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                       {file.path}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                      +{file.insertions}
+                      +{formatDiffCount(file.insertions)}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                      -{file.deletions}
+                      -{formatDiffCount(file.deletions)}
                     </Text>
                   </View>
                 ))}
@@ -240,10 +252,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                         </View>
                         <View className="items-end gap-1">
                           <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                            +{file.insertions}
+                            +{formatDiffCount(file.insertions)}
                           </Text>
                           <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                            -{file.deletions}
+                            -{formatDiffCount(file.deletions)}
                           </Text>
                         </View>
                       </View>
@@ -274,7 +286,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               <SheetActionButton
                 icon="arrow.branch"
                 label="Commit on new branch"
-                disabled={noneSelected || busy}
+                disabled={!canChangeThreadBranch || noneSelected || busy}
                 onPress={() => void runCommitAction(true)}
               />
             </View>
@@ -283,7 +295,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 icon="checkmark.circle"
                 label="Commit"
                 tone="primary"
-                disabled={noneSelected || busy}
+                disabled={!canWriteSourceControl || noneSelected || busy}
                 onPress={() => void runCommitAction(false)}
               />
             </View>

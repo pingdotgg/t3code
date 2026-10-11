@@ -1,0 +1,93 @@
+{
+  "name": "@t3tools/source-control-github",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/GitHubApi": {
+      "types": "./src/server/GitHubApi.ts",
+      "import": "./src/server/GitHubApi.ts"
+    },
+    "./server/gitHubAuthStatus": {
+      "types": "./src/server/gitHubAuthStatus.ts",
+      "import": "./src/server/gitHubAuthStatus.ts"
+    },
+    "./server/gitHubChangeRequestTemplate": {
+      "types": "./src/server/gitHubChangeRequestTemplate.ts",
+      "import": "./src/server/gitHubChangeRequestTemplate.ts"
+    },
+    "./server/gitHubConditionalChecks": {
+      "types": "./src/server/gitHubConditionalChecks.ts",
+      "import": "./src/server/gitHubConditionalChecks.ts"
+    },
+    "./server/GitHubCredentials": {
+      "types": "./src/server/GitHubCredentials.ts",
+      "import": "./src/server/GitHubCredentials.ts"
+    },
+    "./server/githubGraphQl": {
+      "types": "./src/server/githubGraphQl.ts",
+      "import": "./src/server/githubGraphQl.ts"
+    },
+    "./server/GitHubPullRequestApi": {
+      "types": "./src/server/GitHubPullRequestApi.ts",
+      "import": "./src/server/GitHubPullRequestApi.ts"
+    },
+    "./server/gitHubPullRequestJson": {
+      "types": "./src/server/gitHubPullRequestJson.ts",
+      "import": "./src/server/gitHubPullRequestJson.ts"
+    },
+    "./server/GitHubPullRequestProvider": {
+      "types": "./src/server/GitHubPullRequestProvider.ts",
+      "import": "./src/server/GitHubPullRequestProvider.ts"
+    },
+    "./server/gitHubPullRequests": {
+      "types": "./src/server/gitHubPullRequests.ts",
+      "import": "./src/server/gitHubPullRequests.ts"
+    },
+    "./server/GitHubQuota": {
+      "types": "./src/server/GitHubQuota.ts",
+      "import": "./src/server/GitHubQuota.ts"
+    },
+    "./server/gitHubRepositoryResolution": {
+      "types": "./src/server/gitHubRepositoryResolution.ts",
+      "import": "./src/server/gitHubRepositoryResolution.ts"
+    },
+    "./server/GitHubSourceControlProvider": {
+      "types": "./src/server/GitHubSourceControlProvider.ts",
+      "import": "./src/server/GitHubSourceControlProvider.ts"
+    },
+    "./server/githubStackActions": {
+      "types": "./src/server/githubStackActions.ts",
+      "import": "./src/server/githubStackActions.ts"
+    },
+    "./server/githubStackRebase": {
+      "types": "./src/server/githubStackRebase.ts",
+      "import": "./src/server/githubStackRebase.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

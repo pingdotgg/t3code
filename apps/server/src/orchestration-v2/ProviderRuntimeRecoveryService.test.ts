@@ -21,7 +21,7 @@ import * as Ref from "effect/Ref";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1227,6 +1227,7 @@ it.effect(
         {
           id: staleSubagentNodeId,
           runId: settledRunId,
+          origin: "provider_native",
           driver: ProviderDriverKind.make("claude"),
           providerInstanceId: claudeInstanceId,
           status: "running",
@@ -1235,6 +1236,7 @@ it.effect(
           // Already finished with a real result: must never be overwritten.
           id: doneSubagentNodeId,
           runId: settledRunId,
+          origin: "provider_native",
           driver: ProviderDriverKind.make("claude"),
           providerInstanceId: claudeInstanceId,
           status: "completed",

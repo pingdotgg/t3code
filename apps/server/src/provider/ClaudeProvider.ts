@@ -33,12 +33,12 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
-import type { ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
-import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
+import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -49,6 +49,7 @@ import {
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
+  resolveClaudeUpdateRequiredModels,
 } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -166,6 +167,38 @@ function apiProviderAuthMetadata(
   return apiProvider === "bedrock" ? { type: "bedrock", label: "Amazon Bedrock" } : undefined;
 }
 
+/**
+ * Whether the SDK's account payload evidences a credential the CLI can use.
+ *
+ * The capability probe resolves for a logged-out CLI, so a completed probe only
+ * proves Claude Code started. `tokenSource: "none"` is the CLI reporting it
+ * found no token at all, and is the one shape that disproves authentication.
+ * Everything else either names a credential or, on a third-party backend, omits
+ * these fields by design because auth lives with AWS or gcloud instead.
+ *
+ * Silence is deliberately not disproof. Profile-authenticated installs report no
+ * token source, and a CLI too old to send an account payload reports nothing at
+ * all; treating either as logged out would sign working setups out of Settings.
+ * `apiKeySource: "none"` means no API key is in use, so it is no evidence either.
+ */
+function claudeAuthStatus(
+  capabilities: Pick<
+    ClaudeCapabilitiesProbe,
+    "email" | "subscriptionType" | "tokenSource" | "apiKeySource" | "apiProvider"
+  >,
+): "authenticated" | "unauthenticated" {
+  if (capabilities.apiProvider !== undefined && capabilities.apiProvider !== "firstParty") {
+    return "authenticated";
+  }
+  if (capabilities.tokenSource !== "none") return "authenticated";
+  // An `ANTHROPIC_API_KEY` install reports no token source but is authenticated
+  // all the same, so the key and account fields still get a say.
+  const hasApiKey = Boolean(capabilities.apiKeySource) && capabilities.apiKeySource !== "none";
+  return hasApiKey || capabilities.email || capabilities.subscriptionType
+    ? "authenticated"
+    : "unauthenticated";
+}
+
 // ── SDK capability probe ────────────────────────────────────────────
 
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the
@@ -229,8 +262,15 @@ function nonEmptyProbeString(value: string): string | undefined {
 
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
+  /**
+   * The organization UUID from the login's `.claude.json`. The driver reads it
+   * in the same cached probe, so it describes the same login as the rest.
+   */
+  readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  /** Where the CLI found an API key, when it authenticates with one. */
+  readonly apiKeySource: string | undefined;
   /**
    * Active API backend reported by the SDK's `AccountInfo`. Anthropic OAuth
    * login only applies when `"firstParty"`; for Amazon Bedrock (`"bedrock"`)
@@ -386,6 +426,7 @@ const probeClaudeCapabilities = (
               readonly email?: string;
               readonly subscriptionType?: string;
               readonly tokenSource?: string;
+              readonly apiKeySource?: string;
               readonly apiProvider?: string;
             }
           | undefined;
@@ -393,6 +434,7 @@ const probeClaudeCapabilities = (
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
+          apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
@@ -560,6 +602,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
+  const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
@@ -575,6 +618,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
+      updateRequiredModels,
       slashCommands: dedupedSlashCommands,
       skills,
       probe: {
@@ -583,6 +627,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+      },
+    });
+  }
+
+  if (claudeAuthStatus(capabilities) === "unauthenticated") {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
       },
     });
   }
@@ -612,6 +674,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     enabled: claudeSettings.enabled,
     checkedAt,
     models,
+    updateRequiredModels,
     slashCommands: dedupedSlashCommands,
     skills,
     probe: {
@@ -621,6 +684,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       auth: {
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),

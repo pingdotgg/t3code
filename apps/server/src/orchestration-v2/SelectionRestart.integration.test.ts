@@ -28,15 +28,10 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import {
-  ProviderAdapterOpenSessionError,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex-restart-test");
@@ -69,7 +64,7 @@ const exclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
 };
 
 interface ActiveTurn {
-  readonly input: ProviderAdapterV2TurnInput;
+  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: ProviderTurnId;
 }
 
@@ -92,7 +87,7 @@ function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
-): ProviderAdapterV2Shape {
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: providerInstanceId,
     driver,
@@ -125,14 +120,14 @@ function makeRestartAdapter(
           ] as const;
         });
         if (failThisOpen) {
-          return yield* new ProviderAdapterOpenSessionError({
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
             driver,
             providerSessionId: sessionInput.providerSessionId,
             cause: "simulated replacement open failure",
           });
         }
 
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -290,7 +285,9 @@ function makeRestartAdapter(
   };
 }
 
-function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdapterV2Shape {
+function makeCompletingHandoffAdapter(
+  startCount: Ref.Ref<number>,
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: handoffProviderInstanceId,
     driver: handoffDriver,
@@ -298,7 +295,7 @@ function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdap
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         return {
           instanceId: handoffProviderInstanceId,
@@ -865,7 +862,7 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
                     }),
                 })),
               ),
-          } satisfies ProviderAdapterV2Shape;
+          } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
         });
         const layerRegistry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
           get: (instanceId) =>

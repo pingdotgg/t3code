@@ -1,7 +1,14 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
-repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
+and publish repositories, create pull requests, and review changes.
+
+## Review turn changes
+
+A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or
+rebases, the files Git brought in are left out. A file stays in the list when the turn edited it,
+committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
+against your base branch. Restore still returns the complete saved workspace.
 
 ## Connect an account
 
@@ -11,11 +18,21 @@ and choose **Rescan**.
 
 ### GitHub
 
-Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
+T3 Code talks to GitHub's API directly and only needs a token. Any of these works, in this
+order of precedence:
 
-```bash
-gh auth login
-```
+1. A token saved in **Settings → Source Control → GitHub**. It is kept in the server's secret
+   store, and works without the GitHub CLI.
+2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
+   server's environment.
+3. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
+
+If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same place to pick
+the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
+over that choice; a host turned off stays off either way.
+
+For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
+custom server name as GitHub once it has a credential for that host.
 
 ### Forgejo and Gitea
 
@@ -47,18 +64,18 @@ glab auth login
 
 ### Bitbucket
 
-Open **Settings → Source Control**, expand **Bitbucket**, and choose how to sign in:
+Open **Settings → Source Control**, expand **Bitbucket**, and enter one of:
 
 - **Access token**: a token created for one repository, project, or workspace. It can only reach
   what it was created for.
-- **API token**: an Atlassian API token for your account, used with your account email. It can
+- **Atlassian account email** and **API token**: an Atlassian API token for your account. It can
   reach every repository you can. Give it read/write access to repositories and pull requests, plus
   user read access (`read:user:bitbucket`).
 
-Choose **Save**; the change applies right away, and replaces any credential saved with the other
-method. Credentials are saved on the environment's server, so select a remote environment to
-configure it. Saved tokens can't be viewed again; enter a new one to replace it, or choose
-**Remove**.
+A field saves when you leave it, and applies right away. The access token wins when both are saved.
+Credentials are saved on the environment's server, so select a remote environment to configure
+it. Saved tokens can't be viewed again; enter a new one to replace it, or choose **Remove** to clear
+everything saved for Bitbucket.
 
 If no credentials are saved, T3 Code falls back to these variables in the server's environment.
 Restart the server after changing them:
@@ -79,12 +96,31 @@ az extension add --name azure-devops
 az login
 ```
 
+### GitCafe
+
+Install the GitCafe CLI and sign in:
+
+```bash
+bun install -g @gitcafe/cli
+cafe auth login --host https://git.cafe/api
+```
+
+Alternatively, open **Settings → Source Control**, expand **GitCafe**, and enter a token. It is
+kept in the server's secret store, applies right away, and is used before `CAFE_TOKEN` and the
+`cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
+sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
+`staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
+
+Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
+Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or
 **New project** under **Add Project** on any client, and type a name. T3 Code makes a Git
 repository in `~/.t3/projects` (the `projects` folder of your T3 data directory) with a README,
-an icon, and a first commit, then opens a new thread in it. The folder is named after the project,
+an icon, and a first commit, then opens a new thread in it. Until the project has a thread, new
+threads work in its folder, even when your default is a new worktree. The folder is named after the project,
 like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on GitHub** to also
 publish it. If Git has no name or email on that machine, the project is created without the
 first commit.
@@ -136,7 +172,7 @@ environment clears its permission.
 GitHub review details, linked PR status, and permitted review actions can then use another
 connected environment signed in to the same GitHub account. Each needs a project on that host.
 A connected local environment is preferred for actions and can answer slow or failed reads.
-Browsers and mobile clients need a paired environment to use its GitHub CLI credentials.
+Browsers and mobile clients need a paired environment to use its GitHub credentials.
 Credentials stay on their machines. Previously verified credentials remain usable for routing
 for ten minutes during a GitHub outage; new credentials must be verified first. An action with
 an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
@@ -164,7 +200,7 @@ does not show its diff, so marks are made and read on web and desktop.
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
   check the credentials saved in Settings → Source Control, or confirm the running server received
   the environment variables.
-- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
+- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source Control.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
@@ -188,7 +224,7 @@ Linking and unlinking are available in the web and desktop clients.
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
 row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
 closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
-when requested. With **Auto-settle merged threads** enabled, a thread can settle after every linked
+when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
