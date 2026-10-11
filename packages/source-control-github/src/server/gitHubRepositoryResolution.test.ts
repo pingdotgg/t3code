@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  resolveGitHubRepository,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -72,6 +73,21 @@ describe("selectGitHubBaseRepository", () => {
     ]) {
       assert.strictEqual(select(input), null);
     }
+  });
+});
+
+describe("resolveGitHubRepository", () => {
+  it("reads a partial-clone remote whose fetch line carries its filter", () => {
+    const url = "https://github.com/pingdotgg/t3code";
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes: `origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)\n`,
+        resolved: "",
+        hostHint: undefined,
+        defaultHost: "github.com",
+      }),
+      { host: "github.com", locator: { host: "github.com", owner: "pingdotgg", name: "t3code" } },
+    );
   });
 });
 
