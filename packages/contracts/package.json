@@ -21,7 +21,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../scripts/typecheck.ts",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

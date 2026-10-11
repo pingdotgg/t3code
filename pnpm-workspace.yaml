@@ -21,6 +21,7 @@ allowBuilds:
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
   sharp: true
+  tsc-rs: true
   utf-8-validate: false
   workerd: false
 
@@ -80,6 +81,10 @@ catalog:
   unified: 11.0.5
 
 minimumReleaseAgeExclude:
+  - tsc-rs@0.2.0
+  - "@tsc-rs/linux-x64@0.2.0"
+  - "@tsc-rs/linux-arm64@0.2.0"
+  - "@tsc-rs/darwin-arm64@0.2.0"
   - expo-glass-effect@58.0.3
   - expo-blur@58.0.3
   - expo-audio@58.0.4

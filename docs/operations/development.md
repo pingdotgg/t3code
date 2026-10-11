@@ -106,6 +106,14 @@ vp lint <files>
 vp run --filter <package> typecheck
 ```
 
+TypeScript workspaces use pinned tsc-rs on macOS ARM64, Linux x64, and Linux ARM64, with Effect
+diagnostics built in. Other platforms keep Effect-patched TypeScript
+until tsc-rs ships their binaries. Custom compiler flags also use that compiler,
+including watch mode. Keep `typescript`, `@effect/tsgo`, and the
+`effect-tsgo patch` prepare step: they provide the fallback compiler and Effect
+editor features that tsc-rs does not yet include.
+Marketing keeps `astro check` for Astro files.
+
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused

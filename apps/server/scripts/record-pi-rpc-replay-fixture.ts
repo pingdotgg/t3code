@@ -244,13 +244,13 @@ const record = Effect.gen(function* () {
   );
 
   const entries: Array<ProviderReplayEntry> = [];
-  const placeholder = {
+  const placeholder: ProviderReplayTranscript = {
     provider: PI_PROVIDER,
     protocol: PI_RPC_REPLAY_PROTOCOL,
     version: piVersion,
     scenario: fixture.name,
     entries: [],
-  } satisfies ProviderReplayTranscript;
+  };
   const layerRecordingSpawner = Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.map(Effect.service(ChildProcessSpawner.ChildProcessSpawner), (live) =>

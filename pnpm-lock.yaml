@@ -189,6 +189,9 @@ importers:
       knip:
         specifier: 6.34.0
         version: 6.34.0
+      tsc-rs:
+        specifier: 0.2.0
+        version: 0.2.0
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -6172,6 +6175,24 @@ packages:
   '@tiptap/starter-kit@3.31.3':
     resolution: {integrity: sha512-WKof9RewdmGHvWJ1wn0/HVNG2mV+HOgVRyJkKekuM9fgr6BZAAH/xZsWE1eon+94JnQ+KtK2ThydXQM/qc6b2A==}
 
+  '@tsc-rs/darwin-arm64@0.2.0':
+    resolution: {integrity: sha512-sf8+KeIFuENwGM/rf09g0Yp6ttMxvJXUsM1rvc/h6RhsvFhzmwUwj3fe/YtHm80EoJCQ/TtFUT2CjHJu6Pl1EQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@tsc-rs/linux-arm64@0.2.0':
+    resolution: {integrity: sha512-3j4Res9jkcwt5H5M6MLoNZEvWbx49Pg2rjJcylpRk767wW3Rm4TboQkTJmhWTnjewT9CeTIjKaXn/DU3QRCxPQ==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@tsc-rs/linux-x64@0.2.0':
+    resolution: {integrity: sha512-gdzYIwgtFANiAdGi8xzDRk9o5gUXGeCEHYLggXmthclYlOJnZv82dAeOLIcrL//p6+K4SAogTKy2fFm8sARGtw==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [linux]
+
   '@tweenjs/tween.js@23.1.3':
     resolution: {integrity: sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA==}
 
@@ -11630,6 +11651,11 @@ packages:
     resolution: {integrity: sha512-JfJeIHke7y2egdGGgRAvpCwYFUsHlM2gPcrVOxFkznt/4uzQ7HFmvE63iFHVLBJNDuyDOQgijDK/tXH/f6Msjg==}
     engines: {node: '>=6.10'}
 
+  tsc-rs@0.2.0:
+    resolution: {integrity: sha512-cALwflE/WoaqyD22552kPPVhDe3v4yMZ1X0LsLJFoBz2VrL6RrGE6Uuss7kfNpFpDICtSXYgE+muz5zV25qtVA==}
+    engines: {node: '>=16.20.0'}
+    hasBin: true
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -16715,6 +16741,15 @@ snapshots:
       '@tiptap/extension-underline': 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
       '@tiptap/extensions': 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
       '@tiptap/pm': 3.31.3
+
+  '@tsc-rs/darwin-arm64@0.2.0':
+    optional: true
+
+  '@tsc-rs/linux-arm64@0.2.0':
+    optional: true
+
+  '@tsc-rs/linux-x64@0.2.0':
+    optional: true
 
   '@tweenjs/tween.js@23.1.3': {}
 
@@ -23026,6 +23061,12 @@ snapshots:
   ts-algebra@2.0.0: {}
 
   ts-dedent@2.3.0: {}
+
+  tsc-rs@0.2.0:
+    optionalDependencies:
+      '@tsc-rs/darwin-arm64': 0.2.0
+      '@tsc-rs/linux-arm64': 0.2.0
+      '@tsc-rs/linux-x64': 0.2.0
 
   tslib@2.8.1: {}
 
