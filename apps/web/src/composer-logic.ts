@@ -339,6 +339,24 @@ export function composerStateAtPromptEnd(
   };
 }
 
+/**
+ * Caret and trigger for the message when the editor shows it again after a
+ * question: where the user left it, or the end if the message changed meanwhile.
+ */
+export function composerStateForReturningDraft(
+  text: string,
+  left: { readonly text: string; readonly cursor: number } | null,
+): { cursor: number; trigger: ComposerTrigger | null } {
+  if (left === null || left.text !== text) {
+    return composerStateAtPromptEnd(text);
+  }
+  const cursor = clampCollapsedComposerCursor(text, left.cursor);
+  return {
+    cursor,
+    trigger: detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+  };
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model"> | null {
