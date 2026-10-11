@@ -51,7 +51,7 @@ export function useEnvironmentThread(
 }
 
 const isRunning = (status: string) =>
-  status === "preparing" || status === "starting" || status === "running";
+  status === "preparing" || status === "queued" || status === "starting" || status === "running";
 
 type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
 
