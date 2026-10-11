@@ -84,6 +84,34 @@ describe("searchSettings", () => {
     expect(searchSettings("update track")).toEqual([]);
   });
 
+  it("finds the About update rows", () => {
+    expect(searchSettings("check for updates").map((item) => item.id)).toContain("app-version");
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "update-track")).toMatchObject({
+      title: "Update track",
+      to: "/settings/general",
+      releaseChannelOnly: true,
+    });
+  });
+
+  it("registers Styled Context Menu as a desktop-only setting", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "styled-context-menu")).toMatchObject({
+      title: "Styled Context Menu",
+      to: "/settings/appearance",
+      desktopOnly: true,
+    });
+    expect(searchSettings("styled context menu").map((item) => item.id)).not.toContain(
+      "styled-context-menu",
+    );
+  });
+
+  it("hides macOS-only settings on other platforms", () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    try {
+      expect(searchSettings("font smoothing")).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
