@@ -27,9 +27,11 @@ import {
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
+  selectsPlanAgent,
 } from "../../modelSelection";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -149,6 +151,9 @@ export function SourceControlWritingSettingsSection() {
     activeSelection.model,
   );
   const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const writerInstanceEntry = instanceEntries.find(
+    (entry) => entry.instanceId === activeSelection.instanceId,
+  );
   const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
   const reviewGuideSelection = resolveAppModelSelectionState(
     {
@@ -167,6 +172,9 @@ export function SourceControlWritingSettingsSection() {
     textGenerationProviders,
     reviewGuideSelection.instanceId,
     reviewGuideSelection.model,
+  );
+  const reviewGuideInstanceEntry = instanceEntries.find(
+    (entry) => entry.instanceId === reviewGuideSelection.instanceId,
   );
 
   return (
@@ -381,6 +389,33 @@ export function SourceControlWritingSettingsSection() {
                   }}
                 />
               ) : null}
+              {usesDedicatedModel &&
+              canEnableDedicatedModel &&
+              !mixedWriterModel &&
+              writerInstanceEntry ? (
+                <TraitsPicker
+                  provider={writerInstanceEntry.driverKind}
+                  models={writerInstanceEntry.models}
+                  model={activeSelection.model}
+                  prompt=""
+                  onPromptChange={() => {}}
+                  modelOptions={activeSelection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  planModeEnabled={
+                    settings.planModeEnabled || selectsPlanAgent(activeSelection.options)
+                  }
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    updateSettings({
+                      sourceControlWriterModelSelection: createModelSelection(
+                        activeSelection.instanceId,
+                        activeSelection.model,
+                        options,
+                      ),
+                    })
+                  }
+                />
+              ) : null}
               <Switch
                 checked={usesDedicatedModel}
                 disabled={!usesDedicatedModel && !canEnableDedicatedModel}
@@ -459,6 +494,33 @@ export function SourceControlWritingSettingsSection() {
                           reviewGuideModelSelection: createModelSelection(instanceId, model),
                         });
                       }}
+                    />
+                  ) : null}
+                  {usesReviewGuideModel &&
+                  canEnableDedicatedModel &&
+                  !mixedReviewGuideModel &&
+                  reviewGuideInstanceEntry ? (
+                    <TraitsPicker
+                      provider={reviewGuideInstanceEntry.driverKind}
+                      models={reviewGuideInstanceEntry.models}
+                      model={reviewGuideSelection.model}
+                      prompt=""
+                      onPromptChange={() => {}}
+                      modelOptions={reviewGuideSelection.options ?? []}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={
+                        settings.planModeEnabled || selectsPlanAgent(reviewGuideSelection.options)
+                      }
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(options) =>
+                        updateSettings({
+                          reviewGuideModelSelection: createModelSelection(
+                            reviewGuideSelection.instanceId,
+                            reviewGuideSelection.model,
+                            options,
+                          ),
+                        })
+                      }
                     />
                   ) : null}
                   <Switch
