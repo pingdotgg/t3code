@@ -35,7 +35,19 @@ final class T3LayoutMetricsView: ExpoView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     lastMetrics = nil
+    assumeNoHingeIfSilent()
     publishMetrics()
+  }
+
+  /// UIKit only sends hinge updates on devices that have a hinge. Without this,
+  /// an ordinary iPhone never publishes and the navigator never attaches.
+  private func assumeNoHingeIfSilent() {
+    guard window != nil, hasHinge == nil else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      guard let self, self.window != nil, self.hasHinge == nil else { return }
+      self.hasHinge = false
+      self.publishMetrics()
+    }
   }
 
   override func layoutSubviews() {
