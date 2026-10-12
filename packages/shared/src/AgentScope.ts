@@ -7,7 +7,9 @@ import * as Effect from "effect/Effect";
  * Each wrapped command runs with a high `oom_score_adj`, so the kernel OOM
  * killer picks it before the server. Under a systemd user manager it also runs
  * in its own transient scope, so systemd-oomd (which kills whole leaf cgroups)
- * kills one agent instead of the server and every other agent.
+ * kills one agent instead of the server and every other agent. Where util-linux
+ * `setpriv` is available, each wrapped command also gets SIGTERM when the server
+ * exits, even by SIGKILL or a crash.
  *
  * The server provides the real implementation. The default leaves commands
  * unchanged, which is also the behavior on macOS, Windows, and in tests.
@@ -71,17 +73,21 @@ export const AGENT_OOM_SCORE_ADJ = 800;
 /** Shell line that raises the score of the current process, ignoring failure. */
 export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;
 
-const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
+const LAUNCH_LINES = [RAISE_OOM_SCORE_LINE, 'exec "$@"'];
 
 // systemd-run needs XDG_RUNTIME_DIR to reach the user manager. Fill it in when
 // the agent environment does not carry it; it is the same user either way.
-const SCOPED_LAUNCH_SCRIPT = [
+const SCOPED_LAUNCH_LINES = [
   RAISE_OOM_SCORE_LINE,
   ': "${XDG_RUNTIME_DIR:=$1}"',
   "export XDG_RUNTIME_DIR",
   "shift",
   'exec "$@"',
-].join("\n");
+];
+
+// The parent-death signal only fires for a parent that exits after it is set.
+// A server that died first has already orphaned the launch, so it stops here.
+const SERVER_CHECK_LINES = ['[ "$PPID" = "$1" ] || exit 1', "shift"];
 
 export interface AgentSystemdScope {
   readonly systemdRun: string;
@@ -90,6 +96,18 @@ export interface AgentSystemdScope {
   readonly runtimeDir: string;
   /** Extra `systemd-run` options, such as `--property=OOMPolicy=stop`. */
   readonly options: ReadonlyArray<string>;
+}
+
+/**
+ * Ties an agent to the server that launched it. `setpriv --pdeathsig` asks the
+ * kernel to send the agent SIGTERM when the server exits, even when the server
+ * is SIGKILLed or crashes and runs no cleanup of its own. Only the agent itself
+ * gets the signal; stopping its tools is up to its SIGTERM handling, which the
+ * Claude CLI does.
+ */
+export interface AgentServerLink {
+  readonly setpriv: string;
+  readonly serverPid: number;
 }
 
 /**
@@ -102,28 +120,43 @@ export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly scope?: AgentSystemdScope | undefined;
+  readonly server?: AgentServerLink | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope } = input;
-  if (scope === undefined) {
-    return { command: "/bin/sh", args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
+  const { command, args, scope, server } = input;
+  const [lines, launchArgs] =
+    scope === undefined
+      ? [LAUNCH_LINES, [command, ...args]]
+      : [
+          SCOPED_LAUNCH_LINES,
+          [
+            scope.runtimeDir,
+            scope.systemdRun,
+            "--user",
+            "--scope",
+            "--quiet",
+            `--slice=${scope.slice}`,
+            `--unit=${scope.unit}`,
+            ...scope.options,
+            "--",
+            command,
+            ...args,
+          ],
+        ];
+  if (server === undefined) {
+    return { command: "/bin/sh", args: ["-c", lines.join("\n"), "t3-agent", ...launchArgs] };
   }
   return {
-    command: "/bin/sh",
+    command: server.setpriv,
     args: [
-      "-c",
-      SCOPED_LAUNCH_SCRIPT,
-      "t3-agent",
-      scope.runtimeDir,
-      scope.systemdRun,
-      "--user",
-      "--scope",
-      "--quiet",
-      `--slice=${scope.slice}`,
-      `--unit=${scope.unit}`,
-      ...scope.options,
+      "--pdeathsig",
+      "TERM",
       "--",
-      command,
-      ...args,
+      "/bin/sh",
+      "-c",
+      [...SERVER_CHECK_LINES, ...lines].join("\n"),
+      "t3-agent",
+      String(server.serverPid),
+      ...launchArgs,
     ],
   };
 }

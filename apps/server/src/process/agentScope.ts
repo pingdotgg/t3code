@@ -6,6 +6,7 @@ import {
   AgentScope,
   agentScopeCommand,
   type AgentScopeShape,
+  type AgentServerLink,
   type AgentSystemdScope,
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -173,6 +174,23 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // Runs once, on the first agent launch. Without util-linux setpriv (BusyBox's
+  // has no --pdeathsig), agents launch as before and outlive a crashed server.
+  const serverLink = yield* Effect.cached(
+    Effect.gen(function* () {
+      const setpriv = yield* resolve("setpriv", hostEnvironment);
+      const probe =
+        setpriv._tag === "None"
+          ? undefined
+          : yield* run(setpriv.value, ["--pdeathsig", "TERM", "--", "/bin/sh", "-c", "exit 0"]);
+      if (setpriv._tag === "None" || probe?._tag !== "Some" || probe.value.code !== 0) {
+        yield* Effect.logWarning("Agents will outlive a crashed server: setpriv is unavailable");
+        return undefined;
+      }
+      return { setpriv: setpriv.value, serverPid: process.pid } satisfies AgentServerLink;
+    }),
+  );
+
   // The newest scope per thread, oldest thread first. A thread runs one agent
   // at a time, so only its latest scope can explain a failure.
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
@@ -295,8 +313,9 @@ export const make = Effect.gen(function* () {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       // Leave unresolved commands alone so the spawn reports the missing binary.
       if (resolved._tag === "None") return { command, args };
+      const server = yield* serverLink;
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved.value, args, server });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
@@ -308,7 +327,7 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved.value, args, scope: systemdScope });
+      return agentScopeCommand({ command: resolved.value, args, scope: systemdScope, server });
     }),
     oomKilled,
     clear,
