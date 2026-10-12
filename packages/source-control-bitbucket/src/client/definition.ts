@@ -39,7 +39,8 @@ export const settings = makeProviderSettingsSchema(
       title: "Access token",
       description:
         "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
-      providerSettingsForm: { control: "password", secret: true },
+      settingsSecret: true,
+      providerSettingsForm: { control: "password" },
     }),
     email: text({
       title: "Atlassian account email",
@@ -50,7 +51,8 @@ export const settings = makeProviderSettingsSchema(
       title: "API token",
       description:
         "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
-      providerSettingsForm: { control: "password", secret: true },
+      settingsSecret: true,
+      providerSettingsForm: { control: "password" },
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },

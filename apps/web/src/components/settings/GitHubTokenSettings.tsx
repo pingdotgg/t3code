@@ -8,6 +8,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
+import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
 const DEFAULT_HOST = "github.com";
@@ -103,12 +104,10 @@ export function GitHubTokenSettings({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor={`github-token-${environmentId}`}>Token</Label>
-            <Input
+            <SecretInput
               id={`github-token-${environmentId}`}
-              type="password"
-              autoComplete="off"
               size="sm"
-              placeholder={isSaved ? "Stored secret, enter a new value to replace" : "Not set"}
+              configured={isSaved}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />

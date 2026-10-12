@@ -6,6 +6,7 @@
 import {
   GitHubHost,
   makeProviderSettingsSchema,
+  secretSetting,
   pullRequestHostOf,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
@@ -45,7 +46,8 @@ export const settings = makeProviderSettingsSchema({
   ),
   tokens: Schema.Record(GitHubHost, TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
-    Schema.annotateKey({ providerSettingsForm: { hidden: true, secret: true } }),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
 });
 export type GitHubSettings = typeof settings.Type;

@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormOption,
-  ProviderSettingsFormSchemaAnnotation,
+import {
+  isSecretSetting,
+  type ProviderSettingsFormAnnotation,
+  type ProviderSettingsFormControl,
+  type ProviderSettingsFormOption,
+  type ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
 
@@ -15,6 +16,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { SecretInput } from "./SecretInput";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -131,7 +133,7 @@ export function deriveProviderSettingsFields(
               ? { placeholder: formAnnotation.placeholder }
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
-          ...(formAnnotation.secret ? { secret: true } : {}),
+          ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
@@ -253,19 +255,6 @@ function readProviderConfigString(config: unknown, key: string): string {
   if (config === null || typeof config !== "object") return "";
   const value = (config as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
-}
-
-/**
- * A secret field never shows its saved value: it starts empty, and its placeholder says whether
- * one is saved. Saving one is typing a new value; clearing it is the host form's job.
- */
-function secretFieldInputProps(field: ProviderSettingsFieldModel, config: unknown) {
-  const saved = readProviderConfigString(config, field.key);
-  if (!field.secret) return { value: saved, placeholder: field.placeholder };
-  return {
-    value: "",
-    placeholder: saved.length > 0 ? "Stored secret, enter a new value to replace" : "Not set",
-  };
 }
 
 function readProviderConfigBoolean(config: unknown, key: string, defaultValue = false): boolean {
@@ -423,6 +412,16 @@ function ProviderSettingsFieldRow({
           placeholder={field.placeholder}
           spellCheck={false}
         />
+      ) : field.secret ? (
+        <SecretInput
+          id={inputId}
+          aria-describedby={descriptionId}
+          size="sm"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
+          configured={readProviderConfigString(value, field.key).length > 0}
+          value=""
+          onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+        />
       ) : (
         <DraftInput
           id={inputId}
@@ -431,10 +430,9 @@ function ProviderSettingsFieldRow({
           className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           type={field.control === "password" ? "password" : undefined}
           autoComplete={field.control === "password" ? "off" : undefined}
-          {...secretFieldInputProps(field, value)}
+          value={readProviderConfigString(value, field.key)}
+          placeholder={field.placeholder}
           onCommit={(next) => {
-            // An untouched saved secret commits empty; only a typed value replaces it.
-            if (field.secret && next === "") return;
             onChange(nextProviderConfigWithFieldValue(value, field, next));
           }}
           spellCheck={false}
@@ -515,27 +513,29 @@ function ProviderSettingsFieldRow({
   }
 
   const type = field.control === "password" ? "password" : undefined;
+  const BufferedInput = field.secret ? SecretInput : DraftInput;
+  const ControlledInput = field.secret ? SecretInput : Input;
   return (
     <FieldFrame variant={variant}>
       <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
         {label}
         {variant === "card" ? (
-          <DraftInput
+          <BufferedInput
             id={inputId}
             size="sm"
             className="mt-1.5"
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
+            type={field.secret ? undefined : type}
+            autoComplete={!field.secret && field.control === "password" ? "off" : undefined}
             value={readProviderConfigString(value, field.key)}
             onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
             placeholder={field.placeholder}
             spellCheck={false}
           />
         ) : (
-          <Input
+          <ControlledInput
             id={inputId}
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
+            type={field.secret ? undefined : type}
+            autoComplete={!field.secret && field.control === "password" ? "off" : undefined}
             value={readProviderConfigString(value, field.key)}
             onChange={(event) =>
               onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))

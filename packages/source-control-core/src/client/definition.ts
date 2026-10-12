@@ -144,7 +144,7 @@ export interface SourceControlClientDefinition {
   /**
    * What the environment saves for this host under `settings.sourceControlHosts[kind]`, rendered
    * as a form in Source Control settings and read by the host's server package. Fields carry
-   * `providerSettingsForm` annotations, as agent provider settings do; one marked `secret` is
+   * `providerSettingsForm` annotations, as agent provider settings do; a `secretSetting` is
    * kept in the server's secret store. Omitted for a host with nothing to configure.
    */
   readonly settings?: SourceControlHostSettingsSchema;
@@ -321,18 +321,4 @@ export function readSourceControlHostSettings<S extends SourceControlHostSetting
   const fallback = decode({});
   if (fallback._tag === "Some") return fallback.value;
   throw new Error("A source control host settings schema must decode an empty object.");
-}
-
-/**
- * The settings fields a host keeps in the server's secret store: those annotated
- * `providerSettingsForm.secret`. A secret field holds a string, or a string per server host.
- */
-export function secretSourceControlHostSettingsFields(
-  schema: SourceControlHostSettingsSchema,
-): ReadonlyArray<string> {
-  return Object.entries(schema.fields).flatMap(([field, fieldSchema]) => {
-    const annotations =
-      Schema.resolveAnnotationsKey(fieldSchema) ?? Schema.resolveAnnotations(fieldSchema);
-    return annotations?.providerSettingsForm?.secret ? [field] : [];
-  });
 }
