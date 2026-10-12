@@ -346,6 +346,11 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       key: string,
     ) => Effect.Effect<string | null, GitCommandError>;
+    /** Returns the branch name of a local or remote-tracking ref, excluding tags and commits. */
+    readonly resolveBranchName: (
+      cwd: string,
+      refName: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
