@@ -7,10 +7,11 @@ name: Mobile EAS Production
 # runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
 #
 # Every merge to main that touches the mobile app reconciles, per platform:
-#   1. Store builds: if the latest production build's version differs from
-#      app.config.ts, cut a new build and submit it (TestFlight + Play internal
-#      track). Bumping `version` is therefore all it takes to
-#      start the next release train — the first build of a version enters
+#   1. Store builds: when no production build matches the current native
+#      fingerprint, or the latest build's version differs from app.config.ts,
+#      cut a new build and submit it (TestFlight + Play internal track). Native
+#      changes therefore ship a binary on merge, and bumping `version` is all
+#      it takes to start the next release train — the first build of a version enters
 #      external-TestFlight beta review immediately, and later builds of the
 #      same version auto-approve until that version is released. After App
 #      Store approval, Apple closes the release train and `version` must be
@@ -21,10 +22,11 @@ name: Mobile EAS Production
 #      fingerprint. Older binaries of the same major version with a matching
 #      fingerprint receive it too; the major version is part of the
 #      fingerprint (apps/mobile/fingerprint.config.js), so a new major never
-#      reaches the previous major's store binaries over the air. When native
-#      drift means no binary could install the update,
-#      it is skipped and flagged in the job summary instead of published
-#      into the void.
+#      reaches the previous major's store binaries over the air. Until a
+#      build for the new fingerprint finishes, the OTA is skipped rather than
+#      published into the void.
+# Hold native-change PRs (the "📱 Native Change" label) and merge them as a
+# batch to avoid a store build per PR.
 # workflow_dispatch remains as a manual override for both modes (e.g. to
 # retry an errored build or force an OTA).
 # Manual v2-preview builds keep the production app identity and disable OTA.
@@ -263,61 +265,74 @@ jobs:
             --message "${{ inputs.message || format('Production OTA ({0})', github.sha) }}" \
             --non-interactive
 
-      # No --status filter on build:list: an in-queue/in-progress build must
-      # count as existing, or every merge during the build window would cut a
-      # duplicate. After an errored build, retry via workflow_dispatch
-      # mode=build — pushes won't re-trigger it until the app version changes.
-      - id: store_builds
-        name: Ensure store builds exist for the current app version
+      # One pass per platform. The fingerprint decides OTA vs store build:
+      #   - a finished build matches → publish the OTA;
+      #   - a queued/in-progress build matches → wait, the next merge after it
+      #     finishes publishes the OTA (no duplicate build per merge);
+      #   - no build matches → native drift, so cut and submit a new build.
+      # A version bump also cuts a build even when native code is unchanged,
+      # because only the major version is part of the fingerprint.
+      # An errored build for this fingerprint is not retried on push (it would
+      # rebuild on every merge); retry via workflow_dispatch mode=build.
+      - id: reconcile
+        name: Publish OTA or cut store build
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
-        continue-on-error: true
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           failed=0
           version="$(npx expo config --json --type public | jq -r '.version')"
+          message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
           for platform in ios android; do
-            latest="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
-            if [ "$latest" = "$version" ]; then
-              echo "$platform: production build for $version already exists (or is in progress)"
+            # eas-cli prints an environment-loaded notice to stdout before the
+            # JSON even with --json, so discard everything before the document.
+            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
+            matches="$(eas build:list --platform "$platform" --build-profile production --fingerprint-hash "$hash" --limit 20 --json --non-interactive)"
+            finished="$(jq '[.[] | select(.status == "FINISHED")] | length' <<<"$matches")"
+            active="$(jq '[.[] | select(.status == "NEW" or .status == "IN_QUEUE" or .status == "IN_PROGRESS")] | length' <<<"$matches")"
+            errored="$(jq '[.[] | select(.status == "ERRORED")] | length' <<<"$matches")"
+            latest_version="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
+
+            if [ "$finished" -gt 0 ]; then
+              if eas update \
+                --channel production \
+                --environment production \
+                --platform "$platform" \
+                --message "$message" \
+                --non-interactive; then
+                echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+              else
+                failed=1
+                echo ":x: $platform: OTA publish failed (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
+
+            reason=""
+            if [ "$finished" -eq 0 ] && [ "$active" -eq 0 ]; then
+              if [ "$errored" -gt 0 ]; then
+                echo ":x: $platform: the production build for fingerprint \`$hash\` errored — retry with workflow_dispatch mode=build" >> "$GITHUB_STEP_SUMMARY"
+                failed=1
+                continue
+              fi
+              reason="native fingerprint \`$hash\` has no build"
+            elif [ "$latest_version" != "$version" ] && [ "$active" -eq 0 ]; then
+              reason="latest production build is $latest_version, app.config.ts says $version"
+            fi
+
+            if [ -z "$reason" ]; then
+              if [ "$finished" -eq 0 ]; then
+                echo ":hourglass: $platform: production build for fingerprint \`$hash\` is in progress — OTA resumes on the next merge after it finishes" >> "$GITHUB_STEP_SUMMARY"
+              fi
               continue
             fi
-            echo "$platform: latest production build is $latest, app.config.ts says $version — building"
+
+            echo "$platform: $reason — building"
             if eas build --platform "$platform" --profile production --auto-submit --non-interactive --no-wait; then
-              echo ":building_construction: $platform: scheduled production build and submission for $version" >> "$GITHUB_STEP_SUMMARY"
+              echo ":building_construction: $platform: scheduled production build and submission for $version ($reason)" >> "$GITHUB_STEP_SUMMARY"
             else
               failed=1
               echo ":x: $platform: production build or submission failed for $version" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
           exit "$failed"
-
-      - name: Publish fingerprint-gated OTA
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
-          for platform in ios android; do
-            # eas-cli prints an environment-loaded notice to stdout before the
-            # JSON even with --json, so discard everything before the document.
-            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
-            matching="$(eas build:list --platform "$platform" --build-profile production --status finished --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq 'length')"
-            if [ "$matching" -gt 0 ]; then
-              eas update \
-                --channel production \
-                --environment production \
-                --platform "$platform" \
-                --message "$message" \
-                --non-interactive
-              echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo ":warning: $platform: no finished production build matches fingerprint \`$hash\` — OTA skipped; JS changes reach $platform only once a matching build ships" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-
-      - name: Propagate store build failure
-        if: steps.store_builds.outcome == 'failure'
-        run: exit 1
