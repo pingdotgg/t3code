@@ -39,6 +39,16 @@ export function assertMuseWorkflowOutput(
   assert.isDefined(workflow, "the workflow shows as a row");
   assert.equal(workflow.status, "completed");
   assert.equal(workflow.runId, projection.runs[0]?.id);
+  // The settled row shows the workflow's own result, not its generic label.
+  const finalSummary = transcript.entries
+    .map((entry) =>
+      entry.type === "emit_inbound"
+        ? Reflect.get(Reflect.get(Object(entry.frame).params ?? {}, "item") ?? {}, "finalSummary")
+        : undefined,
+    )
+    .findLast((summary) => typeof summary === "string");
+  assert.isString(finalSummary, "Muse reports the workflow's result");
+  assert.equal(workflow.type === "dynamic_tool" ? workflow.output : undefined, finalSummary);
 
   const report = projection.messages.filter(
     (message) => message.role === "assistant" && message.runId === projection.runs[1]?.id,

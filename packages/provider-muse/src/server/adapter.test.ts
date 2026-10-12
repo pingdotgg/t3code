@@ -1216,4 +1216,34 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(started.subagent.title, "ping");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it.effect("shows a workflow child that completed with a failure kind as failed", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: {
+          itemId: "wf-1",
+          kind: "workflow",
+          revision: 1,
+          status: "inProgress",
+          turnId: nativeId,
+          children: [
+            {
+              childId: "c1",
+              attempt: 1,
+              status: "finished",
+              terminal: "completed",
+              failureKind: "budget_exhausted",
+            },
+          ],
+        },
+      });
+      const child = yield* harness.takeEvent("subagent.updated");
+      assert.strictEqual(child.subagent.status, "failed");
+      assert.strictEqual(child.subagent.result, "budget_exhausted");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 });

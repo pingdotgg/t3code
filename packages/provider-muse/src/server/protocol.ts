@@ -25,10 +25,14 @@ export const MuseItem = Schema.Struct({
         label: Schema.optional(Schema.String),
         terminal: Schema.optional(Schema.String),
         durationMs: Schema.optional(Schema.Finite),
+        /** Present on a failed attempt, even one whose `terminal` is `completed`. */
+        failureKind: Schema.optional(Schema.String),
         failureReason: Schema.optional(Schema.String),
       }),
     ),
   ),
+  /** `workflow`: the run's result, once it settles. */
+  finalSummary: Schema.optional(Schema.String),
   itemId: NonEmptyString,
   kind: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),

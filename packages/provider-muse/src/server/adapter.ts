@@ -830,8 +830,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         for (const [index, child] of [...latest.values()].entries()) {
           const time = yield* DateTime.now;
           const base = baseItem(turn, `${item.itemId}:agent:${child.childId}`, time);
+          // Muse marks a failed attempt with `failureKind`, even when its terminal is `completed`.
           const status: OrchestrationV2TurnItemStatus =
-            child.terminal === "completed"
+            child.terminal === "completed" && child.failureKind === undefined
               ? "completed"
               : child.terminal === "cancelled"
                 ? "cancelled"
@@ -849,7 +850,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           // Later revisions drop the label; keep the last one seen.
           if (child.label?.trim()) agentTitles.set(endKey, child.label.trim());
           const title = agentTitles.get(endKey) || `Agent ${index + 1}`;
-          const result = child.failureReason ?? null;
+          const result = child.failureReason ?? child.failureKind ?? null;
           const subagent: OrchestrationV2Subagent = {
             id: base.nodeId,
             threadId: base.threadId,

@@ -617,8 +617,8 @@ importers:
         specifier: 0.11.0
         version: 0.11.0(patch_hash=8956d6ed6938a1bce69b2d0b067ff258dd9ca753c5bbe7006f7b68f760ea3ad2)
       '@muse-code/sdk':
-        specifier: 1.4.2
-        version: 1.4.2(@types/node@24.12.4)
+        specifier: 1.4.6
+        version: 1.4.6(@types/node@24.12.4)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -1356,8 +1356,8 @@ importers:
   packages/provider-muse:
     dependencies:
       '@muse-code/sdk':
-        specifier: 1.4.2
-        version: 1.4.2(@types/node@24.12.4)
+        specifier: 1.4.6
+        version: 1.4.6(@types/node@24.12.4)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -4246,8 +4246,8 @@ packages:
     resolution: {integrity: sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w==}
     engines: {node: '>=18'}
 
-  '@muse-code/sdk@1.4.2':
-    resolution: {integrity: sha512-2gl6EMq0pOoqokQxlfaKciyrkhvfd17UwtRui9rEUULmJZ4wwr3h/eW1HO88iGbU7X8QvTjwPa1WXcOl/HN/mA==}
+  '@muse-code/sdk@1.4.6':
+    resolution: {integrity: sha512-pUENCnmn9q4e2xMXicdRbzbSMdH1fiyTIh5fVBXuxNdNP2ZKA0kwQz5fWMxIB8wzxS2ZyH0v27dvfbZuGuoUjg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@types/node': 24.12.4
@@ -15123,7 +15123,7 @@ snapshots:
       strict-event-emitter: 0.5.1
     optional: true
 
-  '@muse-code/sdk@1.4.2(@types/node@24.12.4)':
+  '@muse-code/sdk@1.4.6(@types/node@24.12.4)':
     optionalDependencies:
       '@types/node': 24.12.4
 
