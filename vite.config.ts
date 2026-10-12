@@ -195,12 +195,14 @@ export default defineConfig({
         },
       },
       {
-        // These clients are session metadata, device streams, and an Expo update adapter.
+        // These clients are session metadata, device streams, an Expo update adapter, and plugin
+        // subscriptions bound to one session so a lost transport cannot leave stale state live.
         files: [
           "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
+          "apps/web/src/state/pluginViewSessions.ts",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },

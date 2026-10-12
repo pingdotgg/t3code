@@ -93,6 +93,13 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         (surface.host === undefined || typeof surface.host === "string") &&
         (surface.url === undefined || typeof surface.url === "string")
       );
+    case "plugin-view":
+      return (
+        surface.id.startsWith("plugin-view:") &&
+        typeof surface.installationId === "string" &&
+        typeof surface.viewId === "string" &&
+        typeof surface.title === "string"
+      );
     default:
       return false;
   }
