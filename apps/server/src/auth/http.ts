@@ -309,8 +309,8 @@ export const layer = HttpApiBuilder.group(
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
-              previousCredential?.source === "cookie" ||
-                previousCredential?.source === "legacy-cookie"
+              previousCredential &&
+                EnvironmentAuth.isBrowserCookieCredential(previousCredential.source)
                 ? previousCredential.token
                 : undefined,
             );

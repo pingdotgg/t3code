@@ -44,6 +44,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -687,6 +688,47 @@ export function selectRequestCredential(
   return undefined;
 }
 
+type RequestCredentialSource = NonNullable<ReturnType<typeof selectRequestCredential>>["source"];
+
+/** Whether a credential came from a browser cookie rather than an Authorization header. */
+export const isBrowserCookieCredential = (source: RequestCredentialSource | "dev-cookie") =>
+  source === "cookie" || source === "legacy-cookie" || source === "dev-cookie";
+
+function firstHeaderValue(value: string | undefined): string | undefined {
+  const first = value?.split(",")[0]?.trim().toLowerCase();
+  return first && first.length > 0 ? first : undefined;
+}
+
+/**
+ * Whether a cookie-carrying request comes from a page allowed to use it.
+ * Browsers send `Origin` on WebSocket upgrades, cross-origin requests, and
+ * non-GET requests, so an absent header means a same-origin read or a
+ * non-browser client. Otherwise the request must be same-origin by the
+ * browser's own `Sec-Fetch-Site` (which survives the dev proxy rewriting
+ * `Host`), come from this server's own host (directly or behind a proxy that
+ * reports `X-Forwarded-Host`), or come from one of the trusted app origins.
+ */
+function isBrowserOriginAllowed(
+  request: HttpServerRequest.HttpServerRequest,
+  trustedOrigins: ReadonlySet<string>,
+): boolean {
+  const origin = request.headers.origin;
+  if (origin === undefined) return true;
+  if (request.headers["sec-fetch-site"] === "same-origin") return true;
+  if (trustedOrigins.has(origin)) return true;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (originHost === "") return false;
+  return (
+    originHost === firstHeaderValue(request.headers.host) ||
+    originHost === firstHeaderValue(request.headers["x-forwarded-host"])
+  );
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
@@ -726,24 +768,48 @@ export const make = Effect.gen(function* () {
       })),
     );
 
-  const authenticateRequest = (
-    request: HttpServerRequest.HttpServerRequest,
-  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+  const resolveRequestCredential = (request: HttpServerRequest.HttpServerRequest) => {
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,
       sessions.legacyCookieName,
     );
-    const dpopToken = parseDpopToken(request);
     const hasAuthorization = request.headers.authorization !== undefined;
     const devCookieToken = devAuth ? request.cookies[devAuth.cookieName] : undefined;
-    const credential =
+    return (
       selectedCredential ??
       (!hasAuthorization && devCookieToken !== undefined
         ? { token: devCookieToken, source: "dev-cookie" as const }
-        : undefined);
+        : undefined)
+    );
+  };
+
+  // Pages the server or its dev setup serves itself. Other origins on the same
+  // site (another localhost port, a LAN IP's other ports) still get the cookie,
+  // so cookie sessions must not authenticate their requests or sockets.
+  const trustedBrowserOrigins = new Set<string>([
+    ...(config.devUrl ? [config.devUrl.origin] : []),
+    ...DESKTOP_RENDERER_ORIGINS,
+    ...config.devAllowedOrigins,
+  ]);
+
+  const authenticateRequest = (
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+    const dpopToken = parseDpopToken(request);
+    const credential = resolveRequestCredential(request);
     if (!credential?.token) {
       return Effect.fail(new ServerAuthMissingCredentialError({}));
+    }
+    if (
+      isBrowserCookieCredential(credential.source) &&
+      !isBrowserOriginAllowed(request, trustedBrowserOrigins)
+    ) {
+      return Effect.fail(
+        new ServerAuthInvalidCredentialError({
+          diagnostic: "Browser sessions are only accepted from the app's own origin.",
+        }),
+      );
     }
     return authenticateToken(credential.token).pipe(
       Effect.flatMap((session) => {
@@ -1248,14 +1314,13 @@ export const make = Effect.gen(function* () {
   const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
     request,
   ) => {
-    const token =
-      request.cookies[sessions.cookieName] ??
-      (sessions.legacyCookieName ? request.cookies[sessions.legacyCookieName] : undefined) ??
-      (devAuth ? request.cookies[devAuth.cookieName] : undefined);
-    if (!token) return Effect.fail(new ServerAuthMissingCredentialError({}));
-    return authenticateToken(token).pipe(
+    const credential = resolveRequestCredential(request);
+    if (!credential || !isBrowserCookieCredential(credential.source)) {
+      return Effect.fail(new ServerAuthMissingCredentialError({}));
+    }
+    return authenticateRequest(request).pipe(
       Effect.filterOrFail(
-        (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
+        (session) => session.method === "browser-session-cookie",
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
