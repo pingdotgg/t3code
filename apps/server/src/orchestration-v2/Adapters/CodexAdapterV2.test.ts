@@ -1237,6 +1237,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    getUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["getUsageLimits"],
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
   ) =>
     Effect.gen(function* () {
@@ -1306,6 +1307,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }).pipe(Effect.andThen(changes.notify)),
         },
+        ...(getUsageLimits ? { getUsageLimits } : {}),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -5662,6 +5664,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       willRetry: true,
       expectedClass: "transport_error",
     },
+    {
+      name: "near-full-reset",
+      code: "usageLimitExceeded",
+      notification: true,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "published-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -5687,7 +5701,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-            ...("usedBefore" in scenario
+            ...("usedBefore" in scenario || scenario.name === "near-full-reset"
               ? [
                   {
                     ...snapshot,
@@ -5697,10 +5711,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         rateLimits: {
                           limitId: "codex",
                           primary: {
-                            usedPercent: scenario.usedBefore,
+                            usedPercent: "usedBefore" in scenario ? scenario.usedBefore : 99,
                             resetsAt: 2000100000,
                             windowDurationMins: 300,
                           },
+                          secondary: { usedPercent: 73, resetsAt: 2000500000, windowDurationMins: 10080 },
                         },
                       },
                     },
@@ -5841,6 +5856,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           undefined,
           undefined,
           undefined,
+          // The session got no rate-limit notification; Usage → Limits still knows the reset.
+          scenario.name === "published-reset"
+            ? Effect.succeed({
+                checkedAt: "2033-05-19T03:00:00.000Z",
+                windows: [
+                  {
+                    id: "primary",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 100,
+                    resetsAt: resetAt,
+                  },
+                  { id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 40 },
+                ],
+              })
+            : undefined,
           () => Deferred.succeed(snapshotReceipt, undefined),
         );
         yield* harness.runtime.startTurn(
@@ -5858,7 +5889,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (
+          scenario.name === "known-reset" ||
+          scenario.name === "deferred-reset" ||
+          scenario.name === "near-full-reset" ||
+          scenario.name === "published-reset"
+        )
+          assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if ("resetAfter" in scenario) {

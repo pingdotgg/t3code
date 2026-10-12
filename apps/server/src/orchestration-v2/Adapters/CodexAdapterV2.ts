@@ -25,6 +25,7 @@ import {
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
+  codexPublishedUsageLimitResetAt,
   codexUsageLimitResetAt,
   type CodexRateLimitSnapshot,
 } from "../../provider/codexUsageLimits.ts";
@@ -38,6 +39,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1166,15 +1168,6 @@ function withCodexManagedFailure(
       };
 }
 
-function failureResetAt(
-  failure: OrchestrationV2ProviderFailure,
-  snapshot: CodexRateLimitSnapshot | undefined,
-) {
-  // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
-  return classifyCodexManagedError(failure.code)?.usageLimit
-    ? null
-    : codexUsageLimitResetAt(snapshot);
-}
 
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
@@ -1646,7 +1639,7 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "compatibility"> = {},
+  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "getUsageLimits" | "resolveRuntime" | "compatibility"> = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -1696,6 +1689,7 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  readonly getUsageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -1868,6 +1862,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.forkScoped,
         );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        const usageLimitResetAt = Effect.fnUntraced(function* (failure: OrchestrationV2ProviderFailure) {
+          // Sharing caps have no reset in the ordinary allowance snapshot.
+          if (classifyCodexManagedError(failure.code)?.usageLimit) return null;
+          const atMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot), atMs);
+          if (resetAt !== null || adapterOptions.getUsageLimits === undefined) return resetAt;
+          // A turn refused at its first request may never get a rate-limit notification.
+          return codexPublishedUsageLimitResetAt(yield* adapterOptions.getUsageLimits, atMs);
+        });
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -4496,9 +4499,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
-              const resetAt = failureResetAt(item.failure, snapshot);
+              const resetAt = yield* usageLimitResetAt(item.failure);
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
                 ...item,
@@ -5843,7 +5845,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: yield* usageLimitResetAt(failure),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5881,9 +5883,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...event,
                   failure: {
                     ...event.failure,
-                    resetAt:
-                      event.failure.resetAt ??
-                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
+                    resetAt: event.failure.resetAt ?? (yield* usageLimitResetAt(event.failure)),
                   },
                 }
               : event;

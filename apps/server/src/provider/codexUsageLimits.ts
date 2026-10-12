@@ -186,12 +186,22 @@ export function mergeCodexRateLimits(
   };
 }
 
-/** All exhausted windows must reset before a continuation can run. */
-export function codexUsageLimitResetAt(
-  snapshot: CodexRateLimitSnapshot | undefined,
+/**
+ * The reset a usage-limit stop at `atMs` waits for. All exhausted windows must
+ * reset before a continuation can run. Codex reports whole percentages and can
+ * refuse a turn while its last update still reads 99%, so a window at 99%
+ * counts as exhausted when none reads 100%. A window whose reset has already
+ * passed has renewed since it was observed, so its percentage no longer applies.
+ */
+function usageLimitStopResetAt(
+  allWindows: ReadonlyArray<ServerProviderUsageWindow>,
+  atMs: number,
 ): string | null {
-  if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const current = allWindows.filter(
+    (window) => window.resetsAt === undefined || Date.parse(window.resetsAt) > atMs,
+  );
+  const full = current.filter((window) => window.usedPercent >= 100);
+  const windows = full.length > 0 ? full : current.filter((window) => window.usedPercent >= 99);
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>
@@ -200,4 +210,24 @@ export function codexUsageLimitResetAt(
         : latest,
     null,
   );
+}
+
+/** The stop's reset from the session's own rate-limit notifications. */
+export function codexUsageLimitResetAt(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atMs: number,
+): string | null {
+  return snapshot ? usageLimitStopResetAt(codexRateLimitsToWindows(snapshot), atMs) : null;
+}
+
+/**
+ * The stop's reset from the instance's published limits, which the status
+ * probe fills even when a session is refused before Codex sends it any
+ * rate-limit notification.
+ */
+export function codexPublishedUsageLimitResetAt(
+  limits: ServerProviderUsageLimits | undefined,
+  atMs: number,
+): string | null {
+  return limits ? usageLimitStopResetAt(limits.windows, atMs) : null;
 }
