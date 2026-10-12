@@ -159,17 +159,15 @@ export function listThreadPullRequests(
 }
 
 /**
- * The project a pull request is read through: the caller's own when its checkout is that
- * repository, else the first project here whose checkout is. Host reads are scoped to a project,
- * so a repository with no checkout in this environment cannot be guided from it.
+ * Prefer a matching checkout, then the caller's project. The guide service can fetch a linked
+ * repository into a temporary checkout; the pull request service owns host access and routing.
  */
 function projectForPullRequest(
   projects: ReadonlyArray<OrchestrationProjectShell>,
   target: { readonly host: string; readonly repository: string },
   preferred: OrchestrationProjectShell | undefined,
 ): OrchestrationProjectShell | undefined {
-  // The same rule the guide service uses: a pull request reads through a project whose checkout
-  // names it with the same host-level key, which also maps Azure DevOps' org/project/_git/repo.
+  // Compare host-level keys, including Azure DevOps' org/project/_git/repo.
   const matches = (project: OrchestrationProjectShell) => {
     const own = pullRequestSyncKey(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
@@ -194,7 +192,7 @@ function projectForPullRequest(
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
-  return projects.find(matches);
+  return projects.find(matches) ?? preferred;
 }
 
 const make = Effect.gen(function* () {
@@ -311,7 +309,7 @@ const make = Effect.gen(function* () {
 
   /**
    * Resolves each requested pull request and the project it is read through. The caller's own
-   * project wins where it is a checkout of that repository; with no thread, any project here may.
+   * matching checkout wins; otherwise the caller's project serves it.
    */
   const locateAll = Effect.fn("PullRequestsToolkit.locateAll")(function* (
     targets: ReadonlyArray<Omit<PullRequestTargetInput, "threadId">>,
@@ -344,7 +342,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** The service reads a pull request through one project's checkout and credentials. */
+  /** The project supplies settings and host access, without requiring a matching checkout. */
   const guideReference = (
     project: OrchestrationProjectShell,
     target: { readonly host: string; readonly repository: string; readonly number: number },

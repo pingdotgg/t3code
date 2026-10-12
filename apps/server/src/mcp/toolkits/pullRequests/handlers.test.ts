@@ -583,7 +583,7 @@ describe("listThreadPullRequests", () => {
 
 describe("pull request guide tools", () => {
   it.effect(
-    "writes guides through the project whose checkout is each pull request's repository",
+    "prefers matching projects and uses the caller's project for other linked repositories",
     () =>
       Effect.gen(function* () {
         const other = {
@@ -614,16 +614,57 @@ describe("pull request guide tools", () => {
         ).toEqual([
           ["acme/web", 7, "started"],
           ["t3tools/t3code", 12, "started"],
-          ["someone/else", 1, "failed"],
+          ["someone/else", 1, "started"],
         ]);
-        expect(result.guides[2]?.detail).toContain("No project in this environment");
         expect(
           (yield* Ref.get(harness.guideRequests)).map((ref) => [ref.projectId, ref.number]),
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          [PROJECT_ID, 1],
         ]);
       }),
+  );
+
+  it.effect("writes and reads a linked guide from a project without a repository", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject(null) });
+      const target = { url: "https://github.com/acme/web/pull/7" };
+      const written = yield* harness.call("write_pull_request_guides", { pullRequests: [target] });
+      expect(written.guides).toMatchObject([
+        { host: "github.com", repository: "acme/web", number: 7, outcome: "started" },
+      ]);
+      expect(yield* Ref.get(harness.guideRequests)).toEqual([
+        { projectId: PROJECT_ID, host: "github.com", repository: "acme/web", number: 7 },
+      ]);
+      const read = yield* harness.call("read_pull_request_guide", target);
+      expect(read).toMatchObject({ number: 7, guide: null, run: null, stale: false });
+    }),
+  );
+
+  it.effect("requires a matching project when the invocation has no caller thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ thread: null, project: makeProject(null) });
+      const result = yield* harness.call("write_pull_request_guides", {
+        pullRequests: [{ url: "https://github.com/acme/web/pull/7" }],
+      });
+      expect(result.guides.map((guide) => guide.outcome)).toEqual(["failed"]);
+      expect(result.guides[0]?.detail).toContain("No matching project");
+      expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
+    }),
+  );
+
+  it.effect("reports a missing project when the environment has none", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: null });
+      const target = { url: "https://github.com/acme/web/pull/7" };
+      const written = yield* harness.call("write_pull_request_guides", { pullRequests: [target] });
+      expect(written.guides[0]).toMatchObject({ outcome: "failed" });
+      expect(written.guides[0]?.detail).toContain("No matching project");
+      const error = yield* harness.call("read_pull_request_guide", target).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestProjectNotFoundError" });
+      expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
+    }),
   );
 
   it.effect("reports a refused run on its own pull request without failing the rest", () =>
