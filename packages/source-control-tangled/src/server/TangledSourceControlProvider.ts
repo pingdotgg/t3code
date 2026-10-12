@@ -328,7 +328,16 @@ export const make = Effect.gen(function* () {
             limit: Number.MAX_SAFE_INTEGER,
           })
           .pipe(
-            Effect.mapError((cause) => notNamed("listChangeRequests", input.cwd, cause.detail)),
+            Effect.mapError(
+              (cause) =>
+                new SourceControlProviderError({
+                  provider: KIND,
+                  operation: "listChangeRequests",
+                  cwd: input.cwd,
+                  detail: cause.detail,
+                  cause,
+                }),
+            ),
           );
         // Filter before limiting: an older PR on another branch must not hide this branch's PR.
         return page.items

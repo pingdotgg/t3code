@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as TangledClient from "../client/definition.ts";
@@ -590,6 +591,35 @@ describe("TangledSourceControlProvider.make", () => {
       Effect.provide(TangledCli.layer.pipe(Layer.provideMerge(layer))),
       Effect.provideService(HttpClient.HttpClient, unusedHttpClient),
     );
+  });
+
+  it.effect("preserves the immediate PR provider error when branch lookup fails", () => {
+    const tg = fakeTg({
+      "pr list alice.example/repo": {
+        stdout: "",
+        stderr: "Error: not logged in",
+        exitCode: 1,
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      const error = yield* provider
+        .listChangeRequests({
+          cwd: "/repo",
+          context: REMOTE,
+          headSelector: "feature",
+          state: "all",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.provider, TangledSourceControlProvider.KIND);
+      assert.strictEqual(error.operation, "listChangeRequests");
+      assert.strictEqual(error.cwd, "/repo");
+      const cause = error.cause;
+      if (!Schema.is(PullRequestProviderError)(cause))
+        return assert.fail("Missing immediate PR provider error");
+      assert.strictEqual(error.detail, cause.detail);
+      assert.strictEqual(cause.reason, "unauthenticated");
+    }).pipe(serve(tg));
   });
 
   it.effect("finds only the current branch's pull requests before applying the limit", () => {
