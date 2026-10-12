@@ -262,8 +262,9 @@ export const make = Effect.gen(function* () {
 
     createRepository: (input) =>
       Effect.gen(function* () {
-        const [owner, name] = input.repository.split("/");
-        if (owner === undefined || name === undefined || name.length === 0) {
+        const segments = input.repository.split("/");
+        const [owner, name] = segments;
+        if (segments.length !== 2 || !owner || !name) {
           return yield* notNamed(
             "createRepository",
             input.cwd,

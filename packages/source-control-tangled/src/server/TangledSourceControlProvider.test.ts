@@ -483,6 +483,29 @@ describe("TangledSourceControlProvider.make", () => {
     }).pipe(serve(tg));
   });
 
+  it.effect("rejects malformed repository paths before invoking tg", () => {
+    const tg = fakeTg({});
+    return Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      for (const repository of [
+        "alice.example/repo/extra",
+        "/repo",
+        "alice.example/",
+        "alice.example/repo/",
+      ]) {
+        const error = yield* provider
+          .createRepository({
+            cwd: "/repo",
+            repository,
+            visibility: "public",
+          })
+          .pipe(Effect.flip);
+        assert.match(error.detail, /handle\/repo/u);
+      }
+      assert.deepStrictEqual(tg.calls, []);
+    }).pipe(serve(tg));
+  });
+
   it.effect("says so when tg created the repository under a different account", () => {
     const tg = fakeTg({
       "repo create repo": {
