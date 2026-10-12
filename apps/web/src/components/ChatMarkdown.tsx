@@ -173,6 +173,7 @@ import {
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
@@ -3035,8 +3036,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             // keeps the `_blank` the shell already handles; the in-app browser needs
             // the click intercepted here. A modifier click is the way out of the
             // in-app default, so it is left to the shell too.
+            if (event.defaultPrevented) return;
             if (
-              event.defaultPrevented ||
               resolveLinkTarget({
                 url: href,
                 event,
@@ -3044,6 +3045,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 canOpenInApp: canOpenInPreview,
               }) !== "app"
             ) {
+              // Chromium turns an Option/Alt-click into a download that never reaches the
+              // shell. On desktop, open the link here while the key is still down, so link
+              // routers such as Finicky can still read it.
+              if (isElectron && event.altKey) {
+                event.preventDefault();
+                event.stopPropagation();
+                void readLocalApi()
+                  ?.shell.openExternal(href)
+                  .catch((cause) =>
+                    reportMarkdownActionFailure(
+                      { operation: "open-link-external", target: href },
+                      cause,
+                    ),
+                  );
+              }
               return;
             }
             event.preventDefault();
