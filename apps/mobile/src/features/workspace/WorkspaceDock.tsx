@@ -1,4 +1,4 @@
-import { Keyboard, Platform, PlatformColor, Pressable, View } from "react-native";
+import { Keyboard, Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { GlassSurface } from "../../components/GlassSurface";
@@ -43,16 +43,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
                 <SymbolView
                   name={tab === "threads" ? "text.bubble" : "arrow.triangle.pull"}
                   size={23}
-                  tintColor={
-                    selected && Platform.OS === "ios" ? PlatformColor("systemBlue") : undefined
-                  }
-                  tintColorClassName={
-                    selected && Platform.OS === "ios"
-                      ? undefined
-                      : selected
-                        ? "accent-focus"
-                        : "accent-icon"
-                  }
+                  tintColorClassName={selected ? "accent-focus" : "accent-icon"}
                 />
               </Pressable>
             );

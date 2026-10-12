@@ -247,6 +247,7 @@ export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,
   groupedCardColor = colors.surface,
+  prominentAction: readonly [string, string] = [colors.text, colors.canvas],
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
@@ -299,6 +300,8 @@ export function createMobileThemeVariables(
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
+    "--color-prominent-action": themeColorToNativeColor(prominentAction[0]),
+    "--color-prominent-action-foreground": themeColorToNativeColor(prominentAction[1]),
     "--color-primary-foreground": c.messageActionForeground,
     "--color-primary-text": themeColorWithContrast(c.messageAction, textSurfaces),
     "--color-primary-shadow": "#000000",
@@ -386,17 +389,18 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile settings groups and fallback materials use tonal fills where desktop
-  // uses outlined cards. Raise flat desktop surfaces above the sheet so grouped
-  // content keeps a visible boundary. Regular cards retain their desktop surface.
+  // Mobile groups and floating controls need a tonal fill, rather than the
+  // nearly neutral raised surface used by desktop outlined cards.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
-      : colors.surface === colors.chrome
-        ? colors.surfaceRaised
-        : colors.surface;
+      : themeId === "t3-chat"
+        ? appearance === "light"
+          ? colors.toolbarControl
+          : colors.surface
+        : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? {
@@ -410,7 +414,16 @@ export function getMobileThemeVariables(
           ),
         }
       : colors;
-  const baseVariables = createMobileThemeVariables(mobileColors, appearance, groupedCard);
+  const baseVariables = createMobileThemeVariables(
+    mobileColors,
+    appearance,
+    groupedCard,
+    themeId === "t3-chat" && appearance === "dark"
+      ? [colors.messageActionForeground, colors.messageAction]
+      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+        ? [colors.messageAction, colors.messageActionForeground]
+        : undefined,
+  );
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;

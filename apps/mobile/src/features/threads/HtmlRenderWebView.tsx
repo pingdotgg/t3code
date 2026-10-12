@@ -271,7 +271,7 @@ export function ThreadHtmlRender(props: {
             accessibilityRole="button"
             accessibilityLabel={`Open ${title}`}
             hitSlop={8}
-            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-surface/80"
+            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
             onPress={() =>
               navigation.navigate("ThreadAttachment", {
                 environmentId: String(props.environmentId),

@@ -120,7 +120,7 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   }, [awaitingUser, exitRequested, focused, navigation]);
 
   return (
-    <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
       <View className="h-11 flex-row items-center justify-between px-3">
         <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
           {app?.server ?? "App"}

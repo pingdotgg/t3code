@@ -169,7 +169,7 @@ export function PullRequestMergeControls(props: {
         className={
           Platform.OS === "android"
             ? "flex-row items-center gap-2"
-            : `flex-row overflow-hidden rounded-xl border-continuous ${canMerge ? "bg-foreground" : "bg-subtle-strong"}`
+            : `flex-row overflow-hidden rounded-xl border-continuous ${canMerge ? "bg-prominent-action" : "bg-subtle-strong"}`
         }
       >
         {Platform.OS === "android" ? (
@@ -200,11 +200,13 @@ export function PullRequestMergeControls(props: {
               <SymbolView
                 name="arrow.triangle.merge"
                 size={16}
-                tintColorClassName={canMerge ? "accent-screen" : "accent-icon-muted"}
+                tintColorClassName={
+                  canMerge ? "accent-prominent-action-foreground" : "accent-icon-muted"
+                }
               />
             )}
             <Text
-              className={`shrink text-center text-sm font-t3-semibold ${canMerge ? "text-screen" : "text-foreground-muted"}`}
+              className={`shrink text-center text-sm font-t3-semibold ${canMerge ? "text-prominent-action-foreground" : "text-foreground-muted"}`}
             >
               {busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
             </Text>
@@ -255,7 +257,9 @@ export function PullRequestMergeControls(props: {
                 <SymbolView
                   name="chevron.down"
                   size={13}
-                  tintColorClassName={canMerge ? "accent-screen" : "accent-icon-muted"}
+                  tintColorClassName={
+                    canMerge ? "accent-prominent-action-foreground" : "accent-icon-muted"
+                  }
                 />
               </Pressable>
             )}

@@ -255,6 +255,66 @@ describe("mobile themes", () => {
     },
   );
 
+  it("keeps T3 Chat light grouped cards distinct from the sheet", () => {
+    const variables = getMobileThemeVariables("t3-chat", "light");
+    const group = variables["--color-grouped-card"];
+    expect(contrastRatio(group, variables["--color-sheet-solid"])).toBeGreaterThanOrEqual(1.1);
+    for (const role of ["--color-foreground", "--color-foreground-muted"] as const) {
+      expect(contrastRatio(variables[role], group)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each(MOBILE_THEME_IDS)("keeps %s prominent actions readable and themed", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = getMobileThemeVariables(themeId, appearance);
+      const fill = variables["--color-prominent-action"];
+      expect(
+        contrastRatio(variables["--color-prominent-action-foreground"], fill),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(fill).toBe(
+        variables[
+          themeId === "t3-chat" && appearance === "dark"
+            ? "--color-primary-foreground"
+            : themeId === DEFAULT_MOBILE_THEME_ID || themeId === "t3-chat"
+              ? "--color-foreground"
+              : "--color-primary"
+        ],
+      );
+    }
+  });
+
+  it.each(["grove", "ocean", "ember", "iris"] as const)(
+    "keeps %s grouped cards and floating controls visibly tinted",
+    (themeId) => {
+      const saturation = (hex: string) => {
+        const channels = hex
+          .slice(1)
+          .match(/.{2}/g)!
+          .map((value) => parseInt(value, 16));
+        return (Math.max(...channels) - Math.min(...channels)) / Math.max(...channels);
+      };
+      for (const appearance of ["light", "dark"] as const) {
+        const variables = getMobileThemeVariables(themeId, appearance);
+        const sheet = variables["--color-sheet-solid"];
+        const group = variables["--color-grouped-card"];
+        expect(contrastRatio(group, sheet)).toBeGreaterThanOrEqual(1.06);
+        for (const role of ["--color-composer-surface", "--color-glass-fallback"] as const) {
+          const surface = flattenThemeColor(variables[role], sheet);
+          expect(contrastRatio(surface, sheet)).toBeGreaterThanOrEqual(1.06);
+          expect(contrastRatio(variables["--color-placeholder"], surface)).toBeGreaterThanOrEqual(
+            4.5,
+          );
+          if (appearance === "dark") {
+            expect(saturation(surface)).toBeGreaterThanOrEqual(saturation(sheet));
+          }
+        }
+        if (appearance === "dark") {
+          expect(saturation(group)).toBeGreaterThanOrEqual(saturation(sheet));
+        }
+      }
+    },
+  );
+
   it.each(["light", "dark"] as const)(
     "slightly strengthens default %s messages and separates fallback materials",
     (appearance) => {

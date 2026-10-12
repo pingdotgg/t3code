@@ -461,7 +461,9 @@ function PreviewStreamDocumentView({
               {control.dialog.type === "prompt" ? (
                 <TextInput
                   accessibilityLabel="Dialog response"
-                  className="rounded-lg border border-secondary-border bg-background px-3 py-2 text-foreground"
+                  className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                  placeholderTextColorClassName="accent-placeholder"
+                  selectionColorClassName="accent-focus/32"
                   value={promptText}
                   onChangeText={setPromptText}
                 />

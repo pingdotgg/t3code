@@ -54,7 +54,7 @@ export function PullRequestStackCard(props: {
               isDraft: layer.isDraft === true,
             });
             return (
-              <View key={layer.number} className={selected ? "bg-subtle-strong" : undefined}>
+              <View key={layer.number} className={selected ? "bg-thread-selected" : undefined}>
                 <PullRequestCardRow
                   title={layer.title ?? layer.headBranch}
                   icon={status.icon}

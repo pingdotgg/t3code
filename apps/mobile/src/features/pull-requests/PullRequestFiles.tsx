@@ -125,7 +125,7 @@ export function usePullRequestFilesContent(props: {
                 <SymbolView
                   name="checkmark.circle.fill"
                   size={18}
-                  tintColorClassName="accent-success-foreground"
+                  tintColorClassName="accent-adaptive-emerald-600-400"
                 />
               ) : null}
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
