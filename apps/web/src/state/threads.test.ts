@@ -19,7 +19,7 @@ import { createRunningThreadKeepAliveAtom } from "./threads";
 const LOCAL = EnvironmentId.make("local");
 const REMOTE = EnvironmentId.make("remote");
 
-type Status = "running" | "starting" | "idle";
+type Status = "running" | "starting" | "preparing" | "queued" | "waiting" | "idle";
 function shell(id: string, status: Status | null) {
   return { id: ThreadId.make(id), status: status ?? "idle" } satisfies Pick<
     OrchestrationV2ThreadShell,
@@ -157,6 +157,12 @@ describe("createRunningThreadKeepAliveAtom", () => {
     expect(h.openStreams()).toEqual(["local:b"]);
     h.registry.set(h.stateAtom(LOCAL, "b"), detail("b", "idle"));
     expect(h.openStreams()).toEqual([]);
+  });
+
+  it("keeps queued threads open", () => {
+    const h = makeHarness();
+    h.registry.set(h.threads(LOCAL), [shell("a", "queued")]);
+    expect(h.openStreams()).toEqual(["local:a"]);
   });
 
   it("follows environments that connect and go away", () => {
