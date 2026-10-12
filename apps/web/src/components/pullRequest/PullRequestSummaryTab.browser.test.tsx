@@ -108,3 +108,19 @@ it("keeps an unsaved description when collapsed and reopened", async () => {
   await screen.click("Description");
   expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
 });
+
+it("explains that comment text is unavailable and directs to host when comments are truncated and empty", async () => {
+  await using screen = await render({
+    ...detail,
+    commentCount: 1,
+    comments: [],
+    commentsTruncated: true,
+  });
+  const renderedTexts = screen.visibleText();
+  expect(renderedTexts.toLowerCase()).not.toContain("longer");
+  expect(renderedTexts.toLowerCase()).not.toContain("no comments");
+  expect(renderedTexts.toLowerCase()).toContain("host");
+  expect(renderedTexts).toContain(
+    "Comments are not available here. Open this pull request on the host to read them.",
+  );
+});
