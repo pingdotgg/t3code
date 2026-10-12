@@ -184,6 +184,7 @@ import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { runPluginAction, threadMenuPluginActions } from "../pluginActions";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -4676,6 +4677,7 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const pluginActions = threadMenuPluginActions(threadRef, thread.projectId);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -4713,12 +4715,18 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              pluginActions,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        const pluginAction = pluginActions.find((entry) => entry.id === clicked.value);
+        if (pluginAction) {
+          await runPluginAction(pluginAction);
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
