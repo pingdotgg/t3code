@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CommandAvailability } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -241,8 +242,18 @@ const diagnose = (
   files: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = "darwin",
+  commands: ReadonlyArray<string> = ["ffmpeg"],
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
+    // Commands resolve against the PATH the hub is given, so entries carry their directory.
+    Effect.provideService(CommandAvailability, (command, options) =>
+      Effect.succeed(
+        commands.includes(command) ||
+          (options?.env?.PATH ?? "")
+            .split(platform === "win32" ? ";" : ":")
+            .some((directory) => commands.includes(`${directory}/${command}`)),
+      ),
+    ),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
@@ -328,6 +339,28 @@ describe("Android SDK availability", () => {
         { HOME: "/test/home" },
       );
       expect(reason).toBeNull();
+    }),
+  );
+
+  it.effect("reports missing ffmpeg, resolved the way the device hub resolves it", () =>
+    Effect.gen(function* () {
+      const sdk = [
+        "/sdk/platform-tools/adb",
+        "/sdk/emulator/emulator",
+        "/sdk/cmdline-tools/latest/bin/avdmanager",
+      ];
+      expect(yield* diagnose(sdk, { ANDROID_HOME: "/sdk" }, "linux", [])).toContain(
+        "ffmpeg was not found. Android emulator video needs it",
+      );
+      const override = { ANDROID_HOME: "/sdk", SERVE_EMU_FFMPEG: " /opt/ffmpeg/bin/ffmpeg " };
+      expect(yield* diagnose(sdk, override, "linux", ["/opt/ffmpeg/bin/ffmpeg"])).toBeNull();
+      expect(yield* diagnose(sdk, override, "linux", ["ffmpeg"])).toContain(
+        "ffmpeg was not found at /opt/ffmpeg/bin/ffmpeg, set by SERVE_EMU_FFMPEG",
+      );
+      // The hub's PATH includes the SDK tool directories, so the check does too.
+      expect(
+        yield* diagnose(sdk, { ANDROID_HOME: "/sdk" }, "linux", ["/sdk/emulator/ffmpeg"]),
+      ).toBeNull();
     }),
   );
 

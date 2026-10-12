@@ -25,7 +25,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { CommandAvailability, isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -134,6 +134,18 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
       return `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`;
     return `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
   }
+  // The device hub encodes emulator video with the same binary, resolved in the same environment.
+  const env = deviceHostEnvironment(
+    yield* HostProcess.Environment,
+    sdk.root,
+    hostPlatform,
+    yield* Path.Path,
+  );
+  const ffmpegOverride = env.SERVE_EMU_FFMPEG?.trim();
+  if (!(yield* (yield* CommandAvailability)(ffmpegOverride || "ffmpeg", { env })))
+    return ffmpegOverride
+      ? `ffmpeg was not found at ${ffmpegOverride}, set by SERVE_EMU_FFMPEG. Android emulator video needs ffmpeg with the libx264 encoder.`
+      : "ffmpeg was not found. Android emulator video needs it; install ffmpeg with the libx264 encoder and put it on PATH.";
   return null;
 });
 
