@@ -11,19 +11,9 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useCallback, useMemo, useState } from "react";
 import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
-import { Text as NativeText } from "react-native";
-import {
-  Markdown,
-  type CustomRenderers,
-  type CustomRendererProps,
-} from "react-native-nitro-markdown";
-import { markdownHtmlContent } from "@t3tools/mobile-markdown-text/markdown";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import {
-  hasNativeSelectableMarkdownText,
-  SelectableMarkdownText,
-} from "../../native/SelectableMarkdownText";
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/FilePreviewGallery";
@@ -109,40 +99,6 @@ export function PullRequestMarkdown(props: {
   );
 }
 
-function renderLink(
-  { href, children }: CustomRendererProps,
-  styles: ReturnType<typeof useMarkdownPreviewStyles>,
-  open: (href: string) => void,
-) {
-  return (
-    <NativeText
-      className="font-t3-medium"
-      onPress={() => href && open(href)}
-      style={{ color: styles.theme.colors?.link }}
-    >
-      {children}
-    </NativeText>
-  );
-}
-
-function renderHtmlBlock(
-  { node }: CustomRendererProps,
-  styles: ReturnType<typeof useMarkdownPreviewStyles>,
-  renderers: CustomRenderers,
-) {
-  const content = markdownHtmlContent(node.content ?? "").trim();
-  return content ? (
-    <Markdown
-      options={{ gfm: true, html: false }}
-      renderers={renderers}
-      styles={styles.styles}
-      theme={styles.theme}
-    >
-      {content}
-    </Markdown>
-  ) : null;
-}
-
 function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
@@ -176,34 +132,16 @@ function PullRequestMarkdownContent(props: {
     (image) => <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />,
     [],
   );
-  const styles = useMarkdownPreviewStyles(renderImage);
-  const renderers = useMemo<CustomRenderers>(() => {
-    const renderers: CustomRenderers = {
-      ...styles.renderers,
-      link: (props) => renderLink(props, styles, openLink),
-    };
-    renderers.html_block = (props) => renderHtmlBlock(props, styles, renderers);
-    return renderers;
-  }, [styles, openLink]);
+  const styles = useMarkdownPreviewStyles();
   return (
     <FilePreviewGallery value={gallery}>
-      {hasNativeSelectableMarkdownText() ? (
-        <SelectableMarkdownText
-          markdown={markdown}
-          textStyle={styles.nativeTextStyle}
-          onLinkPress={openLink}
-          renderImage={renderImage}
-        />
-      ) : (
-        <Markdown
-          options={{ gfm: true, html: true }}
-          renderers={renderers}
-          styles={styles.styles}
-          theme={styles.theme}
-        >
-          {markdown}
-        </Markdown>
-      )}
+      <SelectableMarkdownText
+        markdown={markdown}
+        textStyle={styles.nativeTextStyle}
+        onLinkPress={openLink}
+        renderImage={renderImage}
+        onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+      />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>
   );

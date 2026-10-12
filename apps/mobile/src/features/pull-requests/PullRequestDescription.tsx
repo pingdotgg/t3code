@@ -9,8 +9,7 @@ import { useContext, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
-import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
-import { nativeMarkdownWithHtml } from "@t3tools/mobile-markdown-text/markdown";
+import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -32,10 +31,7 @@ export function PullRequestDescription(props: {
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
   const content = useMemo(() => {
-    const document = nativeMarkdownWithHtml(
-      parseMarkdownWithOptions(props.markdown, { gfm: true, html: true, math: false }),
-      (markdown) => parseMarkdownWithOptions(markdown, { gfm: true, html: false, math: false }),
-    );
+    const document = parseMarkdownDocument(props.markdown);
     const content = pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
     return {
       ...content,

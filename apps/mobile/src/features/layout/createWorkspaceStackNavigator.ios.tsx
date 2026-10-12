@@ -303,9 +303,13 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const primaryDescriptor = props.descriptors[primaryRoute.key]!;
   const descriptors = props.descriptors;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
+  const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
-    route: baseRoute,
+    navigation: props.descriptors[visibleRoute.key]!.navigation,
+    // The native envelope keeps a stable key, but its NavigationProvider must
+    // identify the real visible route or useIsFocused closes media viewers.
+    route: visibleRoute,
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
@@ -359,10 +363,13 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           overlays.map((group) => {
             const route = group[0]!;
             const descriptor = props.descriptors[route.key]!;
+            const visibleRoute = group.at(-1)!;
             return [
               route.key,
               {
                 ...descriptor,
+                navigation: props.descriptors[visibleRoute.key]!.navigation,
+                route: visibleRoute,
                 options: modalEnvelopeOptions(descriptor.options),
                 render: () => (
                   <V5CardStackView

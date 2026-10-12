@@ -6,10 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { useState } from "react";
-import { Alert, Modal, Platform, Pressable, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
 import { AppText as Text } from "../../components/AppText";
+import { AppSheet } from "../../components/AppSheet";
+import { MaterialButton } from "../../components/MaterialButton";
 import { uuidv4 } from "../../lib/uuid";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
 
@@ -54,25 +56,16 @@ export function TerminalContextSheet(props: {
     props.onAttach();
   };
   return (
-    <Modal presentationStyle="pageSheet" animationType="slide" onRequestClose={props.onClose}>
-      <View
-        className="flex-1 bg-sheet-solid"
-        style={
-          Platform.OS === "android"
-            ? { paddingTop: insets.top, paddingBottom: insets.bottom }
-            : undefined
-        }
+    <AppSheet title="Terminal output" onClose={props.onClose}>
+      <ScrollView
+        className="flex-1"
+        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
       >
-        <View className="flex-row items-center justify-between p-4">
-          <Text className="text-lg text-foreground">Visible terminal output</Text>
-          <Pressable accessibilityRole="button" onPress={props.onClose} className="p-3">
-            <Text className="text-foreground">Cancel</Text>
-          </Pressable>
-        </View>
-        <Text className="px-4 pb-3 text-foreground-muted">
+        <Text className="pb-4 text-sm text-foreground-muted">
           Tap the first and last line to select a range.
         </Text>
-        <ScrollView className="flex-1" contentContainerStyle={{ padding: 16 }}>
+        <View className="overflow-hidden rounded-xl bg-card-alt">
           {lines.map((line, index) => (
             <Pressable
               key={index}
@@ -88,31 +81,45 @@ export function TerminalContextSheet(props: {
                   setAnchor(null);
                 }
               }}
-              className={index >= range.start && index <= range.end ? "bg-subtle py-1" : "py-1"}
+              className={
+                index >= range.start && index <= range.end
+                  ? "flex-row gap-3 bg-primary/10 px-3 py-2"
+                  : "flex-row gap-3 px-3 py-2"
+              }
             >
               <Text
-                className="text-sm text-foreground"
+                className="w-8 text-right text-sm text-foreground-muted"
                 style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
               >
-                {index + 1} {line || " "}
+                {index + 1}
+              </Text>
+              <Text
+                className="flex-1 text-sm text-foreground"
+                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+              >
+                {line || " "}
               </Text>
             </Pressable>
           ))}
-        </ScrollView>
+        </View>
+      </ScrollView>
+      <View
+        className="gap-3 border-t border-border px-5 pt-4"
+        style={{ paddingBottom: Math.max(16, insets.bottom) }}
+      >
         {tooLarge ? (
-          <Text className="px-4 text-foreground-muted">
+          <Text className="text-sm text-foreground-muted">
             Select fewer lines to fit the context limit.
           </Text>
         ) : null}
-        <Pressable
-          accessibilityRole="button"
+        <MaterialButton
+          label="Attach selected output"
+          tone="primary"
+          fullWidth
           disabled={!selectedText.trim() || tooLarge}
           onPress={attach}
-          className="m-4 mb-10 rounded-xl bg-subtle p-4"
-        >
-          <Text className="text-center text-foreground">Attach selected output</Text>
-        </Pressable>
+        />
       </View>
-    </Modal>
+    </AppSheet>
   );
 }

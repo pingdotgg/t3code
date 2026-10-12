@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import type { MarkdownNode } from "../../lib/markdownDocument";
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
@@ -7,10 +7,10 @@ describe("PR attachments", () => {
   it("combines embedded images and detected media without duplicate URLs", () => {
     const uri = "https://drop.example.com/shot.png";
     const document = {
-      type: "document",
+      type: "root",
       children: [
-        { type: "image", href: uri, alt: "Screenshot" },
-        { type: "image", href: uri, alt: "Duplicate" },
+        { type: "image", url: uri, alt: "Screenshot" },
+        { type: "image", url: uri, alt: "Duplicate" },
       ],
     } as MarkdownNode;
     const media = splitPullRequestBody(
@@ -32,7 +32,7 @@ describe("PR attachments", () => {
       "https://example.com/docs\n\n```\nhttps://drop.example.com/demo.mp4\n```",
     );
     expect(
-      pullRequestDescriptionContent({ type: "document" } as MarkdownNode, media).attachments,
+      pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments,
     ).toEqual([]);
   });
 });

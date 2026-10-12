@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { MarkdownNode } from "react-native-nitro-markdown/headless";
-import {
-  markdownHtmlContent,
-  nativeMarkdownWithHtml,
-  nativeMarkdownDocumentChunks,
-} from "@t3tools/mobile-markdown-text/markdown";
+import { markdownHtmlContent, markdownWithHtml, parseMarkdownDocument } from "./markdownDocument";
+import { markdownImageSources } from "./markdownImageSources";
 
 describe("HTML in native Markdown", () => {
   it("leaves code inside an HTML details block literal", () => {
@@ -20,7 +16,7 @@ describe("HTML in native Markdown", () => {
       markdownHtmlContent(
         '<img width="900" alt="Before > after [settings]" src="https://example.com/before.png?a=1&amp;b=2" />',
       ),
-    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1&b=2>)");
+    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1\\&b=2>)");
     expect(
       markdownHtmlContent(
         "<a href='https://example.com'><img src='https://example.com/banner.svg' alt='Review' /></a>",
@@ -28,52 +24,50 @@ describe("HTML in native Markdown", () => {
     ).toBe("![Review](<https://example.com/banner.svg>)");
   });
 
-  it("removes bot comments and empty details wrappers without leaving display chunks", () => {
-    const document: MarkdownNode = {
-      type: "document",
-      children: [
-        { type: "html_block", content: "<!-- generated bot metadata -->" },
-        { type: "html_block", content: "<details>" },
-        { type: "heading", level: 2, children: [{ type: "text", content: "Walkthrough" }] },
-        { type: "html_block", content: "</details>" },
-      ],
-    };
-    const result = nativeMarkdownWithHtml(document, () => {
-      throw new Error("Empty HTML must not be parsed");
-    });
-    expect(result.children).toEqual([document.children![2]]);
-    expect(nativeMarkdownDocumentChunks(result)).toHaveLength(1);
-    expect(markdownHtmlContent("<summary>Walkthrough</summary>").trim()).toBe("**Walkthrough**");
+  it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
+    const markdown =
+      '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
+    expect(markdownWithHtml(markdown)).toBe(
+      "![\\&lt;](<https://example.com/shot.png?label=\\&lt;\\&sig=a%26b>)",
+    );
+    expect(markdownImageSources(markdown)).toEqual([
+      "https://example.com/shot.png?label=&lt;&sig=a%26b",
+    ]);
+    const paragraph = parseMarkdownDocument(markdown).children[0];
+    expect(paragraph?.type).toBe("paragraph");
+    if (paragraph?.type === "paragraph")
+      expect(paragraph.children[0]).toMatchObject({ type: "image", alt: "&lt;" });
   });
 
-  it("keeps literal HTML code examples and gives HTML image fragments unique chunk keys", () => {
-    const code: MarkdownNode = {
-      type: "code_block",
-      content: '<img src="literal.png">',
-      language: "html",
-    };
-    const document: MarkdownNode = {
-      type: "document",
-      children: [
-        code,
-        { type: "html_block", content: '<img src="one.png">' },
-        { type: "html_block", content: '<img src="two.png">' },
-      ],
-    };
-    const result = nativeMarkdownWithHtml(document, (content) => ({
-      type: "document",
-      children: [
-        {
-          type: "paragraph",
-          beg: 0,
-          end: content.length,
-          children: [{ type: "image", href: content, beg: 0 }],
-        },
-      ],
-    }));
-    expect(result.children![0]).toBe(code);
-    const keys = nativeMarkdownDocumentChunks(result).map((chunk) => chunk.key);
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(result.children![1]?.beg).toBeUndefined();
+  it("ignores code delimiters in HTML attributes and comments when collecting screenshots", () => {
+    const markdown =
+      '<details data-example="`">\n<summary>Proof</summary>\n<img src="https://example.com/shot.png" alt="Screenshot">\n<!-- ` -->\n</details>';
+    expect(markdownHtmlContent(markdown)).toContain(
+      "![Screenshot](<https://example.com/shot.png>)",
+    );
+    expect(markdownImageSources(markdown)).toEqual(["https://example.com/shot.png"]);
+    expect(markdownWithHtml(markdown)).not.toContain("<img");
+  });
+
+  it("removes bot metadata and details wrappers while keeping the content", () => {
+    const markdown =
+      "<!-- generated bot metadata -->\n<details>\n<summary>Walkthrough</summary>\n\n## Changes\n\nText\n\n</details>";
+    const result = markdownWithHtml(markdown);
+    expect(result).not.toContain("<!--");
+    expect(result).not.toContain("<details>");
+    expect(result).toContain("**Walkthrough**");
+    expect(result).toContain("## Changes");
+    expect(parseMarkdownDocument(markdown).children.some((node) => node.type === "html")).toBe(
+      false,
+    );
+  });
+
+  it("collects HTML and Markdown screenshots while leaving inline and fenced code literal", () => {
+    const markdown =
+      '```html\n<img src="literal.png">\n```\n\nUse `<img src="inline.png">` here.\n\n<img src="one.png">\n\n![Two](two.png)\n\n<img src="one.png">';
+    expect(markdownImageSources(markdown)).toEqual(["one.png", "two.png"]);
+    const result = markdownWithHtml(markdown);
+    expect(result).toContain('```html\n<img src="literal.png">\n```');
+    expect(result).toContain('`<img src="inline.png">`');
   });
 });

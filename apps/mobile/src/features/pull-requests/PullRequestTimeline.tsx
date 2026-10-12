@@ -6,8 +6,7 @@ import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { nativeMarkdownWithHtml } from "@t3tools/mobile-markdown-text/markdown";
-import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
+import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { relativeTime } from "../../lib/time";
@@ -63,17 +62,7 @@ function TimelineComment({ comment }: { comment: PullRequestComment }) {
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
   const content = useMemo(
-    () =>
-      pullRequestDescriptionContent(
-        nativeMarkdownWithHtml(
-          parseMarkdownWithOptions(comment.body.replace(/<!--[\s\S]*?-->/g, ""), {
-            gfm: true,
-            html: true,
-            math: false,
-          }),
-          (markdown) => parseMarkdownWithOptions(markdown, { gfm: true, html: false, math: false }),
-        ),
-      ),
+    () => pullRequestDescriptionContent(parseMarkdownDocument(comment.body)),
     [comment.body],
   );
   const preview = content.preview;

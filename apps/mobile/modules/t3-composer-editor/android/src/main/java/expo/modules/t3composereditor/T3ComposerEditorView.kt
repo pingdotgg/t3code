@@ -29,7 +29,6 @@ import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
-import expo.modules.t3markdowntext.T3ContextChip
 import org.json.JSONObject
 import kotlin.math.max
 

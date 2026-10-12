@@ -7,7 +7,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
-import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
+import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
