@@ -5,6 +5,7 @@
  * @module source-control-tangled/server/tangledPulls
  */
 import * as Schema from "effect/Schema";
+import { decodeHTML } from "entities";
 
 /**
  * One entry of `tg pr list`. Without a `--state` filter `tg` answers with every state, so the
@@ -97,8 +98,7 @@ export function parsePullPageRows(
   const rows: Array<{ number: number; title: string }> = [];
   for (const match of html.matchAll(pattern)) {
     const number = Number(match[1]);
-    const title = (match[2] ?? "")
-      .replace(/<[^>]+>/gu, "")
+    const title = decodeHTML((match[2] ?? "").replace(/<[^>]+>/gu, ""))
       .replace(/\s+/gu, " ")
       .trim()
       .replace(/\s*#\d+$/u, "");

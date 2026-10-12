@@ -146,6 +146,15 @@ describe("offsetFromRows", () => {
 });
 
 describe("parsePullPageRows", () => {
+  it("decodes title character references so numbered reads match the CLI title", () => {
+    const title = "Fix <tag> & \"parsing\" 'quotes' 🚀 &lt;";
+    const html =
+      '<a href="/alice.example/repo/pulls/1">Fix &lt;tag&gt; &amp; &#34;parsing&#34; &#x27;quotes&#x27; &#x1F680; &amp;lt; <span>#1</span></a>';
+    const rows = parsePullPageRows(html, "alice.example/repo");
+    assert.deepStrictEqual(rows, [{ number: 1, title }]);
+    assert.strictEqual(offsetFromRows(rows, numberPulls([pull("a", title)])), 0);
+  });
+
   it("reads the number and title a tangled.org page prints", () => {
     const html = `
       <a href="/tangled.org/knot-docker/pulls/19" class="dark:text-white">
