@@ -26,6 +26,7 @@ import { AppText } from "../../components/AppText";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";
+import { previewPromptText } from "./previewPromptText";
 
 import {
   previewStreamDocument,
@@ -256,6 +257,7 @@ function PreviewStreamDocumentView({
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const [started, setStarted] = useState(false);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
+  const dialogRef = useRef<PreviewStreamControl["dialog"]>(null);
   const [promptText, setPromptText] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const answerFileChooser = (pick: boolean) => {
@@ -371,11 +373,14 @@ function PreviewStreamDocumentView({
           const message = previewStreamMessage(event.nativeEvent.data);
           if (message === null) return;
           switch (message.type) {
-            case "control":
+            case "control": {
               setControl(message);
-              setPromptText(message.dialog?.defaultValue ?? "");
+              const previousDialog = dialogRef.current;
+              dialogRef.current = message.dialog;
+              setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
               onControl?.(message);
               return;
+            }
             case "unauthorized":
               if (!onUnauthorized()) {
                 fail("This session can't open the browser stream. Reconnect to try again.");
@@ -413,6 +418,8 @@ function PreviewStreamDocumentView({
               }
               setStatus(message.status);
               if (message.status === "connecting") {
+                // Dialogs may have closed and reopened while this viewer was disconnected.
+                dialogRef.current = null;
                 setControl(null);
                 onControl?.(null);
               }
