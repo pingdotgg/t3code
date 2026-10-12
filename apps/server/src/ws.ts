@@ -1697,6 +1697,7 @@ const layerWsRpc = (
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
           );
+          const { benchmarks } = yield* modelManifest.current;
 
           return {
             environment,
@@ -1738,6 +1739,7 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...(benchmarks ? { modelBenchmarks: benchmarks } : {}),
           };
         });
 

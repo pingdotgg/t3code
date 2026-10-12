@@ -241,6 +241,19 @@ describe("adjacentModelPickerProvider", () => {
     ).toBe("favorites");
   });
 
+  it("visits the Pareto line between favorites and the instances when shown", () => {
+    const withPareto = { ...input, showPareto: true };
+    expect(
+      adjacentModelPickerProvider({ ...withPareto, selectedInstanceId: "favorites", direction: 1 }),
+    ).toBe("pareto");
+    expect(
+      adjacentModelPickerProvider({ ...withPareto, selectedInstanceId: "pareto", direction: 1 }),
+    ).toBe(codex.instanceId);
+    expect(
+      adjacentModelPickerProvider({ ...input, selectedInstanceId: "favorites", direction: 1 }),
+    ).toBe(codex.instanceId);
+  });
+
   it("keeps thread locks and the selected unavailable catalog", () => {
     expect(
       adjacentModelPickerProvider({

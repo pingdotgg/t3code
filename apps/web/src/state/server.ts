@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
   type EnvironmentTheme,
+  type ModelBenchmarks,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleLegacyThreadMigrationPayload,
@@ -114,6 +115,20 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
   (get): ReadonlyArray<EditorId> =>
     get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
 ).pipe(Atom.withLabel("web-primary-server-available-editors"));
+
+/**
+ * Benchmark scores are manifest data, not environment state. Take the newest
+ * copy any connected server sends, so an older primary server cannot hide them
+ * from threads on a current one.
+ */
+export const modelBenchmarksAtom = Atom.make((get): ModelBenchmarks | undefined => {
+  let newest: ModelBenchmarks | undefined;
+  for (const config of get(environmentServerConfigsAtom).values()) {
+    const benchmarks = config.modelBenchmarks;
+    if (benchmarks && (!newest || benchmarks.updatedAt > newest.updatedAt)) newest = benchmarks;
+  }
+  return newest;
+}).pipe(Atom.withLabel("web-model-benchmarks"));
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
