@@ -209,6 +209,7 @@ it.effect.each([
       const summary = yield* readSummary(input);
       const detail = yield* provider.getChangeRequest(input);
       assert.strictEqual(list.items.length, 1);
+      assert.strictEqual(detail.headSha, "head");
       for (const result of [list.items[0]!, summary, detail]) {
         assert.strictEqual(result.mergeability, mergeability);
         assert.strictEqual(result.isDraft, isDraft);
