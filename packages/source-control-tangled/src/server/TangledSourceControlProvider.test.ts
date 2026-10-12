@@ -147,11 +147,11 @@ describe("TangledSourceControlProvider.defaultBranchFromSymref", () => {
 });
 
 describe("TangledSourceControlProvider.createsUnderOwner", () => {
-  it("accepts the owner tg created the repository under", () => {
+  it.each(["alice.example", "did:plc:alice"])("accepts the same owner %s", (owner) => {
     assert.strictEqual(
       TangledSourceControlProvider.createsUnderOwner({
-        requested: "alice.example",
-        created: "alice.example",
+        requested: owner,
+        created: owner,
       }),
       true,
     );
@@ -495,6 +495,26 @@ describe("TangledSourceControlProvider.make", () => {
         .createRepository({ cwd: "/repo", repository: "someone-else/repo", visibility: "public" })
         .pipe(Effect.flip);
       assert.match(error.detail, /not someone-else/u);
+    }).pipe(serve(tg));
+  });
+
+  it.effect("rejects clone URLs when tg created the repository under a different DID", () => {
+    const tg = fakeTg({
+      "repo create repo": {
+        stdout: encodeJson({ name: "repo", author: "did:plc:bob", knot: "knot1.tangled.sh" }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      const error = yield* provider
+        .createRepository({
+          cwd: "/repo",
+          repository: "did:plc:alice/repo",
+          visibility: "public",
+        })
+        .pipe(Effect.flip);
+      assert.match(error.detail, /did:plc:bob/u);
+      assert.match(error.detail, /did:plc:alice/u);
     }).pipe(serve(tg));
   });
 

@@ -160,8 +160,8 @@ export const TangledPullListSchema = Schema.Struct({
 /**
  * Whether `tg repo create` honoured the owner asked for. `tg` has no way to create a repository
  * under another account, so a name like `someone-else/repo` is created under the signed-in one.
- * Comparing only plain handles keeps a DID and a handle for the same account from reading as a
- * mismatch.
+ * Compare handles and pairs of DIDs directly. A mixed DID/handle pair cannot establish a
+ * mismatch without resolving the handle.
  */
 export function createsUnderOwner(input: {
   readonly requested: string;
@@ -170,6 +170,7 @@ export function createsUnderOwner(input: {
   const requested = input.requested.trim();
   const created = input.created?.trim();
   if (requested.length === 0 || created === undefined || created.length === 0) return true;
+  if (requested.startsWith("did:") && created.startsWith("did:")) return requested === created;
   return requested.startsWith("did:") || created.startsWith("did:") || requested === created;
 }
 
