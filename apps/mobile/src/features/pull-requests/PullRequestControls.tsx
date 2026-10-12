@@ -4,7 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { useSafeAreaFrame, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { MaterialButton } from "../../components/MaterialButton";
@@ -12,10 +12,7 @@ import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
-import {
-  useNativeColumnLayoutMetrics,
-  useNativeLayoutMetrics,
-} from "../../native/native-layout-metrics";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -117,8 +114,6 @@ export function PullRequestActionToolbar(props: {
   const { draft } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
-  const frame = useSafeAreaFrame();
-  const columnMetrics = useNativeColumnLayoutMetrics();
   const nativeMetrics = useNativeLayoutMetrics();
   const verticalControls = nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none";
   const permissions = usePullRequestPermissions(props.params, props.pr);
@@ -140,20 +135,6 @@ export function PullRequestActionToolbar(props: {
   if (!props.pr) return null;
   const primaryDisabled = pendingReview ? false : agent.disabled;
   const showPrimary = pendingReview || canOpenThread;
-  // Match the native phone tab controls; the side rail keeps intrinsic sizing.
-  const controlSize = verticalControls ? undefined : 60;
-  // Reserve the native outer margins, custom-button padding, and item gaps.
-  // UIKit needs this space to keep every action out of its overflow menu.
-  // Duo's side rail uses an intrinsic icon item instead.
-  const sideControls = Number(showAgentControls) + 1;
-  const primaryWidth = verticalControls
-    ? undefined
-    : Math.max(
-        0,
-        (columnMetrics?.width ?? frame.width - insets.left - insets.right) -
-          58 -
-          sideControls * (60 + 10 + 16),
-      );
   if (Platform.OS === "android") {
     const primary = (
       <MaterialButton
@@ -230,8 +211,6 @@ export function PullRequestActionToolbar(props: {
         title={primaryLabel}
         accessibilityLabel={primaryLabel}
         variant="prominent"
-        width={primaryWidth}
-        height={controlSize}
         icon={
           verticalControls
             ? pendingReview
@@ -251,8 +230,6 @@ export function PullRequestActionToolbar(props: {
         label={primaryLabel}
         accessibilityLabel={primaryLabel}
         variant="prominent"
-        width={primaryWidth}
-        height={controlSize}
         icon={
           verticalControls
             ? pendingReview
@@ -270,8 +247,6 @@ export function PullRequestActionToolbar(props: {
   const agentControl = showAgentControls ? (
     <NativeHeaderToolbar.Menu
       identifier="pull-request-agent"
-      width={controlSize}
-      height={controlSize}
       icon="sparkles"
       title="AI helpers"
       accessibilityLabel="PR agent actions"
@@ -310,19 +285,27 @@ export function PullRequestActionToolbar(props: {
   const filesControl = (
     <NativeHeaderToolbar.Button
       identifier="workspace-trailing-action"
-      width={controlSize}
-      height={controlSize}
       icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
       accessibilityLabel="Changed files"
       onPress={openFiles}
       separateBackground
     />
   );
+  if (verticalControls)
+    return (
+      <NativeHeaderToolbar placement="bottom">
+        {filesControl}
+        {agentControl}
+        {primaryControl}
+      </NativeHeaderToolbar>
+    );
   return (
     <NativeHeaderToolbar placement="bottom">
-      {verticalControls ? filesControl : agentControl}
-      {verticalControls ? agentControl : primaryControl}
-      {verticalControls ? primaryControl : filesControl}
+      {agentControl}
+      <NativeHeaderToolbar.Spacer flexible />
+      {primaryControl}
+      <NativeHeaderToolbar.Spacer flexible />
+      {filesControl}
     </NativeHeaderToolbar>
   );
 }

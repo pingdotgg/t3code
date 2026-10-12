@@ -41,9 +41,7 @@ type NativeStackHeaderAxisBehavior = Extract<
   NativeStackHeaderItem,
   { type: "button" }
 >["axisBehavior"];
-type NativeToolbarItem =
-  | (NativeStackHeaderItem & { readonly height?: number })
-  | HeaderBarButtonSearchBarPlacementItem;
+type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
 };
@@ -162,8 +160,6 @@ function convertToolbarChild(child: ReactNode): NativeToolbarItem | null {
           : () => undefined,
       sharesBackground: !child.props.separateBackground,
       tintColor: child.props.tintColor as ColorValue | undefined,
-      width: typeof child.props.width === "number" ? child.props.width : undefined,
-      height: typeof child.props.height === "number" ? child.props.height : undefined,
       variant:
         child.props.variant === "done" || child.props.variant === "prominent"
           ? child.props.variant
@@ -189,8 +185,6 @@ function convertToolbarChild(child: ReactNode): NativeToolbarItem | null {
       },
       sharesBackground: !child.props.separateBackground,
       tintColor: child.props.tintColor as ColorValue | undefined,
-      width: typeof child.props.width === "number" ? child.props.width : undefined,
-      height: typeof child.props.height === "number" ? child.props.height : undefined,
       variant:
         child.props.variant === "done" || child.props.variant === "prominent"
           ? child.props.variant
@@ -289,8 +283,6 @@ function NativeHeaderToolbarButton(_props: {
   readonly tintColor?: ColorValue;
   readonly variant?: "plain" | "done" | "prominent";
   readonly identifier?: string;
-  readonly width?: number;
-  readonly height?: number;
 }) {
   return null;
 }
@@ -308,8 +300,6 @@ function NativeHeaderToolbarMenu(_props: {
   readonly tintColor?: ColorValue;
   readonly title?: string;
   readonly variant?: "plain" | "done" | "prominent";
-  readonly width?: number;
-  readonly height?: number;
 }) {
   return null;
 }
