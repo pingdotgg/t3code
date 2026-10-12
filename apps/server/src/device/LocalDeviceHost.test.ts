@@ -448,15 +448,20 @@ it.effect("requires an ffmpeg the device hub can encode with before reporting An
     }
     let probe = { stdout: " V....D libopenh264", code: 0 };
     const probed: Array<string> = [];
+    // Readiness reads the host environment on every call, not only at construction.
+    const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: baseDir,
+          PATH: "/usr/bin",
+          ANDROID_HOME: `${baseDir}/sdk`,
+        }),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+      );
     const host = yield* LocalDeviceHost.make().pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-      Effect.provideService(HostProcess.Environment, {
-        HOME: baseDir,
-        PATH: "/usr/bin",
-        ANDROID_HOME: `${baseDir}/sdk`,
-      }),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+      onTestHost,
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
@@ -477,18 +482,14 @@ it.effect("requires an ffmpeg the device hub can encode with before reporting An
         },
       }),
     );
-    expect((yield* host.platformAvailability("android")).reason).toContain(
-      "lacks the libx264 encoder",
-    );
+    const android = onTestHost(host.platformAvailability("android"));
+    expect((yield* android).reason).toContain("lacks the libx264 encoder");
     probe = { stdout: "", code: 1 };
-    expect((yield* host.platformAvailability("android")).reason).toContain("could not be run");
+    expect((yield* android).reason).toContain("could not be run");
     probe = { stdout: " V....D libx264", code: 0 };
-    expect(yield* host.platformAvailability("android")).toEqual({
-      platform: "android",
-      available: true,
-    });
+    expect(yield* android).toEqual({ platform: "android", available: true });
     // A usable ffmpeg is probed once, not on every readiness check.
-    yield* host.platformAvailability("android");
+    yield* android;
     expect(probed).toEqual(Array.from({ length: 3 }, () => "ffmpeg -hide_banner -encoders"));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
