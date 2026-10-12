@@ -218,7 +218,7 @@ export const grokUsageFormat: TranscriptUsageFormat<void> = {
       update: { sessionUpdate: true, prompt_id: true, usage: true },
     },
   },
-  mightCarryUsage: (line) => line.includes('"turn_completed"'),
+  usageMarkers: ['"turn_completed"'],
   parseLine: (line) => parseGrokLine(line),
   parseProjected: (projected) => parseGrokRecord(projected),
 };

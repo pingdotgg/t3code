@@ -98,7 +98,7 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
     costUSD: true,
     message: { id: true, model: true, usage: true },
   },
-  mightCarryUsage: (line) => line.includes('"usage"'),
+  usageMarkers: ['"usage"'],
   parseLine: (line) => orEmpty(parseClaudeLine(line)),
   parseProjected: (projected) => orEmpty(parseClaudeRecord(projected)),
 };

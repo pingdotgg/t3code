@@ -231,11 +231,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   },
   // `turn_context`, `thread_settings_applied` and `session_meta` lines hold no
   // usage, but they carry the model, tier and session the reducer needs.
-  mightCarryUsage: (line) =>
-    line.includes('"token_count"') ||
-    line.includes('"turn_context"') ||
-    line.includes('"thread_settings_applied"') ||
-    line.includes('"session_meta"'),
+  usageMarkers: ['"token_count"', '"turn_context"', '"thread_settings_applied"', '"session_meta"'],
   parseLine: (line, state) => orEmpty(parseCodexLine(line, state)),
   parseProjected: (projected, state) => orEmpty(parseCodexRecord(projected, state)),
   state: { initial: initialCodexScanState, schema: CodexScanState },
