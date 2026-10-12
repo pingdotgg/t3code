@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
-import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
+import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
@@ -49,12 +49,8 @@ export function AndroidWorkspaceNavigation(props: {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale } = useAndroidControlSizing();
   const rail = Boolean(props.rail);
-  const containerColor = rail
-    ? colors["--color-header"]
-    : flattenThemeColor(
-        themeColorWithAlpha(colors["--color-header-foreground"], 0.05),
-        flattenThemeColor(colors["--color-header"], colors["--color-screen"]),
-      );
+  const { containerColor, indicatorColor, selectedColor, unselectedColor } =
+    androidWorkspaceNavigationColors(colors, rail);
   if (!rail && keyboardVisible) return null;
 
   return (
@@ -77,9 +73,9 @@ export function AndroidWorkspaceNavigation(props: {
         dark={themeAppearance === "dark"}
         textScale={scale}
         containerColor={nativeColor(containerColor)}
-        selectedColor={nativeColor(colors["--color-secondary-foreground"])}
-        indicatorColor={nativeColor(colors["--color-secondary"])}
-        unselectedColor={nativeColor(colors["--color-header-foreground"])}
+        selectedColor={nativeColor(selectedColor)}
+        indicatorColor={nativeColor(indicatorColor)}
+        unselectedColor={nativeColor(unselectedColor)}
         onTabSelected={(event) => {
           Keyboard.dismiss();
           const tab = event.nativeEvent.tab;

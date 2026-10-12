@@ -15,7 +15,7 @@ export function MaterialFloatingToolbar(props: { readonly children: ReactElement
     >
       <HorizontalFloatingToolbar
         colors={{
-          toolbarContainerColor: colors["--color-card-alt"],
+          toolbarContainerColor: colors["--color-grouped-card"],
           toolbarContentColor: colors["--color-foreground"],
         }}
       >

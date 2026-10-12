@@ -6,7 +6,7 @@ import {
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { useContext, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
@@ -30,6 +30,7 @@ export function PullRequestDescription(props: {
   const [bodyHeight, setBodyHeight] = useState(0);
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
+  const fadeColor = colors[Platform.OS === "android" ? "--color-sheet-solid" : "--color-screen"];
   const content = useMemo(() => {
     const document = parseMarkdownDocument(props.markdown);
     const content = pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
@@ -87,10 +88,10 @@ export function PullRequestDescription(props: {
                       y2="80"
                       gradientUnits="userSpaceOnUse"
                     >
-                      <Stop offset="0" stopColor={colors["--color-screen"]} stopOpacity={0} />
-                      <Stop offset="0.5" stopColor={colors["--color-screen"]} stopOpacity={0.94} />
-                      <Stop offset="0.72" stopColor={colors["--color-screen"]} stopOpacity={1} />
-                      <Stop offset="1" stopColor={colors["--color-screen"]} stopOpacity={1} />
+                      <Stop offset="0" stopColor={fadeColor} stopOpacity={0} />
+                      <Stop offset="0.5" stopColor={fadeColor} stopOpacity={0.94} />
+                      <Stop offset="0.72" stopColor={fadeColor} stopOpacity={1} />
+                      <Stop offset="1" stopColor={fadeColor} stopOpacity={1} />
                     </LinearGradient>
                   </Defs>
                   <Rect width="100%" height="100%" fill="url(#description-fade)" />
@@ -102,7 +103,7 @@ export function PullRequestDescription(props: {
                     left: 0,
                     right: 0,
                     height: 44,
-                    backgroundColor: colors["--color-screen"],
+                    backgroundColor: fadeColor,
                   }}
                 />
               </View>

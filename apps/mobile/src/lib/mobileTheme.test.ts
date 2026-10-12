@@ -8,7 +8,10 @@ import {
   MOBILE_THEME_IDS,
   getThemeColorsForAppearance,
 } from "@t3tools/shared/themePalettes";
-import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
+import {
+  readDefaultMobileThemeVariables,
+  readGeneratedMobileThemeVariables,
+} from "./mobileTheme.test-support";
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 import {
@@ -96,12 +99,7 @@ describe("mobile themes", () => {
       );
       expect(variables["--color-card"]).toBe(themeColorToNativeColor(colors.surface));
       expect(variables["--color-composer-surface"]).toBe(
-        themeColorWithAlpha(
-          themeId === DEFAULT_MOBILE_THEME_ID
-            ? variables["--color-grouped-card"]
-            : themeColorToNativeColor(colors.surface),
-          appearance === "dark" ? 0.9 : 0.94,
-        ),
+        themeColorWithAlpha(variables["--color-grouped-card"], appearance === "dark" ? 0.9 : 0.94),
       );
       expect(variables["--color-thread-selected"]).toBe(
         themeColorToNativeColor(colors.sidebarRowActive),
@@ -180,6 +178,49 @@ describe("mobile themes", () => {
 
     expect(variables["--color-primary"]).toBe("#123456");
     expect(variables["--color-screen"]).toMatch(/^#/);
+  });
+
+  it.each(MOBILE_THEME_IDS)("separates %s filled groups from their sheets", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const generated = readGeneratedMobileThemeVariables(
+        themeId === DEFAULT_MOBILE_THEME_ID ? appearance : `${themeId}-${appearance}`,
+      );
+      expect(generated).toEqual(getMobileThemeVariables(themeId, appearance));
+      for (const platform of ["ios", "android"]) {
+        const variables = getMobileThemeRuntimeVariables(themeId, appearance, platform);
+        const sheet = variables["--color-sheet-solid"];
+        const group = variables["--color-grouped-card"];
+        expect(
+          contrastRatio(group, sheet),
+          `${platform} ${appearance}: grouped surface on sheet`,
+        ).toBeGreaterThanOrEqual(1.025);
+        for (const role of [
+          "--color-foreground",
+          "--color-foreground-secondary",
+          "--color-foreground-muted",
+          "--color-placeholder",
+          "--color-primary-text",
+        ] as const) {
+          expect(
+            contrastRatio(variables[role], group),
+            `${platform} ${appearance}: ${role} on grouped surface`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+        if (platform === "android") {
+          const header = flattenThemeColor(variables["--color-header"], sheet);
+          for (const role of ["--color-header-foreground", "--color-foreground-muted"] as const) {
+            expect(
+              contrastRatio(variables[role], header),
+              `${appearance}: ${role} on Android header`,
+            ).toBeGreaterThanOrEqual(4.5);
+          }
+        }
+        expect(
+          contrastRatio(variables["--color-foreground-muted"], variables["--color-secondary"]),
+          `${platform} ${appearance}: muted label on secondary surface`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 
   it.each(["light", "dark"] as const)(
