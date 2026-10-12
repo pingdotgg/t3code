@@ -322,13 +322,76 @@ export function extractInlineCodeSpans(text: string): string[] {
   return spans;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN =
-  /\[[^\]]*]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
+/** Reuses delimiter searches when successive candidates fall in the same run. */
+function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
+  let runStart = -1;
+  let runEnd = -1;
+  return (start: number) => {
+    if (start >= runStart && start <= runEnd) return runEnd;
+    delimiter.lastIndex = start;
+    runStart = start;
+    runEnd = delimiter.exec(markdown)?.index ?? markdown.length;
+    return runEnd;
+  };
+}
+
+function markdownLinkTailScanner(markdown: string) {
+  const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  const titleEnd = markdownRunEndFinder(markdown, /["']/g);
+  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  return (start: number) => {
+    const end = whitespaceEnd(start);
+    if (markdown[end] === ")") return end + 1;
+    if (end === start || (markdown[end] !== '"' && markdown[end] !== "'")) return null;
+    const quoteEnd = titleEnd(end + 1);
+    if (quoteEnd === markdown.length) return null;
+    const close = titleWhitespaceEnd(quoteEnd + 1);
+    return markdown[close] === ")" ? close + 1 : null;
+  };
+}
+
+function markdownLinkDestinationScanner(markdown: string) {
+  const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
+  const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
+  // Separate caches keep each branch's searches moving forward even when an
+  // angle destination fails and falls back to an ordinary destination.
+  const angleTail = markdownLinkTailScanner(markdown);
+  const bareTail = markdownLinkTailScanner(markdown);
+  return (start: number) => {
+    if (markdown[start] !== "(") return null;
+    const hrefStart = whitespaceEnd(start + 1);
+    if (markdown[hrefStart] === "<") {
+      const hrefEnd = angleEnd(hrefStart + 1);
+      if (hrefEnd > hrefStart + 1 && markdown[hrefEnd] === ">") {
+        const end = angleTail(hrefEnd + 1);
+        if (end !== null) return { hrefStart: hrefStart + 1, hrefEnd, end };
+      }
+    }
+    const hrefEnd = bareEnd(hrefStart);
+    if (hrefEnd === hrefStart) return null;
+    const end = bareTail(hrefEnd);
+    return end === null ? null : { hrefStart, hrefEnd, end };
+  };
+}
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
-  for (const match of markdown.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = (match[1] ?? match[2])?.trim();
+  const scanDestination = markdownLinkDestinationScanner(markdown);
+  let cursor = 0;
+  while (cursor < markdown.length) {
+    const labelStart = markdown.indexOf("[", cursor);
+    if (labelStart === -1) break;
+    const labelEnd = markdown.indexOf("]", labelStart + 1);
+    if (labelEnd === -1) break;
+
+    // Nested opening brackets share this closing bracket. On failure, skip the
+    // whole label instead of rescanning its suffix from each opening bracket.
+    cursor = labelEnd + 1;
+    const destination = scanDestination(cursor);
+    if (!destination) continue;
+    cursor = destination.end;
+    const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
     if (href) hrefs.push(href);
   }
   return hrefs;
