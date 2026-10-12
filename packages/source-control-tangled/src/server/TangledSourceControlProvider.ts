@@ -42,7 +42,11 @@ export function isTangledHostname(hostname: string): boolean {
 /** `tg auth status --json` names the account and the DID when one is signed in. */
 export function parseAuth(input: SourceControlAuthProbeInput) {
   const decoded = decodeJsonResult(TangledAuthStatusSchema)(input.stdout);
-  if (decoded._tag === "Success" && decoded.success.authenticated) {
+  if (
+    decoded._tag === "Success" &&
+    decoded.success.authenticated &&
+    decoded.success.status !== "expired"
+  ) {
     return providerAuth({
       status: "authenticated",
       account: decoded.success.handle ?? decoded.success.did,

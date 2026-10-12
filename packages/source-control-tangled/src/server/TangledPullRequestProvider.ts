@@ -18,7 +18,7 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
-import { isTangledCliError, TangledAuthStatusSchema, TangledCli } from "./TangledCli.ts";
+import { TangledAuthStatusSchema, TangledCli, type TangledCliError } from "./TangledCli.ts";
 import {
   numberPulls,
   offsetFromRows,
@@ -61,8 +61,22 @@ export const make = Effect.gen(function* () {
   const cli = yield* TangledCli;
   const httpClient = yield* HttpClient.HttpClient;
 
-  const failure = (operation: string, detail: string, reason: "failed" | "not-found" = "failed") =>
-    new PullRequestProviderError({ provider: KIND, operation, reason, detail });
+  const failure = (
+    operation: string,
+    detail: string,
+    reason: PullRequestProviderError["reason"] = "failed",
+  ) => new PullRequestProviderError({ provider: KIND, operation, reason, detail });
+
+  const cliFailure = (operation: string, cause: TangledCliError) =>
+    failure(
+      operation,
+      cause.detail,
+      cause.reason === "authentication"
+        ? "unauthenticated"
+        : cause.reason === "missing-cli"
+          ? "missing-tool"
+          : "failed",
+    );
 
   const unsupported = (operation: string, detail: string) => () =>
     Effect.fail(failure(operation, detail));
@@ -81,12 +95,7 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.map((answer) => numberPulls(answer.items)),
-        Effect.mapError((cause) =>
-          failure(
-            input.operation,
-            isTangledCliError(cause) ? cause.detail : "Tangled could not list pull requests.",
-          ),
-        ),
+        Effect.mapError((cause) => cliFailure(input.operation, cause)),
       );
   });
 
@@ -209,7 +218,7 @@ export const make = Effect.gen(function* () {
         args: ["pr", "view", entry.pull.rkey, "--repo", input.repository],
         schema: TangledPullViewSchema,
       })
-      .pipe(Effect.mapError((cause) => failure(input.operation, cause.detail)));
+      .pipe(Effect.mapError((cause) => cliFailure(input.operation, cause)));
     return {
       pull: toChangeRequest(
         { ...entry, pull: { ...entry.pull, ...detail } },
@@ -234,7 +243,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.map((status) => status.handle ?? status.did ?? ""),
-          Effect.mapError((cause) => failure("getViewer", cause.detail)),
+          Effect.mapError((cause) => cliFailure("getViewer", cause)),
         ),
 
     listChangeRequests: (input) =>

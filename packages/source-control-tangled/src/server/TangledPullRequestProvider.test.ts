@@ -5,6 +5,33 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Host from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Cli from "./TangledCli.ts";
 import * as Provider from "./TangledPullRequestProvider.ts";
+import { ChildProcessSpawner } from "effect/process";
+
+it.effect("preserves OAuth refresh failures as an authentication error", () => {
+  const host = Host.layer({
+    process: {
+      run: () =>
+        Effect.succeed(
+          Host.processOutput("", {
+            exitCode: ChildProcessSpawner.ExitCode(1),
+            stderr: "Error: failed to refresh OAuth tokens: token refresh failed: invalid_grant",
+          }),
+        ),
+    },
+  });
+  const client = HttpClient.make(() => Effect.die("No HTTP request is expected"));
+  return Effect.gen(function* () {
+    const provider = yield* Provider.make;
+    const error = yield* provider
+      .getViewer({ cwd: "/repo", host: "tangled.org" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.reason, "unauthenticated");
+    assert.match(error.detail, /tg auth login/u);
+  }).pipe(
+    Effect.provide(Cli.layer.pipe(Layer.provideMerge(host))),
+    Effect.provideService(HttpClient.HttpClient, client),
+  );
+});
 
 it.effect("reads a closed PR's activity and details through its list number and record key", () => {
   const calls: Array<ReadonlyArray<string>> = [];

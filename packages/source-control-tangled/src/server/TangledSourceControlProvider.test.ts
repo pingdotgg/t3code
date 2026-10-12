@@ -67,6 +67,15 @@ const serve =
     );
 
 describe("TangledSourceControlProvider.parseAuth", () => {
+  it("reports an expired saved session as unauthenticated", () => {
+    const expired = TangledSourceControlProvider.parseAuth({
+      stdout: encodeJson({ authenticated: true, status: "expired", handle: "noz.am" }),
+      stderr: "",
+      exitCode: ChildProcessSpawner.ExitCode(0),
+    });
+    assert.strictEqual(expired.status, "unauthenticated");
+  });
+
   it("reads the signed-in account from tg auth status", () => {
     const signedIn = TangledSourceControlProvider.parseAuth({
       stdout: encodeJson({ authenticated: true, handle: "alice.example", did: "did:plc:abc" }),

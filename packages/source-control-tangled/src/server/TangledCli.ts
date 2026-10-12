@@ -28,6 +28,7 @@ export class TangledCliError extends Schema.TaggedError<TangledCliError>()("Tang
 /** `tg auth status --json` names the signed-in account, and nothing else when logged out. */
 export const TangledAuthStatusSchema = Schema.Struct({
   authenticated: Schema.Boolean,
+  status: Schema.optional(Schema.String),
   did: Schema.optional(Schema.String),
   handle: Schema.optional(Schema.String),
 });
@@ -161,10 +162,14 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError((cause: VcsError) => fromVcsError(input.cwd, cause)));
     if (result.exitCode !== 0) {
+      const detail = tangledErrorMessage(result) ?? `tg ${input.args[0] ?? ""} failed.`;
+      const authentication = /invalid_grant|not authenticated|not logged in|session expired/iu.test(
+        detail,
+      );
       return yield* new TangledCliError({
         cwd: input.cwd,
-        reason: "failed",
-        detail: tangledErrorMessage(result) ?? `tg ${input.args[0] ?? ""} failed.`,
+        reason: authentication ? "authentication" : "failed",
+        detail: authentication ? `${detail} Run \`tg auth login\` and retry.` : detail,
       });
     }
     return result.stdout;
