@@ -129,6 +129,39 @@ jobs:
           git sparse-checkout set --no-cone '/*' '!/.repos/'
           git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
+      # The runner's PowerShell 7.6/.NET 10 intermittently crashes during signing:
+      # https://github.com/dotnet/runtime/issues/131636
+      # Put the .NET 8 release first for both workflow shells and electron-builder.
+      - name: Use PowerShell 7.4 for Windows ARM builds
+        if: inputs.platform == 'win' && inputs.arch == 'arm64'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          $version = "7.4.20"
+          $archive = Join-Path $env:RUNNER_TEMP "PowerShell-$version-win-arm64.zip"
+          $installDir = Join-Path $env:RUNNER_TEMP "powershell-$version-arm64"
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$version/PowerShell-$version-win-arm64.zip" `
+            -OutFile $archive
+          $expectedHash = "67eff749d5dae357501c95a3eec1dcd93f669824e3ca2b1d2adcdecdebf04f35"
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw "PowerShell archive checksum mismatch"
+          }
+          Expand-Archive -Path $archive -DestinationPath $installDir
+          $installDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$installDir\pwsh.exe" -NoProfile -NonInteractive -Command '$PSVersionTable; [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify Windows ARM PowerShell selection
+        if: inputs.platform == 'win' && inputs.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $expectedPath = Join-Path $env:RUNNER_TEMP "powershell-7.4.20-arm64\pwsh.exe"
+          if ((Get-Command pwsh.exe).Source -ne $expectedPath -or $PSVersionTable.PSVersion -ne [version]"7.4.20") {
+            throw "Windows ARM builds must use the pinned PowerShell runtime"
+          }
+
       # Windows installs straight from the registry. There, linking the packages
       # takes the time, not downloading them, so a ~700 MB package cache did not
       # pay for its own restore. Across recent nightlies, restore plus install
