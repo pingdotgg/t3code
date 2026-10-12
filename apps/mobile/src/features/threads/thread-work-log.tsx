@@ -962,12 +962,14 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         : row.getFullDetail()
       : null;
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
+  const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const fetchedOutput = !expanded
     ? null
     : shownItem.type === "file_search" || shownItem.type === "web_search"
       ? turnItemOutputText(shownItem)
       : fetchedItem
-        ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
+        ? (turnItemOutputText(fetchedItem) ??
+          (outputImages.length > 0 || viewedImagePath ? null : "No output."))
         : fetchedDetail.error
           ? `Couldn't load output: ${fetchedDetail.error}`
           : row.fetchesDetail
@@ -975,7 +977,6 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               ? "Output is no longer available."
               : "Loading output…"
             : null;
-  const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
