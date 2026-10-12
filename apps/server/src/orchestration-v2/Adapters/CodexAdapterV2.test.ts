@@ -1142,6 +1142,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    getUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["getUsageLimits"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1202,6 +1203,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }).pipe(Effect.andThen(changes.notify)),
         },
+        ...(getUsageLimits ? { getUsageLimits } : {}),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -5089,6 +5091,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       notification: true,
       expectedClass: "provider_error",
     },
+    {
+      name: "near-full-reset",
+      code: "usageLimitExceeded",
+      notification: true,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "published-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -5114,7 +5128,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-            ...(scenario.name === "deferred-reset" ? [snapshot] : []),
+            ...(scenario.name === "deferred-reset"
+              ? [snapshot]
+              : []),
+            // Codex can refuse the turn while its last update still reads 99%.
+            ...(scenario.name === "near-full-reset"
+              ? [
+                  {
+                    ...snapshot,
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: {
+                          limitId: "codex",
+                          primary: {
+                            usedPercent: 99,
+                            resetsAt: 2000100000,
+                            windowDurationMins: 300,
+                          },
+                          secondary: {
+                            usedPercent: 73,
+                            resetsAt: 2000500000,
+                            windowDurationMins: 10080,
+                          },
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "deferred-reset"
               ? [
                   {
@@ -5236,12 +5278,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const resetReceipt = yield* Deferred.make<void>();
-        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "error" &&
-          event.turnItem.failure.resetAt === resetAt
-            ? Deferred.succeed(resetReceipt, undefined)
-            : Effect.void,
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.resetAt === resetAt
+              ? Deferred.succeed(resetReceipt, undefined)
+              : Effect.void,
+          undefined,
+          undefined,
+          undefined,
+          // The session got no rate-limit notification; Usage → Limits still knows the reset.
+          scenario.name === "published-reset"
+            ? Effect.succeed({
+                checkedAt: "2033-05-19T03:00:00.000Z",
+                windows: [
+                  {
+                    id: "primary",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 100,
+                    resetsAt: resetAt,
+                  },
+                  { id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 40 },
+                ],
+              })
+            : undefined,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -5258,7 +5321,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (
+          scenario.name === "known-reset" ||
+          scenario.name === "deferred-reset" ||
+          scenario.name === "near-full-reset" ||
+          scenario.name === "published-reset"
+        )
+          assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if (scenario.name === "late-reset") {
