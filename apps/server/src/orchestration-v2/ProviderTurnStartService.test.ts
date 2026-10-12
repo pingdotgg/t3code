@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  isPluginContextTurnItem,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -12,8 +13,10 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -33,10 +36,13 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import * as RunContextEnrichment from "./RunContextEnrichment.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -95,6 +101,7 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        ThreadCommandExecutor.layer,
         Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
@@ -171,6 +178,20 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  /** Loads the thread and starts the run; with `openFailsFirst`, only from the second open. */
+  readonly opensSession?: boolean;
+  readonly openFailsFirst?: boolean;
+  readonly contextEnricher?: RunContextEnrichment.RunContextEnricherV2Shape;
+  /** Who wrote the run's message; a user on the web by default. */
+  readonly messageOrigin?: Pick<
+    OrchestrationV2ThreadProjection["messages"][number],
+    "createdBy" | "creationSource"
+  >;
+  readonly restartContinuationOfRunId?: RunId;
+  /** How the run's current message entered its timeline; a turn the user started by default. */
+  readonly messageIntent?: "turn_start" | "queued_turn" | "steer" | "promoted_queued_to_steer";
+  /** The run's rows ahead of its current message, such as the wake a steer restarted. */
+  readonly earlierTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -200,6 +221,9 @@ function makeLocalCommandHarness(input: {
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(input.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: input.restartContinuationOfRunId }),
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
@@ -229,6 +253,7 @@ function makeLocalCommandHarness(input: {
     streaming: false,
     createdBy: "user",
     creationSource: "web",
+    ...input.messageOrigin,
     createdAt: now,
     updatedAt: now,
   };
@@ -334,7 +359,36 @@ function makeLocalCommandHarness(input: {
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
-    turnItems: [],
+    // Enrichment reads the run's message row, written as the orchestrator does.
+    turnItems:
+      input.contextEnricher === undefined
+        ? []
+        : [
+            ...(input.earlierTurnItems ?? []),
+            {
+              id: TurnItemId.make("item-native-account-command"),
+              threadId,
+              runId,
+              nodeId: rootNodeId,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: (input.earlierTurnItems ?? []).length + 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              messageId,
+              inputIntent: input.messageIntent ?? "turn_start",
+              text: message.text,
+              attachments: message.attachments,
+              createdBy: message.createdBy,
+              creationSource: message.creationSource,
+            },
+          ],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -393,50 +447,59 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  let opens = 0;
   const open = vi.fn(() =>
-    input.interruptOpen === true
-      ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
-        ? Effect.succeed(resumeFallbackSession as never)
-        : "ensureThreadFailure" in input
-          ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-          : "openFailure" in input
-            ? Effect.sync(() => {
-                if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-              }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProviderSessionManager.ProviderSessionOpenError({
-                      instanceId: newInstanceId,
-                      providerSessionId,
-                      cause: input.openFailure,
-                    }),
+    input.openFailsFirst === true && opens++ === 0
+      ? Effect.fail(
+          new ProviderSessionManager.ProviderSessionOpenError({
+            instanceId: newInstanceId,
+            providerSessionId,
+            cause: "first open fails",
+          }),
+        )
+      : input.interruptOpen === true
+        ? Effect.interrupt
+        : "historyReadFailureAfterFallback" in input
+          ? Effect.succeed(resumeFallbackSession as never)
+          : "ensureThreadFailure" in input
+            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+            : "openFailure" in input
+              ? Effect.sync(() => {
+                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderSessionManager.ProviderSessionOpenError({
+                        instanceId: newInstanceId,
+                        providerSessionId,
+                        cause: input.openFailure,
+                      }),
+                    ),
                   ),
-                ),
-              )
-            : input.failReadsAfterRunning === true
-              ? Effect.succeed({
-                  driver: providerThread.driver,
-                  providerSession: {
-                    id: providerSessionId,
+                )
+              : input.failReadsAfterRunning === true || input.opensSession === true
+                ? Effect.succeed({
                     driver: providerThread.driver,
-                    providerInstanceId: newInstanceId,
-                    status: "ready",
-                    cwd: "/tmp/native-account-command",
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
-                  ensureThread: () => Effect.succeed(providerThread),
-                } as never)
-              : Effect.die("A local command must not open a native session."),
+                    providerSession: {
+                      id: providerSessionId,
+                      driver: providerThread.driver,
+                      providerInstanceId: newInstanceId,
+                      status: "ready",
+                      cwd: "/tmp/native-account-command",
+                      model: null,
+                      capabilities: CodexProviderCapabilitiesV2,
+                      createdAt: now,
+                      updatedAt: now,
+                      lastError: null,
+                    },
+                    ensureThread: () => Effect.succeed(providerThread),
+                  } as never)
+                : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.opensSession === true
       ? Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
@@ -491,6 +554,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        ThreadCommandExecutor.layer,
         FileSystem.layerNoop({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
@@ -527,6 +591,9 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        input.contextEnricher === undefined
+          ? Layer.empty
+          : Layer.succeed(RunContextEnrichment.RunContextEnricherV2, input.contextEnricher),
       ),
     ),
   );
@@ -853,5 +920,222 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
           },
         ]);
       }),
+  );
+}
+
+const codenameEnricher = () => {
+  let calls = 0;
+  const enricher: RunContextEnrichment.RunContextEnricherV2Shape = {
+    sources: Effect.succeed([
+      {
+        installationId: "installation-codename",
+        generation: 1,
+        pluginId: "test.codename",
+        name: "Codename notes",
+        timeoutSeconds: 5,
+      },
+    ]),
+    enrich: () =>
+      Effect.sync(() => {
+        calls += 1;
+        return {
+          _tag: "added",
+          context: [{ title: "Codename", text: "The codename is PERIWINKLE-42." }],
+        } as const;
+      }),
+  };
+  return { enricher, calls: () => calls };
+};
+
+const providerContext =
+  '<plugin-context plugin="test.codename" title="Codename">\nThe codename is PERIWINKLE-42.\n</plugin-context>\n\nWhat is the codename?';
+
+effectIt.effect("saves plugin context before the provider starts and sends exactly that", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(1);
+    const contextItem = harness.projection().turnItems.find(isPluginContextTurnItem);
+    expect(contextItem).toMatchObject({
+      status: "completed",
+      title: "Added context from Codename notes",
+    });
+    // The context commit lands before the run is marked running.
+    const contextEvent = harness.events.findIndex(
+      (event) => event.type === "turn-item.updated" && event.payload.id === contextItem!.id,
+    );
+    const runningEvent = harness.events.findIndex(
+      (event) => event.type === "run.updated" && event.payload.status === "running",
+    );
+    expect(contextEvent).toBeGreaterThanOrEqual(0);
+    expect(contextEvent).toBeLessThan(runningEvent);
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+effectIt.effect("reuses saved plugin context when a failed session open is retried", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      openFailsFirst: true,
+      contextEnricher: enricher,
+    });
+
+    const error = yield* harness.startWithRetry.pipe(Effect.flip);
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(calls()).toBe(1);
+
+    yield* harness.startWithRetry;
+
+    expect(calls()).toBe(1);
+    expect(harness.open).toHaveBeenCalledTimes(2);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+effectIt.effect("does not enrich a wake that drains output the adapter buffered", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "Background activity updated",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "provider" },
+    });
+
+    yield* harness.start;
+
+    // Claude, OpenCode 2 and Grok send no prompt on this path, so nothing is
+    // asked of plugins and nothing claims context was added.
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe("Background activity updated");
+  }),
+);
+
+effectIt.effect("does not enrich a wake the server prompts", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "Delegated task finished. What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "server" },
+    });
+
+    yield* harness.start;
+
+    // Notifications and delegated completions are not turns the user wrote, so
+    // they never consume the history page's human-turn limit and carry no context.
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(
+      "Delegated task finished. What is the codename?",
+    );
+  }),
+);
+
+effectIt.effect("does not enrich a restart continuation that resumes its turn natively", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "Continue where you left off.",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "server" },
+      restartContinuationOfRunId: RunId.make("run-cancelled-by-restart"),
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+  }),
+);
+
+effectIt.effect("adds plugin context to a queued turn the user wrote", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageIntent: "queued_turn",
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(1);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+for (const messageIntent of ["steer", "promoted_queued_to_steer"] as const) {
+  effectIt.effect(`does not enrich a wake that user steering (${messageIntent}) restarts`, () =>
+    Effect.gen(function* () {
+      const { enricher, calls } = codenameEnricher();
+      const runId = RunId.make("run-native-account-command");
+      const wakeMessageId = MessageId.make("message-wake");
+      const wokeAt = DateTime.makeUnsafe("2026-09-04T11:59:00Z");
+      const wake = notificationTurnItem(
+        {
+          id: TurnItemId.make("item-wake"),
+          threadId: ThreadId.make("thread-native-account-command"),
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: wokeAt,
+          completedAt: wokeAt,
+          updatedAt: wokeAt,
+          type: "user_message",
+          messageId: wakeMessageId,
+          inputIntent: "turn_start",
+          text: "Task finished.",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        {
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "completed",
+            summary: "Task finished",
+          },
+        },
+        [],
+      );
+      // The restart keeps the wake's run and makes the user's steer its message.
+      const harness = makeLocalCommandHarness({
+        text: "What is the codename?",
+        opensSession: true,
+        contextEnricher: enricher,
+        messageIntent,
+        earlierTurnItems: [wake],
+      });
+
+      yield* harness.start;
+
+      // Steering consumes no history-page turn, so it never adds plugin context.
+      expect(calls()).toBe(0);
+      expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+      expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe("What is the codename?");
+    }),
   );
 }

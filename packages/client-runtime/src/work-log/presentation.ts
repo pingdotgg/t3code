@@ -1,4 +1,5 @@
 import {
+  isPluginContextTurnItem,
   isToolLifecycleItemType,
   type AssetResource,
   type RuntimeItemStatus,
@@ -47,6 +48,60 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
     default:
       return item;
   }
+}
+
+export interface PluginContextInspection {
+  /** The plugin that added it, as `Name (id)`; `Plugins` for the record of plugins not called. */
+  readonly source: string;
+  readonly blocks: ReadonlyArray<{ readonly label: string; readonly text: string }>;
+}
+
+const isContextEntry = (value: unknown): value is { title: string; text: string } =>
+  typeof value === "object" &&
+  value !== null &&
+  "title" in value &&
+  typeof value.title === "string" &&
+  "text" in value &&
+  typeof value.text === "string";
+
+/**
+ * What a plugin-context record shows when inspected: the context the provider
+ * received, attributed to its plugin, or why none was added. `null` for every
+ * other item, which keeps its own presentation.
+ */
+export function pluginContextInspection(
+  item: OrchestrationV2TurnItem,
+): PluginContextInspection | null {
+  if (!isPluginContextTurnItem(item)) return null;
+  const key = item.toolSource?.key ?? "";
+  const pluginId = key.startsWith("plugin:") ? key.slice("plugin:".length) : null;
+  const name = item.toolSource?.name ?? pluginId ?? "Plugins";
+  const source = pluginId === null || pluginId === name ? name : `${name} (${pluginId})`;
+  const output = item.output;
+  const context =
+    typeof output === "object" && output !== null && "context" in output
+      ? output.context
+      : undefined;
+  const reason =
+    typeof output === "object" &&
+    output !== null &&
+    "reason" in output &&
+    typeof output.reason === "string"
+      ? output.reason
+      : null;
+  if (item.status === "running") return { source, blocks: [] };
+  if (item.status !== "completed")
+    return {
+      source,
+      blocks: [{ label: "Not added", text: reason ?? "No reason was recorded." }],
+    };
+  if (!Array.isArray(context) || !context.every(isContextEntry))
+    return {
+      source,
+      blocks: [{ label: "Context", text: "The saved context is not available here." }],
+    };
+  if (context.length === 0) return { source, blocks: [{ label: "Context", text: "None." }] };
+  return { source, blocks: context.map((entry) => ({ label: entry.title, text: entry.text })) };
 }
 
 export function contextCompactionLabel(
