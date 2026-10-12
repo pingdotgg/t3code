@@ -39,6 +39,10 @@
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
     },
+    "./prompt-links": {
+      "types": "./src/promptLinks.ts",
+      "default": "./src/promptLinks.ts"
+    },
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"

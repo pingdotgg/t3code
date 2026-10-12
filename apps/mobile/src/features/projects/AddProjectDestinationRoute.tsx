@@ -7,6 +7,8 @@ type AddProjectDestinationRouteParams = {
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
+  /** A prompt link's prompt, for the draft the clone opens. */
+  readonly prompt?: string | string[];
 };
 
 export function AddProjectDestinationRoute({

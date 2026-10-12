@@ -152,7 +152,7 @@ import {
   ZapIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+import { ChevronDown, ChevronRight, Link as LinkIconNode } from "lucide";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -186,6 +186,7 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -2326,6 +2327,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         .map((record) => record.contextId),
     [resolvedContext.records],
   );
+  // Chips read as their labels outside a draft, so a shared link carries the prose alone.
+  const plainText = useMemo(
+    () => replaceComposerContextReferences(resolvedContext.text, (reference) => reference.label),
+    [resolvedContext.text],
+  );
+  const promptLink = useMemo(() => promptLinkFor(plainText), [plainText]);
   const contextClipboardFragment =
     resolvedContext.records.length === 0
       ? null
@@ -2615,19 +2622,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
-                text={
-                  contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      )
-                }
+                text={contextClipboardFragment ? resolvedContext.text : plainText}
                 {...(contextClipboardFragment
                   ? {
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
                     }
                   : {})}
+                variant="ghost"
+              />
+            )}
+            {promptLink !== null && (
+              <MessageCopyButton
+                text={promptLink}
+                label="Copy prompt link"
+                icon={LinkIconNode}
                 variant="ghost"
               />
             )}
