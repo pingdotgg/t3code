@@ -55,6 +55,7 @@
     "effect": "catalog:",
     "jose": "catalog:",
     "node-pty": "^1.2.0-beta.15",
+    "open-editor": "6.0.0",
     "playwright-core": "1.60.0",
     "proper-lockfile": "4.1.2",
     "stream-chain": "^4.2.5",
