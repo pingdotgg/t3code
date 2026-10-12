@@ -1,5 +1,6 @@
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
 import { useCallback, useRef, useState } from "react";
@@ -84,12 +85,21 @@ export function PullRequestReviewSheet({
   const verdict = offered.find((option) => option.value === requestedVerdict) ?? offered[0];
   const reviewing = params.mode === "review";
   const canSubmitComments = !store.draft.comments.length || permissions.canInlineComment;
+  // Forgejo requires a summary when requesting changes, even with inline comments.
+  const summaryRequired =
+    verdict !== undefined && result.data
+      ? sourceControlClients.get(result.data.provider).reviewSummaryRequired(verdict.value)
+      : false;
   const canSubmit =
     store.ready &&
     (!reviewing || (!stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
-        (verdict.value === "approve" || body.trim().length > 0 || store.draft.comments.length > 0)
+        (summaryRequired
+          ? body.trim().length > 0
+          : verdict.value === "approve" ||
+            body.trim().length > 0 ||
+            store.draft.comments.length > 0)
       : permissions.canComment && body.trim().length > 0);
   const perform = () =>
     submission.submit(async () => {
@@ -160,7 +170,13 @@ export function PullRequestReviewSheet({
       <TextInput
         multiline
         accessibilityLabel={reviewing ? "Review summary" : "Comment"}
-        placeholder={reviewing ? "Summarize your review…" : "Write a comment…"}
+        placeholder={
+          reviewing
+            ? summaryRequired
+              ? "Summary required to request changes…"
+              : "Summarize your review…"
+            : "Write a comment…"
+        }
         placeholderTextColorClassName="accent-foreground-muted"
         editable={store.ready && !submission.busy}
         value={body}
