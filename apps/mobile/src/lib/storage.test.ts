@@ -276,6 +276,32 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
+  it("keeps valid list filters and drops malformed ones", async () => {
+    const threadListFilters = { environmentId: "environment-1", projectKey: null };
+    const pullRequestListFilters = {
+      environmentId: null,
+      controls: {
+        "": {
+          state: "all",
+          involvement: "reviewing",
+          filters: { labels: [["size:S"]] },
+          sort: "oldest",
+        },
+      },
+    };
+    mocks.setPreferencesJson(JSON.stringify({ threadListFilters, pullRequestListFilters }), 10);
+    await expect(loadPreferences()).resolves.toEqual({ threadListFilters, pullRequestListFilters });
+
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        threadListFilters: { environmentId: 1, projectKey: null },
+        pullRequestListFilters: { environmentId: null, controls: { "": { sort: "newest" } } },
+      }),
+      11,
+    );
+    await expect(loadPreferences()).resolves.toEqual({});
+  });
+
   it("reconciles fallback preferences after SQLite recovers", async () => {
     mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 15 }), 10);
     await mocks.setItemAsync(

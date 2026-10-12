@@ -1,22 +1,13 @@
 import type {
   EnvironmentId,
   PullRequestListEntry,
-  PullRequestListFilters,
   PullRequestListInput,
   PullRequestListResult,
-  PullRequestInvolvement,
-  PullRequestListState,
 } from "@t3tools/contracts";
+import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
 export const PR_LIST_PAGE_SIZE = 30;
-export interface PullRequestListControls {
-  readonly state: PullRequestListState;
-  readonly involvement: PullRequestInvolvement;
-  readonly filters: PullRequestListFilters;
-  readonly projectId?: string;
-  readonly projectEnvironmentId?: string;
-  readonly sort: "updated" | "created" | "oldest";
-}
+export type { PullRequestListControls } from "../../persistence/mobile-preferences";
 export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   state: "open",
   involvement: "all",

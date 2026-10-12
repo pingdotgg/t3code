@@ -5,10 +5,14 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type {
-  ProviderInstanceId,
-  PullRequestMergeMethod,
-  SidebarProjectGroupingMode,
+import {
+  EnvironmentId,
+  PullRequestInvolvement,
+  PullRequestListFilters,
+  PullRequestListState,
+  type ProviderInstanceId,
+  type PullRequestMergeMethod,
+  type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -20,6 +24,33 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+
+/** The pull request list's filters and sort for one environment scope. */
+export const PullRequestListControls = Schema.Struct({
+  state: PullRequestListState,
+  involvement: PullRequestInvolvement,
+  filters: PullRequestListFilters,
+  projectId: Schema.optional(Schema.String),
+  projectEnvironmentId: Schema.optional(Schema.String),
+  sort: Schema.Literals(["updated", "created", "oldest"]),
+});
+export type PullRequestListControls = typeof PullRequestListControls.Type;
+
+const ThreadListFilters = Schema.Struct({
+  environmentId: Schema.NullOr(EnvironmentId),
+  projectKey: Schema.NullOr(Schema.String),
+});
+export type ThreadListFilters = typeof ThreadListFilters.Type;
+
+/** Controls are keyed by environment id, with "" for all environments. */
+const PullRequestListPreferences = Schema.Struct({
+  environmentId: Schema.NullOr(Schema.String),
+  controls: Schema.Record(Schema.String, PullRequestListControls),
+});
+export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
+
+const isThreadListFilters = Schema.is(ThreadListFilters);
+const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -61,6 +92,9 @@ export interface Preferences {
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
+  /** Home list filters, restored on the next launch. */
+  readonly threadListFilters?: ThreadListFilters;
+  readonly pullRequestListFilters?: PullRequestListPreferences;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -127,6 +161,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
+    threadListFilters?: ThreadListFilters;
+    pullRequestListFilters?: PullRequestListPreferences;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -240,6 +276,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
     preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
+  }
+  if (isThreadListFilters(parsed.threadListFilters)) {
+    preferences.threadListFilters = parsed.threadListFilters;
+  }
+  if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
+    preferences.pullRequestListFilters = parsed.pullRequestListFilters;
   }
   return preferences;
 }

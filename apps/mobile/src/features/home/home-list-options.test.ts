@@ -1,8 +1,24 @@
+import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/reactivity";
 import { act, createElement, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+const saved = vi.hoisted(() => [] as unknown[]);
+vi.mock("../../state/preferences", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    updateMobilePreferencesAtom: Atom.writable(
+      () => null,
+      (_ctx, patch: unknown) => {
+        saved.push(patch);
+      },
+    ),
+  };
+});
+
+import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { HomeListOptionsProvider, useHomeListOptions } from "./home-list-options";
 
 describe("home list options across layout changes", () => {
@@ -19,14 +35,20 @@ describe("home list options across layout changes", () => {
     return null;
   }
 
-  async function showLayout(layout: "compact" | "sidebar") {
+  const registry = AtomRegistry.make();
+
+  async function showLayout(layout: "compact" | "sidebar", savedFilters?: ThreadListFilters) {
     await act(() => {
       root.render(
         createElement(
-          HomeListOptionsProvider,
-          { projectGroupingMode: "repository" },
-          // Replace the list while keeping the workspace provider mounted.
-          createElement(ThreadList, { key: layout }),
+          RegistryContext,
+          { value: registry },
+          createElement(
+            HomeListOptionsProvider,
+            { projectGroupingMode: "repository", savedFilters },
+            // Replace the list while keeping the workspace provider mounted.
+            createElement(ThreadList, { key: layout }),
+          ),
         ),
       );
     });
@@ -51,6 +73,7 @@ describe("home list options across layout changes", () => {
     vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     root = createRoot(container as unknown as HTMLElement);
+    saved.length = 0;
   });
 
   afterEach(async () => {
@@ -92,4 +115,16 @@ describe("home list options across layout changes", () => {
       }
     },
   );
+
+  it("restores saved filters on launch and saves only real changes", async () => {
+    await showLayout("compact", { environmentId, projectKey: "repository:one" });
+    expect(latest.options).toMatchObject({
+      selectedEnvironmentId: environmentId,
+      selectedProjectKey: "repository:one",
+    });
+    expect(saved).toEqual([]);
+
+    await act(() => latest.setSelectedProjectKey(null));
+    expect(saved).toEqual([{ threadListFilters: { environmentId, projectKey: null } }]);
+  });
 });

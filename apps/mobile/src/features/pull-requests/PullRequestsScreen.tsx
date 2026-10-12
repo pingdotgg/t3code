@@ -2,7 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectId } from "@t3tools/contracts";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -24,7 +24,8 @@ import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import { PullRequestListFilters } from "./PullRequestListFilters";
-import { pullRequestListControlsAtom, usePullRequestList } from "./usePullRequestList";
+import { usePullRequestList } from "./usePullRequestList";
+import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
@@ -74,7 +75,8 @@ export function PullRequestsScreen() {
   const debouncedQuery = useDebouncedValue(tab.query.trim(), 180);
   // Dismissal must restore the cached unfiltered list before restoring its offset.
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
-  const selectedEnvironmentId = workspace.pullRequestEnvironmentId;
+  const listControls = usePullRequestListControls();
+  const selectedEnvironmentId = listControls.environmentId;
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
     ? selectedEnvironmentId
     : null;
@@ -95,9 +97,7 @@ export function PullRequestsScreen() {
     },
     [navigation, selectAndroidWorkspace],
   );
-  const controlsAtom = pullRequestListControlsAtom(environmentId ?? "");
-  const controls = useAtomValue(controlsAtom);
-  const setControls = useAtomSet(controlsAtom);
+  const controls = listControls.controlsFor(environmentId);
   const targets = useMemo(
     () =>
       environments
@@ -269,10 +269,10 @@ export function PullRequestsScreen() {
                 label: item.environmentLabel,
               }))}
               environmentId={environmentId}
-              onEnvironmentChange={workspace.setPullRequestEnvironmentId}
+              onEnvironmentChange={listControls.setEnvironmentId}
               value={controls}
               onChange={(next) => {
-                setControls(next);
+                listControls.setControls(environmentId, next);
                 void listRef.current?.scrollToOffset({
                   offset: Platform.OS === "ios" ? -insets.top : 0,
                   animated: false,

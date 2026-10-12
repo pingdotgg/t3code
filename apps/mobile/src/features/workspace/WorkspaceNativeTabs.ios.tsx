@@ -1,7 +1,12 @@
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, Platform, View, type NativeSyntheticEvent } from "react-native";
-import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
+import {
+  Tabs,
+  type TabSelectedEvent,
+  type TabSelectionPreventedEvent,
+  type TabSelectionRejectedEvent,
+} from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
@@ -10,6 +15,7 @@ import { useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 
 // Tabler's git-pull-request geometry, rasterized at 1x/2x/3x for UIKit template images.
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
+const COMPOSE_TAB = "compose";
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
@@ -39,7 +45,11 @@ function RetainedWorkspaceTab(props: {
   ) : null;
 }
 
-/** UIKit retains both controller trees and displays the system tab bar or sidebar for the current size class. */
+/**
+ * UIKit retains both controller trees and displays the system tab bar or sidebar for the current size class.
+ * On phones, compose is UIKit's own search-role tab, detached like Photos' search button; it never
+ * becomes selected and opens a new chat instead.
+ */
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
@@ -62,13 +72,11 @@ export function WorkspaceNativeTabs(props: {
       <Tabs.Host
         navStateRequest={request}
         tabBarHidden={props.hidden || !systemTabBar}
-        ios={{
-          tabBarControllerMode: "tabBar",
-          tabBarTrailingActionSystemImage: phoneBar ? "square.and.pencil" : undefined,
-          tabBarTrailingActionAccessibilityLabel: "New chat",
-          onTabBarTrailingActionPress: props.onNewTask,
-          tabBarMinimizeBehavior: "never",
-          tabBarLeadingWidth: phoneBar ? 220 : 0,
+        ios={{ tabBarControllerMode: "tabBar", tabBarMinimizeBehavior: "never" }}
+        onTabSelectionPrevented={({
+          nativeEvent,
+        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
+          if (nativeEvent.preventedScreenKey === COMPOSE_TAB) props.onNewTask();
         }}
         onTabSelectionRejected={({
           nativeEvent,
@@ -89,7 +97,7 @@ export function WorkspaceNativeTabs(props: {
           <Tabs.Screen
             key={tab}
             screenKey={tab}
-            title=""
+            title={tab === "threads" ? "Threads" : "Pulls"}
             tabBarItemAccessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
             ios={{
               icon:
@@ -106,6 +114,22 @@ export function WorkspaceNativeTabs(props: {
             </RetainedWorkspaceTab>
           </Tabs.Screen>
         ))}
+        {phoneBar ? (
+          <Tabs.Screen
+            key={COMPOSE_TAB}
+            screenKey={COMPOSE_TAB}
+            title="New chat"
+            preventNativeSelection
+            ios={{
+              role: "search",
+              // iOS 27 detaches a search tab only while it may activate search.
+              automaticallyActivatesSearch: true,
+              icon: { type: "sfSymbol", name: "square.and.pencil" },
+            }}
+          >
+            <View />
+          </Tabs.Screen>
+        ) : null}
       </Tabs.Host>
     </View>
   );

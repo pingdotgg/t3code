@@ -196,7 +196,7 @@ export function PullRequestListFilters(props: {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, gap: 6, paddingBottom: 8 }}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 }}
     >
       <ListFilterMenu
         label={count ? String(count) : "Filters"}

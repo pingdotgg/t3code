@@ -8,7 +8,6 @@ import { use, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect
 import { composerPullRequests } from "../../state/pull-requests";
 import {
   appendPullRequestListPage,
-  DEFAULT_PR_LIST_CONTROLS,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   pullRequestListHead,
@@ -27,10 +26,6 @@ const statsFamily = Atom.family((_environmentId: string) =>
 );
 const statKey = (row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">) =>
   `${row.projectId}:${row.repository}:${row.number}`;
-
-export const pullRequestListControlsAtom = Atom.family((_environmentId: string) =>
-  Atom.make(DEFAULT_PR_LIST_CONTROLS),
-);
 
 type ListTarget = { readonly environmentId: EnvironmentId; readonly input: PullRequestListInput };
 const sourcesFamily = Atom.family((key: string) => {
