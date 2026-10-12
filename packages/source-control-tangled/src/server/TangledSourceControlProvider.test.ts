@@ -15,6 +15,7 @@ import * as TangledCli from "./TangledCli.ts";
 import * as TangledSourceControlProvider from "./TangledSourceControlProvider.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
 const context = (remoteUrl: string) =>
   ({
@@ -615,7 +616,7 @@ describe("TangledSourceControlProvider.make", () => {
       assert.strictEqual(error.operation, "listChangeRequests");
       assert.strictEqual(error.cwd, "/repo");
       const cause = error.cause;
-      if (!Schema.is(PullRequestProviderError)(cause))
+      if (!isPullRequestProviderError(cause))
         return assert.fail("Missing immediate PR provider error");
       assert.strictEqual(error.detail, cause.detail);
       assert.strictEqual(cause.reason, "unauthenticated");
