@@ -22,7 +22,8 @@ export function MaterialRadioIndicator({ selected }: { readonly selected: boolea
             height: 20,
             borderRadius: 10,
             borderWidth: 2,
-            borderColor: themeVariables[selected ? "--color-primary" : "--color-foreground-muted"],
+            borderColor:
+              themeVariables[selected ? "--color-primary-text" : "--color-foreground-muted"],
             alignItems: "center",
             justifyContent: "center",
           }}
@@ -33,7 +34,7 @@ export function MaterialRadioIndicator({ selected }: { readonly selected: boolea
                 width: 10,
                 height: 10,
                 borderRadius: 5,
-                backgroundColor: themeVariables["--color-primary"],
+                backgroundColor: themeVariables["--color-primary-text"],
               }}
             />
           ) : null}
