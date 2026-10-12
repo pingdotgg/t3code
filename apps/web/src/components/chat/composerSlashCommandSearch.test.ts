@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { PluginActionId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
@@ -219,5 +219,31 @@ describe("searchSlashCommandItems", () => {
       "provider-slash-command:claudeAgent:compact",
       "skill:claudeAgent:unslop",
     ]);
+  });
+});
+
+describe("plugin actions in the slash menu", () => {
+  const deploy = {
+    id: "plugin-action:installation-1:1:deploy",
+    type: "plugin-action",
+    action: {
+      id: PluginActionId.make("installation-1:1:deploy"),
+      pluginId: "acme.deploy",
+      pluginName: "Deploy",
+      name: "deploy",
+      title: "Deploy this branch",
+      target: "thread",
+      placements: ["composer-slash"],
+    },
+    target: { _tag: "thread", threadId: ThreadId.make("thread-1") },
+    label: "/deploy",
+    description: "Deploy this branch",
+  } satisfies ComposerCommandItem;
+
+  it("match by name and stay offered after other text, since they run on selection", () => {
+    expect(searchSlashCommandItems([deploy], "dep")).toEqual([deploy]);
+    expect(searchSlashCommandItems([deploy], "branch")).toEqual([deploy]);
+    expect(searchSlashCommandItems([deploy], "zzz")).toEqual([]);
+    expect(slashCommandItemsForPromptPosition([deploy], false)).toEqual([deploy]);
   });
 });

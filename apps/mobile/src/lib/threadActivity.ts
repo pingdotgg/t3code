@@ -3,12 +3,18 @@ import type {
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  approvalRequestDetail,
+  approvalResolutionDetail,
+  approvalResolutionLabel,
+  turnItemIsWorkspacePreparation,
+} from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
+  toolCallLines,
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -22,6 +28,7 @@ import {
   toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
+  pluginContextInspection,
   toolGroupAction,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -260,6 +267,10 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+  // A plugin's answer leads with who answered; expanding shows the prompt and reason.
+  const resolution =
+    !expanded && entry.structuredPayload && approvalResolutionLabel(entry.structuredPayload);
+  if (resolution) return resolution;
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -597,6 +608,8 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
+  const resolution = approvalResolutionLabel(item);
+  if (resolution !== undefined) return resolution;
   const title =
     (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
     item.title?.trim();
@@ -673,7 +686,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "web_search":
       return item.patterns?.join(", ") ?? null;
     case "approval_request":
-      return item.prompt ?? null;
+      return approvalRequestDetail(item) ?? null;
     case "user_input_request":
       return item.questions.map((question) => question.question).join(" · ") || null;
     case "checkpoint":
@@ -765,13 +778,15 @@ function toWorkLogEntry(
       };
     case "checkpoint":
       return { ...common, changedFiles: item.files.map((file) => file.path), toolData: item };
-    case "approval_request":
+    case "approval_request": {
+      const detail = approvalRequestDetail(item);
       return {
         ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
+        ...(detail ? { detail } : {}),
         requestKind: item.requestKind,
         toolData: item,
       };
+    }
     case "dynamic_tool":
       return {
         ...common,
@@ -781,6 +796,23 @@ function toWorkLogEntry(
     default:
       return { ...common, ...(detail ? { detail } : {}), toolData: item };
   }
+}
+
+/**
+ * The call an expanded work row shows in the foreground, or null when the row
+ * shows its full detail instead. Plugin context shows what it added (or why
+ * not), so its plugin input is not presented as a tool call.
+ */
+export function expandedWorkRowCall(item: OrchestrationV2TurnItem, isRead: boolean) {
+  if (!isRead && item.type === "command_execution") return toolCallLines({ command: item.input });
+  if (!isRead && item.type === "dynamic_tool") {
+    return pluginContextInspection(item) ? null : toolCallLines({ args: item.input });
+  }
+  if (item.type === "file_search") return toolCallLines({ args: { pattern: item.pattern } });
+  if (item.type === "web_search") {
+    return toolCallLines({ args: { query: item.patterns?.join(", ") } });
+  }
+  return null;
 }
 
 /** Expanded detail for a row, from its wire item or the full item from getTurnItem. */
@@ -814,13 +846,25 @@ function toFeedActivity(
     item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
       ? collectToolFilePaths(item)
       : null;
-  const getFullDetail = memoizeValue(() =>
-    readPaths
-      ? readPaths.join("\n") || null
-      : item.type === "notification"
-        ? item.detail?.trim() || null
-        : formatItemFullDetail(row, item),
-  );
+  const getFullDetail = memoizeValue(() => {
+    if (readPaths) {
+      return readPaths.join("\n") || null;
+    }
+    if (item.type === "notification") {
+      return item.detail?.trim() || null;
+    }
+    // Like web's inspector: the context the provider received, or why none was added.
+    const pluginContext = pluginContextInspection(item);
+    if (pluginContext) {
+      return [
+        `From ${pluginContext.source}`,
+        ...pluginContext.blocks.map((block) => `${block.label}\n${block.text}`),
+      ].join("\n\n");
+    }
+    const json = formatItemFullDetail(row, item);
+    const approvalResolution = approvalResolutionDetail(item);
+    return approvalResolution ? `${approvalResolution}\n\n${json}` : json;
+  });
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]
       .filter(

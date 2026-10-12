@@ -1,0 +1,31 @@
+{
+  "id": "example.machine-label",
+  "name": "Machine label",
+  "version": "1.0.0",
+  "description": "Labels threads with the machine they run on.",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "proposedApi": true,
+  "capabilities": ["events", "settings", "status"],
+  "settings": [
+    {
+      "type": "text",
+      "key": "label",
+      "label": "Label",
+      "description": "Shown on each thread after a turn finishes there. Leave empty to show the machine's host name."
+    },
+    {
+      "type": "select",
+      "key": "tone",
+      "label": "Color",
+      "default": "info",
+      "options": [
+        { "value": "neutral", "label": "Gray" },
+        { "value": "info", "label": "Blue" },
+        { "value": "success", "label": "Green" },
+        { "value": "warning", "label": "Yellow" },
+        { "value": "error", "label": "Red" }
+      ]
+    }
+  ]
+}

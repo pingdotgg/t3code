@@ -1,6 +1,7 @@
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2Run,
@@ -10,6 +11,9 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  approvalRequestDetail,
+  approvalResolutionDetail,
+  approvalResolutionLabel,
   turnItemIsWorkspacePreparation,
   workspacePreparationRetryRunIds,
 } from "./turnItemPresentation.ts";
@@ -100,5 +104,59 @@ describe("workspacePreparationRetryRunIds", () => {
         [preparationFailure("failed", "provider_crashed")],
       ).size,
     ).toBe(0);
+  });
+});
+
+function approval(
+  resolvedBy?: Extract<OrchestrationV2TurnItem, { type: "approval_request" }>["resolvedBy"],
+): Extract<OrchestrationV2TurnItem, { type: "approval_request" }> {
+  const now = DateTime.makeUnsafe("2026-10-04T00:00:00.000Z");
+  return {
+    id: TurnItemId.make("item-approval"),
+    threadId: ThreadId.make("thread-1"),
+    runId: RunId.make("run-1"),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 2,
+    status: resolvedBy?.decision === "decline" ? "cancelled" : "completed",
+    title: null,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    type: "approval_request",
+    requestId: RuntimeRequestId.make("request-1"),
+    requestKind: "command",
+    prompt: "rm -rf build",
+    ...(resolvedBy === undefined ? {} : { resolvedBy }),
+  };
+}
+
+describe("approval resolution", () => {
+  it("names the plugin that answered, and nothing for the user's answers", () => {
+    const declined = approval({
+      _tag: "plugin",
+      pluginId: "acme.policy",
+      pluginName: "Policy",
+      decision: "decline",
+      reason: "Deletes files.",
+    });
+    expect(approvalResolutionLabel(declined)).toBe("Declined by plugin Policy");
+    expect(approvalRequestDetail(declined)).toBe("rm -rf build · Deletes files.");
+    expect(approvalResolutionDetail(declined)).toBe("Declined by plugin Policy: Deletes files.");
+    const approved = approval({
+      _tag: "plugin",
+      pluginId: "acme.policy",
+      pluginName: "",
+      decision: "accept",
+    });
+    expect(approvalResolutionLabel(approved)).toBe("Approved by plugin acme.policy");
+    expect(approvalRequestDetail(approved)).toBe("rm -rf build");
+    expect(approvalResolutionDetail(approved)).toBe("Approved by plugin acme.policy");
+    expect(approvalResolutionDetail(approval())).toBeUndefined();
+    expect(approvalResolutionLabel(approval())).toBeUndefined();
+    expect(approvalResolutionLabel(command("ls"))).toBeUndefined();
   });
 });

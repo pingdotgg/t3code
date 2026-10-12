@@ -16,7 +16,8 @@ and modes you choose in a draft keep their permissions.
 | **Full access**       | Allows commands and edits without approval prompts.                                   |
 
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
-not prevent the agent from asking questions about the task.
+not prevent the agent from asking questions about the task. An enabled plugin with the approvals
+capability can answer a request before you do; see [Plugins](./plugins.md#approvals).
 
 ## Provider differences
 

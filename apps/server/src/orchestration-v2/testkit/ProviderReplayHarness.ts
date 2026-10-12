@@ -396,6 +396,7 @@ export function layerWithRegistry<Error>(
         }),
         layerRunExecutionServiceProvided,
         layerRuntime,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -429,7 +430,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-    Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, layerStores)),
+    Layer.provide(
+      Layer.mergeAll(layerCheckpointCaptureServiceProvided, layerEventSinkProvided, layerStores),
+    ),
   );
   const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,

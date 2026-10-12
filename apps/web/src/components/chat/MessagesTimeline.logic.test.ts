@@ -304,6 +304,65 @@ describe("work entry labels", () => {
     ).toBe(prompt);
   });
 
+  it("titles a plugin-answered approval with the plugin and keeps the reason in its detail", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems[0]!;
+    const approval = (
+      id: string,
+      resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
+    ): OrchestrationV2ProjectedTurnItem => {
+      const item: OrchestrationV2ProjectedTurnItem["item"] = {
+        ...source.item,
+        id: TurnItemId.make(id),
+        threadId: fixture.threadId,
+        runId: fixture.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: resolvedBy?.decision === "decline" ? "cancelled" : "completed",
+        type: "approval_request",
+        requestId: RuntimeRequestId.make(`request-${id}`),
+        requestKind: "command",
+        prompt: `Create ${id}.txt file`,
+        ...(resolvedBy
+          ? {
+              resolvedBy: {
+                _tag: "plugin" as const,
+                pluginId: "proof.policy",
+                pluginName: "Proof policy",
+                ...resolvedBy,
+              },
+            }
+          : {}),
+      };
+      return { ...source, item, sourceItemId: item.id };
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        approval("approved", {
+          decision: "accept",
+          reason: "The proof allows this exact command.",
+        }),
+        approval("declined", { decision: "decline", reason: "Not on the list." }),
+        approval("answered"),
+      ].map((item, position) => ({ ...item, position })),
+      optimisticMessages: [],
+    }).flatMap((timelineEntry) => (timelineEntry.kind === "work" ? [timelineEntry.entry] : []));
+
+    expect(
+      entries.map((workEntry) => [workEntryDisplayLabel(workEntry, undefined), workEntry.detail]),
+    ).toEqual([
+      [
+        "Approved by plugin Proof policy",
+        "Create approved.txt file · The proof allows this exact command.",
+      ],
+      ["Declined by plugin Proof policy", "Create declined.txt file · Not on the list."],
+      ["Create answered.txt file", "Create answered.txt file"],
+    ]);
+  });
+
   it("keeps custom titles and output for unrecognized tools", () => {
     const unknownEntry = { ...entry, toolTitle: "mcp__github__search_issues" };
     expect(liveWorkEntryLabel(unknownEntry, undefined, true)).toBe("Mcp__github__search_issues");
