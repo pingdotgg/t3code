@@ -264,13 +264,39 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const restartDelayRef = yield* Ref.make(0);
   const hostId = LOCAL_DEVICE_HOST_ID;
 
+  let usableFfmpeg: string | null = null;
+  /**
+   * Runs the capability probe the device hub runs before it encodes emulator
+   * video. Only a success is remembered, so installing ffmpeg clears the reason.
+   */
+  const ffmpegEncoderReason = Effect.gen(function* () {
+    const ffmpeg = hostEnvironment.SERVE_EMU_FFMPEG?.trim() || "ffmpeg";
+    if (usableFfmpeg === ffmpeg) return null;
+    const encoders = yield* runner
+      .run({
+        command: ffmpeg,
+        args: ["-hide_banner", "-encoders"],
+        env: hostEnvironment,
+        timeout: Duration.seconds(10),
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(encoders) || encoders.value.timedOut || Number(encoders.value.code) !== 0)
+      return `ffmpeg at ${ffmpeg} could not be run. Android emulator video needs a working ffmpeg with the libx264 encoder.`;
+    if (!/\blibx264\b/.test(`${encoders.value.stdout}\n${encoders.value.stderr}`))
+      return `ffmpeg at ${ffmpeg} lacks the libx264 encoder that Android emulator video needs. Install an ffmpeg build that includes libx264.`;
+    usableFfmpeg = ffmpeg;
+    return null;
+  });
+
   const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
     platform: DevicePlatform,
   ): Effect.fn.Return<DevicePlatformAvailability> {
-    const reason = yield* platformReason(platform).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    );
+    const reason =
+      (yield* platformReason(platform).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      )) ?? (platform === "android" ? yield* ffmpegEncoderReason : null);
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
 

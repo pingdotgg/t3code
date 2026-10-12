@@ -434,6 +434,65 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("requires an ffmpeg the device hub can encode with before reporting Android ready", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
+    for (const [directory, tool] of [
+      ["platform-tools", "adb"],
+      ["emulator", "emulator"],
+      ["cmdline-tools/latest/bin", "avdmanager"],
+    ]) {
+      yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
+      yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
+    }
+    let probe = { stdout: " V....D libopenh264", code: 0 };
+    const probed: Array<string> = [];
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      Effect.provideService(HostProcess.Environment, {
+        HOME: baseDir,
+        PATH: "/usr/bin",
+        ANDROID_HOME: `${baseDir}/sdk`,
+      }),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) => {
+          probed.push([input.command, ...input.args].join(" "));
+          return Effect.succeed({
+            ...probe,
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(probe.code),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          });
+        },
+      }),
+    );
+    expect((yield* host.platformAvailability("android")).reason).toContain(
+      "lacks the libx264 encoder",
+    );
+    probe = { stdout: "", code: 1 };
+    expect((yield* host.platformAvailability("android")).reason).toContain("could not be run");
+    probe = { stdout: " V....D libx264", code: 0 };
+    expect(yield* host.platformAvailability("android")).toEqual({
+      platform: "android",
+      available: true,
+    });
+    // A usable ffmpeg is probed once, not on every readiness check.
+    yield* host.platformAvailability("android");
+    expect(probed).toEqual(Array.from({ length: 3 }, () => "ffmpeg -hide_banner -encoders"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect(
   "constructs and inspects an unconfigured host without installing or starting helpers",
   () =>
