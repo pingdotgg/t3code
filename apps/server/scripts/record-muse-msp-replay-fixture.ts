@@ -236,13 +236,13 @@ const record = Effect.gen(function* () {
 
   const entries: Array<ProviderReplayEntry> = [];
   const commandIds: Array<Array<string>> = [];
-  const placeholder = {
+  const placeholder: ProviderReplayTranscript = {
     provider: MUSE_PROVIDER_KIND,
     protocol: MUSE_MSP_REPLAY_PROTOCOL,
     version: museVersion,
     scenario: fixture.name,
     entries: [],
-  } satisfies ProviderReplayTranscript;
+  };
   const materializeInput = materializeFixtureInput({
     scenario: fixture.name,
     fixtureInput,

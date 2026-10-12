@@ -115,7 +115,7 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     usage: true,
     message: { role: true, provider: true, model: true, responseModel: true, usage: true },
   },
-  mightCarryUsage: (line) => line.includes('"usage"') || line.includes('"session"'),
+  usageMarkers: ['"usage"', '"session"'],
   parseLine: (line, state) => {
     let parsed: unknown;
     try {

@@ -6202,7 +6202,7 @@ it.effect("releases an expired diff nobody reads again", () =>
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
-        fakeProvider("github", {
+        fakeProvider(SourceControlProviderKind.make("github"), {
           getDiff: () => Effect.sync(() => ({ patch: "@@", truncated: false, nextCursor: null })),
         }),
       ],
