@@ -8,6 +8,7 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 export function AndroidWorkspaceSidebar(props: {
   readonly children: ReactNode;
   readonly onRequestVisibility: () => void;
+  readonly selectedPullRequestKey: string | null;
 }) {
   const workspace = useWorkspaceTabs()!;
   const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
@@ -18,7 +19,7 @@ export function AndroidWorkspaceSidebar(props: {
       <View className="flex-1 bg-header">
         <MaterialPullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
         <MaterialScreenContent insetHorizontal>
-          <PullRequestsScreen />
+          <PullRequestsScreen sidebar selectedPullRequestKey={props.selectedPullRequestKey} />
         </MaterialScreenContent>
       </View>
     </WorkspaceTabsContext>

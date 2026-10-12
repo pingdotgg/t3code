@@ -53,7 +53,12 @@ function PullRequestScrollView(props: ScrollViewProps) {
   );
 }
 
-export function PullRequestsScreen() {
+export function PullRequestsScreen(
+  props: {
+    readonly sidebar?: boolean;
+    readonly selectedPullRequestKey?: string | null;
+  } = {},
+) {
   const navigation = useNavigation();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
@@ -135,7 +140,8 @@ export function PullRequestsScreen() {
     connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
   );
-  const selectedKey = primaryColumn?.selectedPullRequestKey;
+  const sidebar = props.sidebar === true || primaryColumn !== null;
+  const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
   const entries = useMemo(
     () =>
       filterPullRequestList(
@@ -179,9 +185,10 @@ export function PullRequestsScreen() {
         onAction={select}
         busy={busyKey === pullRequestKey(item)}
         selected={selectedKey === pullRequestKey(item)}
+        sidebar={sidebar}
       />
     ),
-    [selectPullRequest, selectedKey, actions, select, busyKey],
+    [selectPullRequest, selectedKey, actions, select, busyKey, sidebar],
   );
   const previousSearchMode = useRef(tab.searchMode);
   useEffect(() => {
@@ -199,11 +206,11 @@ export function PullRequestsScreen() {
     : -1;
 
   return (
-    <View className={primaryColumn ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
+    <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
         data={entries}
-        extraData={`${primaryColumn?.selectedPullRequestKey}:${busyKey}`}
+        extraData={`${selectedKey}:${busyKey}`}
         keyExtractor={pullRequestKey}
         itemsAreEqual={pullRequestListRowsAreEqual}
         // Default-size rows measure about 78pt with one title line and 98pt with two.
