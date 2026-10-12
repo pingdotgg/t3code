@@ -1,6 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,13 +25,16 @@ import { cn } from "../../lib/cn";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
 import { useThreadSearch } from "../../state/queries";
+import { useEnvironmentScope } from "../../state/session";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
+  buildPluginActionPaletteItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
   type CommandPaletteItem,
@@ -66,6 +69,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
   if (item.kind === "project") return "folder";
   if (item.kind === "thread") return "text.bubble";
+  if (item.key.startsWith("plugin-action:")) return "cube";
   return ACTION_ICONS[item.key] ?? "ellipsis";
 }
 
@@ -146,6 +150,17 @@ export function CommandPalette(props: {
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
+  // Plugin actions belong to the open thread's environment, else the first connected one.
+  const pluginActionEnvironmentId =
+    activeThreadRef?.environmentId ??
+    environments.find((environment) => environment.connectionState === "connected")
+      ?.environmentId ??
+    null;
+  const pluginActions = usePluginActions(pluginActionEnvironmentId);
+  const canRunPluginActions = useEnvironmentScope(
+    pluginActionEnvironmentId,
+    AuthOrchestrationOperateScope,
+  );
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string | null>(null);
@@ -300,6 +315,18 @@ export function CommandPalette(props: {
         })),
       );
     }
+    if (pluginActionEnvironmentId !== null) {
+      actions.push(
+        ...buildPluginActionPaletteItems({
+          actions: pluginActions,
+          canOperate: canRunPluginActions,
+          environmentId: pluginActionEnvironmentId,
+          threadId: activeThread?.id ?? null,
+          projectId: activeThread?.projectId ?? null,
+          runAction: (input) => void runPluginAction(input),
+        }),
+      );
+    }
     const projectItems: CommandPaletteItem[] = projects.map((project) => ({
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
@@ -346,6 +373,9 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     navigation,
+    canRunPluginActions,
+    pluginActionEnvironmentId,
+    pluginActions,
     projects,
     runCommand,
     savedConnectionsById,
