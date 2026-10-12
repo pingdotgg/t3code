@@ -1,0 +1,36 @@
+{
+  "id": "test.actions",
+  "name": "Actions fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "proposedApi": true,
+  "capabilities": ["actions"],
+  "actions": [
+    {
+      "name": "echo-target",
+      "title": "Echo target",
+      "description": "Says which thread it ran on.",
+      "target": "thread",
+      "placements": ["command-palette", "thread-menu", "composer-slash"]
+    },
+    {
+      "name": "say-hello",
+      "title": "Say hello",
+      "target": "environment",
+      "placements": ["command-palette"]
+    },
+    {
+      "name": "fail",
+      "title": "Fail on purpose",
+      "target": "environment",
+      "placements": ["command-palette"]
+    },
+    {
+      "name": "wait",
+      "title": "Wait until cancelled",
+      "target": "environment",
+      "placements": ["command-palette"]
+    }
+  ]
+}
