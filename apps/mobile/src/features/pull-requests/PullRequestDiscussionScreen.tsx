@@ -5,7 +5,7 @@ import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
-import { ScrollViewMarker } from "react-native-screens";
+import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -153,7 +153,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             />
           </NativeHeaderToolbar>
         ) : null}
-        <ScrollViewMarker style={{ flex: 1 }} scrollEdgeEffects={{ top: "soft", bottom: "soft" }}>
+        <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
             className="flex-1"
             contentInsetAdjustmentBehavior="automatic"
