@@ -4,7 +4,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
 import { useCallback, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { clearSubmittedReview } from "./pullRequestReviewDrafts";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
@@ -137,7 +137,7 @@ export function PullRequestReviewSheet({
                 : "Post comment"
           }
           fullWidth
-          tone="contrast"
+          tone={Platform.OS === "android" ? "primary" : "contrast"}
           loading={submission.busy}
           disabled={!canSubmit || result.isPending || result.error !== null}
           onPress={() => void perform()}

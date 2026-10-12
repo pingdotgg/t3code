@@ -1,5 +1,13 @@
+buildscript {
+  repositories { mavenCentral() }
+  dependencies {
+    classpath("org.jetbrains.kotlin.plugin.compose:org.jetbrains.kotlin.plugin.compose.gradle.plugin:${kotlinVersion}")
+  }
+}
+
 apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 group = 'com.t3tools.nativecontrols'
 version = '0.0.0'
@@ -12,8 +20,11 @@ android {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
   }
+  buildFeatures { compose true }
 }
 
 dependencies {
   implementation project(':expo-modules-core')
+  implementation 'androidx.compose.ui:ui-android:1.10.6'
+  implementation 'androidx.compose.material3:material3-android:1.5.0-alpha17'
 }

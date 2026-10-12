@@ -143,6 +143,12 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     canvasView.contentWidthPx = max(width, dp(value).toInt())
   }
 
+  fun setContentInsetBottom(value: Float) {
+    canvasView.setPadding(0, 0, 0, max(0, dp(value).toInt()))
+    canvasView.setVerticalOffset(canvasView.verticalOffset())
+    canvasView.invalidate()
+  }
+
   fun setInitialRowIndex(value: Double) {
     initialRowIndex = value.toInt().coerceAtLeast(0)
     pendingInitialScroll = true
@@ -818,7 +824,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   fun rowTop(index: Int): Int = rowOffsets[index.coerceIn(0, max(0, rowOffsets.size - 2))]
 
   fun setVerticalOffset(value: Int) {
-    val maxOffset = max(0, (rowOffsets.lastOrNull() ?: 0) - height)
+    val maxOffset = maxVerticalOffset()
     val nextOffset = value.coerceIn(0, maxOffset)
     if (verticalOffset == nextOffset) return
     verticalOffset = nextOffset
@@ -832,7 +838,8 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   fun verticalOffset(): Int = verticalOffset
 
-  fun maxVerticalOffset(): Int = max(0, (rowOffsets.lastOrNull() ?: 0) - height)
+  fun maxVerticalOffset(): Int =
+    max(0, (rowOffsets.lastOrNull() ?: 0) + paddingBottom - height)
 
   fun setHorizontalOffset(value: Int) {
     val nextOffset = value.coerceIn(0, maxHorizontalOffset())
@@ -932,8 +939,9 @@ private class DiffCanvasView(context: Context) : View(context) {
         return rows.getOrNull(sticky.index)?.let { RowHit(it, sticky.top, sticky.bottom) }
       }
     }
-    val index = rowIndexAt(verticalOffset + y.toInt())
-    return rows.getOrNull(index)?.let {
+    val contentY = verticalOffset + y.toInt()
+    val index = rowIndexAt(contentY)
+    return rows.getOrNull(index)?.takeIf { contentY in 0 until rowOffsets.last() }?.let {
       RowHit(
         row = it,
         top = rowOffsets[index] - verticalOffset,

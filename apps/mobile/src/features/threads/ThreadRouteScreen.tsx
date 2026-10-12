@@ -87,6 +87,10 @@ import {
 } from "./thread-inspector-content-stack";
 import { threadRouteIsHydrating } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
+import {
+  useAndroidWorkspaceBack,
+  useWorkspaceListNavigation,
+} from "../workspace/useAndroidWorkspaceNavigation";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -114,7 +118,7 @@ function ThreadPane(props: { readonly children: ReactNode }) {
 }
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
-  const navigation = useNavigation();
+  const returnToList = useWorkspaceListNavigation("threads");
   const { layout } = useAdaptiveWorkspaceLayout();
   const { themeVariables } = useAppearancePreferences();
   if (Platform.OS !== "android") return props.children;
@@ -124,14 +128,7 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
       <ScreenHeader
         title="Thread"
         options={{ contentStyle: { backgroundColor: themeVariables["--color-header"] } }}
-        onBack={
-          layout.usesSplitView
-            ? undefined
-            : () => {
-                if (navigation.canGoBack()) navigation.goBack();
-                else navigation.dispatch(StackActions.replace("Home"));
-              }
-        }
+        onBack={layout.usesSplitView ? undefined : returnToList}
         hideBottomBorder
       />
       <ThreadPane>{props.children}</ThreadPane>
@@ -190,6 +187,7 @@ function ThreadUnavailableScreen(props: {
 }
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+  useAndroidWorkspaceBack("threads");
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();

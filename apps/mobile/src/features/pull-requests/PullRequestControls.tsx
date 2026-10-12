@@ -9,6 +9,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import {
@@ -110,6 +111,7 @@ export function PullRequestActionToolbar(props: {
   readonly params: PullRequestParams;
   readonly filePath?: string;
   readonly onOpenFiles?: () => void;
+  readonly onHeightChange?: (height: number) => void;
 }) {
   const navigation = useNavigation();
   const { draft } = usePullRequestReviewDraft(props.params);
@@ -156,52 +158,57 @@ export function PullRequestActionToolbar(props: {
     const primary = (
       <MaterialButton
         label={primaryLabel}
-        tone="contrast"
-        fullWidth
+        tone="primary"
         disabled={primaryDisabled}
         onPress={primaryPress}
       />
     );
     return (
       <View
-        className="flex-row items-center justify-between gap-3 border-t border-border-subtle bg-screen px-4 pt-2"
-        style={{ paddingBottom: Math.max(insets.bottom, 8) }}
+        pointerEvents="box-none"
+        className="absolute inset-x-0 bottom-0 z-10 items-center px-4 pt-2"
+        style={{ paddingBottom: insets.bottom + 16 }}
+        onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
       >
-        {showAgentControls ? (
-          <ControlPillMenu
-            title="AI helpers"
-            actions={agentActions.map((action) => agent.menuAction(action.task))}
-            onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
-          >
-            <View pointerEvents="none">
-              <MaterialIconButton
-                icon="sparkles"
-                accessibilityLabel="PR agent actions"
-                disabled={agent.disabled}
-              />
-            </View>
-          </ControlPillMenu>
-        ) : null}
-        {showPrimary ? (
-          <View className="min-w-0 flex-1">
-            {!pendingReview && chooseThread ? (
+        <MaterialFloatingToolbar>
+          <View className="flex-row items-center gap-2">
+            {showAgentControls ? (
               <ControlPillMenu
-                title="Open thread"
-                actions={threadMenuItems}
+                title="AI helpers"
+                actions={agentActions.map((action) => agent.menuAction(action.task))}
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
               >
-                <View pointerEvents="none">{primary}</View>
+                <View pointerEvents="none">
+                  <MaterialIconButton
+                    icon="sparkles"
+                    accessibilityLabel="PR agent actions"
+                    disabled={agent.disabled}
+                  />
+                </View>
               </ControlPillMenu>
-            ) : (
-              primary
-            )}
+            ) : null}
+            {showPrimary ? (
+              <View className="min-w-0 shrink">
+                {!pendingReview && chooseThread ? (
+                  <ControlPillMenu
+                    title="Open thread"
+                    actions={threadMenuItems}
+                    onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
+                  >
+                    <View pointerEvents="none">{primary}</View>
+                  </ControlPillMenu>
+                ) : (
+                  primary
+                )}
+              </View>
+            ) : null}
+            <MaterialIconButton
+              icon="file.diff"
+              accessibilityLabel="Changed files"
+              onPress={openFiles}
+            />
           </View>
-        ) : null}
-        <MaterialIconButton
-          icon="doc.on.doc"
-          accessibilityLabel="Changed files"
-          onPress={openFiles}
-        />
+        </MaterialFloatingToolbar>
       </View>
     );
   }
@@ -299,12 +306,13 @@ export function PullRequestActionToolbar(props: {
       )}
     </NativeHeaderToolbar.Menu>
   ) : null;
+  // Tabler file-diff geometry, rasterized at 1x/2x/3x for UIKit template images.
   const filesControl = (
     <NativeHeaderToolbar.Button
       identifier="workspace-trailing-action"
       width={controlSize}
       height={controlSize}
-      icon="document.on.document"
+      icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
       accessibilityLabel="Changed files"
       onPress={openFiles}
       separateBackground

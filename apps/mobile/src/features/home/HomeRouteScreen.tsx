@@ -209,7 +209,7 @@ export function HomeRouteScreen() {
 
   return (
     <AndroidHomeFabLayout
-      disabled={workspace !== null}
+      disabled={workspace !== null && Platform.OS !== "android"}
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
@@ -230,7 +230,7 @@ export function HomeRouteScreen() {
                     params: { screen: "SettingsEnvironments" },
                   }),
               }),
-              headerShown: true,
+              headerShown: Platform.OS !== "android",
             }}
           />
         )}

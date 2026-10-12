@@ -7,6 +7,7 @@
   "android": {
     "modules": [
       "expo.modules.t3nativecontrols.T3NativeControlsModule",
+      "expo.modules.t3nativecontrols.T3WorkspaceNavigationModule",
       "expo.modules.t3nativecontrols.T3KeyboardCommandsModule"
     ]
   }

@@ -36,6 +36,7 @@ import {
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 
 function PullRequestScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
@@ -77,19 +78,22 @@ export function PullRequestsScreen() {
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
     ? selectedEnvironmentId
     : null;
+  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const selectPullRequest = useCallback(
     (item: EnvironmentPullRequestListEntry) => {
       Keyboard.dismiss();
-      navigation.navigate("PullRequest", {
+      const params = {
         environmentId: String(item.environmentId),
         projectId: String(item.projectId),
         repository: item.repository,
         number: item.number,
         host: item.host,
         initialSummary: item,
-      });
+      };
+      if (Platform.OS === "android") selectAndroidWorkspace({ name: "PullRequest", params });
+      else navigation.navigate("PullRequest", params);
     },
-    [navigation],
+    [navigation, selectAndroidWorkspace],
   );
   const controlsAtom = pullRequestListControlsAtom(environmentId ?? "");
   const controls = useAtomValue(controlsAtom);

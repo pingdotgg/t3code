@@ -5,6 +5,7 @@ import IconGitPullRequestClosed from "@tabler/icons-react-native/IconGitPullRequ
 import IconGitPullRequestDraft from "@tabler/icons-react-native/IconGitPullRequestDraft";
 import type { SFSymbol } from "expo-symbols";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
+import IconFileDiff from "@tabler/icons-react-native/IconFileDiff";
 import { SymbolView as ExpoSymbolView } from "expo-symbols";
 import { withUniwind } from "uniwind";
 import type { AppSymbolViewProps } from "./AppSymbol";
@@ -12,7 +13,8 @@ import type { AppSymbolViewProps } from "./AppSymbol";
 export type { SFSymbol } from "expo-symbols";
 export type { AppSymbolName } from "./AppSymbol";
 
-const GIT_ICONS = {
+const CUSTOM_ICONS = {
+  "file.diff": IconFileDiff,
   "arrow.triangle.pull": IconGitPullRequest,
   "arrow.triangle.merge": IconGitMerge,
   "arrow.triangle.branch": IconGitBranch,
@@ -24,10 +26,10 @@ const GIT_ICONS = {
 
 function AppSymbolView(props: AppSymbolViewProps) {
   const name = typeof props.name === "string" ? props.name : props.name.ios;
-  const GitIcon = GIT_ICONS[name as keyof typeof GIT_ICONS];
-  if (GitIcon) {
+  const CustomIcon = CUSTOM_ICONS[name as keyof typeof CUSTOM_ICONS];
+  if (CustomIcon) {
     return (
-      <GitIcon
+      <CustomIcon
         accessibilityLabel={props.accessibilityLabel}
         color={props.tintColor}
         size={props.size}
