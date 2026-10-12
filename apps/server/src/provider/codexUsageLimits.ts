@@ -186,12 +186,20 @@ export function mergeCodexRateLimits(
   };
 }
 
-/** All exhausted windows must reset before a continuation can run. */
+/**
+ * All exhausted windows must reset before a continuation can run. Codex reports whole
+ * percentages and can refuse a turn at 99%; windows whose reset has passed are stale.
+ */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
+  atMs: number,
 ): string | null {
   if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const current = codexRateLimitsToWindows(snapshot).filter(
+    (window) => window.resetsAt === undefined || Date.parse(window.resetsAt) > atMs,
+  );
+  const full = current.filter((window) => window.usedPercent >= 100);
+  const windows = full.length > 0 ? full : current.filter((window) => window.usedPercent >= 99);
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>
