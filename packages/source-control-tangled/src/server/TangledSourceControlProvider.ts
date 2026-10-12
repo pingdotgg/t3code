@@ -387,7 +387,7 @@ export const make = Effect.gen(function* () {
         const open = yield* cli
           .runJson({
             cwd: input.cwd,
-            args: ["pr", "list", address, "--state", "open", "--limit", "100"],
+            args: ["pr", "list", address, "--state", "open"],
             schema: TangledPullListSchema,
           })
           .pipe(Effect.mapError((cause) => fail("createChangeRequest", input.cwd, cause)));

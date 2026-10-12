@@ -217,14 +217,14 @@ describe("createChangeRequest", () => {
 
   it.effect("creates a pull request once no open one holds the branch", () => {
     const tg = fakeTg({
-      "pr list alice.example/repo --state open --limit 100": pullList([]),
+      "pr list alice.example/repo --state open": pullList([]),
       "pr create --title Add a thing --body-file /tmp/body.md --base main --head feature --repo alice.example/repo":
         { stdout: "" },
     });
     return create().pipe(
       Effect.map(() => {
         assert.deepStrictEqual(tg.calls, [
-          ["pr", "list", "alice.example/repo", "--state", "open", "--limit", "100"],
+          ["pr", "list", "alice.example/repo", "--state", "open"],
           [
             "pr",
             "create",
@@ -245,9 +245,16 @@ describe("createChangeRequest", () => {
     );
   });
 
-  it.effect("refuses a second pull request when one already holds the branch", () => {
+  it.effect("refuses a duplicate beyond the first 100 open pull requests", () => {
     const tg = fakeTg({
-      "pr list alice.example/repo --state open --limit 100": pullList([
+      "pr list alice.example/repo --state open": pullList([
+        ...Array.from({ length: 100 }, (_, index) => ({
+          rkey: `other-${index}`,
+          title: "Another branch",
+          state: "open",
+          sourceBranch: `other-${index}`,
+          targetBranch: "main",
+        })),
         {
           rkey: "3mkaewigwhi22",
           title: "Already open",
@@ -264,9 +271,7 @@ describe("createChangeRequest", () => {
       Effect.map((error) => {
         assert.match(error.detail, /already has an open pull request/u);
         assert.match(error.detail, /3mkaewigwhi22/u);
-        assert.deepStrictEqual(tg.calls, [
-          ["pr", "list", "alice.example/repo", "--state", "open", "--limit", "100"],
-        ]);
+        assert.deepStrictEqual(tg.calls, [["pr", "list", "alice.example/repo", "--state", "open"]]);
       }),
       serve(tg),
     );
@@ -274,7 +279,7 @@ describe("createChangeRequest", () => {
 
   it.effect("creates when the open pull request targets a different branch", () => {
     const tg = fakeTg({
-      "pr list alice.example/repo --state open --limit 100": pullList([
+      "pr list alice.example/repo --state open": pullList([
         {
           rkey: "3mkaewigwhi22",
           title: "Into staging",
@@ -298,7 +303,7 @@ describe("createChangeRequest", () => {
 
   it.effect("creates from a DID remote without passing --repo, which takes no DID", () => {
     const tg = fakeTg({
-      "pr list did:plc:4ygmvhvc6kw3w7j4fmd4eiqp --state open --limit 100": pullList([]),
+      "pr list did:plc:4ygmvhvc6kw3w7j4fmd4eiqp --state open": pullList([]),
       "pr create --title Add a thing --body-file /tmp/body.md --base main --head feature": {
         stdout: "",
       },
@@ -319,7 +324,7 @@ describe("createChangeRequest", () => {
 
   it.effect("reports what tg said when the pull request itself fails", () => {
     const tg = fakeTg({
-      "pr list alice.example/repo --state open --limit 100": pullList([]),
+      "pr list alice.example/repo --state open": pullList([]),
       "pr create --title Add a thing --body-file /tmp/body.md --base main --head feature --repo alice.example/repo":
         {
           stdout: "",
