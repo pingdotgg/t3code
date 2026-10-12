@@ -2,7 +2,10 @@
   "platforms": ["apple", "android"],
   "apple": {
     "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"],
-    "appDelegateSubscribers": ["T3WorkspaceOrientationSubscriber"]
+    "appDelegateSubscribers": [
+      "T3WorkspaceOrientationSubscriber",
+      "T3MenuDismissTouchGateSubscriber"
+    ]
   },
   "android": {
     "modules": [
