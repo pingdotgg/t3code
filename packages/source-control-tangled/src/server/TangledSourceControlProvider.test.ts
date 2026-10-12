@@ -463,27 +463,40 @@ describe("TangledSourceControlProvider.make", () => {
     }).pipe(serve(tg));
   });
 
-  it.effect("creates a repository and returns its clone URLs", () => {
-    const tg = fakeTg({
-      "repo create repo": {
-        stdout: encodeJson({ name: "repo", author: "alice.example", knot: "knot1.tangled.sh" }),
-      },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* TangledSourceControlProvider.make;
-      const urls = yield* provider.createRepository({
-        cwd: "/repo",
-        repository: "alice.example/repo",
-        visibility: "public",
+  it.effect.each(["alice.example", "did:plc:alice"])(
+    "creates a repository for the confirmed owner %s",
+    (owner) => {
+      const tg = fakeTg({
+        "auth status": {
+          stdout: encodeJson({
+            authenticated: true,
+            handle: "alice.example",
+            did: "did:plc:alice",
+          }),
+        },
+        "repo create repo": {
+          stdout: encodeJson({ name: "repo", author: "alice.example", knot: "knot1.tangled.sh" }),
+        },
       });
-      assert.deepStrictEqual(urls, {
-        nameWithOwner: "alice.example/repo",
-        url: "https://tangled.org/alice.example/repo",
-        sshUrl: "git@tangled.org:alice.example/repo",
-      });
-      assert.deepStrictEqual(tg.calls, [["repo", "create", "repo"]]);
-    }).pipe(serve(tg));
-  });
+      return Effect.gen(function* () {
+        const provider = yield* TangledSourceControlProvider.make;
+        const urls = yield* provider.createRepository({
+          cwd: "/repo",
+          repository: `${owner}/repo`,
+          visibility: "public",
+        });
+        assert.deepStrictEqual(urls, {
+          nameWithOwner: `${owner}/repo`,
+          url: `https://tangled.org/${owner}/repo`,
+          sshUrl: `git@tangled.org:${owner}/repo`,
+        });
+        assert.deepStrictEqual(tg.calls, [
+          ["auth", "status"],
+          ["repo", "create", "repo"],
+        ]);
+      }).pipe(serve(tg));
+    },
+  );
 
   it.effect("rejects malformed repository paths before invoking tg", () => {
     const tg = fakeTg({});
@@ -508,8 +521,9 @@ describe("TangledSourceControlProvider.make", () => {
     }).pipe(serve(tg));
   });
 
-  it.effect("says so when tg created the repository under a different account", () => {
+  it.effect("rejects a different signed-in handle before creating a repository", () => {
     const tg = fakeTg({
+      "auth status": { stdout: encodeJson({ authenticated: true, handle: "alice.example" }) },
       "repo create repo": {
         stdout: encodeJson({ name: "repo", author: "alice.example", knot: "knot1.tangled.sh" }),
       },
@@ -519,12 +533,14 @@ describe("TangledSourceControlProvider.make", () => {
       const error = yield* provider
         .createRepository({ cwd: "/repo", repository: "someone-else/repo", visibility: "public" })
         .pipe(Effect.flip);
-      assert.match(error.detail, /not someone-else/u);
+      assert.match(error.detail, /someone-else/u);
+      assert.deepStrictEqual(tg.calls, [["auth", "status"]]);
     }).pipe(serve(tg));
   });
 
-  it.effect("rejects clone URLs when tg created the repository under a different DID", () => {
+  it.effect("rejects a different signed-in DID before creating a repository", () => {
     const tg = fakeTg({
+      "auth status": { stdout: encodeJson({ authenticated: true, did: "did:plc:bob" }) },
       "repo create repo": {
         stdout: encodeJson({ name: "repo", author: "did:plc:bob", knot: "knot1.tangled.sh" }),
       },
@@ -540,6 +556,28 @@ describe("TangledSourceControlProvider.make", () => {
         .pipe(Effect.flip);
       assert.match(error.detail, /did:plc:bob/u);
       assert.match(error.detail, /did:plc:alice/u);
+      assert.deepStrictEqual(tg.calls, [["auth", "status"]]);
+    }).pipe(serve(tg));
+  });
+
+  it.effect.each([
+    { authenticated: false, handle: "alice.example" },
+    { authenticated: true },
+    { authenticated: true, status: "expired", handle: "alice.example" },
+    { authenticated: true, status: "unknown", handle: "alice.example" },
+  ])("does not create when the signed-in owner cannot be confirmed: %j", (account) => {
+    const tg = fakeTg({ "auth status": { stdout: encodeJson(account) } });
+    return Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      const error = yield* provider
+        .createRepository({
+          cwd: "/repo",
+          repository: "alice.example/repo",
+          visibility: "public",
+        })
+        .pipe(Effect.flip);
+      assert.match(error.detail, /Cannot confirm/u);
+      assert.deepStrictEqual(tg.calls, [["auth", "status"]]);
     }).pipe(serve(tg));
   });
 

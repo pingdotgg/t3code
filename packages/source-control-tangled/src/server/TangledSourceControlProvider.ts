@@ -271,6 +271,25 @@ export const make = Effect.gen(function* () {
             "Name a Tangled repository as handle/repo.",
           );
         }
+        const account = yield* cli
+          .runJson({
+            cwd: input.cwd,
+            args: ["auth", "status"],
+            schema: TangledAuthStatusSchema,
+          })
+          .pipe(Effect.mapError((cause) => fail("createRepository", input.cwd, cause)));
+        if (
+          !account.authenticated ||
+          account.status === "expired" ||
+          account.status === "unknown" ||
+          (owner !== account.handle && owner !== account.did)
+        ) {
+          return yield* notNamed(
+            "createRepository",
+            input.cwd,
+            `Cannot confirm Tangled is signed in as ${owner} (reported account: ${account.handle ?? account.did ?? "unknown"}). Run \`tg auth login ${owner}\` and retry.`,
+          );
+        }
         // Tangled has no private repositories, so `visibility` is not something `tg` can be asked
         // for; a knot may still refuse the name, which surfaces as this operation's error.
         const created = yield* cli
