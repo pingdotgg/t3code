@@ -75,6 +75,25 @@ describe("providerModelsFromSettings", () => {
     ]);
   });
 
+  it("renames a built-in model when a named entry uses its slug", () => {
+    const capabilities = createModelCapabilities({ optionDescriptors: [] });
+    const models = providerModelsFromSettings(
+      [
+        {
+          slug: "gpt-5.5",
+          name: "GPT-5.5",
+          shortName: "5.5",
+          isCustom: false,
+          capabilities,
+        },
+      ],
+      [{ slug: "gpt-5.5", name: "Team GPT" }],
+      capabilities,
+    );
+
+    expect(models).toEqual([{ slug: "gpt-5.5", name: "Team GPT", isCustom: false, capabilities }]);
+  });
+
   it("preserves a custom slug that collides with a provider alias", () => {
     const capabilities = createModelCapabilities({ optionDescriptors: [] });
     const models = providerModelsFromSettings(
