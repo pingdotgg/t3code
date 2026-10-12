@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { PluginManageAccessScope } from "./PluginsSettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -44,6 +45,9 @@ import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { PluginSettingsSection } from "~/components/plugins/PluginSettingsSection";
+import { pluginSettingsReadOnly } from "@t3tools/client-runtime/state/pluginPresentation";
+import { supportsPluginSettings } from "@t3tools/client-runtime/state/pluginSettings";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -637,6 +641,26 @@ function DeviceIntegrationSettings() {
         agentAccessEnabled={settings.enableAgentDeviceAccess}
       />
     </SettingsSection>
+  );
+}
+
+/** Settings of the selected environment's plugins; hidden until a plugin declares some. */
+function SelectedEnvironmentPluginSettings() {
+  const { environment: selected } = useSettingsScope();
+  if (selected?.connection.phase !== "connected" || selected.serverConfig === null) return null;
+  const capabilities = selected.serverConfig.environment.capabilities;
+  if (!supportsPluginSettings(capabilities)) return null;
+  // Saving settings needs access:write; other sessions see the values read-only.
+  return (
+    <PluginManageAccessScope environment={selected}>
+      {(access) => (
+        <PluginSettingsSection
+          environmentId={selected.environmentId}
+          capabilities={capabilities}
+          readOnly={pluginSettingsReadOnly(access)}
+        />
+      )}
+    </PluginManageAccessScope>
   );
 }
 
@@ -1547,6 +1571,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <SelectedEnvironmentPluginSettings />
     </SettingsPageContainer>
   );
 }

@@ -87,6 +87,24 @@ export function deriveThreadFeedInitialContentInset(input: {
   return { bottom: Math.max(0, input.bottomContentInset) };
 }
 
+/**
+ * Where the thread feed's first row and a just-sent message rest. The header
+ * inset is UIKit's under native automatic insets and a content spacer
+ * otherwise. UI floating over the feed's top edge below the header, such as
+ * the status strip, adds to both, so it never covers the oldest loaded row,
+ * the load-earlier control or an anchored message.
+ */
+export function deriveThreadFeedTopGeometry(input: {
+  readonly usesNativeAutomaticInsets: boolean;
+  readonly headerInset: number;
+  readonly topOverlayInset: number;
+}): { readonly spacerHeight: number; readonly anchorTopInset: number } {
+  return {
+    spacerHeight: (input.usesNativeAutomaticInsets ? 0 : input.headerInset) + input.topOverlayInset,
+    anchorTopInset: input.headerInset + input.topOverlayInset,
+  };
+}
+
 export type WorkspaceAuxiliaryPaneRole = "supplementary" | "inspector";
 
 export function deriveLayout(input: {

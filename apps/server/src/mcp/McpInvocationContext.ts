@@ -11,6 +11,8 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
+import type { PluginToolGrant } from "../plugins/PluginTools.ts";
+
 const ALL_MCP_CAPABILITIES = [
   "preview",
   "orchestration",
@@ -58,6 +60,8 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  /** Tool plugins enabled when the session was prepared; see PluginTools.ts. */
+  readonly pluginToolGrants?: ReadonlyArray<PluginToolGrant>;
 }
 
 export class McpInvocationContext extends Context.Service<

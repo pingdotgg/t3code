@@ -44,6 +44,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as PluginTools from "../plugins/PluginTools.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -355,6 +356,8 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      // Optional for the same reason; without it a session gets no plugin tools.
+      const pluginTools = yield* Effect.serviceOption(PluginTools.PluginTools);
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -495,6 +498,10 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                // Taken at every preparation; each call still checks the plugin is enabled now.
+                const pluginToolGrants = Option.isSome(pluginTools)
+                  ? yield* pluginTools.value.grants
+                  : [];
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -502,25 +509,35 @@ export const layerWithOptions = (
                   reserveMcpCredential(threadId, existing.providerSessionId);
                   const rawToken = existing.authorizationHeader.replace(/^Bearer\s+/, "");
                   // The caller only learns of the reservation once this returns,
-                  // so a stop while resolving must drop it here.
-                  const resolved = yield* mcpSessionRegistry
-                    .resolve(rawToken)
-                    .pipe(
-                      Effect.onInterrupt(() =>
-                        Effect.sync(() =>
-                          dropMcpCredentialReservation(threadId, existing.providerSessionId),
-                        ),
-                      ),
+                  // so a stop or crash while resolving or updating grants must drop it here.
+                  const reused = yield* Effect.gen(function* () {
+                    const resolved = yield* mcpSessionRegistry.resolve(rawToken);
+                    if (
+                      resolved === undefined ||
+                      resolved.thread.threadId !== threadId ||
+                      resolved.thread.providerInstanceId !== providerInstanceId ||
+                      // A flipped browser-access setting must not survive through
+                      // credential reuse: rotate so the new scope reflects it.
+                      resolved.capabilities.has("preview") !== browserToolsAvailable ||
+                      resolved.capabilities.has("device") !== deviceToolsAvailable
+                    ) {
+                      return false;
+                    }
+                    // The provider keeps this credential, and the plugin tools are fixed meta-tools,
+                    // so new grants apply to it without rotating the token.
+                    yield* mcpSessionRegistry.setPluginToolGrants(
+                      existing.providerSessionId,
+                      pluginToolGrants,
                     );
-                  if (
-                    resolved !== undefined &&
-                    resolved.thread.threadId === threadId &&
-                    resolved.thread.providerInstanceId === providerInstanceId &&
-                    // A flipped browser-access setting must not survive through
-                    // credential reuse: rotate so the new scope reflects it.
-                    resolved.capabilities.has("preview") === browserToolsAvailable &&
-                    resolved.capabilities.has("device") === deviceToolsAvailable
-                  ) {
+                    return true;
+                  }).pipe(
+                    Effect.onError(() =>
+                      Effect.sync(() =>
+                        dropMcpCredentialReservation(threadId, existing.providerSessionId),
+                      ),
+                    ),
+                  );
+                  if (reused) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -531,6 +548,7 @@ export const layerWithOptions = (
                   providerInstanceId,
                   browserToolsAvailable,
                   capabilities,
+                  pluginToolGrants,
                 });
                 yield* mcpSessions.set(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
