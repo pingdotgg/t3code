@@ -26,6 +26,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ContributionStatusSnapshot } from "./contributionStatus.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -349,6 +350,16 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
+  PluginAddInput,
+  PluginCatalogError,
+  PluginCatalogSnapshot,
+  PluginConsentInput,
+  PluginInstallationInput,
+  PluginInstallationResult,
+  PluginRefreshInput,
+  PluginRemoveResult,
+} from "./pluginCatalog.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -523,6 +534,17 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
+  // Trusted local plugins (gated on the `plugins` environment capability)
+  pluginsList: "plugins.list",
+  pluginsSubscribe: "plugins.subscribe",
+  pluginsAdd: "plugins.add",
+  pluginsRefresh: "plugins.refresh",
+  pluginsConsent: "plugins.consent",
+  pluginsEnable: "plugins.enable",
+  pluginsDisable: "plugins.disable",
+  pluginsRemove: "plugins.remove",
+  pluginsResume: "plugins.resume",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -584,6 +606,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeContributionStatus: "subscribeContributionStatus",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1843,6 +1866,67 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
     error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
   },
 );
+const pluginRpcError = Schema.Union([PluginCatalogError, EnvironmentAuthorizationError]);
+
+const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+/** One snapshot on subscribe, then a fresh one after every catalogue or plugin state change. */
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+  stream: true,
+});
+
+/** Reads the manifest and digests the directory; runs nothing. */
+const WsPluginsAddRpc = Rpc.make(WS_METHODS.pluginsAdd, {
+  payload: PluginAddInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Inspects the bytes again; an enabled installation whose bytes changed is stopped. */
+const WsPluginsRefreshRpc = Rpc.make(WS_METHODS.pluginsRefresh, {
+  payload: PluginRefreshInput,
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+const WsPluginsConsentRpc = Rpc.make(WS_METHODS.pluginsConsent, {
+  payload: PluginConsentInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsEnableRpc = Rpc.make(WS_METHODS.pluginsEnable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsDisableRpc = Rpc.make(WS_METHODS.pluginsDisable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Disables and forgets the installation; the directory is left untouched. */
+const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
+  payload: PluginInstallationInput,
+  success: PluginRemoveResult,
+  error: pluginRpcError,
+});
+
+/** Clears backoff, quarantine, or incompatibility; the next use starts a fresh process. */
+const WsPluginsResumeRpc = Rpc.make(WS_METHODS.pluginsResume, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
 
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
@@ -1865,6 +1949,14 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+/** Streams every live thread status in the environment: one snapshot on subscribe, then a full replacement after each change. Gated by the `contributionStatus` capability. */
+const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributionStatus, {
+  payload: Schema.Struct({}),
+  success: ContributionStatusSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
  * the handler runs. Every RPC in `WsRpcGroup` carries it, so a handler cannot
@@ -1875,7 +1967,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2054,6 +2146,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeContributionStatusRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
@@ -2070,3 +2163,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 ).middleware(RpcScopeAuthorization);
+
+/**
+ * The plugin RPCs. The server builds their handlers in a layer of their own:
+ * one handler object for every RPC exceeds the type checker's instantiation
+ * limit and silently types the WebSocket layer as `any`.
+ */
+export const WsPluginRpcGroup = RpcGroup.make(
+  WsPluginsListRpc,
+  WsPluginsSubscribeRpc,
+  WsPluginsAddRpc,
+  WsPluginsRefreshRpc,
+  WsPluginsConsentRpc,
+  WsPluginsEnableRpc,
+  WsPluginsDisableRpc,
+  WsPluginsRemoveRpc,
+  WsPluginsResumeRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsPluginRpcGroup);
