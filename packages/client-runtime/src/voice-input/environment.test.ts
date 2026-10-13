@@ -2,7 +2,7 @@ import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { EnvironmentId, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {

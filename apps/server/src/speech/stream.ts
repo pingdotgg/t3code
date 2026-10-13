@@ -11,8 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SpeechService from "./SpeechService.ts";
 

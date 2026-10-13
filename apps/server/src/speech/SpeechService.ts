@@ -5,7 +5,7 @@ import type {
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -182,8 +182,8 @@ export class SpeechService extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
@@ -794,7 +794,7 @@ export const make = Effect.gen(function* () {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
       }).pipe(
-        Effect.catchTag("SpeechDownloadCancelledError", () => Effect.void),
+        Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
         Effect.andThen(modelsEffect),
       ),
     selectModel: (modelId) =>

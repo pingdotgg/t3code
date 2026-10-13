@@ -1846,6 +1846,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const readComposerSnapshotStable = useStableCallback(readComposerSnapshot);
 
   const dictationDisabled =
+    !canOperateThread ||
     isConnecting ||
     projectSelectionRequired ||
     isComposerApprovalState ||
@@ -1891,15 +1892,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
   });
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    (!composerSendState.hasSendableContent && !showResumeAction);
 
   const resolveActiveComposerTrigger = (): {
     snapshot: { value: string; cursor: number; expandedCursor: number };

@@ -39,7 +39,11 @@ export function VoicePostProcessingSettings() {
     (provider) => provider.supportsTextGeneration !== false,
   );
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(textGenerationProviders), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(textGenerationProviders),
+      settings,
+      null,
+    ),
   );
   const hasTextGenerationProvider = instanceEntries.some(
     (entry) => entry.enabled && entry.isAvailable,
@@ -96,6 +100,7 @@ export function VoicePostProcessingSettings() {
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <ProviderModelPicker
+                environmentId={environment?.environmentId ?? null}
                 activeInstanceId={modelSelection.instanceId}
                 model={modelSelection.model}
                 lockedProvider={null}

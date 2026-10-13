@@ -76,7 +76,7 @@ export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   return keys;
 }
 
-export function matchesShortcutModifiers(
+export function matchesKeybindingShortcutModifiers(
   event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform: string,
@@ -92,7 +92,7 @@ export function matchesShortcutModifiers(
   );
 }
 
-function matchesShortcut(
+export function matchesKeybindingShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform: string,
@@ -103,7 +103,7 @@ function matchesShortcut(
     !/^[a-z0-9]$/i.test(event.key)
   )
     return false;
-  if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
+  if (!matchesKeybindingShortcutModifiers(event, shortcut, platform)) return false;
   return resolveEventKeys(event).has(shortcut.key);
 }
 
@@ -134,7 +134,7 @@ export function resolveKeybindingCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding || (binding.whenAst && !evaluateWhenNode(binding.whenAst, context))) continue;
-    if (matchesShortcut(event, binding.shortcut, platform)) return binding.command;
+    if (matchesKeybindingShortcut(event, binding.shortcut, platform)) return binding.command;
   }
   return null;
 }

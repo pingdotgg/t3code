@@ -530,6 +530,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./keybindingMatching": {
+      "types": "./src/keybindingMatching.ts",
+      "import": "./src/keybindingMatching.ts"
     }
   },
   "scripts": {

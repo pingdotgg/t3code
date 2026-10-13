@@ -15,7 +15,7 @@ import { describe, expect, vi } from "vite-plus/test";
 
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { postProcessTranscript } from "./postProcessing.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 
 const codexProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),

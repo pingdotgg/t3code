@@ -6,7 +6,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   type SpeechTranscriptionOptions,
@@ -904,8 +904,8 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
       return yield* Effect.result(speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS));
     }).pipe(
       Effect.provide(layer),
-      Effect.provideService(HostProcessPlatform, "win32"),
-      Effect.provideService(HostProcessArchitecture, "arm64"),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
     );
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechUnsupportedPlatformError",

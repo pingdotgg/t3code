@@ -17,15 +17,15 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import type * as NetAddress from "effect/unstable/net/NetAddress";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
@@ -42,6 +42,7 @@ const dependencies = Layer.mergeAll(
       generatePrContent: () => Effect.die("not used"),
       generateBranchName: () => Effect.die("not used"),
       generateThreadTitle: () => Effect.die("not used"),
+      generateReviewGuide: () => Effect.die("not used"),
       generateTranscriptionPostProcessing: () => Effect.die("not used"),
     }),
   ),

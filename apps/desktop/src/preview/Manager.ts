@@ -59,7 +59,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
-import { MENU_ACTION_CHANNEL, PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
+  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
@@ -2253,7 +2257,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.once("destroyed", onDestroyed);
             wc.on("did-start-navigation", onNavigated);
             if (!wc.isFocused()) wc.focus();
-            wc.send(START_PICK_CHANNEL, annotationTheme, annotationSendEnabled.get(tabId) === true, voice);
+            wc.send(
+              START_PICK_CHANNEL,
+              annotationTheme,
+              annotationSendEnabled.get(tabId) === true,
+              voice,
+            );
           });
         });
         runFork(

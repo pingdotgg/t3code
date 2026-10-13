@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
 import { applySpeechAliases } from "./customWords.ts";
 

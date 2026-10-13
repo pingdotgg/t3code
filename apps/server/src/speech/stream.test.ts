@@ -4,16 +4,11 @@ import { expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import {
-  HttpRouter,
-  HttpServer,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { SpeechStreamEvent, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import type { SpeechService, SpeechStream } from "./SpeechService.ts";
 import { runSpeechSocket } from "./stream.ts";
-import type * as NetAddress from "effect/unstable/net/NetAddress";
+import type * as NetAddress from "effect/net/NetAddress";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
 

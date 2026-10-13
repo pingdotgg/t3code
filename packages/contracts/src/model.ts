@@ -159,6 +159,7 @@ export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
     model: "grok-build",
     options: [{ id: "reasoningEffort", value: "low" }],
   },
+  [MUSE_DRIVER_KIND]: { model: "default", options: [] },
   [PI_DRIVER_KIND]: {
     model: "default",
     options: [],
