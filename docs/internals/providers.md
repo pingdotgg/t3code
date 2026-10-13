@@ -100,6 +100,12 @@ Ownership is cached per instance and re-read immediately before an update runs. 
 changed since the advisory, and reports success only when the refreshed provider is still installed
 with a readable, current version.
 
+Background updates (`automaticUpdates`) use the same runner but install the checked release as
+`package@version`; only native self-updaters and Homebrew run unpinned. A lock file per `lockKey`
+in the user cache directory is shared by every T3 server on the host, and the installer runs
+detached with its output in a log file, so quitting the server never cuts an install in half. A turn
+start waits for any held lock before it reads its context, so a CLI is never replaced under a launch.
+
 ## Protocol traps
 
 Codex async questions arrive as notifications and are answered with a new user message. There is

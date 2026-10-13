@@ -163,6 +163,10 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
+import * as ProviderInstallLock from "./provider/ProviderInstallLock.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import * as ProviderAutoUpdater from "./updates/ProviderAutoUpdater.ts";
+import * as UpdateWindow from "./updates/UpdateWindow.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
@@ -547,7 +551,17 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// One maintenance runner for RPCs and background updates, so both queue
+// behind the same per-installer lock.
+const layerProviderUpdates = ProviderAutoUpdater.layer.pipe(
+  Layer.provide(UpdateWindow.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  Layer.provideMerge(
+    ProviderMaintenanceRunner.layer.pipe(Layer.provide(ProviderMaintenanceRunner.layerInstaller)),
+  ),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  layerProviderUpdates,
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
@@ -1116,6 +1130,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provide(VcsProcess.layer),
       // Every agent and terminal spawn reads this, so it sits below everything.
       Layer.provideMerge(AgentScopeLive.layer),
+      // Provider installs and turn starts coordinate with every T3 server on the host.
+      Layer.provideMerge(ProviderInstallLock.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),
