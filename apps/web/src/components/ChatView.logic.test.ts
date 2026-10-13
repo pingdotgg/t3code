@@ -62,6 +62,7 @@ import {
   shouldRetargetThreadPullRequestPanel,
   shouldOpenProactiveTurnDiff,
   shouldRenderPreviewMiniPlayer,
+  shouldRenderPreviewMiniPlayerInColumns,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
@@ -911,6 +912,98 @@ describe("floating browser preview", () => {
         { id: "diff", kind: "diff" },
       ),
     ).toBe(true);
+  });
+});
+
+describe("floating preview in scrolling columns", () => {
+  const browserColumn = { id: "browser:one", kind: "preview", resourceId: "tab-1" } as const;
+  const deviceColumn = {
+    id: "device:one",
+    kind: "device",
+    target: { hostId: "host-1", deviceId: "device-1", platform: "ios", name: "iPhone" },
+  } as const;
+  const diffColumn = { id: "diff", kind: "diff" } as const;
+  const surfaces: RightPanelSurface[] = [diffColumn, browserColumn, deviceColumn];
+
+  it("returns to the floating player when the selected source column scrolls away", () => {
+    const source = { kind: "browser", tabId: "tab-1" } as const;
+    // Scrolled over to the selected browser column: the column owns the view.
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source,
+        chatUnclipped: false,
+        surfaces,
+        unclippedSurfaceIds: new Set([browserColumn.id]),
+      }),
+    ).toBe(false);
+    // Back on the chat with the browser column still selected but offscreen.
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source,
+        chatUnclipped: true,
+        surfaces,
+        unclippedSurfaceIds: new Set([diffColumn.id]),
+      }),
+    ).toBe(true);
+    // Chat and the browser column both wholly in view: the column shows it.
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source,
+        chatUnclipped: true,
+        surfaces,
+        unclippedSurfaceIds: new Set([browserColumn.id]),
+      }),
+    ).toBe(false);
+  });
+
+  it("matches device sources by host and device", () => {
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source: {
+          kind: "device",
+          hostId: "host-1",
+          deviceId: "device-1",
+          platform: "ios",
+          name: "iPhone",
+        },
+        chatUnclipped: true,
+        surfaces,
+        unclippedSurfaceIds: new Set([deviceColumn.id]),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source: {
+          kind: "device",
+          hostId: "host-1",
+          deviceId: "device-1",
+          platform: "ios",
+          name: "iPhone",
+        },
+        chatUnclipped: true,
+        surfaces,
+        unclippedSurfaceIds: new Set(),
+      }),
+    ).toBe(true);
+  });
+
+  it("stays hidden while the chat column is clipped or there is no source", () => {
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source: { kind: "browser", tabId: "tab-1" },
+        chatUnclipped: false,
+        surfaces,
+        unclippedSurfaceIds: new Set(),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayerInColumns({
+        source: null,
+        chatUnclipped: true,
+        surfaces,
+        unclippedSurfaceIds: new Set(),
+      }),
+    ).toBe(false);
   });
 });
 

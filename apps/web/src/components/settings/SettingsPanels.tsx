@@ -26,6 +26,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
+  type RightPanelLayout,
   type DiffLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -204,6 +205,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
   wide: "Wide",
   full: "Full",
+};
+
+const RIGHT_PANEL_LAYOUT_LABELS: Record<RightPanelLayout, string> = {
+  tabs: "Tabs",
+  columns: "Scrolling columns",
 };
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
@@ -548,6 +554,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff colors"]
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+      ...(settings.rightPanelLayout !== DEFAULT_UNIFIED_SETTINGS.rightPanelLayout
+        ? ["Right panel layout"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -675,6 +684,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.appearanceContrast,
       settings.diffColorScheme,
       settings.chatWidth,
+      settings.rightPanelLayout,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -792,6 +802,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      rightPanelLayout: DEFAULT_UNIFIED_SETTINGS.rightPanelLayout,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1452,6 +1463,40 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("right-panel-layout")}
+          description="Show panels beside the chat as tabs, or lay the chat and every panel out side by side as columns you scroll through."
+          resetAction={
+            settings.rightPanelLayout !== DEFAULT_UNIFIED_SETTINGS.rightPanelLayout ? (
+              <SettingResetButton
+                label="right panel layout"
+                onClick={() =>
+                  updateSettings({ rightPanelLayout: DEFAULT_UNIFIED_SETTINGS.rightPanelLayout })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.rightPanelLayout}
+                onValueChange={(value) => {
+                  if (value === "tabs" || value === "columns")
+                    updateSettings({ rightPanelLayout: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Right panel layout">
+                  <SelectValue>{RIGHT_PANEL_LAYOUT_LABELS[settings.rightPanelLayout]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="tabs">Tabs (default)</SelectItem>
+                  <SelectItem value="columns">Scrolling columns</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

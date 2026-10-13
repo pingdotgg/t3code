@@ -151,6 +151,15 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  /** Hides the add-surface button, for scrolling columns where only the last column shows it. */
+  showAddSurface?: boolean;
+  /**
+   * Every open surface, when `surfaces` holds only this bar's share of them
+   * (one per scrolling column). The tab menu's bulk close actions use it.
+   */
+  allSurfaces?: readonly RightPanelSurface[];
+  /** Makes an embedded tab bar a desktop titlebar drag region, as the inline one is. */
+  titleBar?: boolean;
   children: ReactNode;
 }
 
@@ -866,7 +875,9 @@ function SortableTab({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
-  const ownsDesktopTitleBar = isElectron && props.mode === "inline";
+  const ownsDesktopTitleBar = isElectron && (props.mode === "inline" || props.titleBar === true);
+  // Only the inline panel sits at the window edge under the native and layout controls.
+  const reservesTitleBarControls = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -879,7 +890,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollRight: false,
   });
 
-  if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
+  // Scrolling columns give every column a tab bar; only the one showing the
+  // add button owns it and its shortcut, so one press opens one menu.
+  const ownsAddSurface = props.open !== false && props.showAddSurface !== false;
+  if (!ownsAddSurface && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
   const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
@@ -898,10 +912,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     }
   });
   useEffect(() => {
-    if (props.open === false) return;
+    if (!ownsAddSurface) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
     return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
-  }, [props.open]);
+  }, [ownsAddSurface]);
 
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -1010,7 +1024,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const api = readLocalApi();
       if (!api) return;
 
-      const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
+      const menuSurfaces = props.allSurfaces ?? props.surfaces;
+      const surfaceIndex = menuSurfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
 
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
@@ -1043,17 +1058,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {
           id: "close-others",
           label: "Close others",
-          disabled: props.surfaces.length <= 1,
+          disabled: menuSurfaces.length <= 1,
         },
         {
           id: "close-to-right",
           label: "Close to the right",
-          disabled: surfaceIndex >= props.surfaces.length - 1,
+          disabled: surfaceIndex >= menuSurfaces.length - 1,
         },
         {
           id: "close-all",
           label: "Close all",
-          disabled: props.surfaces.length === 0,
+          disabled: menuSurfaces.length === 0,
         },
       );
 
@@ -1174,7 +1189,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // controls a few pixels higher and the cluster jumps on open.
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+          reservesTitleBarControls && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -1325,7 +1340,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 );
               })}
             </SortableTabList>
-            {props.open !== false ? (
+            {ownsAddSurface ? (
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}
@@ -1460,11 +1475,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </div>
         ) : null}
         {props.layoutControls}
-        {ownsDesktopTitleBar && !props.layoutControls ? (
+        {reservesTitleBarControls && !props.layoutControls ? (
           // Keeps the tabs clear of the window controls when the layout toggles live elsewhere.
           <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
         ) : null}
-        {ownsDesktopTitleBar ? (
+        {reservesTitleBarControls ? (
           <span
             aria-hidden
             className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
