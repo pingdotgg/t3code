@@ -49,20 +49,27 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
     <div
       className={cn(
         "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none",
-        // A wrapped label keeps its icon beside the first line.
         wrapLabel ? "items-start" : "items-center",
       )}
     >
-      {icon ? (
-        <span className="relative flex size-6 shrink-0 items-center justify-center">{icon}</span>
-      ) : null}
-      <div
-        className={cn(
-          "min-w-0 flex-1 text-secondary-label",
-          !wrapLabel && "truncate [&_*]:whitespace-nowrap",
-        )}
-      >
-        {label}
+      <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        {icon ? (
+          // Align with the first line's capital letters. Centering line boxes drifts
+          // when font ascent/descent rounding changes at fractional browser zoom.
+          <span className="relative w-6 shrink-0 leading-0">
+            <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
+              <span className="flex size-full items-center justify-center">{icon}</span>
+            </span>
+          </span>
+        ) : null}
+        <div
+          className={cn(
+            "min-w-0 flex-1 text-secondary-label",
+            !wrapLabel && "truncate [&_*]:whitespace-nowrap",
+          )}
+        >
+          {label}
+        </div>
       </div>
       {trailing}
     </div>
