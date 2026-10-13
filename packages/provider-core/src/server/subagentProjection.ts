@@ -277,13 +277,15 @@ function writtenIds(
 export const endOrphanedNativeSubagent = <E>(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
   readonly subagentId: NodeId;
-  readonly status: "interrupted" | "cancelled";
+  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+  readonly completedAt?: DateTime.Utc;
+  readonly result?: string | null;
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
 }) =>
   Effect.gen(function* () {
-    const { now, status, subagentId } = input;
+    const { now, status, subagentId, completedAt = now } = input;
     const subagent = input.projection.subagents.find((entry) => entry.id === subagentId);
     if (subagent?.origin !== "provider_native") return [];
     const node = input.projection.nodes.find((entry) => entry.id === subagentId);
@@ -307,7 +309,13 @@ export const endOrphanedNativeSubagent = <E>(input: {
         id: yield* input.allocateEventId(),
         type: "subagent.updated",
         driver: subagent.driver,
-        payload: { ...subagent, status, completedAt: now, updatedAt: now },
+        payload: {
+          ...subagent,
+          status,
+          completedAt,
+          updatedAt: now,
+          ...(input.result === undefined ? {} : { result: input.result }),
+        },
       });
     }
     if (
@@ -319,7 +327,7 @@ export const endOrphanedNativeSubagent = <E>(input: {
         ...scope,
         id: yield* input.allocateEventId(),
         type: "node.updated",
-        payload: { ...node, status, completedAt: now },
+        payload: { ...node, status, completedAt },
       });
     }
     if (
@@ -331,7 +339,13 @@ export const endOrphanedNativeSubagent = <E>(input: {
         ...scope,
         id: yield* input.allocateEventId(),
         type: "turn-item.updated",
-        payload: { ...item, status, completedAt: now, updatedAt: now },
+        payload: {
+          ...item,
+          status,
+          completedAt,
+          updatedAt: now,
+          ...(input.result === undefined ? {} : { result: input.result }),
+        },
       });
     }
     return events;
@@ -346,13 +360,14 @@ export const endRunlessRootTurns = <E>(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
-  readonly status: "interrupted" | "cancelled";
+  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+  readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
 }) =>
   Effect.gen(function* () {
-    const { now, status } = input;
+    const { now, status, completedAt = now } = input;
     const endedNodeIds = writtenIds(input.emitted, "node.updated");
     const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
     const scope = {
@@ -377,7 +392,7 @@ export const endRunlessRootTurns = <E>(input: {
           id: yield* input.allocateEventId(),
           type: "node.updated",
           nodeId: node.id,
-          payload: { ...node, status, completedAt: now },
+          payload: { ...node, status, completedAt },
         });
       }
       for (const item of input.projection.turnItems) {
@@ -396,8 +411,12 @@ export const endRunlessRootTurns = <E>(input: {
           nodeId: node.id,
           payload: {
             ...item,
-            status,
-            completedAt: now,
+            status:
+              status === "completed" &&
+              (item.type === "command_execution" || item.type === "dynamic_tool")
+                ? "failed"
+                : status,
+            completedAt,
             updatedAt: now,
             ...(item.type === "reasoning" || item.type === "assistant_message"
               ? { streaming: false }
