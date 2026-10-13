@@ -9,6 +9,7 @@ import type {
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import type { HttpServerRequest } from "effect/http";
 
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
@@ -117,6 +118,26 @@ export function linkProofScopes(
   return request.endpoint.providerKind === "cloudflare_tunnel"
     ? ["agent_activity_notifications", "managed_tunnels"]
     : ["agent_activity_notifications"];
+}
+
+/**
+ * When a link proof says it was issued. The relay checks the proof's `iat`
+ * against its own clock, so a host clock that runs fast or slow gets the proof
+ * rejected. The relay's challenge carries the relay's issue time, so the proof
+ * reuses it. Freshness still comes from the challenge, which the relay verifies
+ * and consumes. Falls back to the host clock when the challenge has no usable
+ * `iat`.
+ */
+export function linkProofIssuedAt(input: {
+  readonly challenge: string;
+  readonly nowSeconds: number;
+}): number {
+  try {
+    const { iat } = decodeRelayJwt(input.challenge);
+    return typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 ? iat : input.nowSeconds;
+  } catch {
+    return input.nowSeconds;
+  }
 }
 
 export function hasExactScope(input: {
