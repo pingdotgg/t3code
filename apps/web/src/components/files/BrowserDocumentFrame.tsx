@@ -1,3 +1,4 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
@@ -5,9 +6,12 @@ import {
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
+import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 
 /**
@@ -32,6 +36,8 @@ export function BrowserDocumentFrame(props: {
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  /** The thread an HTML render's links open beside. */
+  readonly threadRef?: ScopedThreadRef | undefined;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -47,6 +53,7 @@ export function BrowserDocumentFrame(props: {
       key={props.src}
       src={props.src}
       title={props.title}
+      threadRef={props.threadRef}
       className="min-h-0 flex-1"
     />
   ) : (
@@ -70,6 +77,8 @@ export function HtmlRenderDocument(props: {
   readonly src: string;
   readonly title: string;
   readonly className?: string;
+  /** The thread the page's links open beside, as a chat link would. */
+  readonly threadRef?: ScopedThreadRef | undefined;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
 }) {
@@ -81,6 +90,32 @@ export function HtmlRenderDocument(props: {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
   useEffect(postTheme, [theme]);
+  const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
+  const openLink = useOpenLink(props.threadRef);
+  // Same rules as a chat link: a pull request opens in the right panel, any
+  // other link follows "Open links in", and Cmd/Ctrl-click goes to the system
+  // browser. Without a thread there is no panel, so it goes to the browser.
+  const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
+    // The modifier's destination needs no saved setting, so it never waits on one.
+    if (modifiers.metaKey || modifiers.ctrlKey) {
+      void readLocalApi()
+        ?.shell.openExternal(url)
+        .catch((cause: unknown) => console.error(cause));
+      return;
+    }
+    if (
+      props.threadRef !== undefined &&
+      openChangeRequestLink(
+        { ...modifiers, preventDefault: () => undefined, stopPropagation: () => undefined },
+        url,
+        undefined,
+        props.threadRef.environmentId,
+      )
+    ) {
+      return;
+    }
+    void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
+  });
   // The page cannot open windows itself (an inline page runs unopened, and
   // desktop sends any window to the browser). It asks the client, which opens
   // the link only while this frame has focus and the reader has just used the
@@ -99,7 +134,7 @@ export function HtmlRenderDocument(props: {
       ) {
         return;
       }
-      window.open(request.url, "_blank", "noopener,noreferrer");
+      open(request.url, request);
       frame.contentWindow?.postMessage(htmlRenderResult(request.id), "*");
     };
     window.addEventListener("message", openLink);

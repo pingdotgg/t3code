@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
@@ -28,6 +28,7 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
+  readonly threadRef: ScopedThreadRef | undefined;
   readonly onOpen: (attachment: ChatFileAttachment) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
@@ -97,6 +98,7 @@ export function HtmlRenderFrame(props: {
           <HtmlRenderDocument
             src={src}
             title={title}
+            threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
           />
