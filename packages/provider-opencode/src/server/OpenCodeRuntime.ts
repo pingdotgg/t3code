@@ -117,9 +117,21 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   return Exit.isSuccess(result) ? result.value : undefined;
 }
 
+/**
+ * Formats OpenCode SDK and runtime failures, including errors with missing or
+ * non-string messages.
+ */
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
   if (isOpenCodeRuntimeError(cause)) return cause.detail;
-  if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
+  // Effect's TimeoutError can be constructed without a message, so `message`
+  // is not guaranteed to be a string on every Error that reaches here.
+  if (cause instanceof Error) {
+    const message = cause.message;
+    if (typeof message === "string") {
+      const trimmedMessage = message.trim();
+      if (trimmedMessage.length > 0) return trimmedMessage;
+    }
+  }
   if (cause && typeof cause === "object") {
     // SDK v2 throws { response, request, error? } shapes — extract what's useful
     const anyCause = cause as Record<string, unknown>;
