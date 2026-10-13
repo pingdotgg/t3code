@@ -1165,15 +1165,6 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-// Claude 5.1 and later return the text written ahead of a tool call as a
-// thinking block, at most one per call, instead of a text block.
-function claudeWritesUpdatesAsThinking(model: string): boolean {
-  const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
-  if (match === null) return false;
-  const major = Number(match[1]);
-  return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 1);
-}
-
 // In SDK mode Claude reports `/goal` only through the transcript (its
 // `active_goal` event is remote-only): synthetic command output names the
 // goal, and each unmet evaluator check returns as Stop hook feedback.
@@ -2915,12 +2906,6 @@ interface ActiveClaudeTurnContext {
     readonly nextBlockIndex: Map<string, number>;
     readonly snapshotBlockIndex: Map<string, number>;
     readonly snapshots: Set<string>;
-    // The latest snapshot block, when it was non-empty thinking.
-    lastThinking: {
-      readonly messageId: string;
-      readonly itemId: string;
-      readonly text: string;
-    } | null;
     readonly blocks: Map<
       string,
       { readonly startedAt: DateTime.Utc; readonly ordinal: number; text: string }
@@ -6862,23 +6847,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The SDK emits one assistant snapshot per completed content block.
             // Count thinking blocks separately so snapshots share the streamed ID.
             for (const block of message.message.content) {
-              if (block.type !== "thinking") {
-                const update = context.reasoning.lastThinking;
-                context.reasoning.lastThinking = null;
-                if (
-                  block.type === "tool_use" &&
-                  update?.messageId === message.message.id &&
-                  claudeWritesUpdatesAsThinking(message.message.model)
-                ) {
-                  // Same item ID, so the update replaces the Thought in place.
-                  yield* emitAssistantTextArtifacts({
-                    context,
-                    nativeItemId: update.itemId,
-                    text: update.text,
-                  });
-                }
-                continue;
-              }
+              if (block.type !== "thinking") continue;
               const index = context.reasoning.snapshotBlockIndex.get(message.message.id) ?? 0;
               context.reasoning.snapshotBlockIndex.set(message.message.id, index + 1);
               const itemId = `${message.message.id}:thinking:${index}`;
@@ -6890,9 +6859,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(finalText ? { finalText } : {}),
                 emitEmpty: false,
               });
-              context.reasoning.lastThinking = finalText
-                ? { messageId: message.message.id, itemId, text: finalText }
-                : null;
             }
           }
 
@@ -8587,7 +8553,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 streamBlocks: new Map(),
                 nextBlockIndex: new Map(),
                 snapshotBlockIndex: new Map(),
-                lastThinking: null,
                 snapshots: new Set(),
                 blocks: new Map(),
               },

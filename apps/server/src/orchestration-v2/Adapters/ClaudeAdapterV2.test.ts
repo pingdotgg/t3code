@@ -2809,14 +2809,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([
-    { model: "claude-opus-5-5", expected: "assistant_message" },
-    { model: "claude-fable-5-1", expected: "assistant_message" },
-    { model: "claude-opus-5", expected: "reasoning" },
-    { model: "claude-sonnet-4-6", expected: "reasoning" },
-  ] as const)(
-    "shows $model thinking right before a tool call as $expected",
-    ({ model, expected }) =>
+  // Summarized thinking can't tell a progress update from reasoning, so both stay Thoughts.
+  it.effect.each(["claude-opus-5-5", "claude-fable-5-1", "claude-opus-5", "claude-sonnet-4-6"])(
+    "keeps %s thinking right before a tool call as reasoning",
+    (model) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -2867,7 +2863,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [...latest.values()].map((item) => [item.type, item.text]),
           [
             ["reasoning", "Planning the check"],
-            [expected, "Found it: the memory file is the cause."],
+            ["reasoning", "Found it: the memory file is the cause."],
           ],
         );
       }).pipe(
