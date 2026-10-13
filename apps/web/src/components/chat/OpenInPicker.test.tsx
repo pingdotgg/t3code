@@ -128,16 +128,25 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function renderPicker() {
+async function renderPicker(
+  props: {
+    availableEditors?: readonly EditorId[];
+    openInCwd?: string;
+    revealFileManager?: boolean;
+  } = {},
+) {
   await act(async () => {
     for (const listener of state.listeners) listener();
     const node = (
       <OpenInPicker
         environmentId={selected}
         keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        availableEditors={editors}
-        openInCwd="/work/project"
+        availableEditors={props.availableEditors ?? editors}
+        openInCwd={props.openInCwd ?? "/work/project"}
         compact
+        {...(props.revealFileManager === undefined
+          ? {}
+          : { revealFileManager: props.revealFileManager })}
       />
     );
     if (renderer) renderer.update(node);
@@ -193,6 +202,38 @@ describe("host editor access", () => {
     expect(state.run).toHaveBeenCalledExactlyOnceWith({
       environmentId: selected,
       input: { cwd: "/work/project", editor: "vscode" },
+    });
+  });
+});
+
+describe("file manager targets", () => {
+  async function chooseFileManager(revealFileManager: boolean) {
+    state.allowed.add(selected);
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    await renderPicker({
+      availableEditors: ["vscode", "file-manager"],
+      openInCwd: "/work/project/src/index.ts",
+      revealFileManager,
+    });
+    const finder = renderer!.root
+      .findAll((node) => node.type === "button" && node.props.disabled === false)
+      .find((node) => node.findAll((child) => child.children.includes("Finder")).length > 0)!;
+    await act(async () => finder.props.onClick());
+  }
+
+  it("reveals a file in the file manager instead of opening it with its default app", async () => {
+    await chooseFileManager(true);
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: selected,
+      input: { cwd: "/work/project/src/index.ts", editor: "file-manager", reveal: true },
+    });
+  });
+
+  it("opens the target directly when the server cannot reveal", async () => {
+    await chooseFileManager(false);
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: selected,
+      input: { cwd: "/work/project/src/index.ts", editor: "file-manager" },
     });
   });
 });
