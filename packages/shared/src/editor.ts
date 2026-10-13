@@ -33,11 +33,16 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
 ) {
   if (editor.commands === null) return Option.none();
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
-  for (const command of editor.commands) {
-    if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
+  const platform = yield* HostProcess.Platform;
+  // OpenZFS also installs a `zed` executable. Prefer the macOS editor bundle
+  // so a PATH entry for the ZFS Event Daemon cannot take over editor opens.
+  const preferBundle = platform === "darwin" && editor.id === "zed";
+  if (!preferBundle) {
+    for (const command of editor.commands) {
+      if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
+    }
   }
 
-  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const home = env.HOME;
@@ -134,6 +139,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     }
   }
 
+  if (preferBundle) candidates.push(...editor.commands);
   for (const candidate of candidates) {
     if (yield* isCommandAvailable(candidate, { env })) {
       return Option.some({

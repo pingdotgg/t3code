@@ -340,7 +340,13 @@ export const OpenInPicker = memo(function OpenInPicker({
               density={presentation === "menu" ? "touch" : "default"}
               disabled={!openInCwd || !canOpenEditor}
               key={value}
-              onClick={() => openInEditor(value)}
+              onClick={() => {
+                if (presentation === "menu") {
+                  void openInEditor(value);
+                } else {
+                  setPreferredEditor(value);
+                }
+              }}
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>

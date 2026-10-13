@@ -1043,6 +1043,47 @@ for (const { platform, installPath, editor, args } of [
   );
 }
 
+for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12:4"]) {
+  it.effect.skipIf(windowsHost)(
+    `opens ${cwd} with the macOS Zed bundle when another zed is on PATH`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-collision-" });
+        const executable = path.join(home, "Applications/Zed.app/Contents/MacOS/cli");
+        const binDir = path.join(home, "zfs/bin");
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.makeDirectory(binDir, { recursive: true });
+        for (const command of [executable, path.join(binDir, "zed")]) {
+          yield* fs.writeFileString(command, "#!/bin/sh\n");
+          yield* fs.chmod(command, 0o755);
+        }
+
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          assert.include(yield* launcher.resolveAvailableEditors(), "zed");
+          yield* launcher.launchEditor({ editor: "zed", cwd });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { HOME: home, PATH: binDir },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        assert.equal(spawned.command, executable);
+        assert.deepEqual(spawned.args, [cwd]);
+        assert.equal(spawned.options.shell, false);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 // JetBrains Toolbox names its bundles after the app and the installed version
 // (`IntelliJ IDEA 2026.1.4.app`), so the darwin branch has to list the
 // Applications directories the way the win32 branch does instead of probing
