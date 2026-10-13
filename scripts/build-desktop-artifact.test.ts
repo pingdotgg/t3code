@@ -726,6 +726,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       // macOS lists a default browser only when it also opens web pages as documents.
       const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
+      assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
       assert.deepStrictEqual(macInfo.CFBundleDocumentTypes, [
         {
           CFBundleTypeName: "Web page",
