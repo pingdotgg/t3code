@@ -90,6 +90,7 @@ interface HomeScreenProps {
   readonly environments: ReadonlyArray<
     HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
   >;
+  readonly unreachableEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -678,6 +679,9 @@ export function HomeScreen(props: HomeScreenProps) {
                 : null
             }
             environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
+            environmentUnreachable={props.unreachableEnvironmentIds.has(
+              item.pendingTask.environmentId,
+            )}
             showPendingDivider={item.showPendingDivider}
             showTrailingDivider={item.showTrailingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
@@ -745,6 +749,7 @@ export function HomeScreen(props: HomeScreenProps) {
               : null
           }
           environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
+          environmentUnreachable={props.unreachableEnvironmentIds.has(thread.environmentId)}
           searchMatch={threadSearchMatchByKey.get(
             threadSearchMatchKey({
               environmentId: thread.environmentId,
@@ -815,6 +820,7 @@ export function HomeScreen(props: HomeScreenProps) {
       fullSwipeWidth,
       props.onNewThreadOnBranch,
       props.savedConnectionsById,
+      props.unreachableEnvironmentIds,
       resolveProviderInstance,
       providersByEnvironmentId,
       settlementEnvironmentIds,
@@ -841,6 +847,7 @@ export function HomeScreen(props: HomeScreenProps) {
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
       listEnvironments,
       savedConnectionsById: props.savedConnectionsById,
+      unreachableEnvironmentIds: props.unreachableEnvironmentIds,
       searchQuery: props.searchQuery,
       selectedThreadKey,
       threadSearchMatchByKey,
@@ -851,6 +858,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.searchQuery,
       selectedThreadKey,
       props.savedConnectionsById,
+      props.unreachableEnvironmentIds,
       listEnvironments,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,

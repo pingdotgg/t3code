@@ -35,7 +35,7 @@ import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
-import { useWorkspaceState } from "../../state/workspace";
+import { useUnreachableEnvironmentIds, useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -161,6 +161,7 @@ function ThreadNavigationSidebarPane(
         .sort((left, right) => left.label.localeCompare(right.label)),
     [savedConnectionsById],
   );
+  const unreachableIds = useUnreachableEnvironmentIds();
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
@@ -576,11 +577,13 @@ function ThreadNavigationSidebarPane(
       projectByKey,
       projectTitleByProjectKey,
       savedConnectionsById,
+      unreachableIds,
       listEnvironments,
       threadSearchMatchByKey,
       workingShelfEnabled,
     }),
     [
+      unreachableIds,
       props.selectedThreadKey,
       projectByKey,
       projectTitleByProjectKey,
@@ -640,6 +643,7 @@ function ThreadNavigationSidebarPane(
                   : null
               }
               environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
+              environmentUnreachable={unreachableIds.has(item.pendingTask.environmentId)}
               pane="sidebar"
               showPendingDivider={item.showPendingDivider}
               onSelectPendingTask={openPendingTask}
@@ -671,6 +675,7 @@ function ThreadNavigationSidebarPane(
                   : null
               }
               environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
+              environmentUnreachable={unreachableIds.has(thread.environmentId)}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
                   environmentId: thread.environmentId,
@@ -780,6 +785,7 @@ function ThreadNavigationSidebarPane(
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
+      unreachableIds,
       resolveProviderInstance,
       providersByEnvironmentId,
       threadSearchMatchByKey,
