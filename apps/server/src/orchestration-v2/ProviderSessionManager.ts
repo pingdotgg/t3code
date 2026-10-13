@@ -2230,21 +2230,34 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
-              // Read before the adapter, so a rebuild in between marks this
-              // session outdated rather than hiding it.
-              const instance = Option.isNone(instanceRegistry)
-                ? undefined
-                : yield* instanceRegistry.value.getInstance(input.modelSelection.instanceId);
-              const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderSessionOpenError({
-                      instanceId: input.modelSelection.instanceId,
-                      providerSessionId: input.providerSessionId,
-                      cause,
-                    }),
-                ),
-              );
+              const currentInstance = Option.isNone(instanceRegistry)
+                ? Effect.undefined
+                : instanceRegistry.value.getInstance(input.modelSelection.instanceId);
+              // Retries when a rebuild lands between the reads, so the session
+              // records the instance its adapter actually came from.
+              const lookupAdapter = (): Effect.Effect<
+                {
+                  readonly instance: ProviderInstance | undefined;
+                  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
+                },
+                ProviderSessionOpenError
+              > =>
+                Effect.gen(function* () {
+                  const instance = yield* currentInstance;
+                  const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                  if ((yield* currentInstance) !== instance) return yield* lookupAdapter();
+                  return { instance, adapter };
+                });
+              const { instance, adapter } = yield* lookupAdapter();
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
