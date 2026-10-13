@@ -7,6 +7,7 @@ import {
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
+  registerEmbeddedPanelHost,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
@@ -125,6 +126,49 @@ describe("rightPanelStore", () => {
       { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
     ]);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
+  });
+
+  it("opens a mounted side chat's files in its parent's panel, and its own once unmounted", () => {
+    const store = useRightPanelStore.getState();
+    const unregister = registerEmbeddedPanelHost(refB, refA);
+    store.openFile(refB, "src/app.ts");
+    const surfaceIds = (ref: typeof refA) =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces.map(
+        (surface) => surface.id,
+      );
+    expect(surfaceIds(refA)).toEqual(["file:src/app.ts"]);
+    expect(surfaceIds(refB)).toEqual([]);
+
+    unregister();
+    store.openFile(refB, "src/other.ts");
+    expect(surfaceIds(refB)).toEqual(["file:src/other.ts"]);
+  });
+
+  it("keeps several side chats open as peer tabs and reloads only well-formed ones", () => {
+    const store = useRightPanelStore.getState();
+    store.openAside(refA, "side-1");
+    store.openAside(refA, "side-2");
+    store.openAside(refA, "side-1");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["aside:side-1", "aside:side-2"]);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("aside:side-1");
+
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "aside:side-1",
+          surfaces: [
+            { id: "aside:side-1", kind: "aside", threadId: "side-1" },
+            { id: "aside:broken", kind: "aside" },
+          ],
+        },
+      },
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces).toEqual([
+      { id: "aside:side-1", kind: "aside", threadId: "side-1" },
+    ]);
   });
 
   it("gives each host/device its own tab and preserves renamed tabs", () => {

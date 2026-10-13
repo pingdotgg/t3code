@@ -129,6 +129,13 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+export function useEnvironmentSupportsSideChats(environmentId: EnvironmentId | null): boolean {
+  return (
+    useServerConfigs().get(environmentId as EnvironmentId)?.environment.capabilities
+      .threadSideChats === true
+  );
+}
+
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),

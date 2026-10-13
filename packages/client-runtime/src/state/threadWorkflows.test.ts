@@ -5,7 +5,9 @@ import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  describeSideChatVisibility,
   resolveLatestMergeBackRun,
+  resolveSideChatHistoryAvailability,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
 
@@ -421,4 +423,74 @@ describe("thread workflows", () => {
       expect(resolveLatestMergeBackRun(projection)).toBeNull();
     },
   );
+});
+
+describe("side chat history", () => {
+  const sessionProjection = (
+    runs: ReadonlyArray<Record<string, unknown>>,
+    sessionCapabilities?: ReturnType<typeof capabilities>,
+  ) =>
+    ({
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs,
+      providerThreads: [
+        { id: "provider-thread", appThreadId: "thread", providerSessionId: "session" },
+      ],
+      providerSessions: [
+        {
+          id: "session",
+          status: "ready",
+          ...(sessionCapabilities === undefined ? {} : { capabilities: sessionCapabilities }),
+        },
+      ],
+    }) as unknown as OrchestrationV2ThreadProjection;
+
+  it("forks at the latest completed checkpointed run, ignoring one still streaming", () => {
+    const result = resolveSideChatHistoryAvailability(
+      sessionProjection(
+        [
+          { id: "r1", ordinal: 1, status: "completed", checkpointId: "c1" },
+          { id: "r2", ordinal: 2, status: "completed", checkpointId: "c2" },
+          { id: "r3", ordinal: 3, status: "running", checkpointId: null },
+        ],
+        capabilities({ nativeFork: true }),
+      ),
+    );
+    expect(result).toEqual({ available: true, upToRunOrdinal: 2 });
+  });
+
+  it("explains why history is unavailable", () => {
+    expect(
+      resolveSideChatHistoryAvailability(
+        sessionProjection([{ id: "r1", ordinal: 1, status: "running", checkpointId: null }]),
+      ),
+    ).toMatchObject({ available: false, reason: expect.stringContaining("Nothing to share") });
+    expect(
+      resolveSideChatHistoryAvailability(
+        sessionProjection(
+          [{ id: "r1", ordinal: 1, status: "completed", checkpointId: "c1" }],
+          capabilities(),
+        ),
+      ),
+    ).toMatchObject({ available: false, reason: expect.stringContaining("provider") });
+    expect(
+      resolveSideChatHistoryAvailability(
+        sessionProjection(
+          [{ id: "r1", ordinal: 1, status: "completed", checkpointId: "c1" }],
+          capabilities({ portableFork: true }),
+        ),
+      ),
+    ).toEqual({ available: true, upToRunOrdinal: 1 });
+  });
+
+  it("names what a side chat can see", () => {
+    const parentRuns = [{ id: "r4", ordinal: 4 }] as never;
+    expect(
+      describeSideChatVisibility({
+        forkedFrom: { type: "run", threadId: "thread", runId: "r4" } as never,
+        parentRuns,
+      }),
+    ).toBe("Sees up to run 4");
+    expect(describeSideChatVisibility({ forkedFrom: null, parentRuns })).toBe("Sees no history");
+  });
 });

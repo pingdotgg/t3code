@@ -447,6 +447,43 @@ describe("sidebar thread lineage helpers", () => {
     ).toEqual([parentId, fork.id]);
   });
 
+  it("keeps side chats out of the sidebar, whether forked or only linked", () => {
+    const projectId = ProjectId.make("project-side-chat");
+    const environmentId = "env-side-chat" as never;
+    const parentId = ThreadId.make("thread-parent");
+    const ordinary = makeThreadFixture({ id: parentId, environmentId, projectId });
+    const forkedSideChat = makeThreadFixture({
+      id: ThreadId.make("thread-side-fork"),
+      environmentId,
+      projectId,
+      sideChat: true,
+      lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: "fork" },
+    });
+    const linkedSideChat = makeThreadFixture({
+      id: ThreadId.make("thread-side-linked"),
+      environmentId,
+      projectId,
+      sideChat: true,
+      lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: null },
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads([ordinary, forkedSideChat, linkedSideChat], null).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([parentId]);
+    // Promoting clears the flag, and the thread joins the sidebar.
+    expect(
+      filterSidebarV2VisibleThreads([{ ...forkedSideChat, sideChat: false }], null),
+    ).toHaveLength(1);
+    // With the parent deleted there is nowhere else to reach it, so it is listed.
+    expect(
+      filterSidebarV2VisibleThreads([forkedSideChat, linkedSideChat], null).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([forkedSideChat.id, linkedSideChat.id]);
+  });
+
   it("identifies subagent threads so the sidebar can hide them", () => {
     const parentId = ThreadId.make("thread-parent");
     const subagent = makeThreadFixture({

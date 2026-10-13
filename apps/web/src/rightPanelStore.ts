@@ -30,6 +30,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
+  "aside",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,7 +86,9 @@ export type RightPanelSurface =
       url?: string;
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
-  | { id: "pull-requests"; kind: "pull-requests" };
+  | { id: "pull-requests"; kind: "pull-requests" }
+  /** A side chat: the chat view of another thread, one tab per side chat. */
+  | { id: `aside:${string}`; kind: "aside"; threadId: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -146,7 +149,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "aside">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -164,6 +167,7 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
+  openAside: (ref: ScopedThreadRef, threadId: string) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -191,7 +195,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "aside">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -214,7 +218,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "aside">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -260,6 +264,32 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+// A side chat shown inside its parent's panel has no panel of its own, so files
+// and attachments it opens go to the parent while it is mounted there. Opened as
+// a full thread, it owns its panel again.
+const embeddedPanelHosts = new Map<string, ScopedThreadRef>();
+
+export function registerEmbeddedPanelHost(
+  childRef: ScopedThreadRef,
+  hostRef: ScopedThreadRef,
+): () => void {
+  const key = scopedThreadKey(childRef);
+  embeddedPanelHosts.set(key, hostRef);
+  return () => {
+    if (embeddedPanelHosts.get(key) === hostRef) embeddedPanelHosts.delete(key);
+  };
+}
+
+function panelOwnerOf(ref: ScopedThreadRef): ScopedThreadRef {
+  return embeddedPanelHosts.get(scopedThreadKey(ref)) ?? ref;
+}
+
+const asideSurface = (threadId: string): RightPanelSurface => ({
+  id: `aside:${threadId}`,
+  kind: "aside",
+  threadId,
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -485,6 +515,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           : 0;
                       return [{ ...surface, revealLine, revealRequestId }];
                     }
+                    if (surface.kind === "aside") {
+                      return typeof surface.threadId === "string" && surface.threadId.length > 0
+                        ? [asideSurface(surface.threadId)]
+                        : [];
+                    }
                     if (surface.kind === "pull-request") {
                       if (
                         typeof surface.projectId !== "string" ||
@@ -708,7 +743,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       openFile: (ref, requestedPath, line) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          userAction(state, scopedThreadKey(panelOwnerOf(ref)), (current) => {
             if (requestedPath === ".") {
               return upsertSurface(current, singletonSurface("files"));
             }
@@ -743,7 +778,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       openAttachment: (ref, attachment) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          userAction(state, scopedThreadKey(panelOwnerOf(ref)), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
@@ -752,6 +787,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               attachmentSurface(attachment),
             );
           }),
+        ),
+      openAside: (ref, threadId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, asideSurface(threadId)),
+          ),
         ),
       openTerminal: (ref, terminalId) =>
         set((state) =>
@@ -1093,8 +1134,10 @@ useRightPanelStore.subscribe((next, previous) => {
       ...removed.filter((surface) => surface.id === before.activeSurfaceId),
     ];
     for (const surface of closedInOrder) {
+      // Side chats reopen from their own list, and a discarded one is gone.
       if (
         surface.kind === "terminal" ||
+        surface.kind === "aside" ||
         (surface.kind === "preview" && surface.resourceId !== null)
       )
         continue;

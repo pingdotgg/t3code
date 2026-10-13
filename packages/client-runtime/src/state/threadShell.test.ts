@@ -9,7 +9,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
-import { v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
@@ -99,6 +99,36 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(threads.navigationThreadShellsAtom)).toBe(before);
     expect(registry.get(threads.threadShellsAtom)).toHaveLength(3);
+    dispose();
+    registry.dispose();
+  });
+
+  it("leaves side chats out of navigation until their parent is deleted", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const parent = v2ThreadShell;
+    const sideChat = {
+      ...parent,
+      id: ThreadId.make("side"),
+      sideChat: true,
+      lineage: {
+        ...parent.lineage,
+        parentThreadId: parent.id,
+        relationshipToParent: "fork" as const,
+      },
+    };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [parent, sideChat],
+    });
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const navigationIds = () =>
+      registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id);
+    expect(navigationIds()).toEqual([parent.id]);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...parent, deletedAt: v2Now }, sideChat],
+    });
+    expect(navigationIds()).toContain(sideChat.id);
     dispose();
     registry.dispose();
   });

@@ -105,6 +105,7 @@ import {
   useComposerMenuProps,
   isInsideCollapsedComposerControls,
   isInsideRestingComposerControlScope,
+  isInSameChatView,
 } from "./composerEventScope";
 import {
   type ComposerFileAttachment,
@@ -1545,6 +1546,10 @@ export interface ChatComposerProps {
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
+  /** Replaces the default placeholder when nothing else is asked of the user. */
+  idlePlaceholder?: string;
+  /** Escape with no composer menu open; return true when it was used. */
+  onEscape?: () => boolean;
   projectSelectionRequired: boolean;
 
   // Session phase
@@ -1566,6 +1571,11 @@ export interface ChatComposerProps {
   onToggleKeepFullHistory: () => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  /**
+   * Starts (or, with no question, reopens) a side chat. Absent when the thread
+   * cannot have one, which also hides `/side` and `/btw` from the slash menu.
+   */
+  onSideChatCommand?: ((question: string) => Promise<unknown>) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1734,6 +1744,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
+    idlePlaceholder,
+    onEscape,
     projectSelectionRequired,
     phase,
     canInterrupt,
@@ -2688,6 +2700,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
   );
 
+  const composerHasNonPromptContent = composerDraft
+    ? composerDraftHasUserContent({ ...composerDraft, prompt: "" })
+    : false;
+  // Mirrors ChatView's typed `/side` check: only a leading command on a
+  // prompt-only draft, outside an agent question or a queued-message edit.
+  const sideCommandsRunnable =
+    !composerHasNonPromptContent && activePendingProgress === null && !isEditingQueuedMessage;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -2719,6 +2738,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
+        ...(props.onSideChatCommand && composerTrigger.rangeStart === 0 && sideCommandsRunnable
+          ? ([
+              {
+                id: "slash:side",
+                type: "slash-command",
+                command: "side",
+                label: "/side",
+                description: "Ask a side question without interrupting this thread",
+              },
+              {
+                id: "slash:btw",
+                type: "slash-command",
+                command: "btw",
+                label: "/btw",
+                description: "Same as /side. Add a question to send it right away",
+              },
+            ] as const)
+          : []),
         ...(planModeUiEnabled
           ? ([
               {
@@ -2841,6 +2878,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     activeThreadId,
+    props.onSideChatCommand,
+    sideCommandsRunnable,
     compactSlashCommandAvailable,
     composerTrigger,
     environmentId,
@@ -4015,7 +4054,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [isLiteralPendingAnswer, readComposerSnapshot, resolveComposerTrigger]);
 
-  const { onUsageLimitsCommand } = props;
+  const { onUsageLimitsCommand, onSideChatCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -4044,6 +4083,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if ((item.command === "side" || item.command === "btw") && onSideChatCommand) {
+          // The menu hides these unless they can run, but a stale item can still be
+          // picked after the draft changes. Then keep the command as plain text.
+          if (trigger.rangeStart !== 0 || !sideCommandsRunnable) {
+            const replacement = `/${item.command} `;
+            const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+              snapshot.value,
+              trigger.rangeEnd,
+              replacement,
+            );
+            const applied = applyPromptReplacement(
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+              { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            );
+            if (applied) setComposerHighlightedItemId(null);
+            return;
+          }
+          // `/btw` waits for a question; `/side` opens right away.
+          const opensNow = item.command === "side";
+          const replacement = opensNow ? "" : "/btw ";
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            trigger.rangeEnd,
+            replacement,
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+              focusEditorAfterReplace: !opensNow,
+            },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            if (opensNow) void onSideChatCommand("");
+          }
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4177,6 +4253,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,
+      onSideChatCommand,
+      sideCommandsRunnable,
       resolveActiveComposerTrigger,
     ],
   );
@@ -4510,7 +4588,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      if (!menuIsActive) return onEscape?.() ?? false;
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
@@ -5747,6 +5826,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       });
       if (command !== "composer.stash") return;
+      // A side chat mounts a second composer; only the one whose chat has focus stashes.
+      if (!isInSameChatView(event.target, composerFormRef.current)) return;
       // Always claim the shortcut so the browser save dialog never opens,
       // even when the composer is in a state that can't stash.
       event.preventDefault();
@@ -7603,7 +7684,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : (idlePlaceholder ??
+                                    "Ask anything, @tag files/folders, $use skills, or / for commands")
                     }
                     disabled={
                       isConnecting ||

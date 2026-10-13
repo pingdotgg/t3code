@@ -26,6 +26,7 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn, normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { makeSideChatListingFilter } from "@t3tools/client-runtime/state/thread-workflows";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -568,15 +569,19 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
-    environmentId: string;
-    projectId: string;
-  },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "id" | "lineage"> &
+    Partial<Pick<SidebarThreadSummary, "sideChat">> & {
+      environmentId: string;
+      projectId: string;
+    },
 >(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
+  // Side chats live in the right panel and the parent's details panel.
+  const listable = makeSideChatListingFilter(threads);
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
       !isSidebarSubagentThread(thread) &&
+      listable(thread) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
@@ -1406,7 +1411,9 @@ export function sortLogicalProjectsForSidebar<
 
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
-  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "lineage">,
+  TThread extends ScopedSidebarThread &
+    Pick<SidebarThreadSummary, "id" | "lineage"> &
+    Partial<Pick<SidebarThreadSummary, "sideChat">>,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

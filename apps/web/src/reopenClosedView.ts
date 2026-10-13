@@ -143,6 +143,9 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
+    case "aside":
+      // Never remembered: side chats reopen from the thread's Side chats list.
+      return false;
     default:
       panels.open(ref, surface.kind);
   }

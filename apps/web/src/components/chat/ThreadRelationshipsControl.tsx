@@ -42,6 +42,7 @@ import {
   BotIcon,
   CornerLeftUpIcon,
   GitForkIcon,
+  LinkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -171,6 +172,9 @@ function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: Thread
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
   }
+  if (edge.kind === "parent") {
+    return edge.sourceThreadId === currentThreadId ? "Linked thread" : "Parent thread";
+  }
   return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
 }
 
@@ -291,7 +295,13 @@ export function ThreadRelationshipsPanel(props: {
     () =>
       orderWebThreadLineageRows({
         graph,
-        rows: immediateThreadRelationships(graph, props.threadId),
+        // Side chats of this thread have their own section; listing them here too
+        // would show each one twice. A side chat's own Lineage still shows its parent.
+        rows: immediateThreadRelationships(graph, props.threadId).filter(
+          ({ threadId, edge }) =>
+            isParentThreadRelationship(edge, props.threadId) ||
+            graph.nodes.get(threadId)?.thread?.sideChat !== true,
+        ),
         currentThreadId: props.threadId,
         mergeTargetThreadId,
       }).map((row) => {
@@ -450,7 +460,9 @@ export function ThreadRelationshipsPanel(props: {
                 ? CornerLeftUpIcon
                 : isSubagent
                   ? BotIcon
-                  : GitForkIcon;
+                  : edge.kind === "parent"
+                    ? LinkIcon
+                    : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
               const projectedAgent =
                 isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;

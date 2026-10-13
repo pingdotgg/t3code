@@ -62,6 +62,8 @@ export interface ThreadForkServiceV2Shape {
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
+    readonly sideChat?: boolean;
+    readonly runtimeMode?: OrchestrationV2AppThread["runtimeMode"];
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -91,6 +93,9 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           creationSource: input.creationSource,
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+          // The spread would otherwise carry a side-chat source's flag into the fork.
+          sideChat: input.sideChat === true,
+          ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
           activeProviderThreadId: null,
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,

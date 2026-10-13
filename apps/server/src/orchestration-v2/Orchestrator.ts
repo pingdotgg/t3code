@@ -2234,6 +2234,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
+    // A linked thread records its parent but transfers no context, so the
+    // relationship stays null instead of claiming a fork.
+    const parentThread =
+      command.parentThreadId === undefined
+        ? null
+        : yield* projectionStore.getThread(command.parentThreadId).pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "ProjectionStoreThreadNotFoundError"
+                ? new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: `Parent thread ${command.parentThreadId} does not exist.`,
+                  })
+                : new OrchestratorProjectionError({ threadId: command.parentThreadId!, cause }),
+            ),
+          );
+    if (
+      parentThread !== null &&
+      (parentThread.deletedAt !== null || parentThread.projectId !== command.projectId)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Parent thread ${parentThread.id} is deleted or belongs to another project.`,
+      });
+    }
+
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2249,10 +2276,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       branch: command.branch,
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
+      ...(command.sideChat === undefined ? {} : { sideChat: command.sideChat }),
       lineage: {
-        parentThreadId: null,
+        parentThreadId: parentThread?.id ?? null,
         relationshipToParent: null,
-        rootThreadId: command.threadId,
+        rootThreadId: parentThread?.lineage.rootThreadId ?? command.threadId,
       },
       forkedFrom: null,
       createdAt: now,
@@ -2990,6 +3018,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.sideChat === undefined ? {} : { sideChat: command.sideChat }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
@@ -3629,6 +3658,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.sideChat === undefined ? {} : { sideChat: command.sideChat }),
+        ...(command.runtimeMode === undefined ? {} : { runtimeMode: command.runtimeMode }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,
@@ -10771,6 +10802,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        // Decided under the thread's command lock, so a message that already
+        // landed always wins over "discard if empty".
+        if (command.expectedEmpty === true) {
+          const messageCount = yield* projectionStore
+            .getMessageCount(command.threadId)
+            .pipe(mapDispatchError(command));
+          if (messageCount > 0 || projection.runs.length > 0) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: `Thread ${command.threadId} is no longer empty.`,
+            });
+          }
+        }
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
