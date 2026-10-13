@@ -2264,10 +2264,23 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              // Computed before resolving the target so a retry of an
+              // already accepted thread creation can be recognized:
+              // dispatching under the same command id only replays the
+              // recorded result, so candidate selection must not refuse it
+              // over the project's current settings.
+              const commandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "create-thread",
+                index,
+              });
+              const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
               const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
                 providers,
+                skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
@@ -2283,11 +2296,7 @@ const make = Effect.gen(function* () {
                 requestKey: key,
                 index,
               });
-              yield* assertTargetEnabledForProject(
-                parent,
-                stableCommandId({ scope, requestKey: key, operation: "create-thread", index }),
-                target,
-              );
+              yield* assertTargetEnabledForProject(parent, commandId, target);
               const title = threadTitle({
                 parentTitle: parent.thread.title,
                 prompt: request.prompt,
@@ -2299,12 +2308,7 @@ const make = Effect.gen(function* () {
                   type: "thread.create",
                   createdBy: "agent",
                   creationSource: "mcp",
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "create-thread",
-                    index,
-                  }),
+                  commandId,
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
@@ -2322,6 +2326,14 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
+              // A retry only replays the recorded thread.create result, so the
+              // project's current provider instance, resolved fresh above to
+              // allow the retry through, can differ from what was actually
+              // created. Read the recorded selection back before it drives
+              // anything else.
+              const resolvedModelSelection = isRetryOfAcceptedCreation
+                ? (yield* loadProjection(threadId)).thread.modelSelection
+                : target.modelSelection;
               if (request.prompt !== undefined) {
                 yield* threadManagement
                   .dispatch({
@@ -2343,7 +2355,7 @@ const make = Effect.gen(function* () {
                     }),
                     text: request.prompt,
                     attachments: [],
-                    modelSelection: target.modelSelection,
+                    modelSelection: resolvedModelSelection,
                     dispatchMode: { type: "start_immediately" },
                   })
                   .pipe(
@@ -2387,8 +2399,8 @@ const make = Effect.gen(function* () {
                 title: projection.thread.title,
                 createdBy: projection.thread.createdBy,
                 creationSource: projection.thread.creationSource,
-                providerInstanceId: target.modelSelection.instanceId,
-                model: target.modelSelection.model,
+                providerInstanceId: resolvedModelSelection.instanceId,
+                model: resolvedModelSelection.model,
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },
