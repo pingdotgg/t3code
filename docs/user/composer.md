@@ -57,6 +57,8 @@ applies to this client; already queued messages keep their place. Queued message
 are saved on the server and can be edited, reordered, or removed above the composer.
 `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses the opposite action:
 it steers when your default is Queue and queues when your default is Steer.
+When you steer Claude while it runs a command, the command moves to the background
+so Claude reads your message right away. The command keeps running; Stop ends it.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and

@@ -243,6 +243,7 @@ interface ClaudeSubagentFoundFrame {
 
 type ClaudeOutboundFrame =
   | { readonly type: "query.stop_task"; readonly taskId: string }
+  | { readonly type: "query.background_tasks"; readonly toolUseId: string }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
@@ -795,7 +796,7 @@ function makeReplayQueryRunner(
     return frame;
   };
 
-  const replayEffect = (tryEffect: () => void) =>
+  const replayEffect = <A>(tryEffect: () => A) =>
     Effect.try({
       try: tryEffect,
       catch: (cause) => replayQueryRunnerError(transcript, cause),
@@ -829,6 +830,11 @@ function makeReplayQueryRunner(
         stopTask: (taskId) =>
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });
+          }),
+        backgroundTasks: (toolUseId) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
+            return false;
           }),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });

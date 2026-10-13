@@ -382,6 +382,11 @@ export interface ClaudeAgentSdkQuerySession {
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  // Moves one running foreground task (a Bash command or a subagent) to the
+  // background, like Ctrl+B in Claude Code. False when it matched none.
+  readonly backgroundTasks: (
+    toolUseId: string,
+  ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -535,6 +540,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.stop_task";
         readonly taskId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.background_tasks";
+        readonly toolUseId: string;
       };
     }
   | {
@@ -839,6 +852,19 @@ export const layerQueryRunner: Layer.Layer<
                   direction: "outgoing",
                   stage: "decoded",
                   payload: { type: "query.stop_task", taskId },
+                }),
+              ),
+            ),
+          backgroundTasks: (toolUseId) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.backgroundTasks(toolUseId),
+              catch: (cause) => queryRunnerError(cause, "backgroundTasks"),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: { type: "query.background_tasks", toolUseId },
                 }),
               ),
             ),
@@ -3420,6 +3446,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         );
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        // Claude reads a steer only once the running tool calls return. Until a
+        // result shows it read the steer, root-thread commands move to the
+        // background, as with Ctrl+B in Claude Code: the steer is read now and
+        // nothing is stopped.
+        const steersAwaitingTools = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        const backgroundForSteer = (query: ClaudeAgentSdkQuerySession, toolUseId: string) =>
+          query
+            .backgroundTasks(toolUseId)
+            .pipe(
+              Effect.timeout("5 seconds"),
+              Effect.ignore({ log: "Warn" }),
+              Effect.forkIn(sessionScope),
+            );
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
@@ -6569,6 +6608,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const message = input.message;
+          // A command too new to move when the steer arrived moves once its
+          // task registers, about three seconds in.
+          if (
+            message.type === "system" &&
+            message.subtype === "task_started" &&
+            message.is_backgrounded !== true &&
+            message.tool_use_id !== undefined
+          ) {
+            const context = yield* Ref.get(activeTurn);
+            if (
+              context?.toolCalls.has(message.tool_use_id) === true &&
+              (yield* Ref.get(steersAwaitingTools)).has(context.providerTurnId)
+            ) {
+              yield* backgroundForSteer(input.query, message.tool_use_id);
+            }
+          }
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
@@ -7581,6 +7636,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
+            yield* Ref.update(steersAwaitingTools, (current) => {
+              const next = new Set(current);
+              next.delete(context.providerTurnId);
+              return next;
+            });
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               return;
             }
@@ -8769,7 +8829,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            yield* Ref.update(steersAwaitingTools, (current) => {
+              const next = new Set(current);
+              next.add(turnInput.providerTurnId);
+              return next;
+            });
             yield* existing.query.offer(userMessage);
+            for (const toolCall of currentTurn.toolCalls.values()) {
+              yield* backgroundForSteer(existing.query, toolCall.nativeItemId);
+            }
           },
           (effect, turnInput) =>
             effect.pipe(
