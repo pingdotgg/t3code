@@ -6,6 +6,7 @@ import {
   deriveFileInspectorPaneLayout,
   deriveLayout,
   deriveThreadFeedInitialContentInset,
+  deriveThreadFeedTopGeometry,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
   SPLIT_LAYOUT_MIN_HEIGHT,
@@ -69,6 +70,45 @@ describe("deriveThreadFeedInitialContentInset", () => {
         bottomContentInset: 174,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("deriveThreadFeedTopGeometry", () => {
+  it("keeps the first row and an anchored message below a strip under an opaque header", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: false,
+        headerInset: 0,
+        topOverlayInset: 48,
+      }),
+    ).toEqual({ spacerHeight: 48, anchorTopInset: 48 });
+  });
+
+  it("adds only the strip to content under a glass header, whose inset UIKit applies", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: true,
+        headerInset: 106,
+        topOverlayInset: 44,
+      }),
+    ).toEqual({ spacerHeight: 44, anchorTopInset: 150 });
+  });
+
+  it("leaves the feed where it was when nothing floats over it", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: true,
+        headerInset: 106,
+        topOverlayInset: 0,
+      }),
+    ).toEqual({ spacerHeight: 0, anchorTopInset: 106 });
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: false,
+        headerInset: 0,
+        topOverlayInset: 0,
+      }),
+    ).toEqual({ spacerHeight: 0, anchorTopInset: 0 });
   });
 });
 

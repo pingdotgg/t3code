@@ -31,6 +31,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as RunFinalized from "./RunFinalized.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 /**
@@ -139,6 +140,25 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
+  /**
+   * Fails a claimed effect and records `events` in one transaction. Commits
+   * nothing when `workerId` no longer holds the effect's lease.
+   */
+  readonly failEffect: (input: {
+    readonly commandId: CommandId;
+    readonly effectId: string;
+    readonly workerId: string;
+    readonly error: string;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /** Whether the run recorded `run.finalized` or `run.finalization-failed`. */
+  readonly hasRunFinalization: (runId: RunId) => Effect.Effect<boolean, EventSinkV2Error>;
   readonly commitRejectedCommand: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -306,7 +326,110 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    const isRunFinalizationRecorded = (runId: RunId) =>
+      sql<{ readonly found: number }>`
+        SELECT 1 AS found
+        FROM orchestration_events
+        WHERE event_id = ${RunFinalized.runFinalizedEventId(runId)}
+        LIMIT 1
+      `.pipe(Effect.map((rows) => rows.length > 0));
+
+    // A run records one finalization. A run whose checkpoint capture is due,
+    // running or done finalizes through RunFinalizationService. A run that
+    // never enqueued one finalizes in the commit that writes its terminal
+    // status, and one whose capture was abandoned without a record reports
+    // that failure there instead. Events are checked against stored state so
+    // a repeated write cannot record twice.
+    const withRunFinalizedEvents = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
+    ) =>
+      Effect.gen(function* () {
+        const isFinalizationRecord = (event: OrchestrationV2DomainEvent) =>
+          event.type === "run.finalized" || event.type === "run.finalization-failed";
+        if (!events.some((event) => event.type === "run.updated" || isFinalizationRecord(event))) {
+          return events;
+        }
+        const captureStatus = (runId: RunId) =>
+          effects.some(
+            (effect) =>
+              effect.request.type === "checkpoint.capture" && effect.request.runId === runId,
+          )
+            ? Effect.succeed(Option.some<EffectOutbox.OrchestrationEffectStatusV2>("pending"))
+            : effectOutbox
+                .get(RunFinalized.checkpointCaptureEffectId(runId))
+                .pipe(Effect.map(Option.map((effect) => effect.status)));
+        const statuses = new Map<RunId, string | undefined>();
+        const previousStatus = (runId: RunId) =>
+          statuses.has(runId)
+            ? Effect.succeed(statuses.get(runId))
+            : sql<{ readonly status: string }>`
+                SELECT status
+                FROM orchestration_v2_projection_runs
+                WHERE run_id = ${runId}
+                LIMIT 1
+              `.pipe(Effect.map((rows) => rows[0]?.status));
+        const finalized = new Set<RunId>();
+        const result: Array<OrchestrationV2DomainEvent> = [];
+        // Appended last so the milestone follows every write in its commit.
+        const milestones: Array<OrchestrationV2DomainEvent> = [];
+        for (const event of events) {
+          if (event.type === "run.finalized" || event.type === "run.finalization-failed") {
+            const runId = event.payload.runId;
+            if (!finalized.has(runId) && !(yield* isRunFinalizationRecorded(runId))) {
+              finalized.add(runId);
+              result.push(event);
+            }
+            continue;
+          }
+          result.push(event);
+          if (event.type === "run.created") {
+            statuses.set(event.payload.id, event.payload.status);
+            continue;
+          }
+          if (event.type !== "run.updated") continue;
+          const run = event.payload;
+          const previous = yield* previousStatus(run.id);
+          statuses.set(run.id, run.status);
+          const outcome = RunFinalized.runFinalizedOutcome(run.status);
+          // Only the transition into a final status finalizes, so later
+          // updates to old runs never produce a late milestone.
+          if (
+            outcome === null ||
+            finalized.has(run.id) ||
+            (previous !== undefined && RunFinalized.isSettledRunStatus(previous)) ||
+            (yield* isRunFinalizationRecorded(run.id))
+          ) {
+            continue;
+          }
+          const capture = yield* captureStatus(run.id);
+          const abandoned =
+            Option.isSome(capture) && (capture.value === "failed" || capture.value === "cancelled");
+          if (Option.isSome(capture) && !abandoned) continue;
+          finalized.add(run.id);
+          milestones.push(
+            abandoned
+              ? RunFinalized.makeRunFinalizationFailedEvent({
+                  run,
+                  operation: RunFinalized.abandonedOperation(run),
+                  occurredAt: event.occurredAt,
+                })
+              : RunFinalized.makeRunFinalizedEvent({ run, outcome, occurredAt: event.occurredAt }),
+          );
+        }
+        return [...result, ...milestones];
+      });
+
+    const normalizeEvents = (
+      input: ReadonlyArray<OrchestrationV2DomainEvent>,
+      effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2> = [],
+    ) =>
+      Effect.gen(function* () {
+        const events = yield* withRunFinalizedEvents(input, effects);
+        return yield* normalizeTurnItemPositions(events);
+      });
+
+    const normalizeTurnItemPositions = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -374,6 +497,7 @@ const layerBase: Layer.Layer<
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(input.events)
               : input.events,
+            input.effects,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -428,10 +552,13 @@ const layerBase: Layer.Layer<
               };
             }
 
+            // The checkpoint capture enqueued below decides how a run that
+            // settles here finalizes, so it must be visible to normalization.
             const normalized = yield* normalizeEvents(
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
                 : input.events,
+              input.effects,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -524,6 +651,79 @@ const layerBase: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    // Cancelling a checkpoint capture abandons its run's finalization, so the
+    // cancelling commit records `run.finalization-failed` for that run.
+    const recordAbandonedCaptures = (
+      commandId: CommandId,
+      cancelledEffectIds: ReadonlyArray<string>,
+      occurredAt: DateTime.Utc,
+    ) =>
+      Effect.gen(function* () {
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        for (const effectId of cancelledEffectIds) {
+          const effect = yield* effectOutbox.get(effectId);
+          if (Option.isNone(effect) || effect.value.request.type !== "checkpoint.capture") continue;
+          const { run } = yield* projectionStore.getCheckpointCaptureContext(
+            effect.value.threadId,
+            effect.value.request,
+          );
+          if (run === undefined || run.status === "rolled_back") continue;
+          events.push(
+            RunFinalized.makeRunFinalizationFailedEvent({
+              run,
+              operation: RunFinalized.abandonedOperation(run),
+              occurredAt,
+            }),
+          );
+        }
+        if (events.length === 0) return [];
+        const storedEvents = yield* eventStore.append({
+          commandId,
+          events: yield* normalizeEvents(events),
+        });
+        yield* applyStoredEvents(storedEvents);
+        return storedEvents;
+      });
+
+    const failEffectEffect = Effect.fn("orchestrationV2.EventSink.failEffect")(function* (
+      input: Parameters<EventSinkV2Shape["failEffect"]>[0],
+    ) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.command_id": input.commandId,
+        "orchestration_v2.effect_id": input.effectId,
+        "orchestration_v2.event_count": input.events.length,
+      });
+
+      return yield* commitThenPublish(
+        Effect.gen(function* () {
+          const failed = yield* effectOutbox.fail({
+            effectId: input.effectId,
+            workerId: input.workerId,
+            error: input.error,
+          });
+          if (!failed) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents =
+            normalized.length === 0
+              ? []
+              : yield* eventStore.append({ commandId: input.commandId, events: normalized });
+          yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents };
+        }),
+        (result) =>
+          result.committed
+            ? effectOutbox
+                .notifyAvailable()
+                .pipe(Effect.andThen(publishStoredEvents(result.storedEvents)))
+            : Effect.void,
+      );
+    });
+
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
@@ -543,29 +743,18 @@ const layerBase: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
-          const storedEvents = yield* eventStore.append({
+          const normalized = yield* normalizeEvents(input.events, input.effects);
+          const appended = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
           });
-          const sequence = storedEvents.at(-1)?.sequence;
-          if (sequence === undefined) {
+          if (appended.length === 0) {
             return yield* Effect.die(
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
-          yield* applyStoredEvents(storedEvents);
+          yield* applyStoredEvents(appended);
           yield* effectOutbox.enqueue(input.effects);
-          const receipt: CommandReceiptStore.CommandReceiptV2 = {
-            commandId: input.commandId,
-            threadId: input.threadId,
-            commandType: input.commandType,
-            acceptedAt: input.acceptedAt,
-            resultSequence: sequence,
-            status: "accepted",
-            error: null,
-          };
-          yield* commandReceipts.upsert(receipt);
           const cancelledEffectIds =
             input.cancelUnsettledEffects === undefined
               ? []
@@ -573,6 +762,28 @@ const layerBase: Layer.Layer<
                   threadId: input.threadId,
                   ...input.cancelUnsettledEffects,
                 });
+          const storedEvents = input.cancelUnsettledEffects?.effectTypes.includes(
+            "checkpoint.capture",
+          )
+            ? [
+                ...appended,
+                ...(yield* recordAbandonedCaptures(
+                  input.commandId,
+                  cancelledEffectIds,
+                  input.acceptedAt,
+                )),
+              ]
+            : appended;
+          const receipt: CommandReceiptStore.CommandReceiptV2 = {
+            commandId: input.commandId,
+            threadId: input.threadId,
+            commandType: input.commandType,
+            acceptedAt: input.acceptedAt,
+            resultSequence: storedEvents.at(-1)?.sequence ?? 0,
+            status: "accepted",
+            error: null,
+          };
+          yield* commandReceipts.upsert(receipt);
           return { receipt, storedEvents, committed: true as const, cancelledEffectIds };
         }),
         (result) =>
@@ -814,6 +1025,21 @@ const layerBase: Layer.Layer<
                 cause,
               }),
           ),
+        ),
+      failEffect: (input) =>
+        failEffectEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                commandId: input.commandId,
+                eventCount: input.events.length,
+                cause,
+              }),
+          ),
+        ),
+      hasRunFinalization: (runId) =>
+        isRunFinalizationRecorded(runId).pipe(
+          Effect.mapError((cause) => new EventSinkStreamError({ cause })),
         ),
       commitRejectedCommand: (input) =>
         commitRejectedCommandEffect(input).pipe(
