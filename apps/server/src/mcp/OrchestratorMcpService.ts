@@ -71,6 +71,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -222,19 +223,6 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
- */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
 }
 
 /**
@@ -904,6 +892,7 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const git = yield* GitWorkflow.GitWorkflowService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   /** A caller-named project, which must exist before anything is recorded against it. */
@@ -920,6 +909,28 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  /**
+   * Workspace strategy for a scheduled task created/updated over MCP: bound runs
+   * post into the existing thread (the strategy is unused, keep root); unbound
+   * runs launch a fresh worktree per run. A project folder that is not a Git
+   * repository cannot have worktrees, so unbound runs there start in the folder.
+   */
+  const scheduledTaskWorkspaceStrategy = (
+    boundToThread: boolean,
+    projectId: ProjectId,
+  ): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> =>
+    Effect.gen(function* () {
+      if (boundToThread) return { type: "root" };
+      const project = yield* requireProject(projectId);
+      // A failed check keeps the worktree as before; its launch reports the failure.
+      const isRepository = yield* git
+        .isRepository(project.workspaceRoot)
+        .pipe(Effect.orElseSucceed(() => true));
+      return isRepository
+        ? { type: "worktree", baseRef: "main", startFromOrigin: true }
+        : { type: "root" };
+    });
 
   /** A client has no thread to inherit a model from, so it falls back to the project default. */
   const projectDefaultModelSelection = (
@@ -1644,7 +1655,7 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -1712,12 +1723,12 @@ const make = Effect.gen(function* () {
               ? parent.thread.id
               : null;
         // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+        // follow: unbinding a root-strategy task in a Git project would
+        // otherwise run loose prompts in the shared project checkout.
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2664,6 +2675,7 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | GitWorkflow.GitWorkflowService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
 > = Layer.effect(OrchestratorMcpService, make);
