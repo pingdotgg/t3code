@@ -39,6 +39,39 @@ export class DeviceHostTimeoutError extends Schema.TaggedError<DeviceHostTimeout
   }
 }
 
+export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartError>()(
+  "AgentDeviceStartError",
+  {
+    hostId: Schema.String,
+    stateDir: Schema.String,
+    exitCode: Schema.NullOr(Schema.Int),
+    reason: Schema.Literals([
+      "daemon_lock_not_directory",
+      "daemon_registration_unproven",
+      "daemon_retirement_unconfirmed",
+      "command_failed",
+    ]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const exit = this.exitCode === null ? "" : ` (exit code ${this.exitCode})`;
+    const detail =
+      this.reason === "daemon_lock_not_directory"
+        ? "Daemon registration ownership could not be verified: daemon.lock is not a directory."
+        : this.reason === "daemon_registration_unproven"
+          ? "Daemon registration ownership could not be verified."
+          : this.reason === "daemon_retirement_unconfirmed"
+            ? "Daemon replacement could not be confirmed."
+            : "The AgentDevice startup command failed.";
+    const recovery =
+      this.reason === "command_failed"
+        ? `Inspect daemon diagnostics in ${this.stateDir}.`
+        : `Inspect daemon.lock and daemon diagnostics in ${this.stateDir}. Stop older clients and daemons with their original CLI before manually repairing retained state.`;
+    return `Agent tools failed to start${exit}. ${detail} ${recovery}`;
+  }
+}
+
 export interface DeviceHubEndpoint {
   /** Loopback origin of expo-device-hub, e.g. `http://127.0.0.1:3400`. */
   readonly origin: string;
@@ -96,7 +129,7 @@ export class DeviceHost extends Context.Service<
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
     ) => Effect.Effect<
       DeviceHostAgentReady,
-      DeviceHostError | DeviceHostTimeoutError | NodeRuntimeUnavailableError
+      DeviceHostError | DeviceHostTimeoutError | AgentDeviceStartError | NodeRuntimeUnavailableError
     >;
     /** Current endpoints when already running, without starting anything. */
     readonly current: Effect.Effect<DeviceHostReady | null>;

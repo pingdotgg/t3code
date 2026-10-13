@@ -337,9 +337,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                     ? nodeRuntimeUnavailableMessage("Local device support")
                     : error._tag === "DeviceHostTimeoutError"
                       ? `Agent tools did not start within ${error.timeoutMs} ms.`
-                      : error.step === "probe"
-                        ? "Could not connect to this host over SSH."
-                        : `Device support failed during ${error.step}.`,
+                      : error._tag === "AgentDeviceStartError"
+                        ? error.message
+                        : error.step === "probe"
+                          ? "Could not connect to this host over SSH."
+                          : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
           ),
