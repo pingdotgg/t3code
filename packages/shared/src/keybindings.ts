@@ -11,10 +11,6 @@ import {
 } from "@t3tools/contracts";
 
 export {
-  normalizeEventKey,
-  shortcutKeyFromEvent,
-  resolveEventKeys,
-  matchesKeybindingShortcutModifiers,
   matchesKeybindingShortcut,
   type ShortcutEventLike,
   type ShortcutModifierStateLike,
