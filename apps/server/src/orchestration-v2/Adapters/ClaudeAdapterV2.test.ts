@@ -2200,6 +2200,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly uuid: string;
     readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
     readonly parentToolUseId?: string | null;
+    readonly apiErrorParams?: unknown;
   }) =>
     claudeSdkFrame({
       type: "assistant",
@@ -2220,6 +2221,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       },
       parent_tool_use_id: input.parentToolUseId ?? null,
       ...(input.error === undefined ? {} : { error: input.error }),
+      ...(input.apiErrorParams === undefined ? {} : { api_error_params: input.apiErrorParams }),
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
@@ -3139,6 +3141,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
         ),
       );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("keeps a later event-supplied Claude reset over the embedded reset", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-embedded-limit-event"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "seven_day",
+            resetsAt: 1791807600,
+          },
+          uuid: "00000000-0000-4000-8000-000000000683",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000684",
+          error: "rate_limit",
+          apiErrorParams: {
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt: 1791804000,
+            },
+          },
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000685",
+          result: "Usage limit reached.",
+          isError: true,
+          apiErrorStatus: 429,
+          terminalReason: "api_error",
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.resetAt, "2026-10-12T12:20:00.000Z");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -6261,96 +6317,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("carries a rejected wake rate limit into the continuation failure", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        // 2026-09-25T11:10 AEST: the reset a real wake reported while the CLI
-        // blocked its notification turn ("resets 11:10am (Australia/Sydney)").
-        const resetsAt = 1790298600;
+  it.effect.each([true, false])(
+    "carries a rejected wake rate limit into the continuation failure (event=%s)",
+    (standaloneEvent) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          // 2026-09-25T11:10 AEST: the reset a real wake reported while the CLI
+          // blocked its notification turn ("resets 11:10am (Australia/Sydney)").
+          const resetsAt = 1790298600;
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-limit-1"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* Queue.take(harness.terminalReceipts);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-limit-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
 
-        // The CLI wakes with a rejected window before the continuation turn
-        // exists, then blocks the wake turn itself.
-        yield* Queue.offer(harness.sdkMessages, wakeNotification);
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            type: "rate_limit_event",
-            rate_limit_info: {
-              status: "rejected",
-              rateLimitType: "five_hour",
-              resetsAt,
-              overageStatus: "rejected",
-            },
-            uuid: "00000000-0000-4000-8000-000000000630",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        // The parked rate-limit frame rides along with the wake output; it
-        // must not request a continuation on its own.
-        assert.lengthOf(harness.continuationRequests, 0);
-        yield* harness.offerAndWait(
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000631",
-            error: "rate_limit",
-          }),
-        );
-        assert.lengthOf(harness.continuationRequests, 1);
-        yield* harness.offerAndWait(
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000632",
-            result: "You've hit your session limit · resets 11:10am (Australia/Sydney)",
-            isError: true,
-            apiErrorStatus: 429,
-            terminalReason: "api_error",
-            origin: { kind: "task-notification" },
-          }),
-        );
-        assert.lengthOf(harness.continuationRequests, 1);
+          // The CLI wakes with a rejected window before the continuation turn
+          // exists, then blocks the wake turn itself.
+          yield* Queue.offer(harness.sdkMessages, wakeNotification);
+          if (standaloneEvent)
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: "five_hour",
+                  resetsAt,
+                  overageStatus: "rejected",
+                },
+                uuid: "00000000-0000-4000-8000-000000000630",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          // The parked rate-limit frame rides along with the wake output; it
+          // must not request a continuation on its own.
+          assert.lengthOf(harness.continuationRequests, 0);
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: "00000000-0000-4000-8000-000000000631",
+              error: "rate_limit",
+              apiErrorParams: {
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: "five_hour",
+                  resetsAt,
+                  overageStatus: "rejected",
+                },
+              },
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000632",
+              result: "You've hit your session limit · resets 11:10am (Australia/Sydney)",
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-limit-2"),
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal?.status, "failed");
-        if (terminal === undefined || terminal.status !== "failed") return;
-        assert.equal(terminal.failure.class, "usage_limit");
-        assert.equal(terminal.failure.resetAt, "2026-09-25T01:10:00.000Z");
-        // The rejected window is announced once the replay has a turn to own it.
-        const pause = yield* Queue.take(harness.systemNoticeReceipts);
-        assert.equal(pause.turnItem.type, "system_notice");
-        if (pause.turnItem.type !== "system_notice") return;
-        assert.include(pause.turnItem.message, "This turn is paused until the 5-hour limit");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-limit-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal?.status, "failed");
+          if (terminal === undefined || terminal.status !== "failed") return;
+          assert.equal(terminal.failure.class, "usage_limit");
+          assert.equal(terminal.failure.resetAt, "2026-09-25T01:10:00.000Z");
+          // The rejected window is announced once the replay has a turn to own it.
+          if (standaloneEvent) {
+            const pause = yield* Queue.take(harness.systemNoticeReceipts);
+            assert.equal(pause.turnItem.type, "system_notice");
+            if (pause.turnItem.type !== "system_notice") return;
+            assert.include(pause.turnItem.message, "This turn is paused until the 5-hour limit");
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
