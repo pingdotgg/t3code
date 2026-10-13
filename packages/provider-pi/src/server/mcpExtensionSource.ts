@@ -1,8 +1,9 @@
 /**
  * Source for the T3-owned Pi extension that consumes T3's HTTP MCP server.
  *
- * Pi 0.99+ discovers optional HTTP bridge tools on demand. Older versions
- * keep them directly available. Pi loads this TypeScript via `--extension`; the
+ * Pi 0.99+ discovers optional HTTP bridge tools on demand. OpenAI completion
+ * gateways need their schemas loaded up front. Older versions keep tools
+ * directly available. Pi loads this TypeScript via `--extension`; the
  * server writes it to a cache so packaged builds need no sibling .ts file.
  *
  * Do not import t3code modules from the string body. The Pi process resolves
@@ -24,7 +25,7 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -421,23 +422,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  const reconcileDiscovery = () => {
+  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
     const hasToolSearch = hasBuiltinToolSearch();
     const exposureChanged = deferOptionalTools !== hasToolSearch;
     deferOptionalTools = hasToolSearch;
     if (exposureChanged) registerTools();
-    if (hasToolSearch) {
-      const active = pi.getActiveTools();
-      if (!active.includes("tool_search")) pi.setActiveTools([...active, "tool_search"]);
-    }
+    const active = pi.getActiveTools();
+    // Completion gateways can silently drop calls to undeclared tools named
+    // in history or guidance. Eagerly load T3 schemas, including after tree
+    // restores, while retaining deferred exposure for Pi's allowlist rules.
+    // Pi still applies --tools/--exclude-tools to this active loadout.
+    const required = [
+      ...(hasToolSearch ? ["tool_search"] : []),
+      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
+    ];
+    const missing = required.filter((name) => !active.includes(name));
+    if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
   };
 
   // Tree navigation restores its saved loadout after session_start.
-  pi.on("session_tree", reconcileDiscovery);
+  pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
+  pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
-    reconcileDiscovery();
+    reconcileDiscovery(ctx);
     try {
       await ensureStarted();
     } catch (error) {
@@ -449,8 +458,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Deliver orchestration guidance through pi's real system-prompt channel.
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
-  }));
+  pi.on("before_agent_start", (event, ctx) => {
+    reconcileDiscovery(ctx);
+    return { systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS };
+  });
 }
 `;
