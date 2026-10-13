@@ -18,6 +18,11 @@ it.effect.each([
     commit: { hash: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93" },
     headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93",
   },
+  {
+    metadata: "short source commit hash",
+    commit: { hash: "9f3a7c2d8b1e" },
+    headSha: "9f3a7c2d8b1e",
+  },
   { metadata: "absent commit", commit: undefined, headSha: undefined },
   { metadata: "null commit", commit: null, headSha: undefined },
   { metadata: "absent hash", commit: {}, headSha: undefined },

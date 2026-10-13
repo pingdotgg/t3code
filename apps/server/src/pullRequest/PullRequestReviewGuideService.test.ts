@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import {
   ProjectId,
+  GitCommandError,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
@@ -144,7 +145,7 @@ const stack = (repositories: {
     {
       number: 8,
       title: "Upper",
-      headSha: repositories.upperSha,
+      headSha: repositories.upperSha.slice(0, 12),
       headBranch: "upper",
       state: "open",
     },
@@ -228,8 +229,328 @@ const layerBase = Layer.mergeAll(
   SqlitePersistence.layerMemory,
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
+type Repositories = Effect.Success<typeof makeRepositories>;
+
+const awaitRunFailure = (
+  service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+  input: PullRequestRef,
+) =>
+  service.get(input).pipe(
+    Effect.flatMap((result) =>
+      result.run?._tag === "Failed"
+        ? Effect.succeed(result.run.detail)
+        : Effect.fail("still running" as const),
+    ),
+    Effect.retry(Schedule.spaced("20 millis")),
+  );
+
+/** A workspace cloned with only `main`, so the change's head is not there until fetched. */
+const startSingleBranchRun = (input: {
+  readonly repositoryName: string;
+  readonly reportedHead: (repositories: Repositories) => string;
+  readonly refuseCommitFetch: boolean;
+  readonly prepare: (
+    repositories: Repositories,
+    workspace: string,
+  ) => Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver>;
+  /** Runs inside the head branch's fetch, after the service asked for it and before git runs. */
+  readonly onBranchFetch?:
+    | ((
+        repositories: Repositories,
+      ) => Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver>)
+    | undefined;
+}) =>
+  Effect.gen(function* () {
+    const repositories = yield* makeRepositories;
+    const workspace = `${repositories.root}/single-branch`;
+    yield* git(repositories.root, [
+      "clone",
+      "--quiet",
+      "--no-local",
+      "--single-branch",
+      "--branch",
+      "main",
+      `${repositories.root}/remote`,
+      workspace,
+    ]);
+    yield* input.prepare(repositories, workspace);
+    const reportedHead = input.reportedHead(repositories);
+    const stored = yield* Deferred.make<void>();
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const fetchedRefs: Array<string> = [];
+    const observed: Array<{ cwd: string; head: string; changed: string }> = [];
+    const onBranchFetch = input.onBranchFetch;
+    const observedDriver = {
+      ...driver,
+      execute: (call: GitVcsDriver.ExecuteGitInput) =>
+        Effect.gen(function* () {
+          const ref = call.args.at(-1);
+          if (call.args[0] !== "fetch" || ref === undefined) return yield* driver.execute(call);
+          fetchedRefs.push(ref);
+          if (input.refuseCommitFetch && ref === repositories.headSha) {
+            return yield* new GitCommandError({
+              operation: call.operation,
+              command: "git",
+              cwd: call.cwd,
+              detail: "The test remote refuses fetches by commit.",
+              exitCode: 128,
+            });
+          }
+          if (ref === "refs/heads/feature" && onBranchFetch !== undefined) {
+            yield* onBranchFetch(repositories).pipe(
+              Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+            );
+          }
+          return yield* driver.execute(call);
+        }),
+    };
+    const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+      driver
+        .execute({ operation: "test.readCheckout", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    const context = yield* Layer.build(
+      makeLayer({
+        ...repositories,
+        headSha: reportedHead,
+        workspace,
+        stored,
+        identity: {
+          ...ACME_APP,
+          canonicalKey: `github.com/acme/${input.repositoryName}`,
+          displayName: `acme/${input.repositoryName}`,
+          name: input.repositoryName,
+        },
+        generate: (generation) =>
+          Effect.gen(function* () {
+            observed.push({
+              cwd: generation.cwd,
+              head: yield* readCheckout(generation.cwd, ["rev-parse", "HEAD"]),
+              changed: yield* readCheckout(generation.cwd, [
+                "diff",
+                "--name-only",
+                `${generation.baseCommit}...HEAD`,
+              ]),
+            });
+            return { stops: [] };
+          }).pipe(Effect.orDie),
+      }).pipe(Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, observedDriver))),
+    );
+    const service = Context.get(
+      context,
+      PullRequestReviewGuideService.PullRequestReviewGuideService,
+    );
+    const guideReference = { ...reference, repository: `acme/${input.repositoryName}` };
+    yield* service.generate(guideReference);
+    return {
+      repositories,
+      reportedHead,
+      service,
+      reference: guideReference,
+      stored,
+      fetchedRefs,
+      observed,
+    };
+  });
+
 // Runs drive real git, which the test clock does not advance, so waits use real time.
 it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
+  it.effect.each([
+    {
+      name: "a short head already fetched",
+      shortHash: true,
+      prepare: "fetch-feature",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: [],
+    },
+    {
+      name: "a short head on its branch",
+      shortHash: true,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["refs/heads/feature"],
+    },
+    {
+      name: "a short head whose branch moves during the fetch",
+      shortHash: true,
+      prepare: "none",
+      pushDuringFetch: true,
+      refuseCommitFetch: true,
+      expectedFetches: ["refs/heads/feature"],
+    },
+    {
+      name: "a full head served by commit",
+      shortHash: false,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: false,
+      expectedFetches: ["<head>"],
+    },
+    {
+      name: "a full head on its branch",
+      shortHash: false,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["<head>", "refs/heads/feature"],
+    },
+    {
+      name: "a full head only on its pull ref",
+      shortHash: false,
+      prepare: "refs/pull/7/head",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["<head>", "refs/heads/feature", "refs/pull/7/head"],
+    },
+    {
+      name: "a full head only on its merge request ref",
+      shortHash: false,
+      prepare: "refs/merge-requests/7/head",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: [
+        "<head>",
+        "refs/heads/feature",
+        "refs/pull/7/head",
+        "refs/merge-requests/7/head",
+      ],
+    },
+  ])(
+    "writes a guide for the reported commit: $name",
+    ({ shortHash, prepare, pushDuringFetch, refuseCommitFetch, expectedFetches }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const run = yield* startSingleBranchRun({
+            repositoryName: "fetched-head",
+            reportedHead: (repositories) =>
+              shortHash ? repositories.headSha.slice(0, 12) : repositories.headSha,
+            refuseCommitFetch,
+            prepare: (repositories, workspace) => {
+              const remote = `${repositories.root}/remote`;
+              if (prepare === "fetch-feature") {
+                return git(workspace, ["fetch", "--quiet", "origin", "feature"]).pipe(
+                  Effect.asVoid,
+                );
+              }
+              if (prepare === "none") return Effect.void;
+              return git(remote, ["update-ref", prepare, repositories.headSha]).pipe(
+                Effect.andThen(
+                  git(remote, ["update-ref", "refs/heads/feature", repositories.lowerSha]),
+                ),
+                Effect.asVoid,
+              );
+            },
+            onBranchFetch: pushDuringFetch
+              ? (repositories) => {
+                  const remote = `${repositories.root}/remote`;
+                  return git(remote, ["checkout", "--quiet", "feature"]).pipe(
+                    Effect.andThen(
+                      git(remote, [
+                        "commit",
+                        "--quiet",
+                        "--allow-empty",
+                        "-m",
+                        "push during fetch",
+                      ]),
+                    ),
+                    Effect.asVoid,
+                  );
+                }
+              : undefined,
+          });
+          yield* Effect.raceFirst(
+            Deferred.await(run.stored),
+            awaitRunFailure(run.service, run.reference).pipe(
+              Effect.flatMap((detail) => Effect.die(`run failed: ${detail}`)),
+            ),
+          );
+          const { headSha } = run.repositories;
+          const result = yield* run.service.get(run.reference);
+          assert.strictEqual(result.guide?.headSha, run.reportedHead);
+          assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+          assert.deepStrictEqual(run.observed, [
+            { cwd: run.observed[0]?.cwd, head: headSha, changed: "feature.txt" },
+          ]);
+          const headRefs = new Set([
+            headSha,
+            run.reportedHead,
+            "refs/heads/feature",
+            "refs/pull/7/head",
+            "refs/merge-requests/7/head",
+          ]);
+          assert.deepStrictEqual(
+            run.fetchedRefs.filter((ref) => headRefs.has(ref)),
+            expectedFetches.map((ref) => (ref === "<head>" ? headSha : ref)),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          assert.isFalse(yield* fs.exists(run.observed[0]?.cwd ?? ""));
+        }),
+      ),
+  );
+
+  it.effect.each([
+    {
+      name: "a branch named like the short head",
+      reportedHead: (repositories: Repositories) => repositories.headSha.slice(0, 12),
+      shadow: "branch",
+      expected: ["a branch or tag rather than the commit"],
+    },
+    {
+      name: "a tag named like the short head",
+      reportedHead: (repositories: Repositories) => repositories.headSha.slice(0, 12),
+      shadow: "tag",
+      expected: ["a branch or tag rather than the commit"],
+    },
+    {
+      name: "a head that is not a commit hash",
+      reportedHead: (repositories: Repositories) =>
+        `--upload-pack=touch ${repositories.root}/injected`,
+      shadow: "none",
+      expected: ["not a commit hash"],
+    },
+    {
+      name: "a head no source has",
+      reportedHead: () => "e".repeat(40),
+      shadow: "none",
+      expected: [
+        "local objects:",
+        "the commit:",
+        "branch feature:",
+        "refs/pull/7/head:",
+        "refs/merge-requests/7/head:",
+      ],
+    },
+  ])("refuses to write a guide for $name", ({ reportedHead, shadow, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startSingleBranchRun({
+          repositoryName: "refused-head",
+          reportedHead,
+          refuseCommitFetch: false,
+          prepare: (repositories, workspace) =>
+            git(workspace, ["fetch", "--quiet", "origin", "feature"]).pipe(
+              Effect.andThen(
+                shadow === "none"
+                  ? Effect.void
+                  : git(workspace, [shadow, repositories.headSha.slice(0, 12), "HEAD"]),
+              ),
+              Effect.asVoid,
+            ),
+        });
+        const detail = yield* Effect.raceFirst(
+          awaitRunFailure(run.service, run.reference),
+          Deferred.await(run.stored).pipe(Effect.andThen(Effect.die("a guide was written"))),
+        );
+        for (const part of expected) assert.include(detail, part);
+        assert.deepStrictEqual(run.observed, []);
+        assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
+        const fs = yield* FileSystem.FileSystem;
+        assert.isFalse(yield* fs.exists(`${run.repositories.root}/injected`));
+      }),
+    ),
+  );
+
   it.effect("briefs the change against its own base in a checkout it then removes", () =>
     Effect.scoped(
       Effect.gen(function* () {
