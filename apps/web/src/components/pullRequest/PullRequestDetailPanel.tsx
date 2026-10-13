@@ -2,6 +2,7 @@ import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { AnimatedWidth } from "~/components/AnimatedWidth";
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -2122,21 +2123,20 @@ export function PullRequestDetailPanel({
                           ) : (
                             <PullRequestGlyph.merged aria-hidden className="size-3.5" />
                           )}
-                          <span className="inline-grid @max-[30rem]/pr-header:hidden">
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              {selectedMergeMethodLabel}
+                          <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                            <span className="grid">
+                              <span aria-hidden className="invisible col-start-1 row-start-1">
+                                {selectedMergeMethodLabel}
+                              </span>
+                              <span className="col-start-1 row-start-1">
+                                {pendingAction === "merge"
+                                  ? "Merging..."
+                                  : inlineConfirm.isArmed("merge")
+                                    ? "Confirm merge?"
+                                    : selectedMergeMethodLabel}
+                              </span>
                             </span>
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              Confirm merge?
-                            </span>
-                            <span className="col-start-1 row-start-1">
-                              {pendingAction === "merge"
-                                ? "Merging..."
-                                : inlineConfirm.isArmed("merge")
-                                  ? "Confirm merge?"
-                                  : selectedMergeMethodLabel}
-                            </span>
-                          </span>
+                          </AnimatedWidth>
                         </Button>
                       </span>
                     }
