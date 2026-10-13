@@ -2959,6 +2959,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["before", "after"] as const)(
+    "compacts the turn with the compaction item when another turn starts %s the start response",
+    (strayTurn) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = `compact-stray-${strayTurn}`;
+          const item = { type: "contextCompaction", id: "compact-item" };
+          const notification = (label: string, method: string, params: unknown) => ({
+            type: "emit_inbound" as const,
+            label,
+            frame: { method, params: { threadId: nativeThreadId, ...(params as object) } },
+          });
+          const response = {
+            type: "emit_inbound" as const,
+            label: "compact",
+            frame: { id: 3, result: {} },
+          };
+          // Codex continues a goal on its own, then the compaction replaces it.
+          const stray = [
+            notification("stray start", "turn/started", {
+              turn: makeCodexReplayTurn({ id: "stray-turn", status: "inProgress" }),
+            }),
+            notification("stray end", "turn/completed", {
+              turn: makeCodexReplayTurn({ id: "stray-turn", status: "interrupted" }),
+            }),
+          ];
+          const transcript = makeCodexReplayTranscript({
+            scenario: `native-compaction-stray-${strayTurn}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused",
+                prompt: "unused",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "compact",
+                frame: {
+                  id: 3,
+                  method: "thread/compact/start",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              ...(strayTurn === "before" ? [...stray, response] : [response, ...stray]),
+              notification("start", "turn/started", {
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+              }),
+              notification("item/started", "item/started", { turnId: "compact-turn", item }),
+              notification("item/completed", "item/completed", { turnId: "compact-turn", item }),
+              notification("complete", "turn/completed", {
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "completed" }),
+              }),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+            [
+              [
+                idAllocator.derive.providerTurn({
+                  driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                  nativeTurnId: "compact-turn",
+                }),
+                "completed",
+              ],
+            ],
+          );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+                ? [event.turnItem.status]
+                : [],
+            ),
+            ["running", "completed"],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -8466,6 +8560,125 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         );
         assert.equal(providerGoals(harness.events).at(-1), "complete");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("continues a held goal run while a compaction waits for its own turn", () =>
+      Effect.gen(function* () {
+        const item = { type: "contextCompaction", id: "compact-item" };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-continuation-during-compaction",
+          entries: [
+            ...sessionStart,
+            ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, objective, status: "paused" },
+              { goal: codexGoal("paused", 0) },
+            ),
+            ...withReplayRequestId(
+              codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "goal-turn-1",
+                prompt: objective,
+              }).slice(5),
+              5,
+            ),
+            ...request(
+              6,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: codexGoal("active", 0) },
+            ),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-1",
+              goal: codexGoal("active", 0),
+            }),
+            notification("first turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+            }),
+            ...request(7, "thread/compact/start", { threadId: nativeThreadId }, {}),
+            notification("continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+            }),
+            notification("continuation replaced", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "interrupted" }),
+            }),
+            // Otherwise the finished compaction waits for the next goal turn.
+            notification("goal paused", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              goal: codexGoal("paused", 10),
+            }),
+            notification("compaction", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+            }),
+            ...(["item/started", "item/completed"] as const).map((method) =>
+              notification(method, method, {
+                threadId: nativeThreadId,
+                turnId: "compact-turn",
+                item,
+              }),
+            ),
+            notification("compaction done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "compact-turn", status: "completed" }),
+            }),
+          ],
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const providerTurnId = (nativeTurnId: string) =>
+          idAllocator.derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId,
+          });
+        const compacted = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "turn.terminal" && event.providerTurnId === providerTurnId("compact-turn")
+            ? Deferred.succeed(compacted, undefined)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        yield* harness.runtime.compactThread!(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("compact-attempt"),
+            text: "/compact",
+          }),
+        );
+        yield* Deferred.await(compacted);
+
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+              ? [[event.providerTurn.id, event.providerTurn.runAttemptId]]
+              : [],
+          ),
+          [
+            [providerTurnId("goal-turn-1"), RunAttemptId.make("goal-attempt")],
+            [providerTurnId("goal-turn-2"), RunAttemptId.make("goal-attempt")],
+            [providerTurnId("compact-turn"), RunAttemptId.make("compact-attempt")],
+          ],
+        );
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+          [
+            [providerTurnId("goal-turn-2"), "interrupted"],
+            [providerTurnId("compact-turn"), "completed"],
+          ],
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
