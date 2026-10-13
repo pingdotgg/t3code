@@ -484,6 +484,7 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { resolveThreadErrorExplainTarget } from "./chat/ThreadErrorExplanation.logic";
 import {
   QueuedRunsControl,
   type QueuedRunsControlHandle,
@@ -2264,6 +2265,10 @@ export default function ChatView(props: ChatViewProps) {
     visibleThreadError === serverRuntime.lastError
       ? null
       : visibleThreadError;
+
+  // Only the server's own failure can be explained; local client errors have no server record.
+  const bannerShowsServerError =
+    localServerError === null && visibleThreadError === serverRuntime?.lastError;
 
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -11517,11 +11522,14 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={timelineThreadError}
-                errorClass={
-                  localServerError === null && visibleThreadError === serverRuntime?.lastError
-                    ? (serverRuntime?.lastErrorClass ?? null)
-                    : null
-                }
+                errorClass={bannerShowsServerError ? (serverRuntime?.lastErrorClass ?? null) : null}
+                explainTarget={resolveThreadErrorExplainTarget({
+                  showsServerError: bannerShowsServerError,
+                  isServerThread,
+                  canOperateThread,
+                  threadRef: activeThreadRef,
+                  runId: serverLatestRun?.runId ?? null,
+                })}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

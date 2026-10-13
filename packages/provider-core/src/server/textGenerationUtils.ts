@@ -22,10 +22,23 @@ export function toJsonSchemaObject(schema: Schema.Top): unknown {
   return document.schema;
 }
 
+/**
+ * The start of `value` within `maxUnits` UTF-16 units, never ending inside a
+ * surrogate pair. A pair cut in half is a lone surrogate, which
+ * `encodeURIComponent` rejects and every encoder mangles.
+ */
+export function truncateOnCodePoint(value: string, maxUnits: number): string {
+  if (value.length <= maxUnits) return value;
+  let end = Math.max(0, maxUnits);
+  const last = value.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return value.slice(0, end);
+}
+
 /** Truncate a text section to `maxChars`, appending a `[truncated]` marker when needed. */
 export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
-  const truncated = value.slice(0, maxChars);
+  const truncated = truncateOnCodePoint(value, maxChars);
   return `${truncated}\n\n[truncated]`;
 }
 

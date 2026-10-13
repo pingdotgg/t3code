@@ -40,6 +40,8 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
+  /** The process must run in an empty directory other than this one. */
+  isolatedFrom?: string;
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -56,6 +58,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     forbidArg: input.forbidArg ?? null,
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
+    isolatedFrom: input.isolatedFrom ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -122,6 +125,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         "if (check.stdinMustNotContain !== null && stdinContent.includes(check.stdinMustNotContain)) {",
         '  fail("stdin contained forbidden content", 4);',
+        "}",
+        "if (",
+        "  check.isolatedFrom !== null &&",
+        "  (process.cwd() === check.isolatedFrom || NodeFS.readdirSync(process.cwd()).length > 0)",
+        ") {",
+        '  fail("not run in an empty directory away from " + check.isolatedFrom, 10);',
         "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
@@ -191,6 +200,30 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           }),
       ),
   );
+  it.effect(
+    "explains provider failures read-only in an empty directory away from the project",
+    () =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ summary: "The session ended.", likelyFix: "Start a new turn." }),
+          isolatedFrom: process.cwd(),
+          requireArg: "-s read-only --config features.shell_tool=false",
+          stdinMustContain: "Message: boom",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const explained = yield* textGeneration.explainProviderFailure({
+              context: "Message: boom",
+              modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5"),
+            });
+            expect(explained).toEqual({
+              summary: "The session ended.",
+              likelyFix: "Start a new turn.",
+              matchingIssueNumber: null,
+            });
+          }),
+      ),
+  );
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {
@@ -200,6 +233,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           body: "\n- added migration\n- updated tests\n",
         }),
         stdinMustNotContain: "branch must be a short semantic git branch fragment",
+        forbidArg: "features.shell_tool=false",
       },
       (textGeneration) =>
         Effect.gen(function* () {

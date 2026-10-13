@@ -17,6 +17,9 @@ export type {
   CommitMessageGenerationResult,
   PrContentGenerationInput,
   PrContentGenerationResult,
+  ProviderFailureExplanationInput,
+  ProviderFailureKnownIssue,
+  ProviderFailureExplanationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
   ThreadTitleGenerationInput,
@@ -35,7 +38,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "explainProviderFailure";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -91,6 +95,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    explainProviderFailure: (input) =>
+      resolveInstance(registry, "explainProviderFailure", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.explainProviderFailure(input)),
       ),
   });
 });
