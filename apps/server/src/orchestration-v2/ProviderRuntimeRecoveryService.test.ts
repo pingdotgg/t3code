@@ -690,6 +690,7 @@ it.effect("holds accepted queued work without cancelling its execution state aft
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getThreadRecords: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {

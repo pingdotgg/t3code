@@ -22,6 +22,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -284,10 +285,35 @@ export const make = Effect.gen(function* () {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
       };
-      // Queued runs have not started provider work. Preserve their execution
-      // identities and order, but require explicit consent before draining them.
-      for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* projections
+              .getThreadRecords(projection.thread.id, ["messages"], {
+                messageIds: queuedRuns.map((run) => run.userMessageId),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderRuntimeRecoveryError({
+                      operation: "read-projections",
+                      threadId: projection.thread.id,
+                      cause,
+                    }),
+                ),
+              )).messages;
+      const bufferedMessageIds = new Set(
+        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      );
+      // Buffered wakes lost their output with the process. Durable queued messages
+      // keep their execution identities and order until the user resumes them.
+      for (const run of queuedRuns) {
+        if (bufferedMessageIds.has(run.userMessageId)) {
+          runs.push(run);
+          continue;
+        }
+        if (run.queueHeld === true) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",

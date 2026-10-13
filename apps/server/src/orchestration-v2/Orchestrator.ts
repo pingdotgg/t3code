@@ -89,7 +89,10 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
-import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import {
+  isBufferedProviderNotification,
+  isUndeliveredMailboxSteer,
+} from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -2798,7 +2801,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
         });
       }
-      if (projection.runs.some((run) => run.status === "queued")) {
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* loadProjectionForCommand(command, ["messages"], {
+              messageIds: queuedRuns.map((run) => run.userMessageId),
+            })).messages;
+      // Automatic wakes are hidden from the user queue and must not block snooze.
+      // Snooze only changes visibility, so keep those deliveries intact.
+      const automaticMessageIds = new Set(
+        queuedMessages
+          .filter(
+            (message) =>
+              message.notification !== undefined || message.delegatedCompletion !== undefined,
+          )
+          .map((message) => message.id),
+      );
+      if (queuedRuns.some((run) => !automaticMessageIds.has(run.userMessageId))) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -8797,9 +8817,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * What Stop holds besides the run it interrupts: queued runs wait for the user, the
-   * thread's pull request watches end, and every wake its delegated tasks still owe is
-   * dropped, since Stop stops those tasks too. Nothing automatic starts the thread again.
+   * What Stop holds besides the run it interrupts: durable queued messages wait for the
+   * user, buffered provider wakes are cancelled, and the thread's pull request watches end.
+   * Every wake its delegated tasks still owe is dropped, since Stop stops those tasks too.
    * `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
    */
   const holdStoppedThread = (input: {
@@ -8815,6 +8835,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const emitEvent = emit(input.events, input.command);
       const { thread, runs, subagents } = input.projection;
+      const queuedRuns = runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* projectionStore
+              .getThreadRecords(thread.id, ["messages"], {
+                messageIds: queuedRuns.map((run) => run.userMessageId),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
+                ),
+              )).messages;
+      const bufferedMessageIds = new Set(
+        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      );
       for (const run of runs) {
         // A resumed queue can have a lower ordinal than a pending continuation source.
         // Stop must reach those sources even when interrupting the resumed run succeeds.
@@ -8824,7 +8860,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           yield* markStoppedRun({ ...input, thread, run });
         }
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued") continue;
+        // Stop discards the provider's wake buffer, so its queued placeholders cannot resume.
+        if (bufferedMessageIds.has(run.userMessageId)) {
+          yield* dispatchQueuedRunCancel(
+            {
+              type: "queued-run.cancel",
+              commandId: input.command.commandId,
+              threadId: thread.id,
+              runId: run.id,
+            },
+            input.events,
+          );
+          continue;
+        }
+        if (run.queueHeld === true) continue;
         yield* emitEvent({
           type: "run.updated",
           threadId: thread.id,

@@ -225,6 +225,62 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["thread.stop", "run.interrupt"] as const)(
+  "%s cancels buffered wakes and preserves durable queued messages",
+  (type) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`thread:stop-buffered:${type}`);
+      yield* createWatchingThread(threadId, 5);
+      yield* send(threadId, "active", "start_immediately");
+      yield* send(threadId, "user follow-up", "queue_after_active");
+      for (const creationSource of ["provider", "server"] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`notification:${type}:${creationSource}`),
+          threadId,
+          messageId: MessageId.make(`notification:${type}:${creationSource}`),
+          text: "Background activity updated",
+          attachments: [],
+          createdBy: "agent",
+          creationSource,
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: "Background activity updated",
+          },
+          dispatchMode: { type: "queue_after_active" },
+        });
+      }
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const buffered = before.runs.find((run) =>
+        before.messages.some(
+          (message) => message.id === run.userMessageId && message.creationSource === "provider",
+        ),
+      )!;
+      const stop = { commandId: CommandId.make(`stop:${type}`), threadId };
+      yield* orchestrator.dispatch(
+        type === "run.interrupt"
+          ? { ...stop, type, runId: before.runs[0]!.id, holdQueue: true }
+          : { ...stop, type },
+      );
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(stopped.runs.find((run) => run.id === buffered.id)?.status, "cancelled");
+      assert.equal(
+        stopped.attempts.find((attempt) => attempt.runId === buffered.id)?.status,
+        "cancelled",
+      );
+      assert.equal(
+        stopped.nodes.find((node) => node.id === buffered.rootNodeId)?.status,
+        "cancelled",
+      );
+      assert.deepEqual(
+        stopped.runs.filter((run) => run.status === "queued").map((run) => run.queueHeld),
+        [true, true],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
   () =>
