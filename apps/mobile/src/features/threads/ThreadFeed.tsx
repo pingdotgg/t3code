@@ -94,7 +94,10 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { Image as ExpoImage } from "expo-image";
+import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
+import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { messageImageGallery } from "./messageImageGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -457,6 +460,7 @@ function MessageAttachmentImage(props: {
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  const imageStyle = useResolveClassNames(props.className);
 
   if (uri === null) {
     return (
@@ -490,10 +494,11 @@ function MessageAttachmentImage(props: {
           )
         }
       >
-        <Image
-          source={{ uri }}
-          className={props.className}
-          resizeMode="cover"
+        <ExpoImage
+          source={assetImageSource(props.environmentId, resource, uri)}
+          cachePolicy="memory-disk"
+          style={imageStyle}
+          contentFit="cover"
           onLoad={() => {
             retriedImage.current = false;
           }}

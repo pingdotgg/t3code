@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   attachmentFileExtension,
+  chatAttachmentStableKey,
   createAttachmentId,
   createDeterministicAttachmentId,
   createPendingAttachmentId,
@@ -28,6 +29,27 @@ describe("attachmentStore", () => {
     expect(first).toBe(retry);
     expect(next).not.toBe(first);
     expect(first && parseThreadSegmentFromAttachmentId(first)).toBe("thread-1");
+  });
+
+  it("gives a queued edit's new image its own id instead of an earlier image's", () => {
+    const imageA = new Uint8Array([1, 2, 3]);
+    const imageB = new Uint8Array([4, 5, 6]);
+    const sent = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageA),
+    );
+    const retried = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageA),
+    );
+    // Editing the queued message keeps its id, and the new upload is first in its batch.
+    const edited = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageB),
+    );
+
+    expect(retried).toBe(sent);
+    expect(edited).not.toBe(sent);
   });
 
   it("keeps deterministic ids distinct when sanitized thread segments collide", () => {

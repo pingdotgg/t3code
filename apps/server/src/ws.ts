@@ -185,7 +185,11 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
+} from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -398,7 +402,10 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
           message: `Attachment ${attachment.name} size does not match its payload.`,
         });
       }
-      const rawId = createDeterministicAttachmentId(input.threadId, `${input.messageId}:${index}`);
+      const rawId = createDeterministicAttachmentId(
+        input.threadId,
+        chatAttachmentStableKey(input.messageId, index, bytes),
+      );
       if (rawId === null) {
         return yield* new PersistChatAttachmentsError({
           message: "Could not allocate an attachment identifier.",

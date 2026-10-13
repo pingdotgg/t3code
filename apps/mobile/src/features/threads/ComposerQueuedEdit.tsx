@@ -5,6 +5,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
+import { assetImageSource } from "../../lib/assetImageSource";
 
 /**
  * The composer is shared, so editing a queued message needs a visible way back
@@ -75,24 +76,21 @@ function QueuedEditAttachmentChip(props: {
 }) {
   const { attachment } = props;
   const isImage = attachment.mimeType.startsWith("image/");
-  const url = useAssetUrl(
-    props.environmentId,
-    isImage
-      ? {
-          _tag: "attachment",
-          attachmentId: attachment.id,
-          fileName: attachment.name,
-          mimeType: attachment.mimeType,
-          disposition: "inline",
-        }
-      : null,
-  );
+  const resource = {
+    _tag: "attachment",
+    attachmentId: attachment.id,
+    fileName: attachment.name,
+    mimeType: attachment.mimeType,
+    disposition: "inline",
+  } as const;
+  const url = useAssetUrl(props.environmentId, isImage ? resource : null);
 
   return (
     <View className="max-w-[180px] flex-row items-center gap-2 rounded-xl border border-border bg-card py-1 pl-1 pr-2">
       {isImage && url !== null ? (
         <Image
-          source={{ uri: url }}
+          source={assetImageSource(props.environmentId, resource, url)}
+          cachePolicy="memory-disk"
           contentFit="cover"
           style={{ width: 24, height: 24, borderRadius: 6 }}
           accessibilityIgnoresInvertColors
