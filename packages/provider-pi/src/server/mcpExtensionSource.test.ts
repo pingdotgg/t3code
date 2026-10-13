@@ -25,9 +25,12 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  env: Record<string, string> = {},
+) {
   const handlers = new Map<string, unknown>();
-  // Execute the shipped extension with MCP disabled; this path needs no Typebox.
+  // Execute the shipped extension without registering MCP tools; no Typebox needed.
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -35,7 +38,11 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env },
+    AbortSignal,
+    fetch: async () => {
+      throw new Error("MCP unavailable in this test");
+    },
     NodeFSP,
     NodePath,
     // Frontmatter parsing belongs to Pi. These fixtures contain only skill bodies.
@@ -47,6 +54,62 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   });
   return handlers;
 }
+
+type PromptEvent = {
+  systemPrompt: string;
+  systemPromptOptions?: { sections?: Record<string, string> | null };
+  messageType?: "user" | "custom";
+};
+
+type PromptHook = (event: PromptEvent) => { systemPrompt: string } | undefined;
+
+async function loadPromptHook(): Promise<PromptHook> {
+  const handlers = await loadHooks([], {
+    T3_MCP_URL: "http://fixture.invalid/mcp",
+    T3_MCP_BEARER_TOKEN: "fixture-token",
+  });
+  const hook = handlers.get("before_agent_start");
+  assert.isDefined(hook);
+  return hook as PromptHook;
+}
+
+describe("Pi orchestration prompt section", () => {
+  it.each(["user", "custom"] as const)(
+    "adds guidance without forcing the prompt for %s turns",
+    async (messageType) => {
+      const hook = await loadPromptHook();
+      const sections: Record<string, string> = { existing: "keep me" };
+      const options = { sections };
+      const event = { systemPrompt: "base", systemPromptOptions: options, messageType };
+
+      assert.isUndefined(hook(event));
+      assert.strictEqual(options.sections, sections);
+      assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+      assert.equal(sections.existing, "keep me");
+      assert.equal(event.systemPrompt, "base");
+
+      // Repeated turns replace this section rather than accumulating instructions.
+      const guidance = sections.t3_code_orchestration;
+      assert.isUndefined(hook(event));
+      assert.equal(sections.t3_code_orchestration, guidance);
+      assert.equal(Object.keys(sections).length, 2);
+    },
+  );
+
+  it("keeps the appended-prompt fallback on Pi builds without sections", async () => {
+    const hook = await loadPromptHook();
+    for (const event of [
+      { systemPrompt: "base" },
+      { systemPrompt: "base", systemPromptOptions: {} },
+      { systemPrompt: "base", systemPromptOptions: { sections: null } },
+    ]) {
+      const result = hook(event);
+      assert.isDefined(result);
+      assert.isTrue(result!.systemPrompt.startsWith("base\n\n"));
+      assert.include(result!.systemPrompt, "orchestrator_capabilities");
+    }
+  });
+});
 
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
