@@ -814,6 +814,8 @@ export const layer = Layer.effect(
                 }),
               )
             : yield* Effect.exit(
+                // No modelSelection: the run follows the thread's current
+                // provider and model, not the one the task was created with.
                 threadManagement.sendToThread({
                   projectId: active.projectId,
                   commandId,
@@ -822,7 +824,6 @@ export const layer = Layer.effect(
                   scheduledTaskId: active.id,
                   text: prompt,
                   attachments: [],
-                  modelSelection: active.modelSelection,
                   // Scheduled prompts must not interrupt tools in the bound thread.
                   mode: "queue",
                   createdBy: active.createdBy,
