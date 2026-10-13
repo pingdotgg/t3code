@@ -113,7 +113,7 @@ import {
   hasForwardedAuthorityHeaders,
   isAllowedEndpointOrigin,
   isSupportedLinkProviderKind,
-  linkProofIssuedAt,
+  linkProofLifetime,
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
@@ -121,7 +121,6 @@ import {
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
-const LINK_PROOF_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
@@ -642,7 +641,7 @@ const make = Effect.gen(function* () {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
-    const issuedAt = linkProofIssuedAt({
+    const lifetime = linkProofLifetime({
       challenge: request.challenge,
       nowSeconds: Math.floor(now.epochMilliseconds / 1_000),
     });
@@ -652,8 +651,8 @@ const make = Effect.gen(function* () {
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
       jti: yield* crypto.randomUUIDv4(),
-      iat: issuedAt,
-      exp: issuedAt + LINK_PROOF_LIFETIME_SECONDS,
+      iat: lifetime.iat,
+      exp: lifetime.exp,
       challenge: request.challenge,
       descriptor,
       environmentId: descriptor.environmentId,

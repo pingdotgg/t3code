@@ -1,14 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
-import * as NodeCrypto from "node:crypto";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
 
 import {
   isSupportedLinkProviderKind,
-  linkProofIssuedAt,
+  linkProofLifetime,
   linkProofScopes,
   parseManagedEndpointLocalOrigin,
 } from "./linkChecks.ts";
@@ -75,26 +74,27 @@ describe("link proof provider kinds", () => {
   });
 });
 
-describe("linkProofIssuedAt", () => {
+describe("linkProofLifetime", () => {
   const relayIssuer = "https://relay.example.test";
-  const relayKeys = NodeCrypto.generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { format: "pem", type: "pkcs8" },
-    publicKeyEncoding: { format: "pem", type: "spki" },
-  });
-  const environmentKeys = NodeCrypto.generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { format: "pem", type: "pkcs8" },
-    publicKeyEncoding: { format: "pem", type: "spki" },
+  const pemKeyPair = Effect.promise(async () => {
+    const { privateKey, publicKey } = await generateKeyPair("EdDSA", { extractable: true });
+    return { privateKey: await exportPKCS8(privateKey), publicKey: await exportSPKI(publicKey) };
   });
   const relayNow = 1_800_000_000;
   const hostNow = relayNow + 10 * 60;
 
-  const relayChallenge = signRelayJwt({
-    privateKey: relayKeys.privateKey,
-    typ: "t3-link-challenge+jwt",
-    payload: { iss: relayIssuer, aud: relayIssuer, iat: relayNow, exp: relayNow + 300 },
-  });
+  const relayChallenge = (payload: { readonly iat?: number }) =>
+    pemKeyPair.pipe(
+      Effect.flatMap((relayKeys) =>
+        signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: "t3-link-challenge+jwt",
+          payload: { iss: relayIssuer, aud: relayIssuer, ...payload },
+        }),
+      ),
+    );
 
-  const verifyAtRelay = (iat: number) =>
+  const verifyAtRelay = (environmentKeys: { privateKey: string; publicKey: string }, iat: number) =>
     signRelayJwt({
       privateKey: environmentKeys.privateKey,
       typ: RELAY_LINK_PROOF_TYP,
@@ -115,26 +115,23 @@ describe("linkProofIssuedAt", () => {
 
   it.effect("dates the proof on the relay's clock when the host clock runs fast", () =>
     Effect.gen(function* () {
-      const challenge = yield* relayChallenge;
-      const iat = linkProofIssuedAt({ challenge, nowSeconds: hostNow });
+      const environmentKeys = yield* pemKeyPair;
+      const challenge = yield* relayChallenge({ iat: relayNow });
+      const { iat, exp } = linkProofLifetime({ challenge, nowSeconds: hostNow });
 
-      expect(iat).toBe(relayNow);
-      expect(Result.isSuccess(yield* verifyAtRelay(iat))).toBe(true);
+      expect({ iat, exp }).toEqual({ iat: relayNow, exp: relayNow + 300 });
+      expect(Result.isSuccess(yield* verifyAtRelay(environmentKeys, iat))).toBe(true);
       // The host clock alone puts `iat` in the relay's future, which it rejects.
-      expect(Result.isFailure(yield* verifyAtRelay(hostNow))).toBe(true);
+      expect(Result.isFailure(yield* verifyAtRelay(environmentKeys, hostNow))).toBe(true);
     }),
   );
 
   it.effect("falls back to the host clock when the challenge has no usable iat", () =>
     Effect.gen(function* () {
-      const withoutIat = yield* signRelayJwt({
-        privateKey: relayKeys.privateKey,
-        typ: "t3-link-challenge+jwt",
-        payload: { iss: relayIssuer },
-      });
+      const withoutIat = yield* relayChallenge({});
 
-      expect(linkProofIssuedAt({ challenge: "not-a-jwt", nowSeconds: hostNow })).toBe(hostNow);
-      expect(linkProofIssuedAt({ challenge: withoutIat, nowSeconds: hostNow })).toBe(hostNow);
+      expect(linkProofLifetime({ challenge: "not-a-jwt", nowSeconds: hostNow }).iat).toBe(hostNow);
+      expect(linkProofLifetime({ challenge: withoutIat, nowSeconds: hostNow }).iat).toBe(hostNow);
     }),
   );
 });
