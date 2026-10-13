@@ -39,7 +39,7 @@ import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
-import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
+import { type PullRequestTestThread, v2PullRequestThread } from "./testkit/pullRequestFixtures.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("sync-project");
@@ -161,6 +161,17 @@ function makeSummary(
     updatedAt: "2026-08-27T00:00:00.000Z",
     ...overrides,
   };
+}
+
+/** How a host answers for a pull request it cannot find, such as one in a deleted repository. */
+function notFound(input: PullRequestRef) {
+  return Effect.fail(
+    new PullRequestOperationError({
+      operation: "summary",
+      detail: `GitHub could not find ${input.repository}#${input.number}.`,
+      reason: "not-found",
+    }),
+  );
 }
 
 interface HarnessOptions {
@@ -361,6 +372,16 @@ function commandRan(threadId: ThreadId, input: string): OrchestrationV2DomainEve
       type: "command_execution",
       input,
     },
+  };
+}
+
+function pullRequestsSynced(thread: PullRequestTestThread): OrchestrationV2DomainEvent {
+  return {
+    type: "thread.pull-request-synced",
+    id: EventId.make(`event:${thread.id}:pull-requests`),
+    threadId: thread.id,
+    occurredAt: DateTime.makeUnsafe(NOW),
+    payload: { ...v2PullRequestThread(thread), lastVisitedAt: null },
   };
 }
 
@@ -863,7 +884,11 @@ describe("PullRequestSyncReactor", () => {
             makeThread("settled", {
               settledOverride: "settled",
               settledAt: "2026-08-21T00:00:00.000Z",
-              pullRequests: [makeLink(5, { state: "open" }), makeLink(6, { state: "closed" })],
+              pullRequests: [
+                makeLink(5, { state: "open" }),
+                makeLink(6, { state: "closed" }),
+                makeLink(7),
+              ],
             }),
           ]),
         });
@@ -884,7 +909,7 @@ describe("PullRequestSyncReactor", () => {
           yield* sweepAgain(fixture, reactor);
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number).toSorted(),
-            [5, 6],
+            [5, 6, 7],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -971,11 +996,161 @@ describe("PullRequestSyncReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          yield* startAndSweep(fixture);
+          const reactor = yield* startAndSweep(fixture);
 
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
             [8],
+          );
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).filter((call) => call.number === 7).length,
+            2,
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect(
+    "asks every fifteen minutes for pull requests the host cannot find, until it finds them",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const found = yield* Ref.make(false);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread("renamed", {
+                pullRequests: [makeLink(9), makeLink(10, { state: "open" })],
+              }),
+            ]),
+            summary: (input) =>
+              Ref.get(found).pipe(
+                Effect.flatMap((isFound) =>
+                  isFound ? Effect.succeed(makeSummary(input)) : notFound(input),
+                ),
+              ),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+            for (let index = 0; index < 14; index += 1) yield* sweepAgain(fixture, reactor);
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+
+            // The repository is back, so its open pull requests return to the per-minute reads.
+            yield* Ref.set(found, true);
+            yield* sweepAgain(fixture, reactor);
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.summaryCalls))
+                .map((call) => call.number)
+                .toSorted((left, right) => left - right),
+              [9, 9, 10, 10],
+            );
+            const commands = yield* Ref.get(fixture.syncCommands);
+            yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 6);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
+  it.effect("keeps the slow cadence for a missing pull request whose stack read failed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const found = yield* Ref.make(true);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("renamed", { pullRequests: [makeLink(4)] })]),
+          summary: (input) =>
+            Ref.get(found).pipe(
+              Effect.flatMap((isFound) =>
+                isFound ? Effect.succeed(makeSummary(input)) : notFound(input),
+              ),
+            ),
+          stack: () =>
+            Effect.fail(new PullRequestOperationError({ operation: "stack", detail: "host down" })),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          // The next sweep retries the failed stack read, and finds the repository gone.
+          yield* Ref.set(found, false);
+          for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("stops asking for a requested pull request once the host cannot find it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("settled", {
+              settledOverride: "settled",
+              settledAt: "2026-08-21T00:00:00.000Z",
+              pullRequests: [makeLink(5, { state: "open" })],
+            }),
+          ]),
+          summary: notFound,
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* Queue.offer(fixture.stateChanges, {
+            host: "github.com",
+            repository: "owner/repository",
+            number: 5,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+
+          for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a missing pull request again for a reader, not for another link's sync", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("renamed", { pullRequests: [makeLink(9)] })]),
+          summary: (input) =>
+            input.number === 9 ? notFound(input) : Effect.succeed(makeSummary(input)),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          // Linking another pull request syncs the thread's links, the unreadable one included.
+          const linked = makeThread("renamed", { pullRequests: [makeLink(9), makeLink(8)] });
+          yield* Ref.set(fixture.snapshots, makeSnapshot([linked], 2));
+          yield* Queue.offer(fixture.domainEvents, pullRequestsSynced(linked));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [9, 8],
+          );
+
+          yield* Queue.offer(fixture.stateChanges, {
+            host: "github.com",
+            repository: "owner/repository",
+            number: 9,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [9, 8, 9],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

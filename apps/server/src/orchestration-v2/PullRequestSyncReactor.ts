@@ -166,22 +166,27 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
+  // Pull requests the host last answered it cannot find, such as one in a deleted repository.
+  const missing = new Set<string>();
   // Rate limit pauses by project and host, since each project reads with its own credential.
   // A paused host refuses every read without asking it, so the sweep leaves its pull requests
   // due until the pause ends rather than failing each of them every minute.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
-    if (requested.has(key) || retryStacks.has(key)) return true;
-    if (entries.some((entry) => entry.link.snapshot === null)) return true;
+    if (requested.has(key) || (retryStacks.has(key) && !missing.has(key))) return true;
     // Settled threads stop watching their pull requests. Unsettling one makes its links due on
     // the next sweep, since the cadence clock below kept running while it was settled.
     const active = entries.filter((entry) => isUnsettled(entry.thread));
+    if (active.length === 0) return false;
+    // Closed requests can reopen on the host, and a missing one can come back.
+    const last = lastSyncedAt.get(key);
+    const slowDue = last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    if (missing.has(key)) return slowDue;
+    if (active.some((entry) => entry.link.snapshot === null)) return true;
     if (active.every((entry) => entry.link.snapshot?.state === "merged")) return false;
     if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
-    // Closed requests can reopen on the host.
-    const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    return slowDue;
   };
 
   const logSkipped =
@@ -208,6 +213,7 @@ export const make = Effect.gen(function* () {
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of missing) if (!groups.has(key)) missing.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     // Layers auto-linked this sweep, so two links of one thread that share a
@@ -286,7 +292,19 @@ export const make = Effect.gen(function* () {
       };
       const generation = requested.get(key);
       if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
+        Effect.tapError((error) =>
+          error._tag === "PullRequestOperationError" && error.reason === "not-found"
+            ? // The host answered, so the request is done and the cadence clock ticks.
+              Effect.sync(() => {
+                missing.add(key);
+                lastSyncedAt.set(key, nowMs);
+                if (requested.get(key) === generation) requested.delete(key);
+              })
+            : Effect.void,
+        ),
+      );
+      missing.delete(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||
@@ -440,10 +458,11 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         switch (event.type) {
+          // Another link's sync is no reason to ask again for one the host cannot find.
           case "thread.pull-request-synced":
             return Effect.forEach(
               visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
-                (link) => link.snapshot === null,
+                (link) => link.snapshot === null && !missing.has(threadPullRequestKeyOf(link)),
               ),
               requestSync,
               { discard: true },
