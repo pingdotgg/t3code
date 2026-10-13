@@ -1205,6 +1205,10 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: configConcurrency,
     }),
     updateSettings,
+    getSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-settings",
+      tag: WS_METHODS.serverGetSettings,
+    }),
     // Provider-instance mutations share the settings command and its
     // environment-serial scheduler. The named boundary keeps clients on the
     // atomic map-entry payload instead of rebuilding a stale whole map.

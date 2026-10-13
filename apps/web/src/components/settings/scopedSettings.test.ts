@@ -4,16 +4,19 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
-  type ServerSettings,
+  ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   listProjectOverrides,
+  createScopedSettingsWriter,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -24,6 +27,9 @@ import {
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+
+const decodeSettings = Schema.decodeSync(ServerSettings);
+const encodeSettings = Schema.encodeSync(ServerSettings);
 
 function environment(
   id: string,
@@ -102,6 +108,496 @@ const checkout = resolveSettingsScope(
   [group],
   environments,
 );
+
+function scopedWriter(initial = server.serverConfig!.settings) {
+  let stored = initial;
+  let snapshot: ServerSettings | null = initial;
+  const responses: ServerSettings[] = [];
+  const write = createScopedSettingsWriter();
+  const read = vi.fn<Parameters<typeof write>[2]>(async () => ({
+    _tag: "Success",
+    value: stored,
+  }));
+  const persistClient = vi.fn();
+  const commit = async ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+    stored = applyServerSettingsPatch(stored, input.patch);
+    responses.push(stored);
+    return { _tag: "Success" as const, value: stored };
+  };
+  const persist = vi.fn(commit);
+  const run = (planner: Parameters<typeof write>[1]) =>
+    write(
+      [environment("Server", { settings: snapshot ?? initial })],
+      planner,
+      read,
+      persist,
+      persistClient,
+    );
+  const edit = (patch: ServerSettingsPatch) =>
+    run((current) => planScopedSettingsPatch(checkout, current, patch));
+  const clear = (keys: Parameters<typeof planScopedSettingsClear>[2]) =>
+    run((current) => planScopedSettingsClear(checkout, current, keys));
+  return {
+    run,
+    edit,
+    clear,
+    read,
+    persistClient,
+    persist,
+    commit,
+    responses,
+    stored: () => stored,
+    push: (settings: ServerSettings | null) => {
+      snapshot = settings;
+    },
+  };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function configPush(settings: ServerSettings) {
+  return decodeSettings(encodeSettings(settings));
+}
+
+describe("queued scoped settings writes", () => {
+  it("preserves another client's edit after a coalesced toggle cycle", async () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+    });
+    const writes = scopedWriter(initial);
+    await writes.edit({ defaultAutoPull: true });
+    await writes.edit({ defaultAutoPull: false });
+    writes.push(configPush(writes.stored()));
+    const other = await writes.commit({
+      input: { patch: { projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } } },
+    });
+    writes.push(configPush(other.value));
+    await writes.edit({ defaultThreadEnvMode: "local" });
+    expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      defaultThreadEnvMode: "local",
+    });
+    expect(writes.stored()).toEqual(writes.responses.at(-1));
+  });
+
+  it.each(["reset", "toggle"])(
+    "keeps a rapid %s when an older matching push arrives before its response",
+    async (operation) => {
+      const writes = scopedWriter();
+      await writes.edit(
+        operation === "reset" ? { removeAgentCreditsOnMerge: true } : { defaultAutoPull: true },
+      );
+      await writes.edit({ defaultAutoPull: operation === "reset" });
+      const [earlier, intermediate] = writes.responses;
+      writes.persist.mockImplementationOnce(async (request) => {
+        writes.push(configPush(earlier!));
+        return writes.commit(request);
+      });
+      if (operation === "reset") await writes.clear(["defaultAutoPull"]);
+      else await writes.edit({ defaultAutoPull: true });
+      writes.push(configPush(intermediate!));
+      await writes.edit({ defaultThreadEnvMode: "local" });
+      expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+        ...(operation === "reset"
+          ? { removeAgentCreditsOnMerge: true }
+          : { defaultAutoPull: true }),
+        defaultThreadEnvMode: "local",
+      });
+      expect(writes.stored()).toEqual(writes.responses.at(-1));
+      writes.push(configPush(writes.stored()));
+    },
+  );
+
+  it.each(["edit", "reset"])(
+    "accepts a batched acknowledgement of an %s that includes another writer's fields",
+    async (operation) => {
+      const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultAutoPull: true,
+            ...(operation === "reset" ? { removeAgentCreditsOnMerge: true } : {}),
+          },
+        },
+      });
+      const writes = scopedWriter(initial);
+      writes.persist.mockImplementationOnce(async (request) => {
+        const result = await writes.commit(request);
+        const newer = await writes.commit({
+          input: {
+            patch: {
+              projectSettingsOverrides: {
+                [projectId]: {
+                  ...result.value.projectSettingsOverrides[projectId],
+                  defaultThreadEnvMode: "local",
+                },
+              },
+            },
+          },
+        });
+        writes.push(configPush(newer.value));
+        return result;
+      });
+      if (operation === "reset") await writes.clear(["removeAgentCreditsOnMerge"]);
+      else await writes.edit({ removeAgentCreditsOnMerge: true });
+      await writes.edit({ defaultAutoPull: false });
+      expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: false,
+        defaultThreadEnvMode: "local",
+        ...(operation === "edit" ? { removeAgentCreditsOnMerge: true } : {}),
+      });
+      expect(writes.stored()).toEqual(writes.responses.at(-1));
+    },
+  );
+
+  it("rebases queued edits on the response after an unrelated push during the save", async () => {
+    const writes = scopedWriter();
+    writes.persist.mockImplementationOnce(async (request) => {
+      const external = await writes.commit({
+        input: { patch: { enableProviderUpdateChecks: false } },
+      });
+      writes.push(configPush(external.value));
+      return writes.commit(request);
+    });
+    await Promise.all([
+      writes.edit({ defaultAutoPull: true }),
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+    ]);
+    expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.stored()).toEqual(writes.responses.at(-1));
+    expect(writes.stored().enableProviderUpdateChecks).toBe(false);
+  });
+
+  it("respects an external reset after acknowledgement but before the response arrives", async () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    const writes = scopedWriter(initial);
+    writes.persist.mockImplementationOnce(async (request) => {
+      const result = await writes.commit(request);
+      writes.push(configPush(result.value));
+      const reset = await writes.commit({
+        input: { patch: { projectSettingsOverrides: initial.projectSettingsOverrides } },
+      });
+      writes.push(configPush(reset.value));
+      return result;
+    });
+    await Promise.all([
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+      writes.edit({ defaultThreadEnvMode: "local" }),
+    ]);
+    expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      defaultThreadEnvMode: "local",
+    });
+    expect(writes.stored()).toEqual(writes.responses.at(-1));
+    writes.push(configPush(writes.stored()));
+  });
+
+  it("preserves a completed save while the config push is still pending", async () => {
+    const writes = scopedWriter();
+    await writes.edit({ defaultAutoPull: true });
+    await writes.edit({ removeAgentCreditsOnMerge: true });
+    expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.stored()).toEqual(writes.responses[1]);
+  });
+
+  it.each(["failure", "rejection"])("continues after a fresh settings read %s", async (failure) => {
+    const writes = scopedWriter();
+    writes.read.mockImplementationOnce(async () => {
+      const error = new Error("Disconnected");
+      if (failure === "rejection") throw error;
+      return { _tag: "Failure", cause: Cause.fail(error) };
+    });
+    const results = await Promise.all([
+      writes.edit({ defaultAutoPull: true }),
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+    ]);
+    expect(results[0]?.failedEnvironments[0]?.message).toBe("Disconnected");
+    expect(results[1]?.savedEnvironmentCount).toBe(1);
+    expect(writes.persist).toHaveBeenCalledTimes(1);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("persists client preferences immediately while a server save is pending", async () => {
+    const writes = scopedWriter();
+    const started = deferred();
+    const release = deferred();
+    writes.persist.mockImplementationOnce(async (request) => {
+      started.resolve();
+      await release.promise;
+      return writes.commit(request);
+    });
+    const first = writes.edit({ defaultAutoPull: true });
+    await started.promise;
+    await writes.run((current) =>
+      planScopedSettingsPatch(checkout, current, { diffIgnoreWhitespace: false }),
+    );
+    expect(writes.persistClient).toHaveBeenCalledExactlyOnceWith({
+      diffIgnoreWhitespace: false,
+    });
+    expect(writes.read).toHaveBeenCalledTimes(1);
+    release.resolve();
+    await first;
+  });
+
+  it("ignores an intermediate config push until it catches up with the latest save", async () => {
+    const writes = scopedWriter();
+    await writes.edit({ defaultAutoPull: true });
+    await writes.edit({ removeAgentCreditsOnMerge: true });
+    writes.push(configPush(writes.responses[0]!));
+    await writes.edit({ defaultThreadEnvMode: "local" });
+    expect(writes.responses[2]?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+      defaultThreadEnvMode: "local",
+    });
+    expect(writes.stored()).toEqual(writes.responses[2]);
+  });
+
+  it("uses fresh server settings after the config push catches up", async () => {
+    const writes = scopedWriter();
+    await writes.edit({ defaultAutoPull: true });
+    writes.push(configPush(writes.stored()));
+    await writes.edit({ removeAgentCreditsOnMerge: true });
+    const external = await writes.commit({
+      input: {
+        patch: {
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+        },
+      },
+    });
+    writes.push(configPush(external.value));
+    await writes.edit({ defaultThreadEnvMode: "local" });
+    expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: false,
+      defaultThreadEnvMode: "local",
+    });
+    expect(writes.stored()).toEqual(writes.responses.at(-1));
+  });
+
+  it("does not restore another client's reset to an earlier snapshot", async () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    const writes = scopedWriter(initial);
+    await writes.edit({ removeAgentCreditsOnMerge: true });
+    writes.push(configPush(writes.stored()));
+    const reset = await writes.commit({
+      input: {
+        patch: {
+          projectSettingsOverrides: initial.projectSettingsOverrides,
+        },
+      },
+    });
+    writes.push(configPush(reset.value));
+    await writes.edit({ defaultThreadEnvMode: "local" });
+    expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      defaultThreadEnvMode: "local",
+    });
+    expect(writes.stored()).toEqual(writes.responses.at(-1));
+  });
+
+  it.each([project, checkout])(
+    "preserves both overrides from rapid edits at $kind scope",
+    async (scope) => {
+      const writes = scopedWriter();
+      const started = deferred();
+      const release = deferred();
+      writes.persist.mockImplementationOnce(async (request) => {
+        started.resolve();
+        await release.promise;
+        return writes.commit(request);
+      });
+      const first = writes.run((current) =>
+        planScopedSettingsPatch(scope, current, { defaultAutoPull: true }),
+      );
+      const second = writes.run((current) =>
+        planScopedSettingsPatch(scope, current, { removeAgentCreditsOnMerge: true }),
+      );
+      await started.promise;
+      expect(writes.persist).toHaveBeenCalledTimes(1);
+      expect(writes.read).toHaveBeenCalledTimes(1);
+      release.resolve();
+      const results = await Promise.all([first, second]);
+      expect(results.map((result) => result.savedEnvironmentCount)).toEqual([1, 1]);
+      expect(writes.responses[0]?.projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: true,
+      });
+      expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: true,
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(writes.stored()).toEqual(writes.responses[1]);
+      expect(writes.read).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("keeps a queued reset from erasing an earlier edit", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+      writes.clear(["defaultAutoPull"]),
+    ]);
+    expect(writes.responses[0]?.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.stored()).toEqual(writes.responses[1]);
+  });
+
+  it("keeps a queued edit from restoring a reset override", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.clear(["defaultAutoPull"]),
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+    ]);
+    expect(writes.responses[0]?.projectSettingsOverrides[projectId]).toBeUndefined();
+    expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.stored()).toEqual(writes.responses[1]);
+  });
+
+  it("rebases the environment chain popover's reset on an earlier project edit", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+      writes.run((current) =>
+        planProjectOverridesClear(
+          current,
+          [{ environmentId: server.environmentId, projectId }],
+          ["defaultAutoPull"],
+        ),
+      ),
+    ]);
+    expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(writes.stored()).toEqual(writes.responses[1]);
+  });
+
+  it("preserves earlier edits to object-valued overrides", async () => {
+    const writes = scopedWriter();
+    await Promise.all([
+      writes.edit({ sourceControlWritingStyle: { customInstructions: "Keep it brief." } }),
+      writes.edit({ sourceControlWritingStyle: { followChangeRequestTemplates: false } }),
+    ]);
+    expect(writes.responses[1]?.projectSettingsOverrides[projectId]).toEqual({
+      sourceControlWritingStyle: {
+        ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+        customInstructions: "Keep it brief.",
+        followChangeRequestTemplates: false,
+      },
+    });
+    expect(writes.stored()).toEqual(writes.responses[1]);
+  });
+
+  it.each(["failure", "rejection"])(
+    "continues after a first save %s without applying the failed edit",
+    async (failure) => {
+      const initial = {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" as const } },
+      };
+      const writes = scopedWriter(initial);
+      const persist = vi.fn(async (request: Parameters<typeof writes.commit>[0]) => {
+        if (persist.mock.calls.length === 1) {
+          const error = new Error("Save failed");
+          if (failure === "rejection") throw error;
+          return { _tag: "Failure" as const, cause: Cause.fail(error) };
+        }
+        return writes.commit(request);
+      });
+      const write = createScopedSettingsWriter();
+      const edit = (patch: ServerSettingsPatch) =>
+        write(
+          [environment("Server", { settings: initial })],
+          (current) => planScopedSettingsPatch(checkout, current, patch),
+          writes.read,
+          persist,
+          vi.fn(),
+        );
+      const results = await Promise.all([
+        edit({ defaultAutoPull: true }),
+        edit({ removeAgentCreditsOnMerge: true }),
+      ]);
+      expect(results[0]?.failedEnvironments[0]?.message).toBe("Save failed");
+      expect(results[1]?.savedEnvironmentCount).toBe(1);
+      expect(writes.responses[0]?.projectSettingsOverrides[projectId]).toEqual({
+        defaultThreadEnvMode: "local",
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(writes.stored()).toEqual(writes.responses[0]);
+    },
+  );
+
+  it("does not block another environment while one save is pending", async () => {
+    const write = createScopedSettingsWriter();
+    const started = deferred();
+    const release = deferred();
+    const saved = new Map<EnvironmentId, ServerSettings>();
+    const persist = async (request: {
+      environmentId: EnvironmentId;
+      input: { patch: ServerSettingsPatch };
+    }) => {
+      if (request.environmentId === server.environmentId) {
+        started.resolve();
+        await release.promise;
+      }
+      const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, request.input.patch);
+      saved.set(request.environmentId, settings);
+      return { _tag: "Success" as const, value: settings };
+    };
+    const first = write(
+      [server],
+      (current) => planScopedSettingsPatch(named, current, { defaultAutoPull: true }),
+      async () => ({ _tag: "Success", value: DEFAULT_SERVER_SETTINGS }),
+      persist,
+      vi.fn(),
+    );
+    await started.promise;
+    const other = await write(
+      [laptop],
+      (current) => planScopedSettingsPatch(all, current, { defaultAutoPull: true }),
+      async () => ({ _tag: "Success", value: DEFAULT_SERVER_SETTINGS }),
+      persist,
+      vi.fn(),
+    );
+    expect(other.savedEnvironmentCount).toBe(1);
+    expect(saved.get(laptop.environmentId)?.defaultAutoPull).toBe(true);
+    expect(saved.has(server.environmentId)).toBe(false);
+    release.resolve();
+    await first;
+    expect(saved.get(server.environmentId)?.defaultAutoPull).toBe(true);
+  });
+});
 
 describe("scoped settings targets", () => {
   it("uses the named environment even when a different primary is available", () => {

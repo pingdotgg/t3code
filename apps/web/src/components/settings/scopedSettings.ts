@@ -389,6 +389,62 @@ export function planProjectOverridesClear(
   };
 }
 
+type ScopedSettingsServerResult =
+  | { readonly _tag: "Success"; readonly value: ServerSettings }
+  | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> };
+
+/** Queue planning and persistence together, since project entries replace whole overrides. */
+export function createScopedSettingsWriter() {
+  const queues = new Map<EnvironmentId, { tail: Promise<void> }>();
+  return (
+    environments: readonly ScopedSettingsEnvironment[],
+    plan: (
+      environments: readonly ScopedSettingsEnvironment[],
+    ) => ReturnType<typeof planScopedSettingsPatch>,
+    readServer: (environmentId: EnvironmentId) => Promise<ScopedSettingsServerResult>,
+    persistServer: (request: {
+      environmentId: EnvironmentId;
+      input: { patch: ServerSettingsPatch };
+    }) => Promise<ScopedSettingsServerResult>,
+    persistClient: (patch: ClientSettingsPatch) => void,
+  ) =>
+    persistScopedSettingsPatch(
+      plan(environments),
+      ({ environmentId }) => {
+        const queue = queues.get(environmentId) ?? { tail: Promise.resolve() };
+        queues.set(environmentId, queue);
+        const save = queue.tail.then(async () => {
+          // Config pushes can lag or be batched. Read the server after the preceding save
+          // rather than guessing whether a client snapshot includes it.
+          const current = await readServer(environmentId);
+          if (current._tag === "Failure") return current;
+          const rebased = environments.map((environment) =>
+            environment.environmentId === environmentId && environment.serverConfig
+              ? {
+                  ...environment,
+                  serverConfig: { ...environment.serverConfig, settings: current.value },
+                }
+              : environment,
+          );
+          const write = plan(rebased).serverWrites.find(
+            (write) => write.environmentId === environmentId,
+          )!;
+          return persistServer({ environmentId, input: { patch: write.patch } });
+        });
+        const settled = save.then(
+          () => {},
+          () => {},
+        );
+        queue.tail = settled;
+        void settled.then(() => {
+          if (queue.tail === settled) queues.delete(environmentId);
+        });
+        return save;
+      },
+      persistClient,
+    );
+}
+
 /** Wait for every target so a failed environment does not hide successful or later writes. */
 export async function persistScopedSettingsPatch(
   plan: ReturnType<typeof planScopedSettingsPatch>,
