@@ -59,6 +59,26 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("keeps the request namespace across credential reissue and splits it per thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const request = {
+      threadId: ThreadId.make("thread-restarted"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    };
+    const scopeOf = (issued: { readonly config: { readonly authorizationHeader: string } }) =>
+      registry.resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""));
+    const first = yield* scopeOf(yield* registry.issue(request));
+    const second = yield* scopeOf(yield* registry.issue(request));
+    const other = yield* scopeOf(
+      yield* registry.issue({ ...request, threadId: ThreadId.make("thread-other") }),
+    );
+    expect(second?.thread.providerSessionId).not.toBe(first?.thread.providerSessionId);
+    expect(second?.requestNamespace).toBe(first?.requestNamespace);
+    expect(other?.requestNamespace).not.toBe(first?.requestNamespace);
+  }),
+);
+
 it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);

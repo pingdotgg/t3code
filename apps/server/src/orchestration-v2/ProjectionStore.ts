@@ -275,7 +275,13 @@ export type ProjectionRuntimeRecoveryState = Pick<
   | "runtimeRequests"
   | "messages"
   | "turnItems"
->;
+> & {
+  /** Steering whose delivery was still queued in the outbox, per run. */
+  readonly pendingSteering?: ReadonlyArray<{
+    readonly runId: RunId;
+    readonly messageId: MessageId;
+  }>;
+};
 
 export type ProjectionPendingUserInputs = Pick<
   OrchestrationV2ThreadProjection,
@@ -651,6 +657,10 @@ function preserveRunRecordedFields(
     ...next,
     ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
       ? { delegatedCompletion: current.delegatedCompletion }
+      : {}),
+    ...(next.restartPendingMessageIds === undefined &&
+    current.restartPendingMessageIds !== undefined
+      ? { restartPendingMessageIds: current.restartPendingMessageIds }
       : {}),
     ...(next.restartCancelledBackgroundWork === undefined &&
     current.restartCancelledBackgroundWork !== undefined
@@ -1934,7 +1944,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
                 payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  keepRecordedRunField(
+                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                    "$.restartPendingMessageIds",
+                  ),
                   "$.restartCancelledBackgroundWork",
                 )}
             `;
@@ -4247,7 +4260,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeMessagePayload, threadId)(messageRows),
           decodeRows(decodeTurnItemPayload, threadId)(turnItemRows),
         ]);
+        // Delegated results are redelivered by their own cohort, not by the prompt.
+        const pendingSteering = yield* sql<{
+          readonly run_id: string;
+          readonly message_id: string;
+        }>`
+          SELECT message.run_id, message.message_id
+          FROM orchestration_v2_effect_outbox AS effect
+          JOIN orchestration_v2_projection_messages AS message
+            ON message.thread_id = effect.thread_id
+              AND message.message_id = json_extract(effect.payload_json, '$.messageId')
+          WHERE effect.thread_id = ${threadId} AND effect.effect_type = 'provider-turn.steer'
+            AND effect.status IN ('pending', 'running')
+            AND message.run_id IS NOT NULL
+            AND json_extract(message.payload_json, '$.delegatedCompletion') IS NULL
+          ORDER BY effect.rowid ASC
+        `;
         return {
+          pendingSteering: pendingSteering.map((row) => ({
+            runId: RunId.make(row.run_id),
+            messageId: MessageId.make(row.message_id),
+          })),
           thread,
           runs,
           attempts,

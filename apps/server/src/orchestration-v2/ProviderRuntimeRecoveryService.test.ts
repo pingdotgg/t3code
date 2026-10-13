@@ -643,6 +643,79 @@ it.effect("closes a secret request card's form when its run is recovered", () =>
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("records undelivered steering on the cancelled run and ends cut streams", () => {
+  const threadId = ThreadId.make("thread_steer_recovery");
+  const runId = RunId.make("run_steer_recovery");
+  const steerId = MessageId.make("message_steer_recovery");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: { id: threadId },
+    pendingSteering: [{ runId, messageId: steerId }],
+    runtimeRequests: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    messages: [],
+    turnItems: ["assistant_message", "reasoning", "proposed_plan"].map((type) => ({
+      id: `turn-item:${type}`,
+      threadId,
+      runId,
+      nodeId: null,
+      type,
+      status: "running",
+      streaming: true,
+    })),
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committedInput = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          listByCommandId: () => Effect.succeed([]),
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    const events = committedInput?.events ?? [];
+    const run = events.find((event) => event.type === "run.updated");
+    assert.equal(run?.type === "run.updated" ? run.payload.status : null, "cancelled");
+    assert.deepEqual(run?.type === "run.updated" ? run.payload.restartPendingMessageIds : null, [
+      steerId,
+    ]);
+    const items = events.flatMap((event) =>
+      event.type === "turn-item.updated" ? [event.payload] : [],
+    );
+    assert.lengthOf(items, 3);
+    for (const item of items) {
+      assert.equal(item.status, "cancelled");
+      assert.isFalse("streaming" in item ? item.streaming : true);
+    }
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("holds accepted queued work without cancelling its execution state after restart", () => {
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");

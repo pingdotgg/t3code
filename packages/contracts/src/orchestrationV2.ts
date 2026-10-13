@@ -561,6 +561,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** Steering input lost with a provider process, carried into the restart prompt. */
+  restartPendingMessageIds: Schema.optional(Schema.Array(MessageId)),
   /** The delegated task this run answers, including a follow-up in an existing child thread. */
   delegatedTaskId: Schema.optional(NodeId),
   /**

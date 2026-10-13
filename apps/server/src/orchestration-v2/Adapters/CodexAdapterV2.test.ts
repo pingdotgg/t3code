@@ -3256,6 +3256,154 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["active-goal", "no-goal"] as const)(
+    "a continuation Codex rejects as EmptyInput retries only on an active goal (%s)",
+    (state) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-restart-empty-input";
+          const nativeThreadId = "native-restart-empty-input";
+          const nativeTurnId = "turn-restart-empty-input";
+          const prompt = "Continue where you left off.";
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "unused",
+          }).slice(0, 5);
+          const turnParams = {
+            threadId: nativeThreadId,
+            cwd: "/workspace",
+            model: "gpt-5.4",
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "dangerFullAccess" },
+            summary: "detailed",
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "resume",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "resume",
+                frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+              {
+                type: "expect_outbound",
+                label: "empty continue",
+                frame: { id: 4, method: "turn/start", params: { ...turnParams, input: [] } },
+              },
+              {
+                type: "emit_inbound",
+                label: "empty continue",
+                frame: {
+                  id: 4,
+                  error: { code: -32603, message: "failed to submit turn input: EmptyInput" },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "read goal",
+                frame: { id: 5, method: "thread/goal/get", params: { threadId: nativeThreadId } },
+              },
+              {
+                type: "emit_inbound",
+                label: "read goal",
+                frame: {
+                  id: 5,
+                  result: {
+                    goal:
+                      state === "no-goal"
+                        ? null
+                        : {
+                            threadId: nativeThreadId,
+                            objective: "Finish the work",
+                            status: "active",
+                            tokenBudget: null,
+                            tokensUsed: 10,
+                            timeUsedSeconds: 3,
+                            createdAt: 1782622440,
+                            updatedAt: 1782622450,
+                          },
+                  },
+                },
+              },
+              ...(state === "active-goal"
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "prompted continue",
+                      frame: {
+                        id: 6,
+                        method: "turn/start",
+                        params: { ...turnParams, input: [{ type: "text", text: prompt }] },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "prompted continue",
+                      frame: {
+                        id: 6,
+                        result: {
+                          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                        },
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const resumed = yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          });
+          const started = yield* harness.runtime
+            .startTurn({
+              ...makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: resumed,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-restart-empty-input"),
+                text: prompt,
+              }),
+              restartContinuationOfRunId: RunId.make("run-before-restart"),
+            })
+            .pipe(Effect.result);
+          if (state === "active-goal") {
+            assert.equal(started._tag, "Success");
+            return;
+          }
+          assert.equal(started._tag, "Failure");
+          if (started._tag === "Failure") {
+            assert.nestedPropertyVal(
+              started.failure,
+              "cause.errorMessage",
+              "failed to submit turn input: EmptyInput",
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
     Effect.scoped(
       Effect.gen(function* () {

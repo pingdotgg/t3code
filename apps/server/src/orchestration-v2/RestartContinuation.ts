@@ -211,7 +211,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       input.threadId,
       ["messages", "turnItems"],
       {
-        messageIds: [source.userMessageId],
+        messageIds: [source.userMessageId, ...(source.restartPendingMessageIds ?? [])],
         turnItemRunIds: [source.id],
         turnItemTypes: ["run_interrupt_request"],
       },
@@ -227,6 +227,13 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       (message) => message.id === source.userMessageId,
     );
     if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
+    // Steering the provider never received before the process ended.
+    const pendingMessages = (source.restartPendingMessageIds ?? []).flatMap((id) =>
+      sourceRecords.messages.filter((message) => message.id === id),
+    );
+    const prompt = [CONTINUE_PROMPT, ...pendingMessages.map((message) => message.text)].join(
+      "\n\n",
+    );
     const note = restartContinuationNote(
       source,
       projection.runs,
@@ -237,10 +244,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
     const text =
       noteText === undefined
-        ? CONTINUE_PROMPT
-        : note.settled
+        ? prompt
+        : note.settled && pendingMessages.length === 0
           ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+          : `${noteText}\n\n${prompt}`;
     yield* threads
       .dispatch({
         type: "message.dispatch",
@@ -249,15 +256,20 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         messageId,
         text,
         // Shown as a work log row; the prompt the agent got is its detail.
-        notification: {
-          source: { kind: "system" },
-          outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
-          detail: text,
-        },
-        attachments: [],
+        // Carried steering stays a visible message so its attachments show.
+        ...(pendingMessages.length === 0
+          ? {
+              notification: {
+                source: { kind: "system" as const },
+                outcome: "updated" as const,
+                summary: note.settled
+                  ? "T3 Code restarted and stopped background work"
+                  : "T3 Code restarted and resumed this turn",
+                detail: text,
+              },
+            }
+          : {}),
+        attachments: pendingMessages.flatMap((message) => message.attachments),
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
         createdBy: "agent",

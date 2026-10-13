@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -609,5 +610,84 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([fork, descendant]),
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("surfaces steering still queued in the outbox and keeps its ids across run upserts", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("steering");
+    const runId = yield* createRun(threadId, "running");
+    const steer = (name: string) => {
+      const messageId = MessageId.make(`message:steering:${name}`);
+      return {
+        messageId,
+        effect: {
+          id: `effect:steering:${name}`,
+          commandId: CommandId.make(`command:steering:${name}`),
+          threadId,
+          request: {
+            type: "provider-turn.steer" as const,
+            providerSessionId: ProviderSessionId.make("session:steering"),
+            providerThreadId: ProviderThreadId.make("provider-thread:steering"),
+            providerTurnId: ProviderTurnId.make("provider-turn:steering"),
+            messageId,
+          },
+        },
+      };
+    };
+    const delivered = steer("delivered");
+    const queued = steer("queued");
+    for (const { messageId } of [delivered, queued]) {
+      yield* projections.apply({
+        id: EventId.make(`event:${messageId}`),
+        type: "message.updated",
+        threadId,
+        runId,
+        driver,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: messageId,
+          threadId,
+          runId,
+          nodeId: null,
+          role: "user",
+          text: "steer",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    yield* outbox.enqueue([delivered.effect]);
+    const claimed = yield* outbox.claimNext({ workerId: "worker:steering", leaseDurationMs: 1000 });
+    assert.isTrue(
+      yield* outbox.succeed({ effectId: delivered.effect.id, workerId: "worker:steering" }),
+    );
+    assert.isTrue(claimed._tag === "Some");
+    yield* outbox.enqueue([queued.effect]);
+
+    const before = yield* projections.getRuntimeRecoveryProjection(threadId);
+    assert.deepEqual(before.pendingSteering, [{ runId, messageId: queued.messageId }]);
+
+    const run = before.runs[0]!;
+    const apply = (payload: OrchestrationV2Run, name: string) =>
+      projections.apply({
+        id: EventId.make(`event:steering:${name}`),
+        type: "run.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload,
+      });
+    yield* apply({ ...run, restartPendingMessageIds: [queued.messageId] }, "record");
+    yield* apply({ ...run, status: "cancelled", completedAt: now }, "later-upsert");
+    const after = yield* projections.getRuntimeRecoveryProjection(threadId);
+    assert.deepEqual(after.runs[0]?.restartPendingMessageIds, [queued.messageId]);
   }).pipe(Effect.provide(layerTest)),
 );

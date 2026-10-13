@@ -86,6 +86,14 @@ command and message IDs prevent duplicate submissions after an outbox retry. Cod
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.
 
+Steering is process-bound, so a steer still queued when the process ended never reached
+the provider. Recovery records its message ids on the cancelled run
+(`restartPendingMessageIds`) and the continuation appends their text and attachments to
+its prompt. This carries them one hop: a second restart before delivery loses them, and a
+steer delivered just before the crash may be repeated once. When Codex rejects the empty
+continuation input while a goal turn is still active, the adapter reads the goal and, if
+it is active, retries with the continue prompt as real input.
+
 Delegated tasks (`delegate_task` child threads) are reconciled as their own threads,
 never as the parent's background work. The orchestrator settles child results and
 completion deliveries in a startup pass after reconciliation, because the terminal-run

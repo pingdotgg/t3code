@@ -101,6 +101,97 @@ it.effect("attributes a launched thread's first message to the calling thread", 
   }),
 );
 
+it.effect(
+  "a launch retried with the same clientRequestId keeps its command after session rotation",
+  () =>
+    Effect.gen(function* () {
+      const sourceThreadId = ThreadId.make("source-thread");
+      const projectId = ProjectId.make("project");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
+      const caller = {
+        id: sourceThreadId,
+        projectId,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        activeRunId: "active-run",
+        archivedAt: null,
+        deletedAt: null,
+      } as OrchestrationV2ThreadShell;
+      const launches: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const launch = (clientRequestId: string | undefined, requestNamespace: string) =>
+        Effect.gen(function* () {
+          const dependencies = Layer.mergeAll(
+            ServerSettings.layerTest(),
+            NodeCrypto.layer,
+            Layer.succeed(McpInvocationContext.McpInvocationContext, {
+              environmentId: EnvironmentId.make("environment"),
+              requestNamespace,
+              thread: {
+                threadId: sourceThreadId,
+                providerSessionId: "session",
+                providerInstanceId,
+              },
+              client: undefined,
+              issuedAt: 0,
+              capabilities: new Set(["orchestration" as const]),
+            }),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(caller),
+            }),
+            Layer.mock(ThreadLaunch.ThreadLaunchService)({
+              launch: (input) => {
+                launches.push(input);
+                return Effect.succeed({
+                  threadId: input.threadId,
+                  projection: {
+                    thread: { id: input.threadId, projectId, modelSelection },
+                    runs: [],
+                  },
+                  resumed: false,
+                } as unknown as ThreadLaunch.ThreadLaunchResult);
+              },
+            }),
+            Layer.mock(Project.ProjectService)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+            }),
+            Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+            NodeServices.layer,
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-retry-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          );
+          const toolkit = yield* ProjectToolkit.pipe(
+            Effect.provide(
+              McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+                Layer.provide(dependencies),
+              ),
+            ),
+          );
+          yield* toolkit
+            .handle("t3_thread_launch", {
+              title: "Audit",
+              message: "Review the change",
+              ...(clientRequestId === undefined ? {} : { clientRequestId }),
+            })
+            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        });
+      // The namespace is stable per thread, so a rotated session still matches.
+      yield* launch("retry-launch", "thread:source-thread:codex");
+      yield* launch("retry-launch", "thread:source-thread:codex");
+      expect(launches[1]?.commandId).toBe(launches[0]?.commandId);
+      expect(launches[1]?.threadId).toBe(launches[0]?.threadId);
+      expect(launches[1]?.initialMessage?.messageId).toBe(launches[0]?.initialMessage?.messageId);
+      yield* launch("retry-launch", "thread:other-thread:codex");
+      yield* launch(undefined, "thread:source-thread:codex");
+      yield* launch(undefined, "thread:source-thread:codex");
+      expect(new Set(launches.map((input) => input.threadId)).size).toBe(4);
+    }),
+);
+
 it.effect("launches a scratch thread into the Scratch project", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");

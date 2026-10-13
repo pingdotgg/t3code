@@ -771,6 +771,29 @@ it.effect("shows a continuation as a T3 Code notice whose detail is the prompt",
   }),
 );
 
+it.effect("carries steering the provider never received into the continuation", () =>
+  Effect.gen(function* () {
+    const steerId = MessageId.make("message:steer");
+    const attachment = {
+      type: "file" as const,
+      id: "attachment:steer",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const [resumed] = yield* continuationDispatches({
+      ...cutMidTurn({ restartPendingMessageIds: [steerId] }),
+      messages: [
+        { id: steerId, text: "Also update the docs.", attachments: [attachment] },
+        { id: MessageId.make("message:unrelated"), text: "Not carried.", attachments: [] },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection);
+    assert.equal(resumed?.text, "Continue where you left off.\n\nAlso update the docs.");
+    assert.deepEqual(resumed?.attachments, [attachment]);
+    assert.isUndefined(resumed?.notification);
+  }),
+);
+
 it.effect(
   "carries the note forward when its continuation was cut before reaching the provider",
   () =>
@@ -808,6 +831,86 @@ it.effect(
       assert.include(texts[0]!, "sleep 25 && echo DONE");
       assert.notInclude(texts[0]!, "Continue where");
     }),
+);
+
+it.effect("continues every thread that shares one provider session", () =>
+  Effect.gen(function* () {
+    const secondThreadId = ThreadId.make("thread:restart-second");
+    const secondRunId = RunId.make("run:restart-second");
+    const secondProviderThreadId = ProviderThreadId.make("provider-thread:restart-second");
+    const secondAttemptId = RunAttemptId.make("attempt:restart-second");
+    const commits: Array<Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0]> = [];
+    // Recovering the first thread stops the session they share.
+    const read = (id: ThreadId) => {
+      const base = makeProjection();
+      const session = {
+        ...base.providerSessions[0]!,
+        status: commits.length === 0 ? ("ready" as const) : ("stopped" as const),
+      };
+      return id === threadId
+        ? { ...base, providerSessions: [session] }
+        : {
+            ...base,
+            thread: { ...base.thread, id: secondThreadId },
+            runs: [
+              {
+                ...base.runs[0]!,
+                id: secondRunId,
+                providerThreadId: secondProviderThreadId,
+                activeAttemptId: secondAttemptId,
+              },
+            ],
+            providerThreads: [
+              {
+                ...base.providerThreads[0]!,
+                id: secondProviderThreadId,
+                appThreadId: secondThreadId,
+              },
+            ],
+            providerSessions: [session],
+            providerTurns: [
+              {
+                ...base.providerTurns[0]!,
+                id: ProviderTurnId.make("turn:restart-second"),
+                providerThreadId: secondProviderThreadId,
+                runAttemptId: secondAttemptId,
+              },
+            ],
+          };
+    };
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId, secondThreadId]),
+            getRuntimeRecoveryProjection: (id) => Effect.succeed(read(id)),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              commits.push(input);
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(
+      commits.flatMap((commit) => commit.effects.map((effect) => effect.request)),
+      [
+        { type: "provider-runtime.continue", sourceRunId: runId },
+        { type: "provider-runtime.continue", sourceRunId: secondRunId },
+      ],
+    );
+  }),
 );
 
 it.effect("prepares later threads' continuations when one thread fails", () =>

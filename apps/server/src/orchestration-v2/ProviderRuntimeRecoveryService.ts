@@ -156,7 +156,18 @@ const cancelledItem = (
 ): OrchestrationV2ThreadProjection["turnItems"][number] =>
   item.type === "secret_request" && item.secretStatus === "pending"
     ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
-    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
+    : {
+        ...item,
+        status: "cancelled",
+        completedAt: now,
+        updatedAt: now,
+        // A cut stream never gets its closing event.
+        ...(item.type === "reasoning" ||
+        item.type === "assistant_message" ||
+        item.type === "proposed_plan"
+          ? { streaming: false }
+          : {}),
+      };
 
 /**
  * A provider thread's latest started run: the last turn that provider saw.
@@ -190,6 +201,10 @@ export const make = Effect.gen(function* () {
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      initialSessions: ReadonlyMap<
+        string,
+        OrchestrationV2ThreadProjection["providerSessions"][number]
+      >,
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -317,6 +332,16 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const run of runs) {
+        // Steering still queued in the outbox died with the process; the
+        // continuation prompt carries it.
+        const undeliveredSteering = [
+          ...new Set([
+            ...(run.restartPendingMessageIds ?? []),
+            ...(projection.pendingSteering ?? [])
+              .filter((steer) => steer.runId === run.id)
+              .map((steer) => steer.messageId),
+          ]),
+        ];
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -324,7 +349,15 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+          payload: {
+            ...run,
+            status: "cancelled",
+            queuePosition: null,
+            completedAt: now,
+            ...(undeliveredSteering.length === 0
+              ? {}
+              : { restartPendingMessageIds: undeliveredSteering }),
+          },
         });
         for (const attempt of projection.attempts.filter(
           (candidate) =>
@@ -561,7 +594,15 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, now)
+          ? restartContinuationRun(
+              {
+                ...projection,
+                providerSessions: projection.providerSessions.map(
+                  (session) => initialSessions.get(session.id) ?? session,
+                ),
+              },
+              now,
+            )
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -647,6 +688,12 @@ export const make = Effect.gen(function* () {
       let stoppedSessions = 0;
       let closedRequests = 0;
       let retiredEffects = 0;
+      // Recovering one thread stops its shared session. Later threads must
+      // judge continuation against that session's state before recovery.
+      const initialSessions = new Map<
+        string,
+        OrchestrationV2ThreadProjection["providerSessions"][number]
+      >();
       for (const threadId of threadIds) {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
           Effect.mapError(
@@ -658,11 +705,14 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        for (const session of projection.providerSessions) {
+          if (!initialSessions.has(session.id)) initialSessions.set(session.id, session);
+        }
         const enabled =
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const result = yield* reconcileProjection(projection, trigger, enabled, initialSessions);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;

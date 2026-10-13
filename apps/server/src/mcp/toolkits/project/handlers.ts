@@ -1,4 +1,10 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -59,7 +65,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       Effect.gen(function* () {
         const context = yield* readCaller();
         const { caller } = context;
-        const commandId = yield* newCommandId();
+        const commandId =
+          input.clientRequestId === undefined
+            ? yield* newCommandId()
+            : CommandId.make(
+                `command:mcp:${encodeURIComponent(context.scope.requestNamespace)}:thread-launch:${encodeURIComponent(input.clientRequestId)}`,
+              );
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];

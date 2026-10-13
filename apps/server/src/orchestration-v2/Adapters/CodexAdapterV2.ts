@@ -6638,11 +6638,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
-              yield* startNativeTurn(
-                turnInput,
+              const input =
                 turnInput.restartContinuationOfRunId === undefined
                   ? yield* toCodexInput(turnInput)
-                  : [],
+                  : [];
+              yield* startNativeTurn(turnInput, input).pipe(
+                Effect.catchTags({
+                  CodexAppServerRequestError: (cause) => {
+                    // Codex rejects an empty continuation while a goal turn is
+                    // still active. Send the continue prompt as real input.
+                    if (
+                      input.length !== 0 ||
+                      cause.code !== -32603 ||
+                      cause.errorMessage !== "failed to submit turn input: EmptyInput"
+                    )
+                      return Effect.fail(cause);
+                    return Effect.gen(function* () {
+                      const current = yield* client
+                        .request("thread/goal/get", {
+                          threadId: yield* getNativeThreadId(turnInput.providerThread),
+                        })
+                        .pipe(Effect.orElseSucceed(() => null));
+                      if (current?.goal?.status !== "active") return yield* Effect.fail(cause);
+                      yield* startNativeTurn(turnInput, yield* toCodexInput(turnInput));
+                    });
+                  },
+                }),
               );
             }).pipe(
               Effect.mapError(
