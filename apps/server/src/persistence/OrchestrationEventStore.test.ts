@@ -393,6 +393,101 @@ layer("OrchestrationEventStore", (it) => {
       );
     }),
   );
+
+  it.effect.each([
+    ["agent", "thread"],
+    ["application", "thread"],
+    ["application", "project"],
+  ] as const)(
+    "%s replay skips unknown %s types but rejects malformed known payloads",
+    ([reader, aggregateKind]) =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const streamId = ThreadId.make(`skip-unknown:${reader}:${aggregateKind}`);
+        const now = "2026-01-05T00:00:00.000Z";
+        // Direct SQL models rows written by a newer build, which append cannot accept.
+        const insertRow = Effect.fnUntraced(function* (
+          version: number,
+          eventType: string,
+          payload: string,
+        ) {
+          const [row] = yield* sql<{ sequence: number }>`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+          ) VALUES (
+            ${`${streamId}:${version}`}, ${aggregateKind}, ${streamId}, ${version}, ${eventType},
+            ${now}, 'server', ${payload}, '{}', 2
+          ) RETURNING sequence
+        `;
+          return row!.sequence;
+        });
+        const read = (
+          afterSequence: number,
+          throughSequence: number,
+          skipUnknownEventTypes = false,
+          limit?: number,
+        ) => {
+          const input = { afterSequence, throughSequence, skipUnknownEventTypes };
+          return reader === "agent"
+            ? store
+                .readAgentEvents({
+                  ...input,
+                  threadId: streamId,
+                  ...(limit === undefined ? {} : { limit }),
+                })
+                .pipe(
+                  Stream.map((event) => event.sequence),
+                  Stream.runCollect,
+                )
+            : store.readApplicationEvents(input).pipe(
+                Stream.map((event) => event.sequence),
+                Stream.runCollect,
+              );
+        };
+        const knownType =
+          aggregateKind === "thread" ? "provider-session.detached" : "project.meta-updated";
+        const knownPayload = JSON.stringify(
+          aggregateKind === "thread"
+            ? { providerSessionId: "session:known", detachedAt: now }
+            : { projectId: streamId, updatedAt: now },
+        );
+        const baseline = yield* store.latestApplicationSequence;
+        const before = yield* insertRow(0, knownType, knownPayload);
+        // More than one raw page ensures replay crosses an entirely filtered page.
+        yield* Effect.forEach(
+          Array.from({ length: 1_000 }, (_, i) => i + 1),
+          (version) => insertRow(version, "future.event", "not JSON"),
+          { discard: true },
+        );
+        // A type known for the other aggregate kind is unknown for this one.
+        yield* insertRow(
+          1_001,
+          aggregateKind === "thread" ? "project.meta-updated" : "provider-session.detached",
+          "{}",
+        );
+        const after = yield* insertRow(1_002, knownType, knownPayload);
+        const highWater = yield* insertRow(1_003, "future.trailing", "{}");
+        yield* insertRow(1_004, knownType, knownPayload);
+        assert.deepEqual(yield* read(baseline, highWater, true), [before, after]);
+        assert.isTrue(isPersistenceDecodeError(yield* read(baseline, highWater).pipe(Effect.flip)));
+        if (reader === "agent") {
+          // The work limit includes skipped rows, rather than fetching extra pages to fill it.
+          assert.deepEqual(yield* read(baseline, highWater, true, 2), [before]);
+        }
+        const beforeBroken = yield* store.latestApplicationSequence;
+        // Exercise a grouped V2 literal as well as the project type discriminator.
+        const broken = yield* insertRow(
+          1_005,
+          aggregateKind === "thread" ? "thread.metadata-updated" : "project.created",
+          "{}",
+        );
+        assert.isTrue(
+          isPersistenceDecodeError(yield* read(beforeBroken, broken, true).pipe(Effect.flip)),
+        );
+      }),
+  );
 });
 
 it.effect.each(["high-water", "replay"] as const)(
