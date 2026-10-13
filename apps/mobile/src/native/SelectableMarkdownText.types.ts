@@ -79,6 +79,9 @@ export interface SelectableMarkdownTextProps {
   readonly renderImage?: MarkdownImageRenderer;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
+  readonly onDocumentAssets?: (
+    event: import("react-native-enriched-markdown").DocumentAssetsEvent,
+  ) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

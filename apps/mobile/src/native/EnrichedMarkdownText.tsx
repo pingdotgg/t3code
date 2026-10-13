@@ -139,29 +139,34 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource } = props;
+  const { renderImage, resolveImageSource, onDocumentAssets: onParsedDocumentAssets } = props;
   const markdown = useMemo(() => markdownWithHtml(props.markdown), [props.markdown]);
   const { themeAppearance } = useAppearancePreferences();
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
-  const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
-    setDocumentAssets((previous) =>
-      previous.length === assets.length &&
-      previous.every((asset, index) => {
-        const next = assets[index]!;
-        return (
-          asset.id === next.id &&
-          asset.kind === next.kind &&
-          asset.url === next.url &&
-          asset.altText === next.altText &&
-          asset.title === next.title &&
-          asset.placement === next.placement &&
-          asset.eligible === next.eligible
-        );
-      })
-        ? previous
-        : assets,
-    );
-  }, []);
+  const onDocumentAssets = useCallback(
+    (event: DocumentAssetsEvent) => {
+      const { assets } = event;
+      setDocumentAssets((previous) =>
+        previous.length === assets.length &&
+        previous.every((asset, index) => {
+          const next = assets[index]!;
+          return (
+            asset.id === next.id &&
+            asset.kind === next.kind &&
+            asset.url === next.url &&
+            asset.altText === next.altText &&
+            asset.title === next.title &&
+            asset.placement === next.placement &&
+            asset.eligible === next.eligible
+          );
+        })
+          ? previous
+          : assets,
+      );
+      onParsedDocumentAssets?.(event);
+    },
+    [onParsedDocumentAssets],
+  );
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(documentAssets, props);
   const linkRecognition = useMemo(
     () => ({

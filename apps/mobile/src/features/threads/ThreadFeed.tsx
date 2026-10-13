@@ -1,4 +1,4 @@
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
@@ -30,7 +30,6 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -48,10 +47,6 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
@@ -130,6 +125,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
+import { useThreadMarkdownImageRenderer } from "./useThreadMarkdownImageRenderer";
 import {
   attachmentVideoPreviewSource,
   mediaVideoPreviewUri,
@@ -163,10 +159,8 @@ import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { markdownLinkIconSource } from "../../lib/markdownLinkIcons";
 import {
-  normalizeNativeMarkdownUrl,
   resolveMarkdownInlineCodePresentation,
   resolveMarkdownLinkIcon,
-  resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import {
   failedFeedRunIds,
@@ -216,21 +210,11 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
-import {
-  fileRoutePathSegments,
-  isAbsolutePath,
-  resolveWorkspaceRelativeFilePath,
-} from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
-import {
-  MarkdownImageAvailableWidthContext,
-  ThreadMarkdownImage,
-  ThreadMarkdownImageUnavailable,
-  ThreadMarkdownImageView,
-} from "./ThreadMarkdownImage";
+import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -1696,8 +1680,6 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
-  const openPullRequest = useOpenPullRequest();
-  const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -1818,76 +1800,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const onMarkdownLinkPress = useCallback(
-    (href: string, imageEmbed = false) => {
-      // A thread link names a thread in this feed's environment.
-      const linkedThreadId = parseThreadLinkHref(href);
-      if (linkedThreadId) {
-        navigation.navigate("Thread", {
-          environmentId: String(props.environmentId),
-          threadId: String(linkedThreadId),
-        });
-        return;
-      }
-      const media = resolveMarkdownMediaPreview(href, {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-        imageEmbed,
-      });
-      if (media) {
-        void Haptics.selectionAsync();
-        if (media.kind === "video") {
-          setExpandedVideo((current) => current ?? media.source);
-        } else {
-          setExpandedFile((current) => current ?? media.source);
-        }
-        return;
-      }
-
-      const presentation = resolveMarkdownLinkPresentation(href);
-      if (presentation.kind === "file") {
-        const relativePath = resolveWorkspaceRelativeFilePath(
-          props.workspaceRoot,
-          presentation.path,
-        );
-        if (relativePath) {
-          void Haptics.selectionAsync();
-          navigation.navigate("ThreadFile", {
-            environmentId: String(props.environmentId),
-            threadId: String(props.threadId),
-            path: fileRoutePathSegments(relativePath),
-            ...(presentation.line ? { line: String(presentation.line) } : {}),
-          });
-          return;
-        }
-      }
-
-      // A host file outside the workspace, such as a report an agent wrote to
-      // a temp directory, opens read-only in the file screen.
-      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
-        void Haptics.selectionAsync();
-        navigation.navigate("ThreadFile", {
-          environmentId: String(props.environmentId),
-          threadId: String(props.threadId),
-          path: fileRoutePathSegments(presentation.path),
-          ...(presentation.line ? { line: String(presentation.line) } : {}),
-        });
-        return;
-      }
-
-      if (presentation.kind !== "file" && presentation.href) {
-        if (/^https?:\/\//i.test(presentation.href) && isPdfFile({ name: presentation.href })) {
-          setExpandedFile(
-            (current) => current ?? { kind: "pdf", uri: presentation.href!, name: "Document.pdf" },
-          );
-          return;
-        }
-        void openPullRequest(presentation.href);
-      }
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openPullRequest],
-  );
+  const onMarkdownLinkPress = useThreadMarkdownLinkPress({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot ?? null,
+    setExpandedFile,
+    setExpandedVideo,
+  });
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -1923,61 +1842,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }),
     [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, resolveImageSource],
   );
-  const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
-    (image) => {
-      const media = resolveMarkdownMediaPreview(image.href, {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-        imageEmbed: true,
-      });
-      if (media?.kind === "video") {
-        return (
-          <ThreadMarkdownVideo
-            key={image.href}
-            source={{ ...media.source, name: image.alt ?? media.source.name }}
-          />
-        );
-      }
-      const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
-      if (imageSource._tag === "Direct") {
-        return (
-          <ThreadMarkdownImageView
-            uri={normalizeNativeMarkdownUrl(imageSource.uri)}
-            sourceKey={imageSource.uri}
-            format={
-              /\.svg(?:[?#]|$)/i.test(imageSource.uri) ||
-              imageSource.uri.startsWith("data:image/svg+xml")
-                ? "svg"
-                : undefined
-            }
-            unavailable={false}
-            alt={image.alt}
-            actionsSource={media?.source.actionsSource}
-            onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-          />
-        );
-      }
-      if (imageSource._tag === "Blocked") {
-        return <ThreadMarkdownImageUnavailable alt={image.alt} />;
-      }
-      return (
-        <ThreadMarkdownImage
-          environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
-          alt={image.alt}
-          srcFragment={markdownImageSourceFragment(image.href)}
-          actionsSource={media?.source.actionsSource}
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-        />
-      );
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot],
-  );
+  const renderMarkdownImage = useThreadMarkdownImageRenderer({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot ?? null,
+    setExpandedFile,
+  });
   const renderViewedImage = useCallback<MarkdownImageRenderer>(
     (image) => {
       const viewedImage = resolveViewedImageAsset(image.href, {
