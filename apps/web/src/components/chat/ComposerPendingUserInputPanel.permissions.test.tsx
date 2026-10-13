@@ -1,7 +1,11 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
+
+vi.mock("../ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <span>{text}</span>,
+}));
 
 vi.mock("../ui/collapsible", () => {
   const Children = ({ children }: { children: ReactNode }) => <>{children}</>;
@@ -42,6 +46,11 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   };
   const panel = (disabled: boolean) => (
     <ComposerPendingUserInputPanel
+      cwd={undefined}
+      threadRef={{
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: ThreadId.make("test-thread"),
+      }}
       pendingUserInputs={[prompt]}
       disabled={disabled}
       respondingRequestIds={[]}
@@ -56,9 +65,7 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   const chooseOption = () => {
     const option = renderer!.root
       .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
-      );
+      .find((button) => button.props["aria-labelledby"] !== undefined);
     expect(option).toBeDefined();
     option!.props.onClick();
   };

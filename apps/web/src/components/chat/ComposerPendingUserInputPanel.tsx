@@ -1,5 +1,6 @@
-import { type RuntimeRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
+import ChatMarkdown from "../ChatMarkdown";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -11,6 +12,8 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef;
   pendingUserInputs: PendingUserInput[];
   disabled?: boolean;
   respondingRequestIds: RuntimeRequestId[];
@@ -22,6 +25,8 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  cwd,
+  threadRef,
   pendingUserInputs,
   disabled = false,
   respondingRequestIds,
@@ -37,6 +42,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
   return (
     <ComposerPendingUserInputCard
+      cwd={cwd}
+      threadRef={threadRef}
       key={activePrompt.requestId}
       prompt={activePrompt}
       disabled={disabled}
@@ -51,6 +58,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 });
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  cwd,
+  threadRef,
   prompt,
   disabled,
   isResponding,
@@ -60,6 +69,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance,
   onDismiss,
 }: {
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef;
   prompt: PendingUserInput;
   disabled: boolean;
   isResponding: boolean;
@@ -73,6 +84,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const optionIdPrefix = useId();
+  const headerId = `${optionIdPrefix}-header`;
+  const previewId = `${optionIdPrefix}-preview`;
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
@@ -190,25 +204,39 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-      >
-        <ComposerBanner.Icon />
-        <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+      <ComposerBanner.Row className="relative">
+        <CollapsibleTrigger
+          render={<button type="button" />}
+          className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          aria-labelledby={headerId}
+          aria-describedby={isCollapsed ? previewId : undefined}
+          title={
+            isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          }
+          data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+        />
+        <ComposerBanner.Icon className="pointer-events-none relative" />
+        <ComposerBanner.Content className="pointer-events-none relative">
+          <span id={headerId} className="shrink-0 font-medium text-muted-foreground">
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
+            <span
+              id={previewId}
+              inert
+              className="min-w-0 flex-1 text-secondary-label"
+              data-pending-user-input-preview
+            >
+              <ChatMarkdown
+                text={activeQuestion.question}
+                cwd={cwd}
+                threadRef={threadRef}
+                className="line-clamp-1 max-h-lh"
+              />
             </span>
           ) : null}
         </ComposerBanner.Content>
-        <ComposerBanner.Actions>
+        <ComposerBanner.Actions className="pointer-events-none relative">
           {prompt.questions.length > 1 ? (
             <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
@@ -216,33 +244,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
           <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
           {prompt.dismissible ? (
-            // Sits inside the trigger button, so stop the click from toggling
-            // the disclosure. Dismiss closes the question without a reply.
-            <ComposerBanner.Dismiss
-              render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
-              disabled={isResponding}
-              data-pending-user-input-dismiss
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-            />
+            <span className="pointer-events-auto inline-flex">
+              <ComposerBanner.Dismiss
+                aria-label="Dismiss question without answering"
+                title="Dismiss question without answering"
+                disabled={isResponding}
+                data-pending-user-input-dismiss
+                onClick={() => onDismiss(prompt.requestId)}
+              />
+            </span>
           ) : null}
         </ComposerBanner.Actions>
-      </CollapsibleTrigger>
+      </ComposerBanner.Row>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            <ChatMarkdown text={activeQuestion.question} cwd={cwd} threadRef={threadRef} />
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
@@ -256,8 +273,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   isOptimisticallySelected ||
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
                 const shortcutKey = index < 9 ? index + 1 : null;
+                const labelId = `${optionIdPrefix}-${index}-label`;
+                const descriptionId = `${optionIdPrefix}-${index}-description`;
+                const hasDescription = option.description && option.description !== option.label;
                 const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                  "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150",
                   isSelected
                     ? "bg-muted/55 text-foreground"
                     : "bg-transparent text-foreground/85 hover:bg-muted/30",
@@ -267,9 +287,23 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const content = (
                   <>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                      <div id={labelId}>
+                        <ChatMarkdown
+                          text={option.label}
+                          cwd={cwd}
+                          threadRef={threadRef}
+                          className="text-sm font-medium [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_video[controls]]:pointer-events-auto"
+                        />
+                      </div>
+                      {hasDescription ? (
+                        <div id={descriptionId}>
+                          <ChatMarkdown
+                            text={option.description}
+                            cwd={cwd}
+                            threadRef={threadRef}
+                            className="text-secondary-label text-2xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_video[controls]]:pointer-events-auto"
+                          />
+                        </div>
                       ) : null}
                     </div>
                     {isSelected ? (
@@ -286,17 +320,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </>
                 );
                 return (
-                  <button
-                    key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    disabled={disabled || isResponding}
-                    onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
-                    }}
-                    className={className}
-                  >
-                    {content}
-                  </button>
+                  <div key={`${activeQuestion.id}:${optionValue}`} className={className}>
+                    <button
+                      type="button"
+                      disabled={disabled || isResponding}
+                      aria-labelledby={labelId}
+                      aria-describedby={hasDescription ? descriptionId : undefined}
+                      aria-pressed={isSelected}
+                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
+                      className="absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25"
+                    />
+                    <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2 [&_[data-slot^=scroll-area-]]:pointer-events-auto [&_pre]:pointer-events-auto [&_.overflow-x-auto]:pointer-events-auto">
+                      {content}
+                    </div>
+                  </div>
                 );
               })}
             </div>

@@ -1,7 +1,11 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { act, useState, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+vi.mock("../ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <span>{text}</span>,
+}));
 
 import {
   togglePendingUserInputOptionSelection,
@@ -43,6 +47,11 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
       <button onClick={advance}>Next</button>
       <button onClick={() => setQuestionIndex(questionIndex - 1)}>Previous</button>
       <ComposerPendingUserInputPanel
+        cwd={undefined}
+        threadRef={{
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: ThreadId.make("test-thread"),
+        }}
         pendingUserInputs={[prompt]}
         disabled={false}
         respondingRequestIds={[]}
@@ -87,9 +96,7 @@ async function chooseOption() {
   await act(async () => {
     renderer!.root
       .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
-      )!
+      .find((button) => button.props["aria-labelledby"] !== undefined)!
       .props.onClick();
   });
 }

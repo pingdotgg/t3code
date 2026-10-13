@@ -6868,6 +6868,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </ComposerBanner.Row>
                 ) : !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
                   <ComposerPendingUserInputPanel
+                    cwd={gitCwd ?? undefined}
+                    threadRef={routeThreadRef}
                     pendingUserInputs={pendingUserInputs}
                     disabled={!canOperateThread}
                     respondingRequestIds={
@@ -6889,6 +6891,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
                   <div data-chat-composer-collapsed-controls="true">
                     <ComposerPendingUserInputPanel
+                      cwd={gitCwd ?? undefined}
+                      threadRef={routeThreadRef}
                       pendingUserInputs={pendingUserInputs}
                       disabled={!canOperateThread}
                       respondingRequestIds={

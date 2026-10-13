@@ -1,4 +1,4 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -27,6 +27,11 @@ const prompt: PendingUserInput = {
 function renderPanel(pendingUserInput: PendingUserInput = prompt) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
+      cwd={undefined}
+      threadRef={{
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: ThreadId.make("test-thread"),
+      }}
       pendingUserInputs={[pendingUserInput]}
       respondingRequestIds={[]}
       answers={{}}
