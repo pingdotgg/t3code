@@ -809,6 +809,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.equal(next.textGenerationModelSelection.model, "claude-haiku-5-5");
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
