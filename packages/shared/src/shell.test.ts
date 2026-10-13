@@ -2,9 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -40,6 +43,19 @@ const withWindowsEnvironmentMocks = <A, E, R>(
     Effect.provideService(WindowsShellEnvironment, readEnvironment),
     Effect.provideService(CommandAvailability, commandAvailable),
   );
+
+const recordCommandTrace = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+  const spans: Array<Tracer.NativeSpan> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  const result = yield* effect.pipe(Effect.withTracer(tracer), Effect.result);
+  return { result, spans };
+});
 
 describe("readPathFromLoginShell", () => {
   it("uses a shell-agnostic printenv PATH probe", () => {
@@ -338,6 +354,65 @@ describe("resolveKnownWindowsCliDirs", () => {
 });
 
 effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
+  it.effect.each(["win32", "linux"] as const)(
+    "records missing optional commands as successful lookups on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-command-trace-" });
+        const env = { PATH: cwd, PATHEXT: ".CMD" };
+        const checks = [
+          isCommandAvailable("missing", { env }),
+          isCommandAvailable("missing", { env }),
+          isCommandAvailable("missing", { env: { ...env, PATH: "" } }),
+          isCommandAvailable(path.join(cwd, "missing.cmd"), { env }),
+        ];
+        for (const check of checks) {
+          const { result, spans } = yield* recordCommandTrace(check);
+          expect(Result.getOrThrow(result)).toBe(false);
+          expect(spans.length).toBeGreaterThan(0);
+          for (const span of spans) {
+            expect(span.status._tag).toBe("Ended");
+            if (span.status._tag === "Ended") {
+              expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
+            }
+          }
+        }
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      ),
+  );
+
+  it.effect.each(["win32", "linux"] as const)(
+    "records available commands as successful lookups on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-command-trace-" });
+        const executable = path.join(cwd, platform === "win32" ? "available.cmd" : "available");
+        yield* fs.writeFileString(executable, "");
+        yield* fs.chmod(executable, 0o700);
+        const env = { PATH: cwd, PATHEXT: ".CMD" };
+        for (const command of ["available", executable]) {
+          const { result, spans } = yield* recordCommandTrace(isCommandAvailable(command, { env }));
+          expect(Result.getOrThrow(result)).toBe(true);
+          expect(spans.length).toBeGreaterThan(0);
+          for (const span of spans) {
+            expect(span.status._tag).toBe("Ended");
+            if (span.status._tag === "Ended") {
+              expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
+            }
+          }
+        }
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      ),
+  );
+
   it.effect("returns false when PATH is empty", () =>
     Effect.gen(function* () {
       expect(
@@ -350,13 +425,29 @@ effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
-  it.effect("fails when PATH is empty", () =>
+  it.effect("records a successful lookup when a command is missing", () =>
+    Effect.gen(function* () {
+      const { result, spans } = yield* recordCommandTrace(
+        resolveCommandPath("missing", { env: { PATH: "" } }),
+      );
+      expect(Result.getOrThrow(result)).toBeNull();
+      expect(spans.length).toBeGreaterThan(0);
+      for (const span of spans) {
+        expect(span.status._tag).toBe("Ended");
+        if (span.status._tag === "Ended") {
+          expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
+        }
+      }
+    }),
+  );
+
+  it.effect("returns null when PATH is empty", () =>
     Effect.gen(function* () {
       const result = yield* resolveCommandPath("definitely-not-installed", {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.result);
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
-      expect(result._tag).toBe("Failure");
+      expect(result).toBeNull();
     }),
   );
 
@@ -379,10 +470,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
               }),
           }),
         ),
-        Effect.result,
       );
 
-      expect(result._tag).toBe("Failure");
+      expect(result).toBeNull();
       return probed;
     });
 
@@ -448,13 +538,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       const executable = path.join(cwd, "appeared.CMD");
       const options = { env: { PATH: `${cwd};${cwd}`, PATHEXT: ".CMD" } };
 
-      expect((yield* resolveCommandPath("appeared", options).pipe(Effect.result))._tag).toBe(
-        "Failure",
-      );
+      expect(yield* resolveCommandPath("appeared", options)).toBeNull();
       yield* fs.writeFileString(executable, "@echo off\n");
-      expect((yield* resolveCommandPath("appeared", options).pipe(Effect.result))._tag).toBe(
-        "Failure",
-      );
+      expect(yield* resolveCommandPath("appeared", options)).toBeNull();
       expect(yield* resolveCommandPath(executable, options)).toBe(executable);
       yield* TestClock.adjust("30 seconds");
       expect(yield* resolveCommandPath("appeared", options)).toBe(executable);

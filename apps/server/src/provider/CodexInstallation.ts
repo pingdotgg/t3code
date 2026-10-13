@@ -335,6 +335,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
+      if (executablePath === null) return null;
       // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
       const realExecutablePath = yield* fs.realPath(executablePath);
       // A PATH entry pointing into T3's download remains a managed installation.

@@ -106,7 +106,6 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcess.Platform, platform),
-      Effect.option,
     );
 
   const run = (command: string, args: ReadonlyArray<string>) =>
@@ -120,9 +119,9 @@ export const make = Effect.gen(function* () {
       if (runtimeDir === undefined || runtimeDir.length === 0) return undefined;
       const systemdRun = yield* resolve("systemd-run", hostEnvironment);
       const systemctl = yield* resolve("systemctl", hostEnvironment);
-      if (systemdRun._tag === "None" || systemctl._tag === "None") return undefined;
+      if (systemdRun === null || systemctl === null) return undefined;
       const probe = (options: ReadonlyArray<string>) =>
-        run(systemdRun.value, [
+        run(systemdRun, [
           "--user",
           "--scope",
           "--quiet",
@@ -146,7 +145,7 @@ export const make = Effect.gen(function* () {
         return undefined;
       }
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      const limited = yield* run(systemctl.value, [
+      const limited = yield* run(systemctl, [
         "--user",
         "set-property",
         "--runtime",
@@ -165,8 +164,8 @@ export const make = Effect.gen(function* () {
         oomPolicy: scopeOptions.length > 0,
       });
       return {
-        systemdRun: systemdRun.value,
-        systemctl: systemctl.value,
+        systemdRun,
+        systemctl,
         runtimeDir,
         scopeOptions,
       };
@@ -294,9 +293,9 @@ export const make = Effect.gen(function* () {
     wrap: Effect.fn("AgentScope.wrap")(function* ({ command, args, name, threadId, env }) {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       // Leave unresolved commands alone so the spawn reports the missing binary.
-      if (resolved._tag === "None") return { command, args };
+      if (resolved === null) return { command, args };
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved, args });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
@@ -308,7 +307,7 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved.value, args, scope: systemdScope });
+      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
     }),
     oomKilled,
     clear,
