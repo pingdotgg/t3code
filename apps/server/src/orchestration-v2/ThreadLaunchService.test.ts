@@ -55,6 +55,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
@@ -152,6 +153,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerExternalServices = Layer.mergeAll(
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+    RestartWork.layer,
     Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
@@ -544,17 +546,21 @@ it.effect("enqueues provider work only after setup has been initiated", () =>
         message: "Start after setup",
         workspace: { type: "worktree", baseRef: "main" },
       });
+      const restartWork = yield* RestartWork.RestartWork;
       const launched = yield* launches.launch(input);
       yield* Deferred.await(setupEntered);
       assert.isEmpty(
         yield* outbox.listByCommandId(CommandId.make("command:launch:release:release")),
       );
+      // A restart now would cut the setup script off.
+      assert.equal(yield* restartWork.count, 1);
       yield* Deferred.succeed(allowSetup, undefined);
       yield* waitUntil(() =>
         outbox
           .listByCommandId(CommandId.make("command:launch:release:release"))
           .pipe(Effect.map((effects) => effects.length === 1)),
       );
+      yield* restartWork.count.pipe(Effect.repeat({ until: (count) => count === 0 }));
       const projection = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(projection.runs[0]?.status, "starting");
       assert.equal(projection.checkpointScopes[0]?.cwd, "/repo-worktrees/feature");

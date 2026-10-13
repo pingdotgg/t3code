@@ -2929,7 +2929,7 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["automaticUpdates"]}
           {...searchableSetting("automatic-updates")}
-          description="Install updates for provider CLIs that support one-click updates in the background on the selected environments while nothing is running."
+          description="Install provider CLI updates, and update background-service installs, on the selected environments while nothing is running."
           status={
             !supportsAutomaticUpdates
               ? "All selected connected environments must support automatic updates."

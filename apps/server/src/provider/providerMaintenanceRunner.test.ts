@@ -35,7 +35,9 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProviderAutoUpdater from "../updates/ProviderAutoUpdater.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as UpdateWindow from "../updates/UpdateWindow.ts";
 
 import * as ProviderInstallLock from "./ProviderInstallLock.ts";
@@ -1515,6 +1517,8 @@ describe("UpdateWindow", () => {
     quietFor: Duration.Duration;
     active: ReadonlyArray<ThreadId> | "unreadable";
     installing: boolean;
+    restartWork?: number;
+    busyTerminals?: boolean;
   }) =>
     Effect.service(UpdateWindow.UpdateWindow).pipe(
       Effect.provide(
@@ -1532,6 +1536,12 @@ describe("UpdateWindow", () => {
               }),
               Layer.mock(ProviderInstallLock.ProviderInstallLock)({
                 anyHeld: Effect.sync(() => state.installing),
+              }),
+              Layer.mock(RestartWork.RestartWork)({
+                count: Effect.sync(() => state.restartWork ?? 0),
+              }),
+              Layer.mock(TerminalManager.TerminalManager)({
+                hasBusyTerminals: Effect.sync(() => state.busyTerminals ?? false),
               }),
             ),
           ),
@@ -1568,6 +1578,38 @@ describe("UpdateWindow", () => {
         state.installing = false;
         assert.deepStrictEqual(yield* window.runIfOpen(Effect.succeed("ran")), Option.some("ran"));
       }),
+  );
+
+  it.effect("keeps a server restart out while work or a terminal command would be lost", () =>
+    Effect.gen(function* () {
+      const state = {
+        quietFor: Duration.minutes(15),
+        active: [] as ReadonlyArray<ThreadId> | "unreadable",
+        installing: false,
+        restartWork: 1,
+        busyTerminals: false,
+      };
+      const window = yield* makeWindow(state);
+      const restart = { restartsServer: true };
+      // Provider installs do not restart the server, so they ignore both blockers.
+      assert.isTrue(yield* window.isOpen());
+      assert.isFalse(yield* window.isOpen(restart));
+      assert.deepStrictEqual(
+        yield* window.runIfOpen(Effect.succeed("ran"), restart),
+        Option.none(),
+      );
+
+      state.restartWork = 0;
+      state.busyTerminals = true;
+      assert.isTrue(yield* window.isOpen());
+      assert.isFalse(yield* window.isOpen({ ...restart, ignoreInstallLocks: true }));
+
+      state.busyTerminals = false;
+      assert.deepStrictEqual(
+        yield* window.runIfOpen(Effect.succeed("ran"), restart),
+        Option.some("ran"),
+      );
+    }),
   );
 });
 

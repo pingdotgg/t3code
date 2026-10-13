@@ -221,6 +221,12 @@ export class TerminalManager extends Context.Service<
     }) => Effect.Effect<void>;
 
     /**
+     * Whether any terminal is starting or running a foreground command.
+     * Restarting the server would end those, so an update waits.
+     */
+    readonly hasBusyTerminals: Effect.Effect<boolean>;
+
+    /**
      * Subscribe to terminal runtime events with a direct callback.
      *
      * Returns an unsubscribe function.
@@ -2545,6 +2551,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ),
   );
 
+  const hasBusyTerminals = readManagerState.pipe(
+    Effect.map((state) =>
+      [...state.sessions.values()].some(
+        (session) =>
+          session.status === "starting" ||
+          (session.status === "running" && session.hasRunningSubprocess),
+      ),
+    ),
+  );
+
   let subprocessSnapshotFailureCount = 0;
   yield* Effect.forever(
     hasRunningSessions.pipe(
@@ -3208,6 +3224,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     restart,
     close,
     closeIdle,
+    hasBusyTerminals,
     subscribe,
     subscribeMetadata,
   });

@@ -103,6 +103,17 @@ after 6 hours or when a newer version is published. While `settings.json`
 cannot be read, automatic updates stay off, and a server started for
 development never updates provider CLIs.
 
+The same setting updates a [background service](./background-service.md) to
+the newest release on its channel. T3 Code downloads the release right away
+and restarts the service once the same conditions hold, and also no project
+clone or workspace setup is running and no terminal is running a command. A
+stable service never installs a prerelease, a release that changes the client
+protocol waits for a manual update, and a release the service rolled back is
+not tried again. A server that crashes is restarted
+with a growing delay instead of exiting. To stay on an exact version, turn
+**Update automatically** off. Servers started by the desktop app, `npx`, or a
+terminal are not updated this way.
+
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only

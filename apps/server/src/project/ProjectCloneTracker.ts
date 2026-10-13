@@ -29,6 +29,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 
 /**
  * Runs repository clones that back newly added projects and tracks their
@@ -115,6 +116,7 @@ interface TrackedClone {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+  const restartWork = yield* RestartWork.RestartWork;
   const clones = yield* Ref.make(new Map<ProjectId, TrackedClone>());
   const changes = yield* PubSub.unbounded<ReadonlyArray<ProjectCloneSnapshot>>();
   const retentionFibers = new Map<ProjectId, Fiber.Fiber<unknown, never>>();
@@ -249,7 +251,10 @@ export const make = Effect.gen(function* () {
       const current = yield* Ref.get(clones);
       const tracked = current.get(projectId);
       if (!tracked) return;
-      const fiber = yield* runClone(projectId, tracked).pipe(Effect.forkIn(cloneScope));
+      // A restart would lose the clone, so it counts as restart work from the moment it forks.
+      const fiber = yield* restartWork
+        .track(runClone(projectId, tracked))
+        .pipe(Effect.forkIn(cloneScope, { startImmediately: true }));
       yield* Ref.update(clones, (map) => {
         const existing = map.get(projectId);
         if (!existing) return map;

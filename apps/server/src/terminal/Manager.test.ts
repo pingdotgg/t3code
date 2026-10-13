@@ -1099,6 +1099,43 @@ it.layer(
     }),
   );
 
+  it.effect("reports busy only while a terminal runs a foreground command", () =>
+    Effect.gen(function* () {
+      let inspect: {
+        readonly hasRunningSubprocess: boolean;
+        readonly childCommand: string | null;
+        readonly processIds: ReadonlyArray<number>;
+      } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 20,
+      });
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      yield* manager.open(openInput());
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100] };
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
+        ),
+        "1200 millis",
+      );
+      expect(yield* manager.hasBusyTerminals).toBe(true);
+
+      inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      yield* waitFor(
+        Effect.map(getEvents, (events) => {
+          const last = events.filter((event) => event.type === "activity").at(-1);
+          return last?.type === "activity" && !last.hasRunningSubprocess;
+        }),
+        "1200 millis",
+      );
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+    }),
+  );
+
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {
       let checks = 0;

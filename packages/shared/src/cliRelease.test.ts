@@ -85,6 +85,21 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
   });
 
+  it("never picks a prerelease on the stable channel", () => {
+    const releases = [
+      { tag_name: "v1.3.0", prerelease: true },
+      { tag_name: "v1.3.0-rc.1" },
+      { tag_name: "v1.2.3" },
+    ];
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
+    expect(
+      newestCliReleaseVersion(
+        [{ tag_name: "v1.4.0-nightly.20260912.7", prerelease: true }],
+        "nightly",
+      ),
+    ).toBe("1.4.0-nightly.20260912.7");
+  });
+
   it("pages through the release index at the largest page GitHub allows", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
       "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1",

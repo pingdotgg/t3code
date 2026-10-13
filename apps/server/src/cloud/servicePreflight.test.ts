@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 
 import { runServicePreflight } from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -29,5 +30,6 @@ it("accepts the current launcher protocol", () => {
     status: "ready",
     version: "1.2.3",
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    orchestrationProtocol: ORCHESTRATION_PROTOCOL_VERSION,
   });
 });
