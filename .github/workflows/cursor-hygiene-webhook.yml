@@ -3,7 +3,9 @@ name: Forward to Cursor hygiene
 on:
   push:
     branches: [main]
-  pull_request:
+  # Use trusted workflow code and repository secrets for fork PRs.
+  # Keep this job payload-only: never check out or run PR code.
+  pull_request_target:
     types: [opened, reopened, ready_for_review]
   issues:
     types: [opened, closed, reopened]
@@ -31,6 +33,6 @@ jobs:
           curl -fsS --max-time 60 -X POST "$URL" \
             -H "Authorization: $AUTH" \
             -H "Content-Type: application/json" \
-            -H "X-GitHub-Event: ${{ github.event_name }}" \
+            -H "X-GitHub-Event: ${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}" \
             -H "X-GitHub-Delivery: ${{ github.run_id }}-${{ github.run_attempt }}" \
             --data-binary @"${{ github.event_path }}"
