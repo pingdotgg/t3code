@@ -333,6 +333,19 @@ describe("mobile PR scan and filters", () => {
       ),
     ).toHaveLength(0);
   });
+  it("lists a shared repository's row from a connected environment over an offline one", () => {
+    const rows = [
+      { ...entry(1), environmentId: "laptop" },
+      { ...entry(1), environmentId: "server" },
+    ];
+    const pick = (connected: ReadonlySet<string>) =>
+      filterPullRequestList(rows, DEFAULT_PR_LIST_CONTROLS, {}, "", new Set(), connected).map(
+        (row) => row.environmentId,
+      );
+    expect(pick(new Set(["server"]))).toEqual(["server"]);
+    expect(pick(new Set(["laptop", "server"]))).toEqual(["laptop"]);
+    expect(pick(new Set())).toEqual(["laptop"]);
+  });
   it("sorts loaded rows and builds unique author and label options", () => {
     const rows = [
       entry(1, { labels: [{ name: "bug", color: null }] }),
