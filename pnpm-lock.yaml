@@ -15943,14 +15943,6 @@ snapshots:
 
   '@pierre/theme@2.0.0': {}
 
-  '@pierre/theming@1.0.0(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
-    optionalDependencies:
-      '@pierre/theme': 1.1.0
-      '@shikijs/themes': 4.2.0
-      react: 19.3.0
-      react-dom: 19.3.0(react@19.3.0)
-      shiki: 4.2.0
-
   '@pierre/theming@1.0.0(@pierre/theme@1.1.0)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(shiki@4.2.0)':
     optionalDependencies:
       '@pierre/theme': 1.1.0
@@ -15990,18 +15982,6 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
       shiki: 4.2.0
-
-  '@pierre/trees@1.0.0-beta.6(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
-    dependencies:
-      '@pierre/theming': 1.0.0(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
-      preact: 11.0.0-beta.0
-      preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
-      react: 19.3.0
-      react-dom: 19.3.0(react@19.3.0)
-    transitivePeerDependencies:
-      - '@pierre/theme'
-      - '@shikijs/themes'
-      - shiki
 
   '@pierre/trees@1.0.0-beta.6(@pierre/theme@1.1.0)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(shiki@4.2.0)':
     dependencies:
