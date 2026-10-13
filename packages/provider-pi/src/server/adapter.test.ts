@@ -90,6 +90,8 @@ interface FakePi {
   readonly vetoNextSwitch: () => void;
   /** Fields overriding the recorded idle state in the next `get_state` acks, in order. */
   readonly queueState: (data: Record<string, unknown>) => void;
+  /** Change Pi's streaming state before its agent_start event reaches T3. */
+  readonly setStreaming: (streaming: boolean) => void;
   /** Hold the next `get_state` response until the test resolves it. */
   readonly deferNextState: () => void;
   /** Resolve the held `get_state` request. */
@@ -154,6 +156,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
+  let isStreaming: boolean | null = null;
   let stdinBuffer = "";
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
@@ -166,7 +169,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     });
 
   const respondTo = (record: PiRpcRecord): PiRpcRecord | null => {
-    if (typeof record["id"] !== "string") return null;
+    if (typeof record["id"] !== "string" && !(record["type"] === "prompt" && isStreaming !== null))
+      return null;
     const base = {
       type: "response",
       id: record["id"],
@@ -181,7 +185,24 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         }
         // Queued data overrides fields of the recorded idle state, so a test
         // that only cares about the session file still gets a real shape.
-        return { ...base, data: { ...recordedIdleState(sessionFile), ...stateQueue.shift() } };
+        return {
+          ...base,
+          data: {
+            ...recordedIdleState(sessionFile),
+            isStreaming: isStreaming ?? false,
+            ...stateQueue.shift(),
+          },
+        };
+      case "prompt":
+        if (isStreaming && record["streamingBehavior"] === undefined) {
+          return {
+            ...base,
+            success: false,
+            error:
+              "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+          };
+        }
+        return base;
       case "get_available_models":
         return { ...base, data: { models } };
       case "new_session": {
@@ -312,6 +333,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       vetoSwitch = true;
     },
     queueState: (data) => stateQueue.push(data),
+    setStreaming: (streaming) => {
+      isStreaming = streaming;
+    },
     queueStats: (data) => statsQueue.push(data),
     closeStdout: Queue.end(stdout),
     lastSpawn: () => lastSpawn,
@@ -488,6 +512,37 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(layerTest));
 
 describe("PiAdapterV2", () => {
+  it.effect.each([false, true])(
+    "completes a resumed user turn before native wake events arrive, Pi streaming=%s",
+    (streaming) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.setStreaming(streaming);
+        yield* runtime.resumeThread({ providerThread });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Resumed prompt completed" }],
+            stopReason: "stop",
+          },
+        });
+        fake.queueState({ isStreaming: false });
+        yield* fake.emit({ type: "agent_settled" });
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "serializes rollback fork hooks with native wake ownership, wake=%s",
     (nativeWake) =>
