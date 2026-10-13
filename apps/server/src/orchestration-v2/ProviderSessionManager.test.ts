@@ -26,6 +26,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -33,6 +34,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -53,6 +55,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -342,6 +345,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    /** Completed when a session's provider process closes. */
+    readonly sessionClosed?: Deferred.Deferred<void>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -349,7 +354,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     Ref.update(state, (current) => ({
       ...current,
       closeCount: current.closeCount + 1,
-    })),
+    })).pipe(
+      Effect.andThen(
+        options.sessionClosed === undefined
+          ? Effect.void
+          : Deferred.succeed(options.sessionClosed, undefined),
+      ),
+    ),
   );
   // Register after countClose to wedge teardown before its finalizer, matching a provider stream that never yields.
   const hangClose = Effect.addFinalizer(() =>
@@ -490,7 +501,9 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly sessionClosed?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
+  readonly instanceRegistryLayer?: Layer.Layer<ProviderInstanceRegistry.ProviderInstanceRegistry>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
   const layerConfiguredEventSink =
@@ -528,6 +541,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.sessionClosed === undefined ? {} : { sessionClosed: input.sessionClosed }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -574,6 +588,7 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.instanceRegistryLayer === undefined ? [] : [input.instanceRegistryLayer]),
         ),
       ),
     ),
@@ -970,6 +985,260 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
           idleTimeoutMs: 60_000,
         }),
       ),
+    );
+  }),
+);
+
+/** Stands in for a registry instance; sessions only compare it by identity. */
+const makeTestInstance = () => ({ instanceId: modelSelection.instanceId }) as ProviderInstance;
+
+const makeTestInstanceRegistry = Effect.gen(function* () {
+  const current = yield* Ref.make<ProviderInstance | undefined>(makeTestInstance());
+  const changes = yield* PubSub.unbounded<void>();
+  const registry = ProviderInstanceRegistry.ProviderInstanceRegistry.of({
+    getInstance: () => Ref.get(current),
+    listInstances: Ref.get(current).pipe(
+      Effect.map((instance) => (instance === undefined ? [] : [instance])),
+    ),
+    listUnavailable: Effect.succeed([]),
+    streamChanges: Stream.fromPubSub(changes),
+    subscribeChanges: PubSub.subscribe(changes),
+  });
+  return {
+    layer: Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, registry),
+    /** Replaces the instance, as a settings change does. */
+    rebuild: Ref.set(current, makeTestInstance()).pipe(
+      Effect.andThen(PubSub.publish(changes, undefined)),
+    ),
+  };
+});
+
+it.effect("ProviderSessionManagerV2 releases an idle session when its instance is rebuilt", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const sessionClosed = yield* Deferred.make<void>();
+    const instances = yield* makeTestInstanceRegistry;
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-instance-rebuilt");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const runtime = yield* open;
+
+      yield* instances.rebuild;
+      yield* Deferred.await(sessionClosed);
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+
+      assert.notStrictEqual(yield* open, runtime);
+      const runtimeState = yield* Ref.get(state);
+      assert.equal(runtimeState.openCount, 2);
+      assert.equal(runtimeState.closeCount, 1);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          sessionClosed,
+          instanceRegistryLayer: instances.layer,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 replaces a rebuilt instance's session once its running turn ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const instances = yield* makeTestInstanceRegistry;
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-instance-rebuilt-busy");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const runtime = yield* open;
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "running across a settings change",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+        // The running turn keeps the outdated session.
+        yield* instances.rebuild;
+        assert.strictEqual(yield* open, runtime);
+
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-instance-rebuilt",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        // Subscribers see the terminal only after the session marked itself idle.
+        yield* subscription.events.pipe(Stream.take(1), Stream.runDrain);
+
+        assert.notStrictEqual(yield* open, runtime);
+        const runtimeState = yield* Ref.get(state);
+        assert.equal(runtimeState.openCount, 2);
+        assert.equal(runtimeState.closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, instanceRegistryLayer: instances.layer }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 records provider session and turn metrics", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-metrics");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "native-turn",
+        }),
+      });
+      yield* manager.close(providerSessionId);
+
+      const snapshots = yield* Metric.snapshot;
+      const has = (id: string, attributes: Readonly<Record<string, string>>) =>
+        snapshots.some(
+          (snapshot) =>
+            snapshot.id === id &&
+            Object.entries(attributes).every(
+              ([key, value]) => snapshot.attributes?.[key] === value,
+            ),
+        );
+      assert.isTrue(
+        has("t3_provider_sessions_total", {
+          provider: "codex",
+          operation: "open",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(
+        has("t3_provider_sessions_total", {
+          provider: "codex",
+          operation: "release",
+          reason: "manual_shutdown",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(
+        has("t3_provider_turns_total", {
+          provider: "codex",
+          operation: "send",
+          modelFamily: "gpt",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(has("t3_provider_turn_duration", { provider: "codex", operation: "send" }));
+      assert.isTrue(
+        has("t3_provider_turns_total", {
+          provider: "codex",
+          operation: "interrupt",
+          outcome: "success",
+        }),
+      );
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+      // A private registry keeps other tests' provider metrics out of the assertions.
+      Effect.provideService(Metric.MetricRegistry, new Map()),
     );
   }),
 );

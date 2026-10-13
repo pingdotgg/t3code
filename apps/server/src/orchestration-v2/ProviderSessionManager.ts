@@ -25,6 +25,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -41,8 +42,10 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -221,6 +224,11 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /**
+   * The registry instance this session was opened from. A settings change
+   * rebuilds the instance, which leaves this session running the old config.
+   */
+  readonly instance: ProviderInstance | undefined;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -340,6 +348,10 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      // Optional for the same reason; production always provides it.
+      const instanceRegistry = yield* Effect.serviceOption(
+        ProviderInstanceRegistry.ProviderInstanceRegistry,
+      );
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2088,6 +2100,67 @@ export const layerWithOptions = (
         );
       };
 
+      const isOutdated = (entry: LiveSessionEntry) =>
+        Option.isNone(instanceRegistry)
+          ? Effect.succeed(false)
+          : instanceRegistry.value
+              .getInstance(entry.runtime.instanceId)
+              .pipe(Effect.map((instance) => instance !== entry.instance));
+
+      /**
+       * Releases a session whose provider instance was rebuilt or removed
+       * since it opened, so the next turn starts a runtime from the current
+       * settings. Running turns and pending background work keep it alive;
+       * the next `open` checks again.
+       */
+      const releaseIfOutdated = (entry: LiveSessionEntry) =>
+        Effect.gen(function* () {
+          if (entry.busyTurns.size > 0 || !(yield* isOutdated(entry))) return;
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                );
+          if (hasPendingWork) return;
+          // The generation guard keeps a session that took a turn meanwhile.
+          yield* releaseEntry({
+            providerSessionId: entry.runtime.providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Provider instance settings changed.",
+            onlyIfIdleGeneration: entry.idleGeneration,
+          }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
+        });
+
+      if (Option.isSome(instanceRegistry)) {
+        // Subscribed here, before forking, so no rebuild can be missed.
+        const instanceChanges = yield* instanceRegistry.value.subscribeChanges;
+        yield* PubSub.take(instanceChanges).pipe(
+          Effect.andThen(Ref.get(sessions)),
+          Effect.flatMap((current) => Effect.filter(current.values(), isOutdated)),
+          Effect.flatMap((outdated) =>
+            Effect.forEach(
+              outdated,
+              ({ runtime: { providerSessionId } }) =>
+                // Holding the open lock means no replacement can take this
+                // id between the check and the release.
+                sessionOpen.withLock(
+                  providerSessionId,
+                  Ref.get(sessions).pipe(
+                    Effect.flatMap((latest) => {
+                      const entry = latest.get(sessionKey(providerSessionId));
+                      return entry === undefined ? Effect.void : releaseIfOutdated(entry);
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
+            ),
+          ),
+          Effect.forever,
+          Effect.forkIn(layerScope),
+        );
+      }
+
       // Shutdown must fit the launcher's 5 s deadline with up to 15 sessions.
       const sessionScopes = yield* Scope.make("parallel");
       const shutdown = Effect.gen(function* () {
@@ -2135,6 +2208,8 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
+              const found = (yield* Ref.get(sessions)).get(key);
+              if (found !== undefined) yield* releaseIfOutdated(found);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -2155,6 +2230,11 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
+              // Read before the adapter, so a rebuild in between marks this
+              // session outdated rather than hiding it.
+              const instance = Option.isNone(instanceRegistry)
+                ? undefined
+                : yield* instanceRegistry.value.getInstance(input.modelSelection.instanceId);
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -2243,6 +2323,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                instance,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
