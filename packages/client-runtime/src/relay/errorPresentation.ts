@@ -43,6 +43,9 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
       if (error.reason === "environment_link_not_found") {
         return "Relay has no active link for this environment. The environment server may not have re-established its link yet.";
       }
+      if (error.reason === "managed_endpoint_allocation_not_ready") {
+        return "The environment's T3 Connect tunnel is still being set up.";
+      }
       return error.reason
         ? `Relay rejected the environment connection request (${error.reason}).`
         : "Relay rejected the environment connection request.";

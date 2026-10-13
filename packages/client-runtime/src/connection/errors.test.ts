@@ -1,6 +1,7 @@
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayAuthInvalidError,
+  RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointTimedOutError,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -32,6 +33,38 @@ describe("mapManagedRelayError", () => {
       reason: "timeout",
       detail: "Relay timed out while contacting the environment endpoint.",
       traceId: "trace-server-timeout",
+    });
+  });
+
+  it("retries a tunnel that is still being set up, and blocks other refusals", () => {
+    const mapConnectRefusal = (reason: RelayEnvironmentConnectNotAuthorizedError["reason"]) => {
+      const relayError = new RelayEnvironmentConnectNotAuthorizedError({
+        code: "environment_connect_not_authorized",
+        reason,
+        traceId: "trace-connect-refused",
+      });
+      return mapManagedRelayError(
+        new ManagedRelayRequestFailedError({
+          action: "connect relay environment",
+          cause: relayError,
+          relayError,
+        }),
+      );
+    };
+
+    expect(mapConnectRefusal("managed_endpoint_allocation_not_ready")).toMatchObject({
+      _tag: "ConnectionTransientError",
+      reason: "endpoint-unavailable",
+      detail: "The environment's T3 Connect tunnel is still being set up.",
+      traceId: "trace-connect-refused",
+    });
+    expect(mapConnectRefusal("endpoint_provider_not_managed")).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "permission",
+    });
+    expect(mapConnectRefusal(undefined)).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "permission",
     });
   });
 
