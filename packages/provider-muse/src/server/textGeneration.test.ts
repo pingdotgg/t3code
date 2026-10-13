@@ -9,6 +9,7 @@ import {
 import { MuseSettings } from "../settings.ts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
@@ -346,6 +347,78 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
           userInputId: "input-1",
         }),
       );
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  const explainInput = { context: "Message: spawn muse ENOENT", modelSelection };
+
+  it.effect("explains a provider failure from a removed empty temp directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const test = fixture(
+        finish('{"summary":"  Muse is not installed.  ","likelyFix":" Install Muse. "}'),
+      );
+      const service = yield* test.make;
+      expect(yield* service.explainProviderFailure(explainInput)).toEqual({
+        summary: "Muse is not installed.",
+        likelyFix: "Install Muse.",
+      });
+      // The fixture's mock takes no parameters, so its recorded calls are untyped.
+      const hostCalls = test.createHost.mock.calls as unknown as ReadonlyArray<
+        readonly [{ readonly cwd?: string; readonly readOnly?: boolean }]
+      >;
+      const hostOptions = hostCalls[0]?.[0];
+      expect(hostOptions?.readOnly).toBe(true);
+      expect(hostOptions?.cwd).toContain("t3code-muse-text-");
+      expect(hostOptions?.cwd).not.toBe(process.cwd());
+      expect(test.host.connection.command).toHaveBeenCalledWith(
+        "session/start",
+        expect.objectContaining({ workspaceRoot: hostOptions?.cwd, approvalMode: "denyUnmatched" }),
+      );
+      const turn = vi
+        .mocked(test.host.connection.command)
+        .mock.calls.find(([method]) => method === "turn/start");
+      expect(JSON.stringify(turn?.[1])).toContain("spawn muse ENOENT");
+      expect(test.host.close).toHaveBeenCalledOnce();
+      // The directory belonged to the request's scope, which has closed.
+      expect(yield* fileSystem.exists(hostOptions?.cwd ?? "")).toBe(false);
+    }),
+  );
+
+  it.effect("denies a tool approval during an explanation and releases the host", () =>
+    Effect.gen(function* () {
+      const test = fixture((emit) =>
+        emit("approval/requested", {
+          approvalId: "approval-1",
+          currentRequirementId: "requirement-1",
+          availableChoices: [{ choiceId: "deny-1", decision: "denied" }],
+        }),
+      );
+      const service = yield* test.make;
+      expect(yield* service.explainProviderFailure(explainInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "TextGenerationError",
+        operation: "explainProviderFailure",
+      });
+      expect(test.host.connection.command).toHaveBeenCalledWith("approval/decide", {
+        sessionId: "session-1",
+        approvalId: "approval-1",
+        requirementId: "requirement-1",
+        choiceId: "deny-1",
+      });
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("rejects an explanation without the structured fields", () =>
+    Effect.gen(function* () {
+      const test = fixture(finish('{"summary":"Only half an answer."}'));
+      const service = yield* test.make;
+      expect(yield* service.explainProviderFailure(explainInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "TextGenerationError",
+        operation: "explainProviderFailure",
+        detail: "Muse returned invalid structured output.",
+      });
       expect(test.host.close).toHaveBeenCalledOnce();
     }),
   );

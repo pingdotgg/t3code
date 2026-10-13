@@ -167,6 +167,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      const workingDirectory = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, {
+        operation,
+        cwd,
+      });
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
             Effect.mapError(
@@ -198,6 +202,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
+          // A request with no project runs on untrusted text; the read-only
+          // sandbox still lets the shell read absolute paths, so turn it off.
+          ...(cwd === null ? ["--config", "features.shell_tool=false"] : []),
           "--model",
           model,
           "--config",
@@ -224,7 +231,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               }
             : {}),
         },
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),

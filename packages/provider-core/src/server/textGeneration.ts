@@ -115,6 +115,23 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+export interface ProviderFailureExplanationInput {
+  /**
+   * Plain-text description of the failure and the run around it. It comes
+   * from provider output, so providers run this operation with no project
+   * access: an empty temporary working directory and no tools where they can
+   * be turned off.
+   */
+  context: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ProviderFailureExplanationResult {
+  summary: string;
+  likelyFix: string;
+}
+
 /** Commit, change request, branch, and title generation backed by one provider instance. */
 export interface ProviderTextGeneration {
   /**
@@ -147,4 +164,9 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  /** Explain the most probable cause of a provider failure and a likely fix. */
+  readonly explainProviderFailure: (
+    input: ProviderFailureExplanationInput,
+  ) => Effect.Effect<ProviderFailureExplanationResult, TextGenerationError>;
 }
