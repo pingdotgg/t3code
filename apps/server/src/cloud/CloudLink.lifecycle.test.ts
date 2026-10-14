@@ -38,6 +38,7 @@ import {
   decodeConfirmedOrigin,
   decodeRuntimeConfig,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
 import * as CloudLink from "./CloudLink.ts";
@@ -1157,5 +1158,60 @@ describe("releaseManagedTunnelOnShutdown", () => {
         },
       }),
     );
+  });
+
+  // The relay commits the link before the server stores it (#11898). A write
+  // that fails part-way must not leave the stale tunnel config that reports
+  // the link as managed, or Settings never relinks.
+  it.effect("does not report a managed tunnel after a relay config write fails part-way", () => {
+    const { store, values } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "managed-config"],
+      [CLOUD_ENDPOINT_CONFIRMED_ORIGIN, "confirmed-origin"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+    ]);
+    const failingStore: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...store,
+      set: (name, value) =>
+        name === RELAY_ISSUER_SECRET
+          ? Effect.fail(
+              new ServerSecretStore.SecretStorePersistError({
+                resource: name,
+                cause: PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: `${name}.bin`,
+                }),
+              }),
+            )
+          : store.set(name, value),
+    };
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const cloudMintPublicKey =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMY09Vo5CzEA6aEkhB/0h27t4Qs71SHS1fTSI4K0KvZQ=\n-----END PUBLIC KEY-----\n";
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(
+        link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "new-credential",
+          cloudMintPublicKey,
+          endpointRuntime: null,
+        }),
+      );
+
+      expect(error._tag).toBe("CloudLinkInternalError");
+      expect(yield* link.linkState()).toMatchObject({
+        linked: true,
+        cloudUserId: "user-123",
+        managedTunnelActive: false,
+      });
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
+    }).pipe(provideReleaseHarness({ store: failingStore, applyConfigCalls, requests }));
   });
 });

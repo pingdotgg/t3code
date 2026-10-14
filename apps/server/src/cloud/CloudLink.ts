@@ -816,8 +816,17 @@ const make = Effect.gen(function* () {
           },
         });
       }
+      const endpointRuntimeJson = payload.endpointRuntime
+        ? yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime)
+        : null;
       yield* endpointRuntime.applyConfig(null);
       yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
+      // The relay has already committed this link. The stored runtime config
+      // is what reports the link as managed and what startup respawns, so drop
+      // it first and store it last. A write that fails part-way then leaves a
+      // link that reads as not managed, and the next relink repairs it instead
+      // of trusting a stale tunnel config.
+      yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
 
       yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
       yield* secrets.set(
@@ -831,11 +840,8 @@ const make = Effect.gen(function* () {
       );
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
       yield* awarenessRelay.requestCatchUp();
-      if (payload.endpointRuntime) {
-        const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
+      if (endpointRuntimeJson !== null) {
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(endpointRuntimeJson));
-      } else {
-        yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
       }
       if (payload.endpointRuntime === null || options?.confirmedOrigin === undefined) {
         return {
