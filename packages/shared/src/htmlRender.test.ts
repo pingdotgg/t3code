@@ -9,6 +9,7 @@ import {
   injectHtmlRenderBootstrap,
   htmlRenderThemeMessage,
   readHtmlRenderContentHeight,
+  readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
@@ -102,6 +103,29 @@ describe("readHtmlRenderLinkRequest", () => {
     ).toBeUndefined();
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderKeyDown", () => {
+  it("reads the key of a keydown notification and nothing else", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/keydown",
+      params,
+    });
+    expect(readHtmlRenderKeyDown(notification({ key: "k", code: "KeyK", metaKey: true }))).toEqual({
+      key: "k",
+      code: "KeyK",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+    });
+    expect(readHtmlRenderKeyDown(notification({ key: 1, code: "KeyK" }))).toBeUndefined();
+    expect(
+      readHtmlRenderKeyDown({ jsonrpc: "2.0", method: "ui/open-link", params: { key: "k" } }),
     ).toBeUndefined();
   });
 });
