@@ -447,6 +447,32 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     ),
   );
 
+  it.effect("traces an event write and its transaction without its SQL statements", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:untraced-write-statements"), now);
+      const names: Array<string> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          names.push(options.name);
+          return new Tracer.NativeSpan(options);
+        },
+      });
+
+      yield* sink
+        .write({
+          events: [
+            threadCreatedEvent({ id: "event:untraced-write-statements:created", thread, now }),
+          ],
+        })
+        .pipe(Effect.withTracer(tracer));
+
+      // These two spans time a slow commit; the statements inside are not traced.
+      assert.deepEqual(names, ["orchestrationV2.EventSink.write", "sql.transaction"]);
+    }),
+  );
+
   it.effect.each(["high-water", "replay"] as const)(
     "bounds live events while the V2 %s query is blocked",
     (phase) =>

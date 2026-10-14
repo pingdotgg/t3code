@@ -399,7 +399,12 @@ const layerBase: Layer.Layer<
           yield* applyStoredEvents(committed);
           yield* effectOutbox.enqueue(input.effects);
           return committed;
-        }),
+        }).pipe(
+          // Every streamed agent event is a write, so its statements would
+          // dominate the trace file. This span and its sql.transaction span
+          // still time each write, including the commit.
+          Effect.withTracerEnabled(false),
+        ),
         (storedEvents) =>
           Effect.gen(function* () {
             if (input.effects.length > 0) {
