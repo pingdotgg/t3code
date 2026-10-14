@@ -151,22 +151,28 @@ export function isAutoSettlementCandidate(
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
-  // A snoozed thread that woke early (error or completed work) can settle;
+  // A snoozed thread that woke early (error or a newer run's completion) can settle;
   // one still parked on its wake time keeps its stronger statement.
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  const requestedAtMs = toMillis(thread.latestRunRequestedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
   const wokeOnCompletion =
-    snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
+    thread.status === "completed" &&
+    snoozedAtMs !== null &&
+    requestedAtMs !== null &&
+    requestedAtMs > snoozedAtMs &&
+    completedAtMs !== null &&
+    completedAtMs > snoozedAtMs;
   return wokeOnError || wokeOnCompletion;
 }
 
 /**
  * Whether a thread is parked on its snooze: its wake time is in the future and
- * it has not raised its hand with a pending request, a fresh failure, or work
- * that completed after the snooze. Server twin of the client's
+ * it has not raised its hand with a pending request, a fresh failure, or a run
+ * requested after the snooze that completed. Server twin of the client's
  * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
  * difference: a failure counts as fresh when its run completed after the
  * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
@@ -175,7 +181,12 @@ export function isAutoSettlementCandidate(
 export function isSnoozed(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt" | "status" | "pendingRuntimeRequest"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "latestRunRequestedAt"
+    | "latestRunCompletedAt"
+    | "status"
+    | "pendingRuntimeRequest"
   >,
   nowMs: number,
 ): boolean {
@@ -183,6 +194,7 @@ export function isSnoozed(
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  const requestedAtMs = toMillis(thread.latestRunRequestedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&
@@ -191,6 +203,8 @@ export function isSnoozed(
   const wokeOnCompletion =
     thread.status === "completed" &&
     snoozedAtMs !== null &&
+    requestedAtMs !== null &&
+    requestedAtMs > snoozedAtMs &&
     completedAtMs !== null &&
     completedAtMs > snoozedAtMs;
   return !wokeOnError && !wokeOnCompletion;

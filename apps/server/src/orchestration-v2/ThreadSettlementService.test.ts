@@ -165,7 +165,7 @@ describe("isAutoSettlementCandidate", () => {
     ).toBe(true);
   });
 
-  it("keeps snoozed threads parked until they wake early on error or completion", () => {
+  it("keeps snoozed threads parked until a fresh error, newer run completion, or timer wake", () => {
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
@@ -179,7 +179,12 @@ describe("isAutoSettlementCandidate", () => {
     ).toBe(true);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
-        shell({ ...snoozed, latestRunCompletedAt: at(-30 * 60 * 1_000) }),
+        shell({
+          ...snoozed,
+          status: "completed",
+          latestRunRequestedAt: at(-45 * 60 * 1_000),
+          latestRunCompletedAt: at(-30 * 60 * 1_000),
+        }),
         NOW_MS,
       ),
     ).toBe(true);
@@ -208,6 +213,56 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+  });
+
+  it.each([
+    { description: "requested before snooze", requestedAt: at(-2 * 60 * 60 * 1_000) },
+    { description: "requested at snooze", requestedAt: at(-60 * 60 * 1_000) },
+    { description: "missing request time", requestedAt: null },
+  ])("keeps completed work parked when $description", ({ requestedAt }) => {
+    const thread = shell({
+      status: "completed",
+      snoozedUntil: at(60 * 60 * 1_000),
+      snoozedAt: at(-60 * 60 * 1_000),
+      latestRunRequestedAt: requestedAt,
+      latestRunStartedAt: at(-45 * 60 * 1_000),
+      latestRunCompletedAt: at(-30 * 60 * 1_000),
+    });
+
+    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-15 * 60 * 1_000)) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      }),
+    ).toBeNull();
+  });
+
+  it.each([{ status: "interrupted" }, { status: "cancelled" }] satisfies Array<
+    Pick<SettlementShell, "status">
+  >)("keeps a snoozed thread parked when a newer run is $status", ({ status }) => {
+    const thread = shell({
+      status,
+      snoozedUntil: at(60 * 60 * 1_000),
+      snoozedAt: at(-60 * 60 * 1_000),
+      latestRunRequestedAt: at(-45 * 60 * 1_000),
+      latestRunCompletedAt: at(-30 * 60 * 1_000),
+    });
+
+    expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(true);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-15 * 60 * 1_000)) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -1276,17 +1331,45 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
 
 describe("isSnoozed", () => {
   const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
+  it.each([
+    { boundary: "before the snooze", requestedAt: at(-3 * DAY_MS) },
+    { boundary: "at the snooze", requestedAt: snoozed.snoozedAt },
+    { boundary: "without a request time", requestedAt: null },
+  ])("keeps completed work requested $boundary parked", ({ requestedAt }) => {
+    expect(
+      ThreadSettlementService.isSnoozed(
+        shell({
+          ...snoozed,
+          status: "completed",
+          latestRunRequestedAt: requestedAt,
+          latestRunCompletedAt: at(-DAY_MS),
+        }),
+        NOW_MS,
+      ),
+    ).toBe(true);
+  });
+
   it("wakes for completed work after the snooze, but not an interrupted run", () => {
     expect(ThreadSettlementService.isSnoozed(shell(snoozed), NOW_MS)).toBe(true);
     expect(
       ThreadSettlementService.isSnoozed(
-        shell({ ...snoozed, status: "interrupted", latestRunCompletedAt: at(-DAY_MS) }),
+        shell({
+          ...snoozed,
+          status: "interrupted",
+          latestRunRequestedAt: at(-DAY_MS - 1),
+          latestRunCompletedAt: at(-DAY_MS),
+        }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
       ThreadSettlementService.isSnoozed(
-        shell({ ...snoozed, status: "completed", latestRunCompletedAt: at(-DAY_MS) }),
+        shell({
+          ...snoozed,
+          status: "completed",
+          latestRunRequestedAt: at(-DAY_MS - 1),
+          latestRunCompletedAt: at(-DAY_MS),
+        }),
         NOW_MS,
       ),
     ).toBe(false);
