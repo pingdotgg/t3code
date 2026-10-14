@@ -10,8 +10,11 @@ processes do not self-update.
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. After a
+commit the launcher points the unit at the committed runtime, so the next service
+start also runs that version's launcher; the protocol check is what makes that safe.
+launchd reads the plist only at its next bootstrap, so a crash respawn before then
+still runs the loaded definition.
 
 ## Commit boundary
 

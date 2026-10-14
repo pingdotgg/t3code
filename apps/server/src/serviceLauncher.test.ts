@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
+import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootService.ts";
 import {
   databaseBackupBlocker,
   Launcher,
@@ -19,6 +20,8 @@ import {
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
+  repointServiceUnit,
+  type ServiceUnit,
   writeServiceState,
 } from "./serviceLauncher.ts";
 import {
@@ -111,6 +114,35 @@ it("rejects contradictory service state", () => {
   );
 });
 
+const unitPlan = (root: string, version: string) => ({
+  program: [`${root}/runtime/versions/${version}/t3`, "__service-launcher"],
+  baseDir: root,
+  logPath: `${root}/logs/boot-service.log`,
+  unitPath: `${root}/unit/t3code.service`,
+});
+
+it("points a unit or launch agent at another runtime and leaves the rest alone", () => {
+  for (const root of ["/home/user/.t3", "/home/user name/.t3", "/home/100%/.t3"]) {
+    assert.equal(
+      repointServiceUnit(renderBootServiceUnit(unitPlan(root, "1.0.0")), "1.1.0"),
+      renderBootServiceUnit(unitPlan(root, "1.1.0")),
+    );
+  }
+  const root = "/Users/user/.t3 & co";
+  const plistOptions = {
+    homeDir: "/Users/user",
+    environmentPath: `/usr/bin:${root}/runtime/versions/1.0.0`,
+  };
+  assert.equal(
+    repointServiceUnit(renderBootServicePlist(unitPlan(root, "1.0.0"), plistOptions), "1.1.0"),
+    renderBootServicePlist(unitPlan(root, "1.1.0"), plistOptions),
+  );
+  for (const version of ["1.1.0", "1.2.0"]) {
+    const unit = renderBootServiceUnit(unitPlan(root, version));
+    assert.equal(repointServiceUnit(unit, "1.1.0"), unit);
+  }
+});
+
 const writeFakeRuntime = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -127,6 +159,28 @@ const writeFakeRuntime = (
       `${path.basename(versionDir)}\n`,
     );
     return entryPath;
+  });
+
+// The unit the launcher repoints after a commit, written where its plan says.
+const fakeServiceUnit = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  version: string,
+) =>
+  Effect.gen(function* () {
+    const plan = unitPlan(root, version);
+    yield* fs.makeDirectory(path.dirname(plan.unitPath), { recursive: true });
+    yield* fs.writeFileString(plan.unitPath, renderBootServiceUnit(plan));
+    const unit: ServiceUnit & { reloads: number } = {
+      path: plan.unitPath,
+      reloads: 0,
+      reload: () => {
+        unit.reloads += 1;
+        return Promise.resolve();
+      },
+    };
+    return unit;
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
@@ -294,8 +348,15 @@ if (context.update?.status === "pending") {
           activeVersion: "1.0.0",
         }),
       );
+      const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0");
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          serviceUnit: unit,
+        },
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -306,6 +367,77 @@ if (context.update?.status === "pending") {
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update?.status, "committed");
+      assert.equal(
+        yield* fs.readFileString(unit.path),
+        renderBootServiceUnit(unitPlan(root, "1.1.0")),
+      );
+      assert.equal(unit.reloads, 1);
+    }),
+  );
+
+  it.effect("commits even when the unit cannot be repointed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-unit-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "before trial");
+      const encodedDatabasePath = JSON.stringify(databasePath);
+      const childSource = `
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  process.send({ type: "prepared", updateId: context.update.id });
+  process.on("message", (message) => {
+    if (message.type === "committed") process.exit(0);
+  });
+} else if (context.update === undefined) {
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
+  setInterval(() => {}, 1_000);
+} else {
+  process.exit(0);
+}
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      let reloads = 0;
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          serviceUnit: {
+            path: path.join(root, "unit", "missing.service"),
+            reload: () => {
+              reloads += 1;
+              return Promise.resolve();
+            },
+          },
+        },
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(state.activeVersion, "1.1.0");
+      assert.equal(state.update?.status, "committed");
+      assert.equal(reloads, 0);
     }),
   );
 
@@ -356,7 +488,15 @@ if (context.update?.status === "pending") {
           activeVersion: "1.0.0",
         }),
       );
+      const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0");
 
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          serviceUnit: unit,
+        },
+      );
       yield* Effect.promise(() =>
         main().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -367,6 +507,11 @@ if (context.update?.status === "pending") {
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(state.activeVersion, "1.0.0");
       assert.equal(state.update?.status, "rolled-back");
+      assert.equal(
+        yield* fs.readFileString(unit.path),
+        renderBootServiceUnit(unitPlan(root, "1.0.0")),
+      );
+      assert.equal(unit.reloads, 0);
       assert.equal(
         state.update?.status === "rolled-back" ? state.update.reason : undefined,
         "invalid-prepared",

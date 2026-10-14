@@ -28,6 +28,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
+  SERVICE_UNIT_ENV,
   compareExactServiceVersions,
   parseServiceState,
   serviceStateActiveVersion,
@@ -41,7 +42,6 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (com.t3tools.t3code), so launchd and TCC records never collide.
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
-const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -104,7 +104,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -162,7 +162,7 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
-    `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
+    `    <key>${SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
@@ -606,7 +606,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const runningInsideService =
-    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    (yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -890,7 +890,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         // Transient properties reach systemd literally, unlike unit-file specifiers.
         `--property=StandardOutput=append:${logPath}`,
         `--property=StandardError=append:${logPath}`,
-        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+        `--setenv=${SERVICE_UNIT_ENV}=`,
         runtimePaths.entryPath,
         "service",
         "install",
