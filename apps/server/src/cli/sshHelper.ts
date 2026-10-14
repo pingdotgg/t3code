@@ -18,14 +18,31 @@ import { Argument, Command } from "effect/cli";
  * them.
  */
 
-const tryPort = (port: number) =>
-  new Promise<number | false>((resolve) => {
+const canBind = (port: number) =>
+  new Promise<boolean>((resolve) => {
     const server = NodeNet.createServer();
     server.unref();
     server.once("error", () => resolve(false));
     server.listen(port, "127.0.0.1", () => {
-      server.close((error) => resolve(error ? false : port));
+      server.close((error) => resolve(!error));
     });
+  });
+
+// macOS lets the bind above succeed while another process listens on
+// *:<port>, so also skip any port that already answers on loopback.
+const answersOnLoopback = (port: number) =>
+  new Promise<boolean>((resolve) => {
+    const socket = NodeNet.connect({ port, host: "127.0.0.1" });
+    socket.setTimeout(1000);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
   });
 
 /** Prints the first free loopback port from the preferred one, scanning `window` ports. */
@@ -40,7 +57,7 @@ const pickPort = Command.make("pick-port", {
       const preferred = Number.parseInt(raw, 10);
       const start = Number.isInteger(preferred) ? preferred : defaultPort;
       for (let port = start; port < start + scanWindow; port += 1) {
-        if (await tryPort(port)) {
+        if ((await canBind(port)) && !(await answersOnLoopback(port))) {
           process.stdout.write(String(port));
           return;
         }
