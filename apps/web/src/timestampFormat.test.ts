@@ -75,8 +75,18 @@ describe("resolveWeekStartsOn", () => {
   it("follows the locale the desktop host reports", async () => {
     vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-GB" } });
     vi.resetModules();
-    const { weekStartsOn } = await import("./timestampFormat");
-    expect(weekStartsOn).toBe(1);
+    const { calendarWeekStartsOn } = await import("./timestampFormat");
+    expect(calendarWeekStartsOn("locale")).toBe(1);
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("lets an explicit first day of the week override the locale", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-GB" } });
+    vi.resetModules();
+    const { calendarWeekStartsOn } = await import("./timestampFormat");
+    expect(calendarWeekStartsOn("sunday")).toBe(0);
+    expect(calendarWeekStartsOn("monday")).toBe(1);
     vi.unstubAllGlobals();
     vi.resetModules();
   });
