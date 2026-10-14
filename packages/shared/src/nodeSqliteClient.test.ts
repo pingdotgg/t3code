@@ -131,6 +131,102 @@ layer("NodeSqliteClient", (it) => {
   );
 });
 
+const largeText = "x".repeat(64 * 1024 + 1);
+
+it.effect("keeps large text and blob parameters off cached statements", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const statements: Array<NodeSqlite.StatementSync> = [];
+    const all = NodeSqlite.StatementSync.prototype.all;
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+          this: NodeSqlite.StatementSync,
+          ...params
+        ) {
+          statements.push(this);
+          return all.apply(this, params);
+        }),
+      ),
+      (spy) => Effect.sync(() => spy.mockRestore()),
+    );
+
+    const small = "small";
+    const queries = [
+      (value: string | Uint8Array | ArrayBuffer) => sql`SELECT length(${value}) AS size`,
+      (value: string | Uint8Array | ArrayBuffer) =>
+        sql.unsafe("SELECT length($value) AS size", [{ $value: value }]),
+      (value: string | Uint8Array | ArrayBuffer) =>
+        sql.unsafe("SELECT length($value) AS callable", [
+          Object.assign(() => {}, { $value: value }),
+        ]),
+    ];
+    const cached = new Set<NodeSqlite.StatementSync>();
+    const large = new Set<NodeSqlite.StatementSync>();
+    const largeBlobs = [new Uint8Array(64 * 1024 + 1), new ArrayBuffer(64 * 1024 + 1)];
+    for (const value of [small, largeText, ...largeBlobs, small]) {
+      const expected = typeof value === "string" ? value.length : value.byteLength;
+      for (const query of queries) {
+        assert.deepEqual((yield* query(value)).map(Object.values), [[expected]]);
+        assert.deepEqual(yield* query(value).values, [[expected]]);
+        for (const statement of statements.splice(0)) {
+          (value === small ? cached : large).add(statement);
+        }
+      }
+    }
+
+    // Small parameters keep reusing the one cached statement for each query.
+    assert.equal(cached.size, queries.length);
+    // Each large execution gets a statement that nothing holds on to afterwards.
+    assert.equal(large.size, queries.length * 6);
+    assert.isTrue(cached.isDisjointFrom(large));
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("reads integers on the values path as the caller asked, cached or not", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    for (const value of ["small", largeText]) {
+      const values = sql`SELECT 1 AS id, length(${value}) AS size`.values;
+      assert.deepEqual(yield* values.pipe(Effect.provideService(SqlClient.SafeIntegers, true)), [
+        [1n, BigInt(value.length)],
+      ]);
+      assert.deepEqual(yield* values, [[1, value.length]]);
+    }
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("leaves a parameter it cannot measure for the statement to handle", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const detached = new DataView(new ArrayBuffer(8));
+    structuredClone(detached.buffer, { transfer: [detached.buffer] });
+    // What a detached view binds as varies by Node version; match the statement itself.
+    const native = new NodeSqlite.DatabaseSync(":memory:");
+    const expected = native.prepare("SELECT length(?) AS size").all(detached);
+    native.close();
+    assert.deepEqual(yield* sql`SELECT length(${detached}) AS size`, expected);
+
+    const throwing = {
+      get $value(): string {
+        throw new Error("unreadable");
+      },
+    };
+    const error = yield* sql.unsafe("SELECT length($value) AS size", [throwing]).pipe(Effect.flip);
+    assert.equal(error.reason.operation, "execute");
+
+    // Only the statement reads a getter, so it runs once as it would natively.
+    let reads = 0;
+    const counting = {
+      get $value(): number {
+        return ++reads;
+      },
+    };
+    assert.deepEqual(yield* sql.unsafe("SELECT $value AS value", [counting]), [{ value: 1 }]);
+    assert.equal(reads, 1);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
 const makeTempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -308,6 +404,38 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
         assert.equal(count, 2);
       }),
     ),
+  ),
+);
+
+it.effect("keeps large parameters off the reader worker's cached statements", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const read = (value: string) =>
+        sql<{ size: number }>`SELECT length(${value}) AS size`.pipe(
+          Effect.map((rows) => rows[0]?.size),
+        );
+      // Start the worker so its requests can be recorded.
+      yield* countEntries(sql).pipe(SqliteClient.readOnly);
+      const worker = startedWorkers.at(-1)!;
+      const cached: Array<boolean> = [];
+      const postMessage = worker.postMessage;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(worker, "postMessage").mockImplementation(function (
+            this: NodeWorkerThreads.Worker,
+            message: { readonly cached: boolean },
+          ) {
+            cached.push(message.cached);
+            return postMessage.call(this, message);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+
+      assert.equal(yield* read("small").pipe(SqliteClient.readOnly), 5);
+      assert.equal(yield* read(largeText).pipe(SqliteClient.readOnly), largeText.length);
+      assert.deepEqual(cached, [true, false]);
+    }).pipe(Effect.scoped),
   ),
 );
 
