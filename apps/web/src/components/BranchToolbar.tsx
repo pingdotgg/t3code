@@ -69,6 +69,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
 import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
 import { cn } from "~/lib/utils";
+import { contentInlineWidth } from "~/lib/contentInlineWidth";
 import { observeResize } from "~/lib/observeResize";
 
 export interface BranchToolbarHandle {
@@ -435,14 +436,10 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     const { element: current, overflows: compact } = stateRef.current;
     if (!current) return;
     if (current.clientWidth === 0) return;
-    // The strip's own padding is not room for its children. Counting it let
-    // labels expand while the composer controls hosted here had already
-    // collapsed to icons for lack of space.
+    // Same free-space read the composer applies to the controls host, so the
+    // labels never expand into room the docked controls already gave up.
     const stripStyle = getComputedStyle(current);
-    const available =
-      current.clientWidth -
-      (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
-      (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
+    const available = contentInlineWidth(current, stripStyle);
     const contentWidth = (parent: Element): number => {
       const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
       let width = 0;
