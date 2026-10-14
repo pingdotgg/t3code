@@ -39,7 +39,8 @@ export interface CloudLinkDesiredState {
  * outlive a relay link that drifted to publish-only, and clients then get
  * `endpoint_provider_not_managed`. So when relay discovery has this
  * environment's record, it must also say managed. Older environment servers
- * predate managedTunnelActive; for them a link always implies a tunnel.
+ * predate managedTunnelActive; for them a link always implies a tunnel. A link
+ * the relay rejected (usually after a Deregister) gives no access at all.
  */
 function isManagedTunnelActive(
   linkState: EnvironmentCloudLinkStateResult,
@@ -47,6 +48,7 @@ function isManagedTunnelActive(
 ) {
   const localManagedTunnel = linkState.managedTunnelActive ?? linkState.linked;
   return (
+    linkState.linkRevoked !== true &&
     localManagedTunnel &&
     (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
   );
@@ -105,6 +107,8 @@ export function useCloudLinkController() {
   };
 
   const linkData = primaryCloudLinkState.data;
+  // A revoked link reads as off; turning it on links again.
+  const linkRevoked = linkData?.linkRevoked ?? false;
   const managedTunnelActive = linkData ? isManagedTunnelActive(linkData, relayProviderKind) : false;
   // Local state says managed but the relay holds a publish-only link. Turning
   // T3 Connect on relinks as managed, which repairs it.
@@ -112,7 +116,7 @@ export function useCloudLinkController() {
     linkData !== null && !managedTunnelActive && isManagedTunnelActive(linkData, undefined);
   const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
   const holdWebhooksWhileOffline = primaryCloudLinkState.data?.holdWebhooksWhileOffline ?? false;
-  const linked = primaryCloudLinkState.data?.linked ?? false;
+  const linked = !linkRevoked && (primaryCloudLinkState.data?.linked ?? false);
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
@@ -178,7 +182,11 @@ export function useCloudLinkController() {
         return false;
       }
       const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
-      if (!currentLinkState.linked || currentManagedTunnel !== desired.managedTunnel) {
+      if (
+        !currentLinkState.linked ||
+        currentLinkState.linkRevoked === true ||
+        currentManagedTunnel !== desired.managedTunnel
+      ) {
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,
@@ -225,6 +233,7 @@ export function useCloudLinkController() {
     isSignedIn,
     linkState: primaryCloudLinkState,
     linked,
+    linkRevoked,
     managedTunnelActive,
     managedTunnelOutOfSync,
     publishAgentActivity,

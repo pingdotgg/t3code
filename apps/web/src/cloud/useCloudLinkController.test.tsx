@@ -222,6 +222,25 @@ describe("useCloudLinkController", () => {
     });
   });
 
+  it("shows a revoked link as off and links it again when turned on", async () => {
+    testState.snapshot = { ...linkedState, linkRevoked: true };
+    testState.renderedSnapshot = testState.snapshot;
+    await mountController();
+    expect(controller).toMatchObject({
+      linked: false,
+      linkRevoked: true,
+      managedTunnelActive: false,
+      managedTunnelOutOfSync: false,
+    });
+
+    expect(await reconcile({ managedTunnel: true, publish: false })).toBe(true);
+    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
+      target,
+      clerkToken: "clerk-token",
+      mode: "managed",
+    });
+  });
+
   it("keeps a managed link that the relay also holds as managed", async () => {
     testState.relayProviderKind = "cloudflare_tunnel";
     await mountController();

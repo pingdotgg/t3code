@@ -29,7 +29,8 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const cloudLinkState = usePrimaryCloudLinkState().data;
   // Same fallback as the Connections row: older servers imply a tunnel from `linked`.
   const managedTunnelActive =
-    cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false;
+    cloudLinkState?.linkRevoked !== true &&
+    (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false);
 
   return useMemo(
     () =>

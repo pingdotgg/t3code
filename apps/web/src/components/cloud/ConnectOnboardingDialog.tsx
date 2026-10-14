@@ -173,7 +173,11 @@ function ConfiguredConnectOnboardingDialog() {
       return;
     }
     prefilledFromLinkStateRef.current = true;
-    if (linkStateData.linked && linkStateData.cloudUserId === openForAccount) {
+    if (
+      linkStateData.linked &&
+      linkStateData.linkRevoked !== true &&
+      linkStateData.cloudUserId === openForAccount
+    ) {
       setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
