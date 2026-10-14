@@ -34,8 +34,8 @@ import { collectUint8StreamText } from "./collectStreamText.ts";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
-const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
-const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
+const PACKAGE_MANAGER_PROBE_TIMEOUT_MS = 10_000;
+const PACKAGE_MANAGER_PROBE_MAX_BYTES = 256 * 1_024;
 const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
@@ -121,6 +121,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -143,6 +144,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
   };
 }
 
@@ -293,37 +295,100 @@ export function parseHomebrewLatestVersion(
   return nonEmptyString(raw);
 }
 
-const runHomebrew = Effect.fn("runHomebrew")(function* (
-  brewPath: string,
+/**
+ * Run a package manager query and return stdout, or null on a rejected exit
+ * code, timeout, or oversized output.
+ */
+const runPackageManagerProbe = Effect.fn("runPackageManagerProbe")(function* (
+  executable: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
+  okExitCodes: ReadonlyArray<number> = [0],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(brewPath, args, { env, extendEnv: true }));
+    const child = yield* spawner.spawn(
+      ChildProcess.make(executable, args, { env, extendEnv: true }),
+    );
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
-    // stderr is drained so a chatty brew cannot block on a full pipe.
+    // stderr is drained so a chatty tool cannot block on a full pipe.
     const [stdout, exitCode] = yield* Effect.all(
       [
-        collectUint8StreamText({ stream: child.stdout, maxBytes: HOMEBREW_INFO_MAX_BYTES }),
+        collectUint8StreamText({ stream: child.stdout, maxBytes: PACKAGE_MANAGER_PROBE_MAX_BYTES }),
         child.exitCode,
         Stream.runDrain(child.stderr),
       ],
       { concurrency: "unbounded" },
     );
-    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
+    return !okExitCodes.includes(Number(exitCode)) || stdout.truncated ? null : stdout.text;
   });
   return yield* collect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(PACKAGE_MANAGER_PROBE_TIMEOUT_MS)),
     Effect.map(Option.getOrNull),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew probe failed", {
+      Effect.logWarning("Package manager probe failed", {
+        executable,
         subcommand: args[0],
         errorTag: causeErrorTag(cause),
       }).pipe(Effect.as(null)),
     ),
   );
+});
+
+const decodePnpmOutdated = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Record(Schema.String, Schema.Struct({ latest: Schema.optional(Schema.String) })),
+  ),
+);
+const decodePnpmList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        dependencies: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ version: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+);
+
+/**
+ * The version `pnpm add -g <package>@latest` would install. pnpm 11+ holds
+ * back releases newer than `minimumReleaseAge` (24 hours by default) and still
+ * exits 0, so the npm `latest` tag would advertise an update pnpm skips.
+ * `pnpm outdated` applies the same policy, including its excludes, and
+ * reports nothing while the only newer release is still waiting; the
+ * installed version is then the latest. Null falls back to the registry.
+ */
+const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion")(function* (
+  packageName: string,
+) {
+  // The updater runs `pnpm` with the server's environment, so ask that same
+  // pnpm: another one could hold a different global directory or cooldown.
+  const env = {};
+  const pnpmPath = yield* resolveCommandPath("pnpm");
+  if (!pnpmPath) return null;
+  // `pnpm outdated` exits 1 when it found something outdated.
+  const outdated = yield* runPackageManagerProbe(
+    pnpmPath,
+    ["outdated", "-g", "--format", "json", packageName],
+    env,
+    [0, 1],
+  );
+  const outdatedEntries = outdated
+    ? Option.getOrUndefined(decodePnpmOutdated(outdated))
+    : undefined;
+  if (!outdatedEntries) return null;
+  const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
+  if (latest) return latest;
+  const listed = yield* runPackageManagerProbe(
+    pnpmPath,
+    ["ls", "-g", "--depth", "0", "--json", packageName],
+    env,
+  );
+  const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
+  return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
@@ -383,12 +448,16 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+      lookupLatestVersion: resolvePnpmGlobalLatestVersion(packageName).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
 
@@ -458,7 +527,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     if (!brewPath) {
       return fallback;
     }
-    const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
+    const brewPrefix = nonEmptyString(
+      yield* runPackageManagerProbe(brewPath, ["--prefix"], context.env),
+    );
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
       : null;
@@ -472,7 +543,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
-    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const info = yield* runPackageManagerProbe(
+      brewPath,
+      ["info", "--json=v2", homebrew.name],
+      context.env,
+    );
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -698,6 +773,22 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+/** The installer's own answer is cached apart from the npm registry entry. */
+function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
+  return capabilities.lookupLatestVersion && capabilities.update && capabilities.packageName
+    ? `${capabilities.update.lockKey}:${capabilities.packageName}`
+    : null;
+}
+
+/** Every ProviderLatestVersions entry `resolveLatestProviderVersion` may read. */
+export function latestProviderVersionCacheKeys(
+  capabilities: ProviderMaintenanceCapabilities,
+): ReadonlyArray<string> {
+  return [capabilities.packageName, installerLatestVersionKey(capabilities)].filter(
+    (key) => key !== null,
+  );
+}
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -710,6 +801,14 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   }
 
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
+    const installable = yield* latestVersions.cached(
+      installerKey,
+      maintenanceCapabilities.lookupLatestVersion,
+    );
+    if (installable !== null) return installable;
+  }
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
 
