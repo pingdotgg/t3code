@@ -405,7 +405,12 @@ const layerTestNodeServices = Layer.mergeAll(
 );
 
 it.layer(
-  Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
+  Layer.mergeAll(
+    layerTestNodeServices,
+    ServerSettingsModule.layerTest(),
+    layerTestHttpClient,
+    ProviderLatestVersions.layer,
+  ),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>
@@ -1550,6 +1555,127 @@ it.layer(
         [...previousProvider.models],
       );
     });
+
+    it.effect("invalidates model caches only for an explicit model refresh", () =>
+      Effect.gen(function* () {
+        const forceRefreshCalls = yield* Ref.make(0);
+        const makeInstance = (name: string) =>
+          Effect.gen(function* () {
+            const driver = ProviderDriverKind.make("codex");
+            const instanceId = ProviderInstanceId.make(name);
+            const provider = {
+              instanceId,
+              driver,
+              status: "ready",
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-06-10T00:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            const invalidations = yield* Ref.make(0);
+            const instance = {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: {
+                driverKind: driver,
+                continuationKey: `codex:instance:${name}`,
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: `${name}-package`,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              invalidateCaches: Ref.update(invalidations, (count) => count + 1),
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+            return { instance, invalidations };
+          });
+        const first = yield* makeInstance("codex_first");
+        const second = yield* makeInstance("codex_second");
+        const instances = [first.instance, second.instance];
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const layerModelManifest = Layer.succeed(ModelManifest.ModelManifest, {
+          current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          forceRefresh: Ref.update(forceRefreshCalls, (count) => count + 1).pipe(
+            Effect.as(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          ),
+          refreshInBackground: Effect.void,
+        });
+        const layerLatestVersions = Layer.effect(
+          ProviderLatestVersions.ProviderLatestVersions,
+          ProviderLatestVersions.make([
+            ["codex_first-package", "1.0.0"],
+            ["codex_second-package", "1.0.0"],
+          ]),
+        );
+        const readCachedVersion = (key: string) =>
+          ProviderLatestVersions.ProviderLatestVersions.use((latestVersions) =>
+            latestVersions.cached(key, Effect.succeed("2.0.0")),
+          );
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+
+          yield* registry.refreshInstance(first.instance.instanceId);
+          yield* registry.refresh();
+          assert.strictEqual(yield* Ref.get(forceRefreshCalls), 0);
+          assert.strictEqual(yield* Ref.get(first.invalidations), 0);
+          assert.strictEqual(yield* readCachedVersion("codex_first-package"), "1.0.0");
+
+          yield* registry.invalidateModelCaches(first.instance.instanceId);
+          assert.strictEqual(yield* Ref.get(forceRefreshCalls), 1);
+          assert.strictEqual(yield* Ref.get(first.invalidations), 1);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 0);
+          assert.strictEqual(yield* readCachedVersion("codex_first-package"), "2.0.0");
+          assert.strictEqual(yield* readCachedVersion("codex_second-package"), "1.0.0");
+
+          yield* registry.invalidateModelCaches();
+          assert.strictEqual(yield* Ref.get(first.invalidations), 2);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 1);
+          assert.strictEqual(yield* readCachedVersion("codex_second-package"), "2.0.0");
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provideMerge(layerInstanceRegistry),
+              Layer.provideMerge(layerModelManifest),
+              Layer.provideMerge(layerLatestVersions),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-model-cache-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+      }),
+    );
 
     it.effect("does not run provider probes during layer construction", () =>
       Effect.gen(function* () {

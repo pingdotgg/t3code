@@ -21,6 +21,8 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
@@ -68,6 +70,15 @@ export class ProviderRegistry extends Context.Service<
       readonly cwd: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Drop T3-owned model caches before an explicit model refresh: the model
+     * manifest, each instance's discovery caches, and its cached latest
+     * package version. Scoped to one instance when `instanceId` is given.
+     * Background and ordinary refreshes keep their cache timers and must not
+     * call this.
+     */
+    readonly invalidateModelCaches: (instanceId?: ProviderInstanceId) => Effect.Effect<void>;
 
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
@@ -344,6 +355,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -934,6 +946,25 @@ export const layer = Layer.effect(
       );
     });
 
+    const invalidateModelCaches = Effect.fn("invalidateModelCaches")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      yield* manifestService.forceRefresh;
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => instanceId === undefined || instanceId === instance.instanceId,
+        ),
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+            if (maintenance.packageName) yield* latestVersions.invalidate(maintenance.packageName);
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -942,6 +973,7 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+      invalidateModelCaches,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
