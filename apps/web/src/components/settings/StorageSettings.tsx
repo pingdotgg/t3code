@@ -466,16 +466,21 @@ export function WorktreeCleanupSection() {
   const clearSettings = useClearScopedSettings();
   // Each rule is one field of `storageCleanup`; naming it lets the row show
   // where that rule's value comes from on every selected machine.
-  const ruleProps = (key: keyof StorageCleanupSettings) => ({
-    mixed: targets.some(
+  const ruleProps = (key: keyof StorageCleanupSettings) => {
+    const mixed = targets.some(
       (target) =>
         ({ ...target.settings.storageCleanup, ...resolveWorktreeCleanup(target.settings, null) })[
           key
         ] !== settings[key],
-    ),
-    settingKeys: STORAGE_CLEANUP_KEYS,
-    settingField: key,
-  });
+    );
+    return {
+      mixed,
+      // Project rows have no layers icon, so they keep the mixed hint as text.
+      status: isProjectScope && mixed ? "Mixed across selected machines" : undefined,
+      settingKeys: STORAGE_CLEANUP_KEYS,
+      settingField: key,
+    };
+  };
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>

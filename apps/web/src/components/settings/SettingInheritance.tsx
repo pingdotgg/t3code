@@ -124,6 +124,25 @@ export function environmentSettingValue(
     : settings[key];
 }
 
+/**
+ * Whether an environment chose its own value. A storage rule also counts when
+ * the environment's `worktreeCleanup` policy overrides the raw rule, even if
+ * the result happens to match the built-in default.
+ */
+export function environmentSettingIsSet(
+  settings: ServerSettings,
+  key: keyof ServerSettings,
+  field?: keyof StorageCleanupSettings,
+): boolean {
+  const value = environmentSettingValue(settings, key, field);
+  return (
+    !Equal.equals(value, environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field)) ||
+    (key === "storageCleanup" &&
+      field !== undefined &&
+      !Equal.equals(value, settings.storageCleanup[field]))
+  );
+}
+
 /** Matches resolveProjectSettings order. */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
@@ -134,7 +153,7 @@ export function settingInheritanceLayers(
   const environmentValue = environmentSettingValue(environmentSettings, key, field);
   const defaultValue = environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field);
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
-  const environmentSet = !Equal.equals(environmentValue, defaultValue);
+  const environmentSet = environmentSettingIsSet(environmentSettings, key, field);
   const fileBacked = isProjectFileBackedSettingKey(key);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {

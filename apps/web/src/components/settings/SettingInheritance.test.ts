@@ -154,9 +154,10 @@ describe("settingInheritanceLayers", () => {
         field,
       ).map((layer) => [layer.label, layer.value, layer.effective]);
     };
+    // The policy, not the default, turned the enabled rule off.
     expect(layers({ mode: "off" }, "worktreeOnMerge")).toEqual([
-      ["Laptop", "Inherits", false],
-      ["Default", "Off", true],
+      ["Laptop", "Off", true],
+      ["Default", "Off", false],
     ]);
     expect(
       layers(

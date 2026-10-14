@@ -3,12 +3,7 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { InfoIcon, Undo2Icon } from "lucide-react";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  type ServerSettings,
-  type StorageCleanupSettings,
-} from "@t3tools/contracts";
-import * as Equal from "effect/Equal";
+import { type ServerSettings, type StorageCleanupSettings } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
 
@@ -31,7 +26,7 @@ import {
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
-  environmentSettingValue,
+  environmentSettingIsSet,
   SettingInheritance,
   type SettingInheritanceState,
   type SettingOverridingProject,
@@ -426,10 +421,7 @@ export function SettingsRow({
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (
           environmentSettings !== undefined &&
-          !Equal.equals(
-            environmentSettingValue(environmentSettings, key, settingField),
-            environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, settingField),
-          )
+          environmentSettingIsSet(environmentSettings, key, settingField)
         );
       }),
     );
