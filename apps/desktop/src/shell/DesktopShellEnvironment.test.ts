@@ -367,6 +367,32 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates missing CA trust variables from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        SSL_CERT_DIR: "/etc/ssl/certs",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/zerobrew/bin:/usr/bin",
+            SSL_CERT_FILE: "/opt/zerobrew/etc/ca-certificates/cacert.pem",
+            SSL_CERT_DIR: "/opt/zerobrew/etc/ca-certificates",
+            NODE_EXTRA_CA_CERTS: "/Users/me/corp-root.pem",
+          }),
+      });
+
+      assert.equal(env.SSL_CERT_FILE, "/opt/zerobrew/etc/ca-certificates/cacert.pem");
+      assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
+      assert.equal(env.NODE_EXTRA_CA_CERTS, "/Users/me/corp-root.pem");
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
