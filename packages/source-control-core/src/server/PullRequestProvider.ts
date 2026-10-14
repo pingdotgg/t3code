@@ -199,6 +199,11 @@ export interface ProviderListCursor {
    * count too when the provider reports a `cursorAdvance`.
    */
   readonly delivered: number;
+  /**
+   * Rows already handed over at `updatedBefore`. Timestamp-paged hosts can exclude these before
+   * applying their limit so a full page of tied updates does not repeat the same prefix.
+   */
+  readonly seenAt?: ReadonlyArray<number> | undefined;
 }
 
 /** One repository's row inside an answer that spans several of them. */

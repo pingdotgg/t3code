@@ -419,7 +419,7 @@ interface RepositoryBatch {
   readonly nextCursor: string | null;
 }
 
-/** What the providers are told, plus the part only the service acts on. */
+/** A decoded continuation, with boundary exclusions always present. */
 interface ListCursor extends ProviderListCursor {
   /**
    * The rows already handed over at exactly `updatedBefore`. The next read asks for that instant
@@ -499,11 +499,11 @@ function listCursorAt(
   fetched: ReadonlyArray<ProviderChangeRequest>,
   deliveredCount: number,
 ): string {
-  const seenAt = [
+  const seenAt = new Set([
     ...(previous?.updatedBefore === boundary ? previous.seenAt : []),
     ...fetched.filter((item) => item.updatedAt === boundary).map((item) => item.number),
-  ];
-  return `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${seenAt.join(",")}`;
+  ]);
+  return `${boundary}|${(previous?.delivered ?? 0) + deliveredCount}|${[...seenAt].join(",")}`;
 }
 
 /** A host that cannot be read at all, as opposed to one request that failed. */
@@ -1382,12 +1382,15 @@ export const make = Effect.gen(function* () {
               // answers unnarrowed rather than failing.
               query: input.query,
               filters: input.filters,
-              // Only the two fields a host can act on: which rows have already been sent at the
-              // boundary instant is this service's business, not a provider's.
+              // Timestamp-paged hosts exclude boundary rows before applying their page limit.
               ...(cursor === undefined
                 ? {}
                 : {
-                    cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered },
+                    cursor: {
+                      updatedBefore: cursor.updatedBefore,
+                      delivered: cursor.delivered,
+                      seenAt: cursor.seenAt,
+                    },
                   }),
             })
             .pipe(

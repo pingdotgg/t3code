@@ -85,6 +85,59 @@ afterEach(() => {
 });
 
 layer("BitbucketPullRequestApi.layer", (it) => {
+  it.effect("advances through tied timestamps before reaching older pull requests", () =>
+    Effect.gen(function* () {
+      const boundary = "2026-10-12T00:00:00.000Z";
+      const older = "2026-10-11T00:00:00.000Z";
+      const rows = [1, 2, 3, 4, 5].map((id) => ({
+        id,
+        updated_on: id <= 3 ? boundary : older,
+      }));
+      mockedRequest.mockImplementation(({ url }) => {
+        const filter = new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
+        const updatedBefore = /updated_on <= (\S+)/.exec(filter)?.[1];
+        const excluded = new Set(
+          Array.from(filter.matchAll(/id != (\d+)/g), (match) => Number(match[1])),
+        );
+        const values = rows
+          .filter(
+            (row) =>
+              (updatedBefore === undefined || row.updated_on <= updatedBefore) &&
+              !excluded.has(row.id),
+          )
+          .map((row) => JSON.parse(pullRequestJson(row)));
+        return Effect.succeed(response(valuePage(values)));
+      });
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const input = { repository: "acme/web", state: "open" as const, limit: 2 };
+      const first = yield* api.listPullRequests(input);
+      assert.deepStrictEqual(
+        first.items.map((item) => item.number),
+        [1, 2],
+      );
+      assert.isTrue(first.truncated);
+      const second = yield* api.listPullRequests({
+        ...input,
+        cursor: { updatedBefore: boundary, delivered: 2, seenAt: [1, 2] },
+      });
+      assert.deepStrictEqual(
+        second.items.map((item) => item.number),
+        [3, 4],
+      );
+      assert.isTrue(second.truncated);
+      const third = yield* api.listPullRequests({
+        ...input,
+        cursor: { updatedBefore: older, delivered: 4, seenAt: [4] },
+      });
+      assert.deepStrictEqual(
+        third.items.map((item) => item.number),
+        [5],
+      );
+      assert.isFalse(third.truncated);
+      assert.strictEqual(mockedRequest.mock.calls.length, 3);
+    }),
+  );
+
   it.effect("asks for reviewers, newest first, at Bitbucket's page ceiling", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(3, 1))));

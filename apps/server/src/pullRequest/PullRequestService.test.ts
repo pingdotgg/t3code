@@ -34,6 +34,9 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
+import * as BitbucketPullRequestProvider from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestProvider";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -936,6 +939,89 @@ it.effect("uses a provider's raw cursor advance when it consumed malformed rows"
   }),
 );
 
+it.effect("continues Bitbucket listings through tied timestamps and terminates", () =>
+  Effect.gen(function* () {
+    const boundary = "2026-10-12T00:00:00.000Z";
+    const older = "2026-10-11T00:00:00.000Z";
+    const filters: string[] = [];
+    const rows = [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: older,
+      updated_on: id <= 3 ? boundary : older,
+      source: { branch: { name: `feat/${id}` } },
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    }));
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                if (url === "/user") {
+                  return Effect.succeed({
+                    body: JSON.stringify({ nickname: "bilal" }),
+                    truncated: false,
+                  });
+                }
+                const filter =
+                  new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
+                filters.push(filter);
+                const updatedBefore = /updated_on <= (\S+)/.exec(filter)?.[1];
+                const excluded = new Set(
+                  Array.from(filter.matchAll(/id != (\d+)/g), (match) => Number(match[1])),
+                );
+                const values = rows.filter(
+                  (row) =>
+                    (updatedBefore === undefined || row.updated_on <= updatedBefore) &&
+                    !excluded.has(row.id),
+                );
+                return Effect.succeed({ body: JSON.stringify({ values }), truncated: false });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [provider],
+    });
+    const key = "bitbucket.org acme/web";
+    const first = yield* service.list({ state: "open", limit: 2 });
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [1, 2],
+    );
+    assert.deepStrictEqual(first.nextCursors, { [key]: `${boundary}|2|1,2` });
+    const second = yield* service.list({ state: "open", limit: 2, cursors: first.nextCursors });
+    assert.deepStrictEqual(
+      second.entries.map((entry) => entry.number),
+      [3, 4],
+    );
+    assert.deepStrictEqual(second.nextCursors, { [key]: `${older}|4|4` });
+    const third = yield* service.list({ state: "open", limit: 2, cursors: second.nextCursors });
+    assert.deepStrictEqual(
+      third.entries.map((entry) => entry.number),
+      [5],
+    );
+    assert.isFalse(third.truncated);
+    assert.deepStrictEqual(third.nextCursors, {});
+    assert.strictEqual(filters.length, 3);
+  }),
+);
+
 it.effect("reads only the repositories it was asked to carry on with", () =>
   Effect.gen(function* () {
     const listed: string[] = [];
@@ -965,7 +1051,9 @@ it.effect("reads only the repositories it was asked to carry on with", () =>
     // is here to avoid. The host summaries stay over the workspace, because the switcher they
     // fill is about the workspace rather than about this slice.
     assert.deepStrictEqual(listed, ["acme/web"]);
-    assert.deepStrictEqual(cursors, [{ updatedBefore: "2026-07-02T00:00:00Z", delivered: 99 }]);
+    assert.deepStrictEqual(cursors, [
+      { updatedBefore: "2026-07-02T00:00:00Z", delivered: 99, seenAt: [7] },
+    ]);
     assert.strictEqual(result.providers.length, 1);
   }),
 );
@@ -4429,7 +4517,7 @@ it.effect("carries a slice on without sending the rows it already sent", () =>
       [4],
     );
     assert.deepStrictEqual(result.nextCursors, {
-      "github.com acme/web": "2026-07-02T00:00:00Z|2|3,3,4",
+      "github.com acme/web": "2026-07-02T00:00:00Z|2|3,4",
     });
   }),
 );
