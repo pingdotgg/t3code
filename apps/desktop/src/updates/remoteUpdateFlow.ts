@@ -52,6 +52,19 @@ export function nextRemoteDesktopUpdateStep(
       reason: disabledReason ?? "Automatic updates are disabled on this machine.",
     };
   }
+  // An install of this version already failed to apply here. Installing it
+  // again from afar would stop the app's threads for nothing, so only the user
+  // on this machine retries it.
+  if (
+    state.notAppliedVersion !== undefined &&
+    (state.downloadedVersion ?? state.availableVersion) === state.notAppliedVersion
+  ) {
+    return {
+      action: "done",
+      outcome: "failed",
+      reason: `Update ${state.notAppliedVersion} did not apply on this machine. Retry it from the desktop app there.`,
+    };
+  }
   // Mirror installDownloadedUpdate's own admission rule exactly, so the run
   // never reports an install that the updater then refuses. A download
   // survives an unrelated background updater error (errorContext null) and

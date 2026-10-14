@@ -124,6 +124,44 @@ export function isRestartNoteSource(
 }
 
 /**
+ * Work an agent ends its turn to wait for: a monitor, a subagent, or a
+ * background task. A restart that cancels it wakes the settled turn, because
+ * nothing else will. A shell does not wake it: most are dev servers that
+ * nobody waits on, so their note waits for the next user message.
+ */
+export function isAwaitedWork(work: Pick<Work, "kind">): boolean {
+  return work.kind !== "shell";
+}
+
+/**
+ * A run's status as its waiter should read it: a delegating parent,
+ * `task_status`, or `t3_thread_wait`. A turn that ended to wait on work the
+ * restart then cancelled did not finish, so it is "interrupted", not
+ * "completed", and its last message is not a final result.
+ */
+export function runOutcome(
+  run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
+): OrchestrationV2Run["status"] {
+  return (run.status === "completed" || run.status === "cancelled") &&
+    (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    ? "interrupted"
+    : run.status;
+}
+
+/**
+ * Whether a restart continuation may prompt from `source`: a turn the restart
+ * cut mid-way, or a settled turn that lost awaited work in the restart.
+ */
+export function isRestartContinuationSource(
+  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+): boolean {
+  return isRestartNoteSource(source, providerTurns)
+    ? (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    : source.status === "cancelled";
+}
+
+/**
  * The note a restart continuation of `source` carries, and whether the turn it
  * continues had settled (the note is then the whole prompt). A continuation cut
  * before its provider turn completed may not have delivered its own note:

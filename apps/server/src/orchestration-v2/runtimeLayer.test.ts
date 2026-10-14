@@ -3251,18 +3251,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect.each(["failed", "completed", "waiting", "cancelled"] as const)(
-    "does not admit a restart continuation of a %s run with only lost background work",
-    (status) =>
+  it.effect.each([
+    ["failed", "shell", false],
+    ["completed", "shell", false],
+    ["waiting", "shell", false],
+    ["cancelled", "shell", false],
+    // A settled run lost work it was waiting on, so nothing else wakes it.
+    ["failed", "monitor", false],
+    ["completed", "monitor", true],
+    ["waiting", "monitor", true],
+    ["cancelled", "monitor", true],
+  ] as const)(
+    "admits a restart continuation of a %s run that lost a %s: %s",
+    ([status, kind, admitted]) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make(`runtime-layer-restart-${status}-source`);
+        const threadId = ThreadId.make(`runtime-layer-restart-${status}-${kind}-source`);
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`restart-${status}-create`),
+          commandId: CommandId.make(`restart-${status}-${kind}-create`),
           threadId,
           projectId: ProjectId.make("restart-project"),
           title: "Restart",
@@ -3276,9 +3286,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "message.dispatch",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`restart-${status}-user-message`),
+          commandId: CommandId.make(`restart-${status}-${kind}-user-message`),
           threadId,
-          messageId: MessageId.make(`restart-${status}-user-message`),
+          messageId: MessageId.make(`restart-${status}-${kind}-user-message`),
           text: "Original work",
           attachments: [],
           modelSelection,
@@ -3287,13 +3297,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
         const now = yield* DateTime.now;
         yield* eventSink.commitCommand({
-          commandId: CommandId.make(`restart-${status}-reconcile`),
+          commandId: CommandId.make(`restart-${status}-${kind}-reconcile`),
           threadId,
           commandType: "provider-runtime.reconcile",
           acceptedAt: now,
           events: [
             {
-              id: EventId.make(`restart-${status}-run`),
+              id: EventId.make(`restart-${status}-${kind}-run`),
               type: "run.updated",
               threadId,
               runId: original.id,
@@ -3301,14 +3311,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               payload: { ...original, status, completedAt: now },
             },
             {
-              id: EventId.make(`restart-${status}-work`),
+              id: EventId.make(`restart-${status}-${kind}-work`),
               type: "run.background-work-cancelled",
               threadId,
               runId: original.id,
               occurredAt: now,
               payload: {
                 runId: original.id,
-                restartCancelledBackgroundWork: [{ kind: "shell", label: "sleep 25" }],
+                restartCancelledBackgroundWork: [{ kind, label: "sleep 25" }],
               },
             },
           ],
@@ -3318,9 +3328,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "server",
-          commandId: CommandId.make(`restart-${status}-continuation`),
+          commandId: CommandId.make(`restart-${status}-${kind}-continuation`),
           threadId,
-          messageId: MessageId.make(`restart-${status}-continuation`),
+          messageId: MessageId.make(`restart-${status}-${kind}-continuation`),
           text: "Note: the T3 server restarted.",
           attachments: [],
           modelSelection,
@@ -3328,8 +3338,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           restartContinuationOfRunId: original.id,
         });
         const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.lengthOf(projection.runs, 1);
         assert.equal(projection.runs[0]?.status, status);
+        assert.deepEqual(
+          projection.runs.slice(1).map((run) => run.restartContinuationOfRunId),
+          admitted ? [original.id] : [],
+        );
       }),
   );
 

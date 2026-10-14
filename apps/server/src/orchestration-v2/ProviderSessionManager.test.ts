@@ -1681,6 +1681,42 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
   }),
 );
 
+it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shutdown", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      for (const name of ["a", "b", "c"]) {
+        const threadId = ThreadId.make(`thread-provider-session-manager-parallel-shutdown-${name}`);
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          }),
+          modelSelection,
+          runtimePolicy,
+        });
+      }
+
+      // Every close hangs until its time box ends. One time box must cover all
+      // three sessions, or a busy server outlives the launcher's kill timer.
+      const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      assert.isDefined(stopping.pollUnsafe());
+    }).pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, hangSessionScopeClose: true })),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
