@@ -132,11 +132,12 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const data = step ? root : nested(root, 1);
   const model = step ? nested(data, 24) : data;
   const usage = bytesAt(data, step ? 9 : 4);
-  const usages = usage === undefined ? [] : [fields(usage)];
+  // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
+  const usages = usage === undefined ? [] : [fields(usage.slice())];
   for (const retry of data.get(step ? 28 : 17) ?? []) {
     if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
     const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) usages.push(fields(retryUsage));
+    if (retryUsage !== undefined) usages.push(fields(retryUsage.slice()));
   }
   return {
     model: modelName(
@@ -171,6 +172,14 @@ class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatab
   }
 }
 
+/**
+ * Rows per statement. One statement.all() holds the event loop until every row
+ * it returns is in memory, and a generation row carries the conversation's
+ * whole context so far, often megabytes, so generations are read one at a time.
+ */
+const GENERATION_PAGE_ROWS = 1;
+const STEP_PAGE_ROWS = 64;
+
 const readDatabase = Effect.fn("readDatabase")(function* (
   path: string,
   sessionId: string,
@@ -192,24 +201,49 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     if (!tables.has("gen_metadata") && !tables.has("steps")) {
       return yield* new AntigravityDatabaseDecodeError({ path });
     }
+    // Runs `query` a page at a time, binding the last rowid read and the page
+    // size. A rowid seek works whatever the table's indexes. Antigravity declares
+    // idx as the INTEGER PRIMARY KEY, so rowid order is idx order; the sort keeps
+    // idx order where rows are stored otherwise.
     const readMetadata = Effect.fnUntraced(function* (
       query: string,
-      column: string,
+      pageRows: number,
       step: boolean,
     ) {
       const entries: Array<{ idx: number; entry: Metadata }> = [];
-      for (const row of yield* sql.unsafe<Record<string, unknown>>(query)) {
-        const idx = row.idx;
-        if (typeof idx !== "number") {
-          return yield* new AntigravityDatabaseDecodeError({ path });
+      // Below every rowid.
+      let after = -Infinity;
+      while (true) {
+        // Untraced: a cold read runs one of these per generation.
+        const rows = yield* sql
+          .unsafe<{
+            readonly row_id: number;
+            readonly idx: unknown;
+            readonly data: unknown;
+          }>(query, [after, pageRows])
+          .pipe(Effect.withTracerEnabled(false));
+        for (const row of rows) {
+          // Skipped here rather than in SQL, so a statement never scans past
+          // more than one page of steps that have no metadata.
+          if (step && row.data === null) continue;
+          const idx = row.idx;
+          if (typeof idx !== "number") {
+            return yield* new AntigravityDatabaseDecodeError({ path });
+          }
+          entries.push({ idx, entry: yield* decode(() => metadata(blob(row.data), step)) });
         }
-        entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
-        if (entries.length % 256 === 0) yield* Effect.yieldNow;
+        if (rows.length < pageRows) break;
+        after = rows[rows.length - 1]!.row_id;
+        yield* Effect.yieldNow;
       }
-      return entries;
+      return entries.sort((a, b) => a.idx - b.idx);
     });
     const generations = tables.has("gen_metadata")
-      ? yield* readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
+      ? yield* readMetadata(
+          "SELECT rowid AS row_id, idx, data FROM gen_metadata WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          GENERATION_PAGE_ROWS,
+          false,
+        )
       : [];
     let trajectoryTimestamp: number | null = null;
     if (tables.has("trajectory_metadata_blob")) {
@@ -221,8 +255,8 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     }
     const steps = tables.has("steps")
       ? yield* readMetadata(
-          "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
-          "metadata",
+          "SELECT rowid AS row_id, idx, metadata AS data FROM steps WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          STEP_PAGE_ROWS,
           true,
         )
       : [];

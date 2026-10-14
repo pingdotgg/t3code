@@ -188,34 +188,37 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        const lastRowId = (yield* sql.unsafe<{ readonly last_row_id: number | null }>(
-          `SELECT MAX(rowid) AS last_row_id FROM ${table}`,
-        ))[0]?.last_row_id;
-        if (lastRowId === null || lastRowId === undefined) continue;
-        let afterRowId: number | undefined;
-        // SqlClient materializes each result with StatementSync.all(). Keep
-        // message bodies in small pages, and exclude rows appended mid-scan.
-        while (true) {
-          const pagePredicates = [
-            ...predicates,
-            "rowid <= ?",
-            ...(afterRowId === undefined ? [] : ["rowid > ?"]),
-          ];
-          const rows = yield* sql.unsafe<{
-            readonly row_id: number;
-            readonly id: unknown;
-            readonly session_id: unknown;
-            readonly data: unknown;
-            readonly created: unknown;
-          }>(
-            `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
-             FROM ${table} WHERE ${pagePredicates.join(" AND ")} ORDER BY rowid LIMIT ${MESSAGE_PAGE_SIZE}`,
-            [
-              ...(timestamp === "NULL" ? [] : [sinceMs]),
-              lastRowId,
-              ...(afterRowId === undefined ? [] : [afterRowId]),
-            ],
-          );
+        predicates.push("rowid > ?", "rowid <= ?");
+        const [range] = yield* sql.unsafe<{
+          readonly first_row_id: number | null;
+          readonly last_row_id: number | null;
+        }>(
+          `SELECT (SELECT MIN(rowid) FROM ${table}) AS first_row_id, (SELECT MAX(rowid) FROM ${table}) AS last_row_id`,
+        );
+        const firstRowId = range?.first_row_id;
+        const lastRowId = range?.last_row_id;
+        if (typeof firstRowId !== "number" || typeof lastRowId !== "number") continue;
+        // SqlClient materializes each result with StatementSync.all(), and the
+        // window can exclude most rows. Each statement covers MESSAGE_PAGE_SIZE
+        // rowids, however few match, and rows appended mid-scan are left out.
+        // Untraced, as a large history runs thousands of them.
+        for (let after = firstRowId - 1; after < lastRowId; after += MESSAGE_PAGE_SIZE) {
+          const rows = yield* sql
+            .unsafe<{
+              readonly id: unknown;
+              readonly session_id: unknown;
+              readonly data: unknown;
+              readonly created: unknown;
+            }>(
+              `SELECT id, session_id, data, ${timestamp} AS created
+               FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
+              [
+                ...(timestamp === "NULL" ? [] : [sinceMs]),
+                after,
+                Math.min(after + MESSAGE_PAGE_SIZE, lastRowId),
+              ],
+            )
+            .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
             append(
               file.records,
@@ -226,8 +229,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               }),
             );
           }
-          if (rows.length < MESSAGE_PAGE_SIZE) break;
-          afterRowId = rows[rows.length - 1]!.row_id;
           yield* Effect.yieldNow;
         }
       }
