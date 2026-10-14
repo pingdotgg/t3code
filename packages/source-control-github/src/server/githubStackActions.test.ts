@@ -325,6 +325,26 @@ it.effect("allows a fork that explicitly permits maintainer updates", () =>
   }),
 );
 
+it.effect("rebases for a GitHub App, which GitHub gives no permission to read", () =>
+  Effect.gen(function* () {
+    gitCalls = [];
+    const api = fake([
+      stack,
+      {
+        data: {
+          repository: {
+            pr2: { headRepository: { viewerPermission: null }, maintainerCanModify: false },
+            pr3: { headRepository: { viewerPermission: null }, maintainerCanModify: false },
+          },
+        },
+      },
+      ...rebaseResponses,
+    ]);
+    yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
+    expect(gitCalls.filter((args) => args[0] === "push")).toHaveLength(2);
+  }),
+);
+
 it.effect("bounds polling and reports a still-running merge without claiming success", () =>
   Effect.gen(function* () {
     const api = fake([

@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitHubApi from "./GitHubApi.ts";
 import { aliasedGraphQlDocument } from "./githubGraphQl.ts";
-import { decodePullRequestStacksJson } from "./gitHubPullRequestJson.ts";
+import { decodePullRequestStacksJson, toCanWrite } from "./gitHubPullRequestJson.ts";
 import { cascadeRebaseStack } from "./githubStackRebase.ts";
 
 const stackErrorIdentity = {
@@ -216,8 +216,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
         const pr = access.data.repository?.[`pr${layer.number}`];
         return (
           !pr?.headRepository ||
-          (!pr.maintainerCanModify &&
-            !["ADMIN", "MAINTAIN", "WRITE"].includes(pr.headRepository.viewerPermission ?? ""))
+          (!pr.maintainerCanModify && !toCanWrite(pr.headRepository.viewerPermission))
         );
       })
     )
