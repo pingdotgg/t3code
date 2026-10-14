@@ -324,6 +324,10 @@ interface ServerTab {
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
+  /** Last CSS size measured on the desktop, usable while a dialog blocks page script. */
+  desktopViewport: { readonly width: number; readonly height: number } | null;
+  /** Counts desktop size reads, so a slower older read cannot overwrite a newer one. */
+  desktopViewportReads: number;
   loading: boolean;
   closing: boolean;
   recording: Recording | null;
@@ -554,6 +558,8 @@ const make = Effect.gen(function* () {
     if (tab.dialog === dialog) tab.dialog = null;
     ServerBrowserPage.invalidateRefs(tab.page);
     broadcastControl(tab);
+    // The desktop page could not be measured while the dialog was open.
+    if (tab.desktop) await broadcastViewport(tab).catch(constVoid);
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
@@ -610,10 +616,49 @@ const make = Effect.gen(function* () {
     );
   };
 
-  /** The CSS size the page lays out in: the viewport shrunk by the tab's zoom, as Chrome zooms. */
-  const layoutSize = (tab: ServerTab) => {
+  /**
+   * Reads the desktop page's CSS size, including scrollbars and native zoom, in
+   * an isolated world so page script cannot override it. Keeps the last size
+   * while a dialog blocks script, when a navigation destroys the world mid-read,
+   * when a newer read already stored one, and for a hidden webview's 0x0.
+   */
+  const measureDesktopViewport = async (tab: ServerTab) => {
+    if (tab.dialog) return tab.desktopViewport;
+    const read = ++tab.desktopViewportReads;
+    let value: unknown;
+    try {
+      const { frameTree } = await tab.cdp.send("Page.getFrameTree");
+      const { executionContextId } = await tab.cdp.send("Page.createIsolatedWorld", {
+        frameId: frameTree.frame.id,
+        worldName: "t3-preview-viewport",
+      });
+      const { result } = await tab.cdp.send("Runtime.evaluate", {
+        expression: "({ width: innerWidth, height: innerHeight })",
+        contextId: executionContextId,
+        returnByValue: true,
+      });
+      value = result.value;
+    } catch {
+      return tab.desktopViewport;
+    }
+    if (read !== tab.desktopViewportReads && tab.desktopViewport) return tab.desktopViewport;
+    const size = asRecord(value);
+    if (!size || typeof size.width !== "number" || typeof size.height !== "number")
+      return tab.desktopViewport;
+    if (size.width <= 0 || size.height <= 0) return tab.desktopViewport;
+    tab.desktopViewport = { width: size.width, height: size.height };
+    return tab.desktopViewport;
+  };
+
+  /**
+   * The CSS size the page lays out in. A desktop page is measured, since a page
+   * Playwright reached over CDP has no viewport. A headless page's size is its
+   * viewport shrunk by the tab's zoom, as Chrome zooms.
+   */
+  const layoutSize = async (tab: ServerTab) => {
+    if (tab.desktop) return measureDesktopViewport(tab);
     const size = tab.page.viewportSize();
-    if (!size || tab.desktop) return size;
+    if (!size) return size;
     return {
       width: Math.max(1, Math.round(size.width / tab.zoomFactor)),
       height: Math.max(1, Math.round(size.height / tab.zoomFactor)),
@@ -634,7 +679,7 @@ const make = Effect.gen(function* () {
       await tab.page.setViewportSize(size);
       return;
     }
-    const layout = layoutSize(tab)!;
+    const layout = (await layoutSize(tab))!;
     await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
       width: layout.width,
       height: layout.height,
@@ -643,8 +688,8 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const broadcastViewport = (tab: ServerTab) => {
-    const size = layoutSize(tab);
+  const broadcastViewport = async (tab: ServerTab) => {
+    const size = await layoutSize(tab);
     if (!size) return;
     for (const viewer of tab.viewers) viewer.push({ _tag: "viewport", ...size });
   };
@@ -662,7 +707,7 @@ const make = Effect.gen(function* () {
       UNATTACHED_FILL_VIEWPORT;
     await tab.page.setViewportSize({ width: size.width, height: size.height });
     await applyZoom(tab);
-    broadcastViewport(tab);
+    await broadcastViewport(tab);
   };
 
   /** Applies a tab's published appearance and, for headless tabs, zoom. */
@@ -676,7 +721,7 @@ const make = Effect.gen(function* () {
     if (zoomFactor !== tab.zoomFactor && !tab.desktop) {
       tab.zoomFactor = zoomFactor;
       await applyZoom(tab);
-      broadcastViewport(tab);
+      await broadcastViewport(tab);
     }
   };
 
@@ -797,6 +842,8 @@ const make = Effect.gen(function* () {
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
+      desktopViewport: null,
+      desktopViewportReads: 0,
       loading: false,
       closing: false,
       recording: null,
@@ -811,6 +858,13 @@ const make = Effect.gen(function* () {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
     await applyRendering(tab, snapshot);
+    if (desktop) {
+      // The desktop resizes and zooms its webview itself; viewers map input with the new size.
+      cdp.on("Page.frameResized", () => {
+        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+      });
+      await cdp.send("Page.enable");
+    }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
       request.isNavigationRequest() && request.frame() === page.mainFrame();
     const navigationGenerations = new WeakMap<object, number>();
@@ -1328,7 +1382,7 @@ const make = Effect.gen(function* () {
       };
     }
     const url = tab.page.url();
-    const viewport = tab.page.viewportSize();
+    const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
     const status = {
       available: true,
       visible: tab.viewers.size > 0,
@@ -2133,7 +2187,7 @@ const make = Effect.gen(function* () {
         const current = tab.page.viewportSize();
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
-        broadcastViewport(tab);
+        await broadcastViewport(tab);
         return;
       }
       case "viewport": {
@@ -2336,7 +2390,7 @@ const make = Effect.gen(function* () {
           ),
         });
       });
-      broadcastViewport(tab);
+      void broadcastViewport(tab).catch(constVoid);
       yield* Effect.promise(() => startScreencast(1));
       // An idle page does not repaint for a new screencast, so the viewer
       // starts from a still unless a live frame beat it.
