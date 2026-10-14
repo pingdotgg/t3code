@@ -597,16 +597,14 @@ describe("providerMaintenanceRunner", () => {
 
   it.effect.each([
     {
-      name: "refreshes a sibling instance that runs the same install",
+      name: "a sibling on the same install",
       workExecutable: "vp",
-      refreshed: ["codex_personal", "codex_work"],
     },
     {
-      name: "leaves a sibling instance with its own install alone",
+      name: "a sibling reached through another path",
       workExecutable: "/opt/work/codex",
-      refreshed: ["codex_personal"],
     },
-  ])("updates a single provider instance and $name", (fixture) => {
+  ])("updates a single provider instance and refreshes $name", (fixture) => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
       const personalInstanceId = ProviderInstanceId.make("codex_personal");
@@ -657,7 +655,7 @@ describe("providerMaintenanceRunner", () => {
           args: ["i", "-g", "@openai/codex"],
         },
       ]);
-      assert.deepStrictEqual(refreshedInstanceIds, fixture.refreshed);
+      assert.deepStrictEqual(refreshedInstanceIds, [personalInstanceId, workInstanceId]);
       assert.strictEqual(result.providers[0]?.instanceId, personalInstanceId);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[1]?.instanceId, workInstanceId);
