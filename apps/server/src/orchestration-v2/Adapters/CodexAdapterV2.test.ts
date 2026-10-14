@@ -3679,6 +3679,94 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("streams a proposed plan a few times a second instead of once per delta", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-plan-delta-coalescing";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const prompt = "Plan the change.";
+        // 100 deltas, 20 ms apart: a two second stream.
+        const deltas = Array.from({ length: 100 }, (_, index) => `step ${index}\n`);
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            ...deltas.map((delta, index): CodexReplay.CodexAppServerReplayEntry => ({
+              type: "emit_inbound",
+              label: `item/plan/delta/${index}`,
+              afterMs: 20,
+              frame: {
+                method: "item/plan/delta",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "plan", delta },
+              },
+            })),
+            {
+              type: "emit_inbound",
+              label: "item/completed/plan",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: { type: "plan", id: "plan", text: "" },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: prompt,
+          }),
+        );
+        for (let step = 0; step < 200 && harness.terminalEvents().length === 0; step += 1) {
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("20 millis");
+        }
+        yield* harness.firstTerminal;
+
+        const plans = harness.events.flatMap((event) =>
+          event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
+        );
+        const planItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+            ? [event.turnItem]
+            : [],
+        );
+        // One update per 400 ms of the stream, plus the completion.
+        assert.isAtLeast(plans.length, 2);
+        assert.isAtMost(plans.length, 7);
+        assert.equal(planItems.length, plans.length);
+        assert.equal(plans.at(-1)?.markdown, deltas.join(""));
+        assert.deepEqual(
+          planItems.map((item) => item.streaming),
+          [...Array.from({ length: planItems.length - 1 }, () => true), false],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const finalAnswerTranscript = (
     scenario: string,
     answers: ReadonlyArray<{
