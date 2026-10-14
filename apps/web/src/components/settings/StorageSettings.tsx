@@ -36,6 +36,7 @@ import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { WORKTREE_KEEP_WHEN_LABELS } from "./SettingInheritance";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -47,6 +48,8 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+
+const STORAGE_CLEANUP_KEYS = ["storageCleanup"] as const;
 
 export function WorktreesDirectoryRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
@@ -164,12 +167,6 @@ function RetentionControl({
     </div>
   );
 }
-
-const KEEP_WHEN_LABELS = {
-  "any-local-files": "Any local files",
-  "uncommitted-changes": "Uncommitted changes",
-  "tracked-changes": "Edited tracked files",
-} as const;
 
 function lastRunSummary(
   entries: readonly { readonly label: string; readonly counts: string }[],
@@ -467,15 +464,18 @@ export function WorktreeCleanupSection() {
   const mixedModes = targets.some((entry) => projectMode(entry) !== mode);
   const updateSettings = useUpdateScopedSettings();
   const clearSettings = useClearScopedSettings();
-  const ruleStatus = (key: keyof StorageCleanupSettings) =>
-    targets.some(
+  // Each rule is one field of `storageCleanup`; naming it lets the row show
+  // where that rule's value comes from on every selected machine.
+  const ruleProps = (key: keyof StorageCleanupSettings) => ({
+    mixed: targets.some(
       (target) =>
         ({ ...target.settings.storageCleanup, ...resolveWorktreeCleanup(target.settings, null) })[
           key
         ] !== settings[key],
-    )
-      ? "Mixed across selected machines"
-      : undefined;
+    ),
+    settingKeys: STORAGE_CLEANUP_KEYS,
+    settingField: key,
+  });
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
@@ -556,7 +556,7 @@ export function WorktreeCleanupSection() {
           <>
             <SettingsRow
               title="Delete worktrees with deleted threads"
-              status={ruleStatus("worktreeOnDelete")}
+              {...ruleProps("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
@@ -569,7 +569,7 @@ export function WorktreeCleanupSection() {
             />
             <SettingsRow
               title="Delete merged worktrees"
-              status={ruleStatus("worktreeOnMerge")}
+              {...ruleProps("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
               serverScoped={!isProjectScope}
               control={
@@ -582,7 +582,7 @@ export function WorktreeCleanupSection() {
             />
             <SettingsRow
               title="Delete inactive worktrees"
-              status={ruleStatus("worktreeAfterDays")}
+              {...ruleProps("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
@@ -629,7 +629,7 @@ export function WorktreeCleanupSection() {
                 )}
               <SettingsRow
                 title="Delete unchanged worktrees"
-                status={ruleStatus("worktreeUnchanged")}
+                {...ruleProps("worktreeUnchanged")}
                 description="Remove worktrees with no commits beyond the default branch."
                 serverScoped={!isProjectScope}
                 control={
@@ -646,7 +646,7 @@ export function WorktreeCleanupSection() {
               ) && (
                 <SettingsRow
                   {...searchableSetting("storage-worktree-keep-when")}
-                  status={ruleStatus("worktreeKeepWhen")}
+                  {...ruleProps("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
                       ? "Includes ignored files, except node_modules."
@@ -657,7 +657,7 @@ export function WorktreeCleanupSection() {
                   serverScoped={!isProjectScope}
                   control={
                     <Select
-                      value={ruleStatus("worktreeKeepWhen") ? null : settings.worktreeKeepWhen}
+                      value={ruleProps("worktreeKeepWhen").mixed ? null : settings.worktreeKeepWhen}
                       onValueChange={(next) => {
                         if (
                           next === "any-local-files" ||
@@ -669,9 +669,9 @@ export function WorktreeCleanupSection() {
                     >
                       <SelectTrigger size="sm" aria-label="Keep worktrees with local changes">
                         <SelectValue>
-                          {ruleStatus("worktreeKeepWhen")
+                          {ruleProps("worktreeKeepWhen").mixed
                             ? "Mixed"
-                            : KEEP_WHEN_LABELS[settings.worktreeKeepWhen]}
+                            : WORKTREE_KEEP_WHEN_LABELS[settings.worktreeKeepWhen]}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -750,6 +750,9 @@ export function StorageCleanupSections() {
           <SettingsRow
             title="Delete old browser artifacts"
             status={artifactsStatus}
+            mixed={artifactsStatus !== undefined}
+            settingKeys={STORAGE_CLEANUP_KEYS}
+            settingField="browserArtifactsAfterDays"
             description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
@@ -765,6 +768,9 @@ export function StorageCleanupSections() {
           <SettingsRow
             title="Delete old rotated logs"
             status={logsStatus}
+            mixed={logsStatus !== undefined}
+            settingKeys={STORAGE_CLEANUP_KEYS}
+            settingField="logsAfterDays"
             description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={
