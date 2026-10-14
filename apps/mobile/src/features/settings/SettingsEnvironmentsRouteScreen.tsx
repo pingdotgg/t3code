@@ -11,6 +11,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
+import { LoadBalancingSettings } from "../connection/LoadBalancingSettings";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
 import { GitHubRoutingSettings } from "../connection/GitHubRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
@@ -188,6 +189,7 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        <LoadBalancingSettings />
         <GitHubRoutingSettings />
       </ScrollView>
     </SettingsScreen>

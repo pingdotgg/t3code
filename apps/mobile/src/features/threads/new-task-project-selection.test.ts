@@ -6,6 +6,8 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   filterProjectScopes,
   getProjectScopeSelectionTarget,
+  resolveAutoBalanceStatus,
+  resolveBalancedProjects,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
 } from "./new-task-project-selection";
@@ -178,5 +180,68 @@ describe("filterProjectScopes", () => {
     expect(matches[0]).toBe(code);
     expect(getProjectScopeSelectionTarget(matches[0]!, EnvironmentId.make("mac"))).toBe(mac);
     expect(code.projects).toEqual([mac, server]);
+  });
+});
+
+describe("resolveAutoBalanceStatus", () => {
+  const automatic = {
+    canAutoBalance: true,
+    environmentPinned: false,
+    hasAttachments: false,
+    loadBalancedEnvironmentId: null,
+    pending: false,
+  };
+  const mac = EnvironmentId.make("mac");
+
+  it("reports the routing progress of an automatic draft", () => {
+    expect(resolveAutoBalanceStatus({ ...automatic, pending: true })).toBe("checking");
+    expect(resolveAutoBalanceStatus(automatic)).toBe("unavailable");
+    expect(resolveAutoBalanceStatus({ ...automatic, loadBalancedEnvironmentId: mac })).toBe(
+      "balanced",
+    );
+  });
+
+  it("leaves a pinned or ineligible draft on its machine", () => {
+    expect(resolveAutoBalanceStatus({ ...automatic, environmentPinned: true })).toBeNull();
+    expect(resolveAutoBalanceStatus({ ...automatic, canAutoBalance: false })).toBeNull();
+  });
+
+  it("keeps attachments in place unless the draft was already routed", () => {
+    expect(resolveAutoBalanceStatus({ ...automatic, hasAttachments: true })).toBeNull();
+    expect(
+      resolveAutoBalanceStatus({
+        ...automatic,
+        hasAttachments: true,
+        loadBalancedEnvironmentId: mac,
+      }),
+    ).toBe("balanced");
+  });
+});
+
+describe("resolveBalancedProjects", () => {
+  const webOnA = makeProject("a-web", "a", { repositoryKey: "repo" });
+  const apiOnB = makeProject("b-api", "b", { repositoryKey: "repo" });
+  const webOnB = makeProject("b-web", "b", { repositoryKey: "repo" });
+
+  it("routes only within the selected project's own group", () => {
+    // Grouped by repository path: the API project shares the repository but
+    // is a different project, even though it is listed first on its machine.
+    const scopes = [
+      { ...makeScope([apiOnB]), key: "repo:apps/api" },
+      { ...makeScope([webOnA, webOnB]), key: "repo:apps/web" },
+    ];
+    expect(resolveBalancedProjects(scopes, webOnA)).toEqual([webOnA, webOnB]);
+  });
+
+  it("offers one copy per machine, keeping the selected one", () => {
+    const secondOnA = makeProject("a-web-2", "a", { repositoryKey: "repo" });
+    const scopes = [makeScope([webOnA, secondOnA, webOnB])];
+    expect(resolveBalancedProjects(scopes, secondOnA)).toEqual([secondOnA, webOnB]);
+  });
+
+  it("has nothing to balance for an ungrouped or missing project", () => {
+    expect(resolveBalancedProjects([makeScope([webOnA])], webOnA)).toEqual([webOnA]);
+    expect(resolveBalancedProjects([makeScope([webOnB])], webOnA)).toEqual([]);
+    expect(resolveBalancedProjects([makeScope([webOnA])], null)).toEqual([]);
   });
 });

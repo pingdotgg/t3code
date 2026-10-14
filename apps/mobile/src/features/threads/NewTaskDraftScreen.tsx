@@ -675,7 +675,7 @@ export function NewTaskDraftScreen(props: {
             selectedProject?.environmentId !== directProject.environmentId ||
             selectedProject.id !== directProject.id
           ) {
-            setProject(directProject);
+            setProject(directProject, { pinEnvironment: true });
             return;
           }
           if (!flow.draftKey) return;
@@ -691,13 +691,13 @@ export function NewTaskDraftScreen(props: {
           });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
-        if (
-          selectedProject?.environmentId === directProject.environmentId &&
-          selectedProject.id === directProject.id
-        ) {
-          return;
-        }
-        setProject(directProject);
+        // Always select explicitly, even when the flow's fallback already
+        // matches: auto balance only runs for a project the route chose. A
+        // branch or shared content belongs to this machine, so those pin it.
+        setProject(directProject, {
+          pinEnvironment:
+            Boolean(props.initialProjectRef?.branch) || props.incomingShareId !== undefined,
+        });
         return;
       }
 
@@ -1220,6 +1220,20 @@ export function NewTaskDraftScreen(props: {
     ) {
       return;
     }
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      if (flow.autoBalanceStatus === "checking") {
+        Dialog.alert(
+          "Checking machine resources",
+          "Resource checks are still running. You can choose a machine in the composer.",
+        );
+      } else {
+        Dialog.alert(
+          "Choose a machine to continue",
+          "No eligible machine has available resources. Choose a machine in the composer to override.",
+        );
+      }
+      return;
+    }
     if (
       environmentConnected &&
       isModelSelectionUnavailable(
@@ -1463,19 +1477,32 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push(routeName));
   };
 
+  // Auto balance names itself, not the machine it picked.
+  const autoBalanceLabel =
+    flow.autoBalanceStatus === null
+      ? null
+      : flow.autoBalanceStatus === "checking"
+        ? "Checking machines…"
+        : flow.autoBalanceStatus === "unavailable"
+          ? "Auto balance unavailable"
+          : "Auto balance";
   const environmentControl = (
     <ComposerInlineControl
-      accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
+      accessibilityLabel={`Environment: ${autoBalanceLabel ?? selectedEnvironmentLabel}`}
       chevronDirection="right"
       disabled={isComposerInteractionLocked || voiceInput.isBusy}
-      renderIcon={(size) => (
-        <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
-          size={size}
-          tintColorClassName="accent-icon-muted"
-        />
-      )}
-      label={`on ${selectedEnvironmentLabel}`}
+      renderIcon={(size) =>
+        autoBalanceLabel === null ? (
+          <EnvironmentMachineSymbol
+            kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+            size={size}
+            tintColorClassName="accent-icon-muted"
+          />
+        ) : (
+          <SymbolView name="scalemass" size={size} tintColorClassName="accent-icon-muted" />
+        )
+      }
+      label={autoBalanceLabel ?? `on ${selectedEnvironmentLabel}`}
       maxWidth={flow.isScratchDraft ? 170 : 260}
       onPress={
         flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
