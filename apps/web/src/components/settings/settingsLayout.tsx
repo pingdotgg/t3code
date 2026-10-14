@@ -3,7 +3,11 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { InfoIcon, Undo2Icon } from "lucide-react";
-import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings,
+  type StorageCleanupSettings,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -36,6 +40,7 @@ import {
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
+  environmentSettingValue,
   SettingInheritance,
   type SettingInheritanceState,
   type SettingOverridingProject,
@@ -246,6 +251,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  settingField,
   mixed: mixedOverride,
   children,
   className,
@@ -259,6 +265,8 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /** The `storageCleanup` rule this row edits, so its chain shows that rule alone. */
+  settingField?: keyof StorageCleanupSettings;
   mixed?: boolean;
   children?: ReactNode;
 }) {
@@ -386,7 +394,10 @@ export function SettingsRow({
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (
           environmentSettings !== undefined &&
-          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
+          !Equal.equals(
+            environmentSettingValue(environmentSettings, key, settingField),
+            environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, settingField),
+          )
         );
       }),
     );
@@ -409,6 +420,7 @@ export function SettingsRow({
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
+        {...(settingField ? { field: settingField } : {})}
         overridingProjects={overridingProjects}
         {...(canWriteSettings
           ? {
