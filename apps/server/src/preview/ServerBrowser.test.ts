@@ -1233,6 +1233,26 @@ it.live("a stalled viewer's backlog replacement keeps its other state and notifi
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a backlog of only notifications keeps the newest ones when replaced", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* Queue.clear(viewer.output);
+      const output =
+        viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
+      let copied = 0;
+      while (Queue.offerUnsafe(output, { _tag: "clipboard", text: `copy ${copied}` })) copied++;
+      yield* viewer.input({ type: "resize", width: 900, height: 600 });
+      const kept = yield* Queue.takeAll(viewer.output);
+      expect(kept[0]).toEqual({ _tag: "viewport", width: 900, height: 600 });
+      expect(kept.at(-1)).toEqual({ _tag: "clipboard", text: `copy ${copied - 1}` });
+      expect(kept).toHaveLength(copied);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a closing tab still ends a stalled viewer whose backlog is all notifications", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1559,6 +1579,27 @@ it.live("a desktop size read that never answers gives up and keeps the last size
           tabId: PreviewTabId.make(opened.tabId),
         }),
       ).toMatchObject({ viewport: { width: 1920, height: 1080 } });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a desktop reconnect replaces a stalled viewer's full backlog", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      yield* nextViewerViewport(viewer);
+      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
+      // The viewer stopped reading: its output is full when the desktop takes the page back.
+      stallViewer(viewer, { _tag: "frame", data: Buffer.alloc(0), ack: Effect.void });
+      const capacity = yield* Queue.size(viewer.output);
+      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
+      while ((yield* Queue.size(viewer.output)) === capacity) yield* Effect.yieldNow;
+      expect(yield* Queue.takeAll(viewer.output)).toEqual([{ _tag: "reconnect" }]);
     }),
   ).pipe(Effect.provide(layer)),
 );

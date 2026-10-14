@@ -2395,7 +2395,9 @@ const make = Effect.gen(function* () {
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss replaces its backlog. It runs
         // synchronously so an older replacement can never land after a newer one.
-        else if (["gone", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          ["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)
+        ) {
           const dropped = Effect.runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           Queue.offerUnsafe(output, next);
@@ -2411,11 +2413,14 @@ const make = Effect.gen(function* () {
           if (chooser && tab.control.controller === viewer.id) Queue.offerUnsafe(output, chooser);
           // One-time notifications cannot be rebuilt from state; keep them in order.
           // A former controller may still cache an older picker, so closes stay too.
-          for (const item of dropped.value) {
-            if (["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag))
-              Queue.offerUnsafe(output, item);
-            else if (item._tag === "frame") runFork(item.ack);
-          }
+          // If they no longer all fit, the oldest go, so the latest clipboard survives.
+          const notifications = dropped.value.filter((item) =>
+            ["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag),
+          );
+          const room = VIEWER_OUTPUT_LIMIT - Effect.runSync(Queue.size(output));
+          for (const item of notifications.slice(Math.max(0, notifications.length - room)))
+            Queue.offerUnsafe(output, item);
+          for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
         }
       },
       pause: () => {
