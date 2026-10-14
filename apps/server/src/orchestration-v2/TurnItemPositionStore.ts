@@ -46,6 +46,14 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       runOrdinal: suppliedRunOrdinal,
     }) =>
       Effect.gen(function* () {
+        const existing = yield* sql<{ readonly ordinal: number }>`
+          SELECT ordinal
+          FROM orchestration_v2_turn_item_positions
+          WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+          LIMIT 1
+        `;
+        if (existing[0] !== undefined) return existing[0].ordinal;
+
         const runRows =
           runId === null
             ? []
