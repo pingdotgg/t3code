@@ -88,8 +88,10 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     idleTtlMs,
     persistence,
     initialState,
+    isFinal,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
+    readonly isFinal?: (value: A) => boolean;
     readonly idleTtlMs?: number;
     readonly persistence?: QueryPersistence<A>;
     readonly initialState?: SupervisorConnectionState;
@@ -127,6 +129,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     execute: () => execute,
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
+    ...(isFinal === undefined ? {} : { isFinal }),
   });
 
   return {
@@ -671,6 +674,30 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("stops refreshing on its trigger once the value is final", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (executions += 1)),
+          { refreshTrigger: trigger, isFinal: (value) => value >= 2 },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        registry.mount(harness.atom);
+        expect(yield* read).toBe(1);
+        registry.set(trigger, 1);
+        expect(yield* read).toBe(2);
+        registry.set(trigger, 2);
+        expect(yield* read).toBe(2);
+        expect(executions).toBe(2);
       }),
     ),
   );
