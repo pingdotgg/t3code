@@ -720,15 +720,44 @@ describe("review thread decoding", () => {
     expect(result.reviewers).toHaveLength(1);
   });
 
-  it("skips a team request, which names nobody to show", () => {
+  it("lists a requested team by org/slug, apart from a user who shares its slug", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        reviewJson({
+          // Recorded from pingdotgg/t3code#12329, where CODEOWNERS asked the team.
+          requested: [
+            {
+              combinedSlug: "pingdotgg/ping-devs",
+              name: "Ping Devs",
+              avatarUrl: "https://avatars.githubusercontent.com/t/6692390?s=400&v=4",
+            },
+          ],
+          reviewed: [
+            { __typename: "User", login: "ping-devs", avatarUrl: "https://avatars/u.png" },
+          ],
+        }),
+      ),
+    );
+
+    expect(result.reviewers).toEqual([
+      {
+        login: "pingdotgg/ping-devs",
+        name: "Ping Devs",
+        avatarUrl: "https://avatars.githubusercontent.com/t/6692390?s=400&v=4",
+      },
+      { login: "ping-devs", name: null, avatarUrl: "https://avatars/u.png" },
+    ]);
+  });
+
+  it("skips a request whose reviewer GitHub does not show", () => {
     const result = expectSuccess(decodeReviewThreadsJson(reviewJson({ requested: [null] })));
 
     expect(result.reviewers).toEqual([]);
   });
 
-  it("keeps the conversation when a request is from a team, which has no login", () => {
-    // GraphQL answers with an empty object for a union member the query has no fragment for.
-    // Failing on it would take the whole response down, comments included.
+  it("keeps the conversation when a reviewer has neither a login nor a team slug", () => {
+    // GraphQL answers with an empty object for a union member the query has no fragment for,
+    // such as a mannequin. Failing on it would take the whole response down, comments included.
     const result = expectSuccess(
       decodeReviewThreadsJson(
         reviewJson({ requested: [{}, { login: "julius", avatarUrl: "https://avatars/j.png" }] }),
@@ -1466,15 +1495,16 @@ describe("reviewer candidate decoding", () => {
       decodeReviewerCandidatesJson(
         candidatesJson({
           assignable: [{ login: "octocat" }],
-          requested: [{ slug: "reviewers", name: "Reviewers" }],
+          requested: [{ slug: "reviewers", combinedSlug: "acme/reviewers", name: "Reviewers" }],
         }),
       ),
     );
     expect(list.candidates).toEqual([
       {
+        // Asked by slug, shown by the same `org/slug` as its reviewer row.
         id: "reviewers",
         kind: "team",
-        login: "reviewers",
+        login: "acme/reviewers",
         name: "Reviewers",
         avatarUrl: null,
         isRequested: true,

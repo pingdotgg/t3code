@@ -3691,7 +3691,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 reviewRequests: {
                   nodes: [
                     { requestedReviewer: { login: "reviewer" } },
-                    { requestedReviewer: { slug: "maintainers", name: "Maintainers" } },
+                    {
+                      requestedReviewer: {
+                        slug: "maintainers",
+                        combinedSlug: "octo/maintainers",
+                        name: "Maintainers",
+                        avatarUrl: "https://avatars.githubusercontent.com/t/1",
+                      },
+                    },
                   ],
                 },
                 labels: { nodes: [{ name: "bug", color: "ff0000" }] },
@@ -3740,6 +3747,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.comparison).toBeNull();
       expect(detail.reviewRequestLogins).toEqual(["reviewer"]);
       expect(detail.hasTeamReviewRequest).toBe(true);
+      expect(detail.reviewRequestTeams).toEqual([
+        {
+          login: "octo/maintainers",
+          name: "Maintainers",
+          avatarUrl: "https://avatars.githubusercontent.com/t/1",
+        },
+      ]);
       expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");

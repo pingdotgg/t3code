@@ -380,11 +380,14 @@ export const make = Effect.gen(function* () {
         Effect.map((pullRequest): ProviderChangeRequestDetail => ({
           ...pullRequest,
           author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
-          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
+          reviewers: [
+            ...pullRequest.reviewRequestLogins.map((login) => ({
+              login,
+              name: null,
+              avatarUrl: null,
+            })),
+            ...pullRequest.reviewRequestTeams,
+          ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: gitHubViewerPermissions({
             ...pullRequest.viewerAccess,
