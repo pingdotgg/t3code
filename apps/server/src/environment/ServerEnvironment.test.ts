@@ -20,6 +20,7 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
@@ -28,6 +29,7 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
@@ -103,6 +105,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSettings.layerTest()),
               Layer.provide(layerEmptySecretStore),
               Layer.provide(ServerConfig.layer({ ...config, mode })),
             ),
@@ -235,7 +238,10 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         prefix: "t3-server-environment-publish-test-",
       });
       const layerTest = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerEnvironment.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(ServerSecretStore.layer),
+        ),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
 
@@ -264,6 +270,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
         const linked = yield* serverEnvironment.getDescriptor;
         expect(linked.capabilities.agentActivityPublishing).toBe(true);
+        const snapshot = yield* serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
+        expect(snapshot.label).toBe("Studio Mac");
+        expect(snapshot.capabilities).toEqual(linked.capabilities);
 
         // The toggle changes at runtime, so the same service instance must
         // reflect a flip without a restart.
@@ -290,6 +301,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSettings.layerTest()),
               Layer.provide(ServerSecretStore.layer),
               Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
             ),
@@ -312,6 +324,33 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       const web = yield* describeWith({ mode: "web", desktopTelemetryControlFd: 5 });
       expect(web.capabilities.desktopAppUpdate).toBeUndefined();
+    }),
+  );
+
+  it.effect("applies configured environment label updates without a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const initial = yield* serverEnvironment.getDescriptor;
+
+        yield* serverSettings.updateSettings({ environmentLabel: "Studio Mac" });
+        const renamed = yield* serverEnvironment.getDescriptor;
+        yield* serverSettings.updateSettings({ environmentLabel: "" });
+        const reset = yield* serverEnvironment.getDescriptor;
+        // A queued settings event must describe its own snapshot even after another write.
+        const previousSnapshot = yield* serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
+
+        expect(previousSnapshot).toEqual(renamed);
+        expect(renamed).toEqual({ ...initial, label: "Studio Mac" });
+        expect(reset).toEqual(initial);
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
     }),
   );
 
@@ -356,6 +395,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
+              Layer.provideMerge(ServerSettings.layerTest()),
               Layer.provide(layerEmptySecretStore),
               Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), layerFailingFileSystem)),
             ),

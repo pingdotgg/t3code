@@ -2,7 +2,10 @@ import type {
   EnvironmentPresentation,
   PreparedConnection,
 } from "@t3tools/client-runtime/connection";
-import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
+import {
+  connectionCatalogDisplayUrl,
+  environmentDisplayLabel,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -34,10 +37,15 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       }
 
       const prepared = Option.getOrNull(get(input.preparedConnectionAtom(environmentId)));
+      const environmentLabel = environmentDisplayLabel(
+        presentation.entry,
+        presentation.serverConfig,
+      );
       if (
         previous !== null &&
         presentation.entry === previousEntry &&
-        prepared === previousPrepared
+        prepared === previousPrepared &&
+        environmentLabel === previous.environmentLabel
       ) {
         return previous;
       }
@@ -61,7 +69,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       previousPrepared = prepared;
       previous = {
         environmentId,
-        environmentLabel: presentation.entry.target.label,
+        environmentLabel,
         pairingUrl: displayUrl,
         displayUrl,
         httpBaseUrl,

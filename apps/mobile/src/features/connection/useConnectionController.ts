@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
@@ -9,7 +9,7 @@ import type {
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
-import { useCallback, useMemo } from "react";
+import { useCallback, useContext, useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import {
@@ -20,6 +20,8 @@ import { useWorkspaceEnvironments } from "../../state/workspace";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { relayManagedEnvironmentIds } from "./environmentSections";
+import { serverEnvironment } from "../../state/server";
+import { updateConnectionEnvironment } from "./environmentUpdate";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
@@ -30,12 +32,14 @@ export interface RelayEnvironmentView {
 }
 
 export function useConnectionController() {
+  const registry = useContext(RegistryContext);
   const connectedEnvironments = useWorkspaceEnvironments();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const connectPairingUrlMutation = useAtomCommand(connectPairingUrlAtom, {
     reportFailure: false,
   });
   const updateBearer = useAtomCommand(updateBearerConnection, { reportFailure: false });
+  const updateHost = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
   const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
   const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
@@ -106,12 +110,13 @@ export function useConnectionController() {
       environmentId: EnvironmentId,
       updates: { readonly label: string; readonly displayUrl: string },
     ) =>
-      updateBearer({
+      updateConnectionEnvironment(
+        registry.get(environmentCatalog.catalogValueAtom).entries.get(environmentId),
         environmentId,
-        label: updates.label,
-        httpBaseUrl: updates.displayUrl,
-      }),
-    [updateBearer],
+        updates,
+        { updateHost, updateBearer },
+      ),
+    [registry, updateHost, updateBearer],
   );
 
   return {

@@ -1166,6 +1166,11 @@ export const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
 export type RelayEnvironmentLinkPreferencesRequest =
   typeof RelayEnvironmentLinkPreferencesRequest.Type;
 
+export const RelayEnvironmentLabelRequest = Schema.Struct({
+  label: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentLabelRequest = typeof RelayEnvironmentLabelRequest.Type;
+
 export const RelayWakeHeldHooksResponse = Schema.Struct({
   /** True when the relay was holding requests and has started delivering them. */
   pending: Schema.Boolean,
@@ -1217,6 +1222,12 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.put("updateEnvironmentLabel", "/v1/environments/:environmentId/label", {
+      params: Schema.Struct({ environmentId: EnvironmentId }),
+      payload: RelayEnvironmentLabelRequest,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Update an environment's display name"),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,

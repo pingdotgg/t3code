@@ -134,6 +134,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -186,6 +187,7 @@ import { APP_VERSION } from "~/branding";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import {
   OutdatedServerUpdateAction,
@@ -1482,6 +1484,48 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
 }
 
 /**
+ * Renames a Connect host for every client. Manual connections keep the label
+ * saved on this device, so only Connect rows offer this.
+ */
+function RemoteHostNameField({ environment }: { readonly environment: EnvironmentPresentation }) {
+  const environmentId = environment.environmentId;
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "Update host name");
+  const canUpdateSettings = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(environmentId),
+  );
+  const connected = environment.connection.phase === "connected";
+  const supported = environment.serverConfig?.environment.capabilities.environmentLabel === true;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 border-t border-border/50 py-2">
+      <DraftInput
+        size="sm"
+        className="w-full sm:w-64"
+        value={environment.serverConfig?.settings.environmentLabel ?? ""}
+        onCommit={(next) =>
+          void updateSettings({
+            environmentId,
+            input: { patch: { environmentLabel: next.trim() } },
+          })
+        }
+        placeholder="Use the machine’s name"
+        aria-label={`Host name for ${environment.label}`}
+        disabled={!connected || !supported || !canUpdateSettings}
+        spellCheck={false}
+      />
+      <p className="text-xs text-muted-foreground">
+        {!connected
+          ? "Connect to this environment to change its host name."
+          : !supported
+            ? "Update this environment to change its host name."
+            : !canUpdateSettings
+              ? "You need permission to update this environment’s settings."
+              : "Shown to every client. Clear it to use the machine’s name."}
+      </p>
+    </div>
+  );
+}
+
+/**
  * One added machine in the Environments list. The switch is the main action;
  * the update icon appears only when that machine can take an update; the
  * row menu holds the icon override, trace ID, and removal.
@@ -1495,7 +1539,9 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [hostNameOpen, setHostNameOpen] = useState(false);
   const environmentId = environment.environmentId;
+  const isConnectHost = environment.entry.target._tag === "RelayConnectionTarget";
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
@@ -1692,6 +1738,7 @@ function SavedBackendListRow({
       }
       detail={
         <>
+          {hostNameOpen && isConnectHost && <RemoteHostNameField environment={environment} />}
           {routesOpen && (
             <EnvironmentRoutesList
               environment={environment}
@@ -1772,6 +1819,11 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {isConnectHost ? (
+            <MenuItem onClick={() => setHostNameOpen((open) => !open)}>
+              {hostNameOpen ? "Hide host name" : "Host name"}
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}
@@ -2036,6 +2088,8 @@ export function ConnectionsSettings() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const environmentLabel = usePrimarySettings((settings) => settings.environmentLabel);
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
@@ -2238,6 +2292,9 @@ export function ConnectionsSettings() {
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
   const canManageLocalBackend = !isLocalEnvironmentDisabled() && canMaintain;
+  const canEditEnvironmentLabel = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(primaryEnvironmentId),
+  );
   const authAccessChanges = useEnvironmentQuery(
     canReadAccess && primaryEnvironmentId !== null
       ? authEnvironment.accessChanges({
@@ -3148,6 +3205,35 @@ export function ConnectionsSettings() {
       aria-label="Enable network access"
     />
   );
+  const renderEnvironmentLabelRow = () => (
+    <SettingsRow
+      title="Host name"
+      description={
+        primaryServerConfig?.environment.capabilities.environmentLabel === true
+          ? "Shown to connected clients and in T3 Connect. Clear it to use this computer’s name."
+          : "Update this environment to set its host name."
+      }
+      serverScoped
+      settingKeys={["environmentLabel"]}
+      control={
+        <div className="w-full sm:w-64">
+          <DraftInput
+            size="sm"
+            value={environmentLabel}
+            onCommit={(next) => updatePrimarySettings({ environmentLabel: next })}
+            placeholder="Use this computer’s name"
+            aria-label="Host name"
+            disabled={
+              !canEditEnvironmentLabel ||
+              primaryEnvironment?.connection.phase !== "connected" ||
+              primaryServerConfig?.environment.capabilities.environmentLabel !== true
+            }
+            spellCheck={false}
+          />
+        </div>
+      }
+    />
+  );
   const renderEndpointRows = (presentation: AccessSectionPresentation) =>
     isAdvertisedEndpointListExpanded
       ? visibleDesktopNetworkAdvertisedEndpoints.map((endpoint) => {
@@ -3698,6 +3784,7 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
+            {renderEnvironmentLabelRow()}
             {canManageLocalBackend && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}

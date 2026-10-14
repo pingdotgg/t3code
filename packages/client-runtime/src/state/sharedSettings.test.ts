@@ -44,6 +44,13 @@ describe("supportsSharedSettingsSync", () => {
 });
 
 describe("splitSharedServerPatch", () => {
+  it("keeps host names on the environment being edited", () => {
+    expect(splitSharedServerPatch({ environmentLabel: "Studio Mac" })).toEqual({
+      sharedPatch: {},
+      localPatch: { environmentLabel: "Studio Mac" },
+    });
+  });
+
   it("keeps project overrides local: project ids belong to one environment", () => {
     const patch = {
       projectSettingsOverrides: { [ProjectId.make("project")]: { defaultAutoPull: true } },

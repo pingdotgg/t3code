@@ -119,3 +119,21 @@ it("does not let an older multi-environment batch clear a newer failure for the 
   await older;
   expect(read(selected).failedLabels).toEqual(["A"]);
 });
+
+it("names a failed environment by its current host name", async () => {
+  const a = EnvironmentId.make("mobile-limits-renamed");
+  const read = () => {
+    state.cursor = 0;
+    return useRefreshLimits();
+  };
+  const presentation = (label: string) => ({
+    connection: { phase: "connected" },
+    entry: { target: { label } },
+  });
+  state.presentations = new Map([[a, presentation("Old name")]]);
+  state.refreshProviders.mockResolvedValue({ _tag: "Failure" });
+  await read().refresh();
+  expect(read().failedLabels).toEqual(["Old name"]);
+  state.presentations = new Map([[a, presentation("New name")]]);
+  expect(read().failedLabels).toEqual(["New name"]);
+});
