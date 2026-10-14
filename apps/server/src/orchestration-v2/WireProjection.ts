@@ -34,6 +34,26 @@ function truncateDetail(
   return `${prefix}\n… output truncated for transport`;
 }
 
+/**
+ * Bounds the text a provider file change keeps in the event log and its
+ * projection. Clients never receive more than this (see projectTurnItemForWire),
+ * so a full diff of a large file would only grow the database and the heap that
+ * reads it back. Agents reading the thread over MCP get the bounded text.
+ */
+export function boundFileChangeForStorage(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  if (item.type !== "file_change") return item;
+  const { diffStr, oldStr, newStr } = item;
+  const bounded = {
+    ...item,
+    ...(diffStr === undefined ? {} : { diffStr: truncateDetail(diffStr) }),
+    ...(oldStr === undefined ? {} : { oldStr: truncateDetail(oldStr) }),
+    ...(newStr === undefined ? {} : { newStr: truncateDetail(newStr) }),
+  };
+  return bounded.diffStr === diffStr && bounded.oldStr === oldStr && bounded.newStr === newStr
+    ? item
+    : bounded;
+}
+
 function summarizeDynamicValue(value: unknown): unknown {
   let serialized: string;
   try {
@@ -95,8 +115,8 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     }
     case "file_change": {
-      // File identity and counts are enough for activity. Full diffs already
-      // have a dedicated read path and remain intact in persistence.
+      // File identity and counts are enough for activity. Full diffs come from
+      // checkpoint diffs; storage keeps only a bounded copy of this text.
       const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
       // A failed edit stores the provider's error where the diff would be.
       return item.status === "failed" && diffStr?.trim()
