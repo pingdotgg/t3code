@@ -1181,6 +1181,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((result) => result.stdout),
     );
 
+  /**
+   * Runs `git worktree list --porcelain -z`. Git before 2.36 rejects `-z`, so a failed run
+   * retries the line form and returns it NUL-delimited, the same shape as `-z` output.
+   * The line form cannot carry paths that contain newlines.
+   */
+  const executeWorktreeList = Effect.fn("executeWorktreeList")(function* (
+    operation: string,
+    cwd: string,
+    gitArgs: readonly string[],
+    options: ExecuteGitOptions = {},
+  ) {
+    const args = [...gitArgs, "worktree", "list", "--porcelain"];
+    const result = yield* executeGit(operation, cwd, [...args, "-z"], {
+      ...options,
+      allowNonZeroExit: true,
+    });
+    if (result.exitCode === 0) return result;
+    const lineResult = yield* executeGit(operation, cwd, args, options);
+    return { ...lineResult, stdout: lineResult.stdout.replaceAll("\n", "\0") };
+  });
+
   const runGitStdoutWithOptions = (
     operation: string,
     cwd: string,
@@ -3163,16 +3184,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             allowNonZeroExit: true,
           },
         ),
-        executeGit(
-          "GitVcsDriver.listRefs.worktreeList",
-          fetchCwd,
-          [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
-          {
-            timeoutMs: 30_000,
-            allowNonZeroExit: true,
-            maxOutputBytes: 16 * 1024 * 1024,
-          },
-        ),
+        executeWorktreeList("GitVcsDriver.listRefs.worktreeList", fetchCwd, gitDirArgs, {
+          timeoutMs: 30_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: 16 * 1024 * 1024,
+        }),
         executeGit("GitVcsDriver.listRefs.remoteNames", fetchCwd, [...gitDirArgs, "remote"], {
           timeoutMs: 5_000,
           allowNonZeroExit: true,
@@ -4043,15 +4059,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
-    runGitStdout("GitVcsDriver.listWorktreePaths", cwd, [
-      "worktree",
-      "list",
-      "--porcelain",
-      "-z",
-    ]).pipe(
+    executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
       // One record per worktree, each ended by an empty field. A `prunable`
       // record's directory is gone, and another checkout may now sit there.
-      Effect.map((stdout) =>
+      Effect.map(({ stdout }) =>
         stdout.split("\0\0").flatMap((record) => {
           const fields = record.split("\0");
           const worktree = fields.find((field) => field.startsWith("worktree "));
