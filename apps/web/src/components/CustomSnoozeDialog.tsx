@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
 import {
+  addSnoozeFavorite,
   localSnoozeDate,
   localSnoozeTime,
   resolveCustomSnooze,
@@ -8,6 +9,11 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
+import { persistClientSettingsUpdate } from "../hooks/useSettings";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import type { SnoozeFavorite } from "@t3tools/contracts/settings";
+import { Checkbox } from "./ui/checkbox";
+import { toastManager } from "./ui/toast";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
@@ -36,6 +42,31 @@ type SnoozeChoice = { readonly snoozedUntil: string };
 type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
+/**
+ * Edits the saved favorites against the newest settings, after hydration, so
+ * an early save or removal cannot overwrite favorites that have not loaded yet.
+ * An update that leaves the favorites unchanged writes nothing. A failed write
+ * shows `failureTitle` as a toast.
+ */
+export function updateSnoozeFavorites(
+  update: (favorites: ReadonlyArray<SnoozeFavorite>) => ReadonlyArray<SnoozeFavorite>,
+  failureTitle: string,
+): void {
+  void persistClientSettingsUpdate((settings) => {
+    const snoozeFavorites = update(settings.snoozeFavorites);
+    return snoozeFavorites === settings.snoozeFavorites
+      ? settings
+      : { ...settings, snoozeFavorites };
+  }).catch((error) => {
+    console.error("[SNOOZE_FAVORITES] persist failed", safeErrorLogAttributes(error));
+    toastManager.add({
+      type: "error",
+      title: failureTitle,
+      description: "Your snooze favorites could not be saved on this device.",
+    });
+  });
+}
+
 export function requestCustomSnooze(): Promise<SnoozeChoice | null> {
   useRequest.getState().request?.resolve(null);
   return new Promise((resolve) => useRequest.setState({ request: { resolve } }));
@@ -62,6 +93,7 @@ function CustomSnoozeDialog() {
   const [time, setTime] = useState(localSnoozeTime(initial));
   const [amount, setAmount] = useState("2");
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
+  const [saveAsFavorite, setSaveAsFavorite] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input: CustomSnoozeInput =
     mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
@@ -85,6 +117,14 @@ function CustomSnoozeDialog() {
                   : "Enter a positive duration.",
               );
               return;
+            }
+            if (input.mode === "duration" && saveAsFavorite) {
+              const favorite = { amount: Number(input.amount), unit: input.unit };
+              // Queued behind any pending removal; a duplicate writes nothing.
+              updateSnoozeFavorites(
+                (favorites) => addSnoozeFavorite(favorites, favorite),
+                "Could not save the favorite",
+              );
             }
             finish({ snoozedUntil });
           }}
@@ -204,6 +244,15 @@ function CustomSnoozeDialog() {
                       </Select>
                     </Label>
                   </div>
+                )}
+                {mode === "duration" && (
+                  <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+                    <Checkbox
+                      checked={saveAsFavorite}
+                      onCheckedChange={(checked) => setSaveAsFavorite(checked === true)}
+                    />
+                    Add as favorite
+                  </label>
                 )}
               </div>
             </div>
