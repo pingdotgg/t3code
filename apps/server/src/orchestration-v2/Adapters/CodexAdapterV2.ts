@@ -717,11 +717,51 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+function usesCodexWorkspaceWriteDefault(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): boolean {
+  return (
+    runtimePolicy.sandboxPolicy === undefined &&
+    codexRuntimeModeTurnDefaults(runtimePolicy.runtimeMode).sandboxPolicy.type === "workspaceWrite"
+  );
+}
+
+/**
+ * `turn/start` replaces the thread's sandbox policy, and Codex fills omitted
+ * workspace-write fields with no network access and no extra writable roots.
+ * Copying the `sandbox_workspace_write` table Codex resolved from config and
+ * launch arguments keeps those settings under a mode's default policy.
+ */
+function withWorkspaceWriteConfig(
+  policy: CodexSchema.V2TurnStartParams__SandboxPolicy,
+  config: CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite | null | undefined,
+): CodexSchema.V2TurnStartParams__SandboxPolicy {
+  if (policy.type !== "workspaceWrite" || config == null) {
+    return policy;
+  }
+  return {
+    ...policy,
+    ...(config.writable_roots === undefined ? {} : { writableRoots: config.writable_roots }),
+    ...(config.network_access === undefined ? {} : { networkAccess: config.network_access }),
+    ...(config.exclude_tmpdir_env_var === undefined
+      ? {}
+      : { excludeTmpdirEnvVar: config.exclude_tmpdir_env_var }),
+    ...(config.exclude_slash_tmp === undefined
+      ? {}
+      : { excludeSlashTmp: config.exclude_slash_tmp }),
+  };
+}
+
 export function buildCodexTurnStartParams(input: {
   readonly nativeThreadId: string;
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  /** `sandbox_workspace_write` from Codex's effective config (`config/read`). */
+  readonly workspaceWriteConfig?:
+    | CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite
+    | null
+    | undefined;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
@@ -738,7 +778,7 @@ export function buildCodexTurnStartParams(input: {
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
-        ? runtimeModeDefaults.sandboxPolicy
+        ? withWorkspaceWriteConfig(runtimeModeDefaults.sandboxPolicy, input.workspaceWriteConfig)
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const selectedEffort = getModelSelectionStringOptionValue(
       input.modelSelection,
@@ -1353,6 +1393,67 @@ export function codexThreadRuntimeParams(input: {
           }),
     },
   };
+}
+
+// Decodes only this table and the profile selection that makes Codex ignore
+// it, so an unrelated config field cannot fail the turn.
+const decodeCodexWorkspaceWriteConfig = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    config: Schema.Struct({
+      default_permissions: Schema.optionalKey(Schema.Unknown),
+      sandbox_workspace_write: Schema.optionalKey(
+        Schema.NullOr(CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite),
+      ),
+    }),
+  }),
+);
+
+// Decodes only `allowedPermissionProfiles`, the requirement that makes Codex
+// ignore `[sandbox_workspace_write]`.
+const decodeCodexPermissionProfileRequirements = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    requirements: Schema.optionalKey(
+      Schema.NullOr(
+        Schema.Struct({ allowedPermissionProfiles: Schema.optionalKey(Schema.Unknown) }),
+      ),
+    ),
+  }),
+);
+
+/**
+ * Whether the user or an admin opted Codex into permission profiles. Codex then
+ * runs threads started without a sandbox mode, as T3 starts them, under the
+ * selected profile and ignores `[sandbox_workspace_write]`, so copying the
+ * table into `turn/start` would grant what the profile excludes. In
+ * `core/src/config/mod.rs` at `rust-v0.162.1`, that happens when:
+ *
+ * - managed requirements set `allowedPermissionProfiles`. Requirements that set
+ *   `defaultPermissions` without it fail Codex's config load, and `config/read`
+ *   with it, so those turns keep the bare policy.
+ * - any config layer sets `default_permissions`, including launch arguments.
+ *   A higher layer's `sandbox_mode` selects the table again, but this check
+ *   doesn't reproduce Codex's layer order, so those turns keep the bare policy.
+ *
+ * Built-in profiles that Codex picks on its own, such as `:read-only` for a
+ * project with no trust setting, don't count: T3's mode asks for
+ * workspace-write, and the table holds the user's workspace-write settings.
+ * A resumed or forked thread can also restore the last profile Codex recorded
+ * for it, which `config/read` and `configRequirements/read` don't show, so the
+ * table is copied. That profile came from another Codex client's turn, or is
+ * the one Codex selected when T3 last resumed the thread without starting a
+ * turn, such as a built-in default or a `default_permissions` profile the user
+ * has since removed. T3's next turn clears it.
+ *
+ * It runs the `allowedPermissionProfiles` read only when `defaultPermissions`
+ * is unset, because otherwise the answer can't change the result.
+ */
+function codexPermissionProfilesConfigured<E, R>(input: {
+  readonly defaultPermissions: unknown;
+  readonly allowedPermissionProfiles: Effect.Effect<unknown, E, R>;
+}): Effect.Effect<boolean, E, R> {
+  return input.defaultPermissions != null
+    ? Effect.succeed(true)
+    : input.allowedPermissionProfiles.pipe(Effect.map((profiles) => profiles != null));
 }
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
@@ -6205,10 +6306,43 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            // A failed or slow read sends the mode's bare policy instead of
+            // blocking the turn.
+            const workspaceWriteConfig = usesCodexWorkspaceWriteDefault(turnInput.runtimePolicy)
+              ? yield* client.raw.request("config/read", { cwd: turnInput.runtimePolicy.cwd }).pipe(
+                  Effect.flatMap(decodeCodexWorkspaceWriteConfig),
+                  Effect.flatMap(({ config }) =>
+                    config.sandbox_workspace_write == null
+                      ? Effect.succeed(null)
+                      : codexPermissionProfilesConfigured({
+                          defaultPermissions: config.default_permissions,
+                          allowedPermissionProfiles: client.raw
+                            .request("configRequirements/read", undefined)
+                            .pipe(
+                              Effect.flatMap(decodeCodexPermissionProfileRequirements),
+                              Effect.map(
+                                ({ requirements }) => requirements?.allowedPermissionProfiles,
+                              ),
+                            ),
+                        }).pipe(
+                          Effect.map((configured) =>
+                            configured ? undefined : config.sandbox_workspace_write,
+                          ),
+                        ),
+                  ),
+                  Effect.timeout("5 seconds"),
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-workspace-write-config-failed", {
+                      cause,
+                    }).pipe(Effect.as(undefined)),
+                  ),
+                )
+              : undefined;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
+              workspaceWriteConfig,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
