@@ -7,6 +7,7 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 const state = vi.hoisted(() => ({
   canOperate: false,
   canWriteSettings: true,
+  connected: true,
   openEditor: vi.fn(),
   upsert: vi.fn(),
   remove: vi.fn(),
@@ -57,7 +58,9 @@ vi.mock("./SettingsScopeContext", () => ({
         availableEditors: [],
       },
     };
-    return { environment, connectedEnvironments: [environment] };
+    return state.connected
+      ? { environment, connectedEnvironments: [environment] }
+      : { environment: null, connectedEnvironments: [] };
   },
 }));
 
@@ -104,6 +107,7 @@ describe("KeybindingsSettings editor permission", () => {
     hooks.reset();
     state.canOperate = false;
     state.canWriteSettings = true;
+    state.connected = true;
     state.openEditor.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
     state.upsert.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
     state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
@@ -139,5 +143,32 @@ describe("KeybindingsSettings editor permission", () => {
 
     expect(state.openEditor).not.toHaveBeenCalled();
     expect(openButton(renderPanel()).props.disabled).toBe(true);
+  });
+});
+
+function noticeText(panel: unknown) {
+  const notice = visitElements(panel, (element) => element.type === "p");
+  return notice?.props.children;
+}
+
+describe("KeybindingsSettings write notice", () => {
+  beforeEach(() => {
+    hooks.reset();
+    state.canWriteSettings = true;
+    state.connected = true;
+  });
+
+  // The hosted app has no environment until one is paired, so the editor is
+  // locked for a missing connection, not a missing permission.
+  it("asks for a connected environment when none is connected", () => {
+    state.connected = false;
+    expect(noticeText(renderPanel())).toBe("Connect an environment to change keybindings.");
+  });
+
+  it("names the permission when the connection cannot write settings", () => {
+    state.canWriteSettings = false;
+    expect(noticeText(renderPanel())).toBe(
+      "This connection can view keybindings but cannot change them.",
+    );
   });
 });

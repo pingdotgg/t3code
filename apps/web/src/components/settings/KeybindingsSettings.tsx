@@ -1502,7 +1502,9 @@ export function KeybindingsSettingsPanel() {
 
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
-          This connection can view keybindings but cannot change them.
+          {connectedEnvironments.length === 0
+            ? "Connect an environment to change keybindings."
+            : "This connection can view keybindings but cannot change them."}
         </p>
       ) : null}
       <div inert={!canWriteSettings} className="flex flex-col gap-8">
