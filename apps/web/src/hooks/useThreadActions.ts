@@ -33,7 +33,6 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
@@ -359,7 +358,6 @@ export function useThreadActions() {
       if (result._tag === "Failure") {
         return result;
       }
-      refreshArchivedThreadsForEnvironment(target.environmentId);
       if (opts.navigate) {
         return settlePromise(() =>
           router.navigate({
@@ -406,7 +404,6 @@ export function useThreadActions() {
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
       showThreadUndoNotice({
         action: "Archived",
@@ -449,7 +446,6 @@ export function useThreadActions() {
           input: { threadId: target.threadId },
         });
         if (result._tag === "Success") {
-          refreshArchivedThreadsForEnvironment(target.environmentId);
           clearThreadPreviewState(target);
         }
         return result;
@@ -549,7 +545,6 @@ export function useThreadActions() {
       if (deleteResult._tag === "Failure") {
         return deleteResult;
       }
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       releaseComposerDraftUploads(threadRef);
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(

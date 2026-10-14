@@ -1,8 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
@@ -11,10 +10,7 @@ import {
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
 import { buildArchivedThreadGroups, type ArchivedThreadSortOrder } from "./archivedThreadList";
-import {
-  refreshArchivedThreadsForEnvironment,
-  useArchivedThreadSnapshots,
-} from "./useArchivedThreadSnapshots";
+import { useArchivedThreadSnapshots } from "./useArchivedThreadSnapshots";
 
 export function ArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -57,20 +53,7 @@ export function ArchivedThreadsRouteScreen() {
       }),
     [environmentLabels, searchQuery, selectedEnvironmentId, snapshots, sortOrder],
   );
-  const refreshChangedEnvironment = useCallback(
-    (thread: { readonly environmentId: EnvironmentId }) => {
-      refreshArchivedThreadsForEnvironment(thread.environmentId);
-    },
-    [],
-  );
-  const { unarchiveThread, confirmDeleteThread } =
-    useArchivedThreadListActions(refreshChangedEnvironment);
-
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh]),
-  );
+  const { unarchiveThread, confirmDeleteThread } = useArchivedThreadListActions();
 
   return (
     <ArchivedThreadsScreen
