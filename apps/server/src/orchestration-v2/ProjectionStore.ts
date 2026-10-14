@@ -73,6 +73,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -459,6 +460,10 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     requestId: TurnItemId,
     resultId: TurnItemId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** True when the projection already stores this exact node, so a write would change nothing. */
+  readonly isNodeStored: (
+    node: OrchestrationV2ExecutionNode,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getRuntimeRequest: (
     threadId: ThreadId,
@@ -4404,6 +4409,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return rows[0]?.pending === 1;
         }).pipe(Effect.mapError(controlReadError(threadId)));
 
+    const isNodeStored: ProjectionStoreV2Shape["isNodeStored"] = (node) =>
+      Effect.gen(function* () {
+        const payloadJson = yield* encodeNodePayload(node);
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_nodes WHERE node_id = ${node.id}
+        `;
+        return rows[0]?.payload_json === payloadJson;
+      }).pipe(Effect.mapError(controlReadError(node.threadId)));
+
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
         .withTransaction(
@@ -5992,6 +6006,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       canStartQueuedRun,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
+      isNodeStored,
       getMessageCount,
       getNextTurnItemOrdinal,
       getTurnItem,
@@ -6255,6 +6270,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             !projection.turnItems.some((item) => item.id === resultId)
           );
         }),
+      isNodeStored: (node) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            const stored = state.projections
+              .get(node.threadId)
+              ?.nodes.find((candidate) => candidate.id === node.id);
+            return stored !== undefined && Equal.equals(stored, node);
+          }),
+        ),
       getMessageCount: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) => state.projections.get(threadId)?.messages.length ?? 0),

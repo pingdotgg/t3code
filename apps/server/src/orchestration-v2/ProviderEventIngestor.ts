@@ -611,6 +611,9 @@ export const layer: Layer.Layer<
               }),
             ];
           case "node.updated":
+            // Adapters send an unchanged node again with each text delta. Compare with the
+            // stored node, not the last one sent, because the server also writes nodes.
+            if (yield* projections.isNodeStored(input.event.node)) return [];
             return [
               yield* makeDomainEvent(input, {
                 type: "node.updated",

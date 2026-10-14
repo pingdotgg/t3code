@@ -325,6 +325,66 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("skips a node update only when it matches the stored node", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const nodeId = NodeId.make(`${threadId}:approval`);
+      const node: OrchestrationV2ExecutionNode = {
+        id: nodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const ingestNode = (sent: OrchestrationV2ExecutionNode) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: { type: "node.updated", driver: CODEX_DRIVER, node: sent },
+        });
+
+      assert.lengthOf(yield* ingestNode(node), 1);
+      assert.isEmpty(yield* ingestNode({ ...node }));
+      // The server resolves the request, then the provider asks again with the same node.
+      yield* eventSink.write({
+        events: [
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "node.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...node, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      assert.lengthOf(yield* ingestNode(node), 1);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "waiting");
+    }),
+  );
+
   it.effect("rolls back runs a provider rewound off its active branch", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
