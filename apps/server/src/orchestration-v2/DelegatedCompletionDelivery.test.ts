@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -749,6 +750,24 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
 
 // Runtime reconciliation writes restart cancellations under this command
 // prefix, which the live terminal-run listener skips.
+// Collects the SQL text of every statement run under the returned tracer.
+const traceSqlStatements = () => {
+  const statements: Array<string> = [];
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        const query = span.attributes.get("db.query.text");
+        if (typeof query === "string") statements.push(query);
+      };
+      return span;
+    },
+  });
+  return { statements, tracer };
+};
+
 const reconcileCommandId = (name: string) => CommandId.make(`command:runtime-reconcile:${name}`);
 
 const parentProviderThreadId = (threadId: ThreadId) =>
@@ -1575,6 +1594,111 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         assert.equal(delivery?.generation, 2);
         assert.deepEqual(delivery?.taskIds, [seeded.taskId]);
       }
+    }),
+  );
+
+  it.effect("settles only the current delivery of a parent with long delivery history", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delivery-history");
+      const runId = RunId.make("run:delivery-history");
+      const taskId = NodeId.make("node:delivery-history-task");
+      const currentMessageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      const currentRunId = RunId.make("run:delivery-history:current");
+      const HISTORY = 40;
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("project:delivery-history"),
+        runId,
+        rootNodeId: NodeId.make("node:delivery-history-root"),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        now,
+      });
+      const deliveryMessage = (id: MessageId, deliveryRunId: RunId) => ({
+        id: EventId.make(`event:${deliveryRunId}:message`),
+        type: "message.updated" as const,
+        threadId,
+        runId: deliveryRunId,
+        occurredAt: now,
+        payload: {
+          id,
+          threadId,
+          runId: deliveryRunId,
+          nodeId: null,
+          role: "user" as const,
+          text: `Delegated task ${taskId} reached a terminal state.`,
+          attachments: [],
+          streaming: false,
+          createdBy: "agent" as const,
+          creationSource: "server" as const,
+          createdAt: now,
+          updatedAt: now,
+          delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+        },
+      });
+      // Earlier deliveries that already settled. Each one still owns a
+      // delegated message and a terminal run.
+      const history = Array.from({ length: HISTORY }, (_, index) => {
+        const historyRunId = RunId.make(`run:delivery-history:${index}`);
+        const messageId = MessageId.make(`message:delivery-history:${index}`);
+        return [
+          deliveryMessage(messageId, historyRunId),
+          runEvent({
+            threadId,
+            runId: historyRunId,
+            ordinal: index + 2,
+            status: "completed",
+            now,
+            providerThreadId: parentProviderThreadId(threadId),
+            userMessageId: messageId,
+          }),
+        ];
+      }).flat();
+      yield* eventSink.write({
+        commandId: reconcileCommandId("delivery-history"),
+        events: [
+          ...history,
+          deliveryMessage(currentMessageId, currentRunId),
+          runEvent({
+            threadId,
+            runId: currentRunId,
+            ordinal: HISTORY + 2,
+            status: "completed",
+            now,
+            providerThreadId: parentProviderThreadId(threadId),
+            userMessageId: currentMessageId,
+          }),
+        ],
+      });
+
+      const { statements, tracer } = traceSqlStatements();
+      yield* orchestrator.recoverDelegatedTasks.pipe(Effect.withTracer(tracer));
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        projection.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+        "delivered",
+      );
+      assert.isNull(projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery);
+      // Recovery reads the delivery message once, for the current delivery
+      // run only. History must not cost one thread reload per past delivery.
+      assert.lengthOf(
+        statements.filter((statement) =>
+          statement.includes("FROM orchestration_v2_projection_messages AS message"),
+        ),
+        1,
+      );
+
+      // A second recovery finds nothing open on this thread and changes nothing.
+      yield* orchestrator.recoverDelegatedTasks;
+      const again = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(again.runs, projection.runs);
+      assert.deepEqual(again.subagents, projection.subagents);
     }),
   );
 
