@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type { ResolvedSharePayload, SharePayload } from "expo-sharing";
 
 import { DraftComposerAttachmentSchema } from "../../lib/composer-image-schema";
+import { fitComposerImage } from "../../lib/composerImageFit";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { estimateBase64ByteSize } from "../../lib/base64";
 
@@ -406,8 +407,18 @@ export async function buildIncomingShareDraft(input: {
     }
 
     try {
-      const base64 = await input.fileReader.readBase64(uri);
-      const sizeBytes = resolved?.contentSize ?? estimateBase64ByteSize(base64);
+      const sharedBase64 = await input.fileReader.readBase64(uri);
+      // Rendered from the bytes already read, since the provider's file may not be readable
+      // by the native image loader.
+      const fitted = await fitComposerImage({
+        uri: `data:${mimeType};base64,${sharedBase64}`,
+        mimeType,
+        base64: sharedBase64,
+      });
+      const base64 = fitted?.base64 ?? sharedBase64;
+      const sizeBytes = fitted
+        ? estimateBase64ByteSize(base64)
+        : (resolved?.contentSize ?? estimateBase64ByteSize(base64));
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
         warnings.push(
           `'${resolved?.originalName ?? fallbackName(uri, index, mimeType)}' exceeds the 10 MB attachment limit.`,

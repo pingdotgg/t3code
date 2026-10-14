@@ -20,6 +20,7 @@ import {
 } from "./composerAttachmentFiles";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
+import { fitComposerImage, renderPhoto } from "./composerImageFit";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 import { writeFileAtomically } from "./atomic-file";
@@ -341,46 +342,6 @@ export async function pickComposerFiles(input: {
   return { files: attachments, error };
 }
 
-/**
- * Longest edge kept when a photo has to be re-encoded. Matches the web composer's
- * MAX_DIMENSION so every client hands providers the same resolution.
- */
-const PHOTO_MAX_EDGE = 2048;
-const PHOTO_JPEG_QUALITY = 0.85;
-
-/**
- * Renders a photo-library pick to a provider-readable JPEG. Decode, downscale, and encode run
- * natively; only the bounded result crosses the bridge. Camera photos are 12-48 MP HEIC files,
- * so a full-size conversion is both slow to transfer and far more than a model can use.
- */
-async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: string }> {
-  const { ImageManipulator, SaveFormat } = await import("expo-image-manipulator");
-  let image = await ImageManipulator.manipulate(uri).renderAsync();
-  try {
-    const longestEdge = Math.max(image.width, image.height);
-    if (longestEdge > PHOTO_MAX_EDGE) {
-      const resized = await ImageManipulator.manipulate(image)
-        .resize(
-          image.width >= image.height ? { width: PHOTO_MAX_EDGE } : { height: PHOTO_MAX_EDGE },
-        )
-        .renderAsync();
-      image.release();
-      image = resized;
-    }
-    const saved = await image.saveAsync({
-      format: SaveFormat.JPEG,
-      compress: PHOTO_JPEG_QUALITY,
-      base64: true,
-    });
-    if (!saved.base64) {
-      throw new Error("The rendered photo has no bytes.");
-    }
-    return { base64: saved.base64, uri: saved.uri };
-  } finally {
-    image.release();
-  }
-}
-
 async function loadImagePicker() {
   try {
     return await import("expo-image-picker");
@@ -530,14 +491,20 @@ export async function pickComposerMedia(input: {
     try {
       if (originalMimeType !== null) {
         const { File } = await import("expo-file-system");
+        const base64 = await new File(asset.uri).base64();
+        const fitted = await fitComposerImage({
+          uri: asset.uri,
+          mimeType: originalMimeType,
+          base64,
+        });
         image = {
-          base64: await new File(asset.uri).base64(),
+          base64: fitted?.base64 ?? base64,
           mimeType: originalMimeType,
           name,
-          previewUri: asset.uri,
+          previewUri: fitted?.uri ?? asset.uri,
         };
       } else {
-        const rendered = await renderPhotoAsJpeg(asset.uri);
+        const rendered = await renderPhoto(asset.uri);
         image = {
           base64: rendered.base64,
           mimeType: "image/jpeg",
@@ -616,7 +583,14 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
       };
     }
 
-    const base64 = image.data.split(",")[1] ?? "";
+    const pastedBase64 = image.data.split(",")[1] ?? "";
+    const fitted = await fitComposerImage({
+      uri: image.data,
+      mimeType: "image/png",
+      base64: pastedBase64,
+    });
+    const base64 = fitted?.base64 ?? pastedBase64;
+    const dataUrl = fitted ? `data:image/png;base64,${base64}` : image.data;
     const sizeBytes = estimateBase64ByteSize(base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
       return {
@@ -634,8 +608,8 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
           name: "pasted-image.png",
           mimeType: "image/png",
           sizeBytes,
-          dataUrl: image.data,
-          previewUri: image.data,
+          dataUrl,
+          previewUri: dataUrl,
         },
       ],
       text: null,
@@ -707,12 +681,14 @@ export async function convertPastedImagesToAttachments(input: {
         continue;
       }
       const file = new File(uri);
-      const base64 = await file.base64();
+      const mimeType = mimeTypeFromUri(uri);
+      const pastedBase64 = await file.base64();
+      const fitted = await fitComposerImage({ uri, mimeType, base64: pastedBase64 });
+      const base64 = fitted?.base64 ?? pastedBase64;
       const sizeBytes = estimateBase64ByteSize(base64);
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
         continue;
       }
-      const mimeType = mimeTypeFromUri(uri);
       results.push({
         id: uuidv4(),
         type: "image",
@@ -720,7 +696,7 @@ export async function convertPastedImagesToAttachments(input: {
         mimeType,
         sizeBytes,
         dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : uri,
+        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : (fitted?.uri ?? uri),
       });
     } catch (error) {
       console.warn("Failed to read pasted image", uri, error);
