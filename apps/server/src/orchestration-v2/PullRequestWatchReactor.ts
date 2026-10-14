@@ -309,7 +309,7 @@ export const make = Effect.gen(function* () {
     wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
   ) =>
     Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4;
+      const uuid = yield* crypto.randomUUIDv4();
       yield* engine.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make(`server:pr-watch:${target.thread.id}:${uuid}`),

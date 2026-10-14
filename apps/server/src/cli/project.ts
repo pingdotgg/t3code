@@ -188,7 +188,7 @@ export function projectCommandErrorFromLiveServerRequest(cause: unknown): Projec
 }
 
 const projectCommandUuid = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.mapError(
     (cause) =>
       new ProjectCommandIdGenerationError({

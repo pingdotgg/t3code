@@ -1588,7 +1588,7 @@ async function recordClaudeStreamingQuery(input: {
         text: prompt,
         uuid: await Effect.runPromise(
           Crypto.Crypto.pipe(
-            Effect.flatMap((crypto) => crypto.randomUUIDv4),
+            Effect.flatMap((crypto) => crypto.randomUUIDv4()),
             Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
             Effect.provide(NodeServices.layer),
           ),

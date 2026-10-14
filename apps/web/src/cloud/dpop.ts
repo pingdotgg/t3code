@@ -160,7 +160,7 @@ export function createBrowserDpopProof(input: {
     normalizedUrl.search = "";
     normalizedUrl.hash = "";
     const jti = yield* Crypto.Crypto.pipe(
-      Effect.flatMap((crypto) => crypto.randomUUIDv4),
+      Effect.flatMap((crypto) => crypto.randomUUIDv4()),
       Effect.mapError((cause) => dpopError("Could not generate DPoP proof identifier.", cause)),
     );
     const proof = yield* Effect.tryPromise({

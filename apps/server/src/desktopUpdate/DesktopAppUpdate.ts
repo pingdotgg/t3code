@@ -156,11 +156,13 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
 
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const requestId = yield* crypto.randomUUIDv4.pipe(
-            Effect.mapError((error) =>
-              failWith("Could not generate a desktop update request id.", error),
-            ),
-          );
+          const requestId = yield* crypto
+            .randomUUIDv4()
+            .pipe(
+              Effect.mapError((error) =>
+                failWith("Could not generate a desktop update request id.", error),
+              ),
+            );
           // Subscribe before sending the request so a fast first report
           // cannot be missed.
           const { changes } = yield* receiver.desktopUpdates;

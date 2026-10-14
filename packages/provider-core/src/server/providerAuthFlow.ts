@@ -241,7 +241,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               operation: "start",
               detail: "Provider setup is already in progress.",
             });
-          const id = yield* crypto.randomUUIDv4.pipe(
+          const id = yield* crypto.randomUUIDv4().pipe(
             Effect.mapError(
               () =>
                 new ProviderSetupError({

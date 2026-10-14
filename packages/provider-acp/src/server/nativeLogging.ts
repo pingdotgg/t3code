@@ -137,7 +137,7 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
           {
             observedAt,
             event: {
-              id: yield* crypto.randomUUIDv4,
+              id: yield* crypto.randomUUIDv4(),
               kind: logInput.kind,
               provider: input.provider,
               createdAt: observedAt,

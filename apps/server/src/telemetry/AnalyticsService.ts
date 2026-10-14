@@ -263,7 +263,7 @@ export const make = Effect.gen(function* () {
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
+      const uuid = yield* Effect.exit(crypto.randomUUIDv7());
       if (Exit.isFailure(uuid)) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);

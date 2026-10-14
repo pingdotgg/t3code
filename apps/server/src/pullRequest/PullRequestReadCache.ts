@@ -162,7 +162,7 @@ export const make = Effect.gen(function* () {
         const next = Object.fromEntries(
           Object.entries(current).filter(([, value]) => value.expiresAt > now),
         );
-        next[scope] = { revision: yield* crypto.randomUUIDv4, expiresAt: now + 60_000 };
+        next[scope] = { revision: yield* crypto.randomUUIDv4(), expiresAt: now + 60_000 };
         const encoded = yield* Schema.encodeEffect(revisionCodec)(next);
         yield* backing.set("revisions", encoded);
         yield* Cache.set(revisions, undefined, next);

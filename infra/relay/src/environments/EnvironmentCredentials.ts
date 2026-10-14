@@ -87,8 +87,9 @@ const make = Effect.gen(function* () {
   const hashToken = (token: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(Effect.map(Base64Url.encode));
   const randomTokenPart = (segments: number) =>
-    Effect.map(Effect.all(Array.from({ length: segments }, () => crypto.randomUUIDv4)), (values) =>
-      values.join("").replaceAll("-", ""),
+    Effect.map(
+      Effect.all(Array.from({ length: segments }, () => crypto.randomUUIDv4())),
+      (values) => values.join("").replaceAll("-", ""),
     );
   const makeCredential = Effect.fnUntraced(function* () {
     const credentialId = yield* randomTokenPart(2);

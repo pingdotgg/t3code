@@ -170,7 +170,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     relativePath,
   });
   const crypto = yield* Crypto.Crypto;
-  const partId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const partId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const partPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,
     relativePath: `${relativePath}.${partId}.part`,

@@ -190,7 +190,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",

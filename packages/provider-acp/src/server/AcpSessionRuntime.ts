@@ -1394,7 +1394,7 @@ export const make = (
     // Recently shown tool calls. A late update to a finished call is not a new
     // boundary in the answer, although its progress state is gone.
     const shownToolCallIds = new Set<string>();
-    const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
+    const assistantItemRuntimeId = yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new EffectAcpErrors.AcpTransportError({

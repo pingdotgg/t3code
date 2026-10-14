@@ -91,7 +91,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
         });
 
         const info = yield* client.server.info();
-        assert.strictEqual(info.version, "2.0.23");
+        assert.strictEqual(info.version, "2.0.28");
         assert.strictEqual(info.pid, server.pid);
 
         const session = yield* client.session.create({

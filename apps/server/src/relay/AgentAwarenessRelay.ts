@@ -489,7 +489,7 @@ export const make = Effect.gen(function* () {
           environmentId,
           threadId,
           state: input.state,
-          jti: yield* crypto.randomUUIDv4,
+          jti: yield* crypto.randomUUIDv4(),
         });
 
         yield* Effect.logInfo("publishing agent activity for thread", {

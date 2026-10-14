@@ -345,7 +345,7 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
         });
         if (settledAt === null) return thread;
-        const uuid = yield* crypto.randomUUIDv4;
+        const uuid = yield* crypto.randomUUIDv4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
           commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
