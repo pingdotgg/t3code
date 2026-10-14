@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  GitCommandError,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -89,6 +90,7 @@ it("does not commit running state when inherited background routing cannot be re
   const startRootRun = vi.fn(() => Effect.void);
   const pruneWorktrees = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -96,7 +98,11 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
-        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees,
+          createWorktree,
+          listLocalBranchNames,
+        }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
             Effect.succeed(
@@ -151,6 +157,303 @@ it("does not commit running state when inherited background routing cannot be re
     expect(writeIfRunCurrent).not.toHaveBeenCalled();
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("recreates a deleted worktree on a new branch from the project's current branch when the thread's own branch is gone too", async () => {
+  const threadId = ThreadId.make("thread_provider_turn_start_missing_branch");
+  const runId = RunId.make("run_provider_turn_start_missing_branch");
+  const attemptId = RunAttemptId.make("attempt_provider_turn_start_missing_branch");
+  const rootNodeId = NodeId.make("node_provider_turn_start_missing_branch");
+  const providerThreadId = ProviderThreadId.make(
+    "provider_thread_provider_turn_start_missing_branch",
+  );
+  const providerSessionId = ProviderSessionId.make(
+    "provider_session_provider_turn_start_missing_branch",
+  );
+  const messageId = MessageId.make("message_provider_turn_start_missing_branch");
+  const checkpointScopeId = CheckpointScopeId.make(
+    "checkpoint_scope_provider_turn_start_missing_branch",
+  );
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("project_provider_turn_start_missing_branch"),
+      branch: "t3/deleted-feature",
+      worktreePath: "/tmp/missing-provider-turn-start-worktree-missing-branch",
+    },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        userMessageId: messageId,
+        ordinal: 2,
+      },
+    ],
+    nodes: [{ id: rootNodeId, checkpointScopeId }],
+    attempts: [{ id: attemptId }],
+    providerThreads: [{ id: providerThreadId, providerSessionId }],
+    messages: [{ id: messageId, text: "Continue", attachments: [] }],
+    checkpointScopes: [{ id: checkpointScopeId }],
+    contextHandoffs: [],
+    contextTransfers: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  let projectionReadCount = 0;
+  const writeIfRunCurrent = vi.fn(() =>
+    Effect.succeed({ committed: true, storedEvents: [] } as never),
+  );
+  const startRootRun = vi.fn(() => Effect.void);
+  const pruneWorktrees = vi.fn(() => Effect.void);
+  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const listLocalBranchNames = vi.fn(() => Effect.succeed<string[]>([]));
+  const localStatus = vi.fn(() => Effect.succeed({ refName: "main" } as never));
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        IdAllocator.layer,
+        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees,
+          createWorktree,
+          listLocalBranchNames,
+          localStatus,
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                workspaceRoot: "/tmp/provider-turn-start-project-missing-branch",
+              } as never),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getTurnStartContext: () => {
+            projectionReadCount += 1;
+            return Effect.succeed({
+              ...projection,
+              hasConversation: projection.messages.some(
+                (m) =>
+                  m.role === "user" &&
+                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+              ),
+            });
+          },
+          getRuntimeRecoveryProjection: () => {
+            projectionReadCount += 1;
+            return Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId,
+                cause: "simulated inherited-background projection failure",
+              }),
+            );
+          },
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(ProviderAuthService.ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
+      .start({ threadId, runId })
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(projectionReadCount).toBe(2);
+    expect(pruneWorktrees).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-turn-start-project-missing-branch",
+    });
+    expect(listLocalBranchNames).toHaveBeenCalledWith(
+      "/tmp/provider-turn-start-project-missing-branch",
+    );
+    expect(localStatus).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-turn-start-project-missing-branch",
+    });
+    expect(createWorktree).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-turn-start-project-missing-branch",
+      refName: "main",
+      newRefName: "t3/deleted-feature",
+      baseRefName: "main",
+      path: "/tmp/missing-provider-turn-start-worktree-missing-branch",
+    });
+    expect(writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(startRootRun).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+function makeRecreateFailureHarness() {
+  const threadId = ThreadId.make("thread_provider_turn_start_recreate_failure");
+  const runId = RunId.make("run_provider_turn_start_recreate_failure");
+  const attemptId = RunAttemptId.make("attempt_provider_turn_start_recreate_failure");
+  const rootNodeId = NodeId.make("node_provider_turn_start_recreate_failure");
+  const providerThreadId = ProviderThreadId.make(
+    "provider_thread_provider_turn_start_recreate_failure",
+  );
+  const providerSessionId = ProviderSessionId.make(
+    "provider_session_provider_turn_start_recreate_failure",
+  );
+  const messageId = MessageId.make("message_provider_turn_start_recreate_failure");
+  const checkpointScopeId = CheckpointScopeId.make(
+    "checkpoint_scope_provider_turn_start_recreate_failure",
+  );
+  const workspaceRoot = "/tmp/provider-turn-start-project-recreate-failure";
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("project_provider_turn_start_recreate_failure"),
+      branch: "t3/deleted-feature",
+      worktreePath: "/tmp/missing-provider-turn-start-worktree-recreate-failure",
+    },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        userMessageId: messageId,
+        ordinal: 2,
+      },
+    ],
+    nodes: [{ id: rootNodeId, checkpointScopeId }],
+    attempts: [{ id: attemptId }],
+    providerThreads: [{ id: providerThreadId, providerSessionId }],
+    messages: [{ id: messageId, text: "Continue", attachments: [] }],
+    checkpointScopes: [{ id: checkpointScopeId }],
+    contextHandoffs: [],
+    contextTransfers: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  let projectionReadCount = 0;
+  let writtenFailureMessage: string | undefined;
+  const writeIfRunCurrent = vi.fn(
+    (write: {
+      readonly events: ReadonlyArray<{ readonly type: string; readonly payload: unknown }>;
+    }) => {
+      const turnItemEvent = write.events.find((event) => event.type === "turn-item.updated");
+      writtenFailureMessage =
+        turnItemEvent === undefined
+          ? undefined
+          : (turnItemEvent.payload as { readonly failure?: { readonly message: string } }).failure
+              ?.message;
+      return Effect.succeed({ committed: true, storedEvents: [] } as never);
+    },
+  );
+  const startRootRun = vi.fn(() => Effect.void);
+  const pruneWorktrees = vi.fn(() => Effect.void);
+  const createWorktree = vi.fn(() =>
+    Effect.fail(
+      new GitCommandError({
+        operation: "worktree-add",
+        command: "git worktree add",
+        cwd: workspaceRoot,
+        detail: "fatal: invalid reference: t3/deleted-feature",
+      }),
+    ),
+  );
+  const listLocalBranchNames = vi.fn(() => Effect.succeed<string[]>([]));
+  const localStatus = vi.fn(() => Effect.succeed({ refName: "main" } as never));
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        IdAllocator.layer,
+        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees,
+          createWorktree,
+          listLocalBranchNames,
+          localStatus,
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeed(Option.some({ workspaceRoot } as never)),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getTurnStartContext: () => {
+            projectionReadCount += 1;
+            return Effect.succeed({
+              ...projection,
+              hasConversation: projection.messages.some(
+                (m) =>
+                  m.role === "user" &&
+                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+              ),
+            });
+          },
+          getRuntimeRecoveryProjection: () => {
+            projectionReadCount += 1;
+            return Effect.die(
+              "must not reach the runtime recovery projection after a worktree-recreate failure",
+            );
+          },
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(ProviderAuthService.ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+      ),
+    ),
+  );
+
+  return {
+    threadId,
+    runId,
+    layer,
+    createWorktree,
+    writeIfRunCurrent,
+    startRootRun,
+    projectionReadCount: () => projectionReadCount,
+    writtenFailureMessage: () => writtenFailureMessage,
+  };
+}
+
+it("settles the run with the recreate failure, not raw git output or the generic workspace-missing error", async () => {
+  const harness = makeRecreateFailureHarness();
+
+  await Effect.gen(function* () {
+    yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+      threadId: harness.threadId,
+      runId: harness.runId,
+    });
+
+    expect(harness.projectionReadCount()).toBe(1);
+    expect(harness.createWorktree).toHaveBeenCalledOnce();
+    expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
+    expect(harness.writtenFailureMessage()).toBe(
+      "Could not recreate the worktree for branch 't3/deleted-feature' at /tmp/missing-provider-turn-start-worktree-recreate-failure.",
+    );
+    expect(harness.writtenFailureMessage()).not.toContain("Restore the folder");
+    expect(harness.writtenFailureMessage()).not.toContain("fatal:");
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(harness.layer), Effect.runPromise);
+});
+
+it("keeps a worktree-recreate failure retryable on a non-final attempt instead of settling it early", async () => {
+  const harness = makeRecreateFailureHarness();
+
+  await Effect.gen(function* () {
+    const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
+      .start({ threadId: harness.threadId, runId: harness.runId, willRetry: true })
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projectionReadCount()).toBe(1);
+    expect(harness.createWorktree).toHaveBeenCalledOnce();
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(harness.layer), Effect.runPromise);
 });
 
 function makeLocalCommandHarness(input: {
