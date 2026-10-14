@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Agent, createAgentPlatform } from "./sdk.ts";
+import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
 
 /**
  * The Cursor Agent SDK runs in this process and spawns a shell for tool
@@ -65,6 +65,7 @@ export class CursorSdk extends Context.Service<
   {
     readonly Agent: typeof Agent;
     readonly createAgentPlatform: typeof createAgentPlatform;
+    readonly SqliteLocalAgentStore: typeof SqliteLocalAgentStore;
   }
 >()("@t3tools/provider-cursor/server/CursorSdk") {}
 
@@ -79,5 +80,5 @@ export const layer = Layer.effect(
       Effect.sync(() => {
         process.off("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform }))),
+  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform, SqliteLocalAgentStore }))),
 );
