@@ -8,6 +8,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
+  sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -443,5 +444,42 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("sortProjectsByGroupOrder", () => {
+  const remote = EnvironmentId.make("remote");
+  const ref = (projectId: string, env = environmentId) => ({
+    environmentId: env,
+    projectId: ProjectId.make(projectId),
+  });
+  const project = (id: string, env: string = environmentId) => ({ id, environmentId: env });
+
+  it("follows the group order, keeping ungrouped projects last in their own order", () => {
+    const sorted = sortProjectsByGroupOrder(
+      [
+        project("alpha"),
+        project("zeta"),
+        project("orphan-b"),
+        project("beta"),
+        project("orphan-a"),
+      ],
+      [{ memberProjectRefs: [ref("zeta")] }, { memberProjectRefs: [ref("beta"), ref("alpha")] }],
+    );
+    expect(sorted.map((entry) => entry.id)).toEqual([
+      "zeta",
+      "alpha",
+      "beta",
+      "orphan-b",
+      "orphan-a",
+    ]);
+  });
+
+  it("tells the same project id on two environments apart", () => {
+    const sorted = sortProjectsByGroupOrder(
+      [project("shared"), project("shared", remote)],
+      [{ memberProjectRefs: [ref("shared", remote)] }, { memberProjectRefs: [ref("shared")] }],
+    );
+    expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
   });
 });
