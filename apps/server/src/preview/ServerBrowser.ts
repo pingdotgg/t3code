@@ -706,11 +706,10 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * With a desktop app attached, every tab of this server renders there, so a
-   * new tab waits for its `<webview>` instead of launching headless.
+   * Prefer the desktop's page, but keep a chosen headless page across reattachments.
    */
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
-    desktopChannel.available
+    desktopChannel.available && snapshot.serverPageMode !== "headless"
       ? Effect.runPromise(
           desktopChannel.awaitAttached(
             { threadId: snapshot.threadId, tabId: snapshot.tabId },
@@ -729,12 +728,14 @@ const make = Effect.gen(function* () {
           .pipe(Scope.provide(scope)),
       );
       const connected = await contexts.connectDesktopPage(endpoint);
+      let closing: Promise<void> | undefined;
       return {
         page: connected.page,
-        close: async () => {
-          await connected.browser.close().catch(constVoid);
-          await Effect.runPromise(Scope.close(scope, Exit.void));
-        },
+        close: () =>
+          (closing ??= (async () => {
+            await connected.browser.close().catch(constVoid);
+            await Effect.runPromise(Scope.close(scope, Exit.void));
+          })()),
       };
     } catch (cause) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
@@ -742,13 +743,45 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
-    const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
-    adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
-    const desktop =
-      adopted === undefined && (await desktopRenders(snapshot))
-        ? await connectDesktop(snapshot)
-        : null;
+  const currentSnapshot = async (threadId: string, tabId: string) => {
+    const { sessions } = await Effect.runPromise(
+      manager.list({ threadId: ThreadId.make(threadId) }),
+    );
+    const snapshot = sessions.find(
+      (session) => session.tabId === tabId && session.runtime === "server",
+    );
+    if (!snapshot) throw new ServerBrowserTabNotFoundError({ threadId, tabId });
+    return snapshot;
+  };
+
+  const createTab = async (
+    requestedSnapshot: PreviewSessionSnapshot,
+    onDesktopAcquired: (close: () => Promise<void>) => void,
+  ): Promise<ServerTab> => {
+    const key = tabKey(requestedSnapshot.threadId, requestedSnapshot.tabId);
+    const adopted = adoptedPages.get(key);
+    adoptedPages.delete(key);
+    // An older opened event may be processed after a failed headless launch or a close.
+    const fresh = await currentSnapshot(requestedSnapshot.threadId, requestedSnapshot.tabId).catch(
+      async (cause: unknown) => {
+        await adopted?.page.close().catch(constVoid);
+        throw cause;
+      },
+    );
+    let snapshot = fresh;
+    const native = adopted === undefined && (await desktopRenders(snapshot));
+    if (adopted === undefined) {
+      // Publish before launching headless so every client releases the independent native guest.
+      snapshot = await Effect.runPromise(
+        manager.setServerPageMode({
+          threadId: ThreadId.make(snapshot.threadId),
+          tabId: snapshot.tabId,
+          mode: native ? "native" : "headless",
+        }),
+      );
+    }
+    const desktop = native ? await connectDesktop(snapshot) : null;
+    if (desktop) onDesktopAcquired(desktop.close);
     // An agent tab without a profile (no client reported one) keeps throwaway storage.
     const isolatedContext =
       adopted === undefined &&
@@ -896,8 +929,8 @@ const make = Effect.gen(function* () {
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
     // Playwright cannot reload a crashed page, so it must leave the tab list.
-    const key = tabKey(tab.threadId, tab.tabId);
-    if (closedPendingTabs.delete(key)) {
+    const { sessions } = await Effect.runPromise(manager.list({ threadId: tab.threadId }));
+    if (closedPendingTabs.delete(key) || !sessions.some((session) => session.tabId === tab.tabId)) {
       await control.close().catch(constVoid);
       if (desktop) await desktop.close().catch(constVoid);
       else await page.close().catch(constVoid);
@@ -1158,6 +1191,7 @@ const make = Effect.gen(function* () {
         threadId: opener.threadId,
         ...(/^https?:/i.test(url) ? { url } : {}),
         runtime: "server",
+        ...(!opener.desktop ? { serverPageMode: "headless" as const } : {}),
         ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
         // Agent popups stay with the agent and only float when it asks, like its own opens.
         ...(opener.control.agentId === null
@@ -1187,8 +1221,13 @@ const make = Effect.gen(function* () {
     if (pending) return pending;
     const existing = tabs.get(key);
     if (existing) return Promise.resolve(existing);
-    const opening = createTab(snapshot)
-      .catch((cause: unknown) => {
+    let releaseDesktop: (() => Promise<void>) | undefined;
+    const opening = createTab(snapshot, (close) => {
+      releaseDesktop = close;
+    })
+      .catch(async (cause: unknown) => {
+        // The tab has not been published, so dropTab cannot release its connection.
+        await releaseDesktop?.().catch(constVoid);
         runFork(
           Effect.logWarning(
             isHostSetupError(cause) ? cause.message : "server preview tab failed to start",
@@ -1336,6 +1375,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      serverPageMode: tab.desktop ? ("native" as const) : ("headless" as const),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1356,6 +1396,7 @@ const make = Effect.gen(function* () {
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
           visible: candidate.viewers.size > 0,
+          serverPageMode: candidate.desktop ? ("native" as const) : ("headless" as const),
           ...(candidate.profileId === undefined ? {} : { profileId: candidate.profileId }),
         })),
       ...profileStatus(),
@@ -1733,24 +1774,48 @@ const make = Effect.gen(function* () {
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
+        const reveal = open.open ?? open.show;
+        // An explicit new, visible profile tab must use that profile's desktop
+        // session. Open it blank so a fallback cannot visit the authenticated site.
+        const nativeProfileOpen =
+          !existing &&
+          open.profileId !== undefined &&
+          profileId !== INCOGNITO_BROWSER_PROFILE_ID &&
+          reveal === true &&
+          open.reuseExistingTab === false &&
+          desktopChannel.available;
         if (!existing) {
-          closeIdleAgentTabs();
+          if (!nativeProfileOpen) closeIdleAgentTabs();
           assertTabCapacity(request.agentSessionId);
         }
-        const tab =
-          existing ??
-          (await ensureTab(
-            await Effect.runPromise(
+        const created = existing
+          ? undefined
+          : await Effect.runPromise(
               manager.open({
                 threadId: request.threadId,
-                ...(url ? { url } : {}),
+                ...(url && !nativeProfileOpen ? { url } : {}),
                 ...(profileId === undefined ? {} : { profileId }),
                 runtime: "server",
                 reveal: false,
                 automationOwner: request.agentSessionId,
               }),
-            ),
-          ));
+            );
+        let tab: ServerTab;
+        try {
+          tab = existing ?? (await ensureTab(created!));
+          if (nativeProfileOpen && !tab.desktop) throw new Error("Native profile did not attach.");
+        } catch (cause) {
+          if (!nativeProfileOpen || !created) throw cause;
+          await Effect.runPromise(
+            manager.close({ threadId: request.threadId, tabId: created.tabId }),
+          );
+          const failed = tabs.get(tabKey(request.threadId, created.tabId));
+          if (failed) dropTab(failed, false);
+          throw new ServerBrowserPage.ServerBrowserOperationError(
+            "PreviewAutomationNativeProfileUnavailableError",
+            "The desktop's native browser did not attach. Open the Browser panel and retry preview_open with the same profileId, open=true and reuseExistingTab=false. The URL was not visited; existing tabs were kept.",
+          );
+        }
         if (existing?.dialog)
           throw new BrowserControlInterrupted(
             "A browser dialog is pending. Read preview_status and use preview_dialog first.",
@@ -1762,13 +1827,12 @@ const make = Effect.gen(function* () {
               "A browser dialog is pending. Read preview_status and use preview_dialog first.",
               "dialogPending",
             );
-          if (existing) {
+          if (existing || nativeProfileOpen) {
             if (url) await navigate(tab, url, "load", navigationTimeout);
           } else {
             // Await the original navigation failure even though background creation keeps the tab.
             await tab.initialNavigation;
           }
-          const reveal = open.open ?? open.show;
           if (reveal !== false) {
             await Effect.runPromise(
               manager.requestReveal({
@@ -2416,7 +2480,8 @@ const make = Effect.gen(function* () {
         const snapshot = sessions.find(
           (session) => session.tabId === key.tabId && session.runtime === "server",
         );
-        if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
+        if (snapshot && snapshot.serverPageMode !== "headless")
+          yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
       }).pipe(Effect.ignore),
     ),
     Effect.forkScoped,

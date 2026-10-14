@@ -16,7 +16,11 @@ import {
   useFaviconProjectRefForThread,
 } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
-import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
+import {
+  applyPreviewDesktopState,
+  readThreadPreviewState,
+  type DesktopPreviewOverlay,
+} from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -66,6 +70,11 @@ export function usePreviewBridge(input: {
   const handleStateChange = useEffectEvent(
     (changedTabId: string, state: DesktopPreviewTabState): void => {
       if (changedTabId !== runtimeTabId) return;
+      // A late native guest must not override the headless page's stream state.
+      if (readThreadPreviewState(stableThreadRef).sessions[tabId]?.serverPageMode === "headless") {
+        applyPreviewDesktopState(stableThreadRef, tabId, null);
+        return;
+      }
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
@@ -95,7 +104,13 @@ export function usePreviewBridge(input: {
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
-    return bridge.onStateChange(handleStateChange);
+    const unsubscribe = bridge.onStateChange(handleStateChange);
+    return () => {
+      unsubscribe();
+      if (readThreadPreviewState(stableThreadRef).sessions[tabId]?.serverPageMode === "headless") {
+        applyPreviewDesktopState(stableThreadRef, tabId, null);
+      }
+    };
   }, [bridge, runtimeTabId, stableThreadRef, tabId]);
   useEffect(() => {
     if (!projectRef) return;
