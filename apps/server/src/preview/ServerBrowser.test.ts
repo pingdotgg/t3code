@@ -377,6 +377,23 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
   quality: 70,
 });
 /** Waits for a viewport. Pulling drains the queue, so it also discards what arrived with it. */
+const stallViewer = (
+  viewer: ServerBrowser.ServerBrowserViewer,
+  item: ServerBrowser.ServerBrowserViewerOutput,
+) => {
+  // The service hands out the read side of a queue it also writes to.
+  const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
+  while (Queue.offerUnsafe(output, item));
+};
+const viewerInput = (tabId: string, canOperate: boolean) => ({
+  threadId: scope.thread.threadId,
+  tabId,
+  canOperate,
+  maxWidth: 1280,
+  maxHeight: 800,
+  quality: 70,
+});
+/** Waits for a viewport. Pulling drains the queue, so it also discards what arrived with it. */
 const nextViewerViewport = (viewer: ServerBrowser.ServerBrowserViewer) =>
   Stream.fromQueue(viewer.output).pipe(
     Stream.filter((item) => item._tag === "viewport"),
@@ -1161,6 +1178,79 @@ it.live("only the current controller can answer a file picker", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a stalled viewer's backlog replacement keeps its other state and notifications", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* Queue.clear(viewer.output);
+      const output =
+        viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
+      /** Fills the stalled backlog, sends input that replaces it, and returns what is left. */
+      const replaceBacklog = (input: unknown) =>
+        Effect.gen(function* () {
+          // Chromium sends no new frames until each dropped one is acked.
+          const acked = Promise.withResolvers<void>();
+          let unacked = 0;
+          const ack = Effect.sync(() => {
+            if (--unacked === 0) acked.resolve();
+          });
+          while (Queue.offerUnsafe(output, { _tag: "frame", data: Buffer.alloc(0), ack }))
+            unacked++;
+          yield* viewer.input(input);
+          yield* Effect.promise(() => acked.promise);
+          return yield* Queue.takeAll(viewer.output);
+        });
+      // One-time notifications cannot be rebuilt from tab state.
+      const notifications: Array<ServerBrowser.ServerBrowserViewerOutput> = [
+        { _tag: "download", id: "download-1", fileName: "report.csv", sizeBytes: 3 },
+        { _tag: "clipboard", text: "copied" },
+        { _tag: "popup", tabId: "popup-1" },
+        { _tag: "fileChooserClosed", id: "chooser-1" },
+      ];
+      for (const item of notifications) Queue.offerUnsafe(output, item);
+      yield* viewer.input({ type: "takeControl" });
+      const resized = yield* replaceBacklog({ type: "resize", width: 900, height: 600 });
+      expect(resized).toHaveLength(2 + notifications.length);
+      expect(resized).toEqual(
+        expect.arrayContaining([
+          { _tag: "viewport", width: 900, height: 600 },
+          expect.objectContaining({ _tag: "control", controller: "you" }),
+        ]),
+      );
+      expect(resized.filter((item) => notifications.includes(item))).toEqual(notifications);
+      yield* viewer.input({ type: "resize", width: 640, height: 480 });
+      const released = yield* replaceBacklog({ type: "releaseControl" });
+      expect(released).toHaveLength(2);
+      expect(released).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ _tag: "control", controller: "agent" }),
+          { _tag: "viewport", width: 640, height: 480 },
+        ]),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a closing tab still ends a stalled viewer whose backlog is all notifications", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Queue.clear(viewer.output);
+      stallViewer(viewer, {
+        _tag: "download",
+        id: "download-1",
+        fileName: "report.csv",
+        sizeBytes: 3,
+      });
+      contexts[0]!.page.emit("close");
+      expect(yield* Queue.takeAll(viewer.output)).toContainEqual({ _tag: "gone" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("desktop viewers follow the page's native size and zoom", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1262,6 +1352,16 @@ it.live("a desktop dialog reuses the last size and remeasures when it closes", (
         width: 1440,
         height: 900,
       });
+      // The host can also close its own dialog, outside viewer input.
+      context.page.emit("dialog", dialog);
+      Object.assign(context.cssViewport, { width: 960, height: 600 });
+      cdp.emit("Page.javascriptDialogClosed");
+      expect(yield* nextViewerViewport(viewer)).toEqual({
+        _tag: "viewport",
+        width: 960,
+        height: 600,
+      });
+      expect(yield* status).toMatchObject({ dialog: null, viewport: { width: 960, height: 600 } });
       // An agent can answer it too, and the status it reads next must not hide the new size.
       yield* viewer.input({ type: "releaseControl" });
       context.page.emit("dialog", dialog);
@@ -1369,6 +1469,120 @@ it.live("a late first desktop size still reaches viewers when a newer read fails
         item._tag === "viewport" ? [`${item.width}x${item.height}`] : [],
       );
       expect(sizes).toEqual(["1500x900"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a late desktop size still replaces the cached one when a newer read fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* nextViewerViewport(viewer);
+      const cdp = desktopConnections[0]!.context.sessions[0]!;
+      const send = cdp.send.getMockImplementation()!;
+      const late = Promise.withResolvers<Record<string, unknown>>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => late.resolve({})));
+      // An older read measures the resized page late; a navigation fails the newer one.
+      const evaluations = [
+        () => late.promise,
+        () => Promise.reject(new Error("Cannot find context with specified id")),
+      ];
+      cdp.send.mockImplementation((method, input) =>
+        method === "Runtime.evaluate" && evaluations.length > 0
+          ? evaluations.shift()!()
+          : send(method, input),
+      );
+      const stale = cdp.emitAsync("Page.frameResized");
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+      late.resolve({ result: { value: { width: 1000, height: 600 } } });
+      yield* Effect.promise(() => stale);
+      const sizes = (yield* Queue.takeAll(viewer.output)).flatMap((item) =>
+        item._tag === "viewport" ? [`${item.width}x${item.height}`] : [],
+      );
+      expect(sizes.at(-1)).toBe("1000x600");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a desktop size read that never answers gives up and keeps the last size", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* nextViewerViewport(viewer);
+      const context = desktopConnections[0]!.context;
+      const cdp = context.sessions[0]!;
+      const send = cdp.send.getMockImplementation()!;
+      const stuck = Promise.withResolvers<Record<string, unknown>>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => stuck.resolve({})));
+      let stall = true;
+      // A dialog that opens after a read starts blocks its page script.
+      cdp.send.mockImplementation((method, input) => {
+        if (method !== "Runtime.evaluate" || !stall) return send(method, input);
+        stall = false;
+        return stuck.promise;
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const resized = cdp.emitAsync("Page.frameResized");
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      vi.useRealTimers();
+      yield* Effect.promise(() => resized);
+      expect(yield* nextViewerViewport(viewer)).toEqual({
+        _tag: "viewport",
+        width: 1920,
+        height: 1080,
+      });
+      // Its answer arrives after the read gave up, so it does not count.
+      stuck.resolve({ result: { value: { width: 100, height: 100 } } });
+      context.page.emit("dialog", {
+        type: () => "alert",
+        message: () => "Wait",
+        defaultValue: () => "",
+        accept: vi.fn(async () => {}),
+        dismiss: vi.fn(async () => {}),
+      });
+      expect(
+        yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "status",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        }),
+      ).toMatchObject({ viewport: { width: 1920, height: 1080 } });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a queued reconnect survives later viewer state on a stalled viewer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      yield* nextViewerViewport(viewer);
+      const cdp = desktopConnections[0]!.context.sessions[0]!;
+      while (desktopDetaches.listenerCount("detach") === 0) yield* Effect.yieldNow;
+      stallViewer(viewer, { _tag: "frame", data: Buffer.alloc(0), ack: Effect.void });
+      // One free slot: the reconnect lands as the last queued item.
+      yield* Queue.take(viewer.output);
+      const capacity = (yield* Queue.size(viewer.output)) + 1;
+      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
+      while ((yield* Queue.size(viewer.output)) < capacity) yield* Effect.yieldNow;
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+      expect((yield* Queue.takeAll(viewer.output)).at(-1)).toEqual({ _tag: "reconnect" });
     }),
   ).pipe(Effect.provide(layer)),
 );
