@@ -1,8 +1,8 @@
 import { Image } from "expo-image";
-import { Path, Svg } from "react-native-svg";
+import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
@@ -66,6 +66,7 @@ function AcpRegistryProviderIcon(props: {
 export function ProviderIcon(props: ProviderIconProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
+  const gradientId = useId();
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
 
@@ -99,12 +100,35 @@ export function ProviderIcon(props: ProviderIconProps) {
       isDarkMode ? fill.dark : fill.light;
     return (
       <Svg width={size} height={size} viewBox={packageIcon.viewBox} fill="none">
-        {packageIcon.paths.map((path) => (
+        <Defs>
+          {packageIcon.paths.map((path, index) =>
+            path.gradient ? (
+              <LinearGradient
+                key={path.d}
+                id={`${gradientId}-${index}`}
+                x1={path.gradient.x1}
+                y1={path.gradient.y1}
+                x2={path.gradient.x2}
+                y2={path.gradient.y2}
+                gradientUnits="userSpaceOnUse"
+              >
+                {path.gradient.stops.map((stop) => (
+                  <Stop key={stop.offset} offset={stop.offset} stopColor={stop.color} />
+                ))}
+              </LinearGradient>
+            ) : null,
+          )}
+        </Defs>
+        {packageIcon.paths.map((path, index) => (
           <Path
             key={path.d}
             d={path.d}
             fillRule={path.fillRule}
-            fill={themeFill(path.fill ?? packageIcon.fill)}
+            fill={
+              path.gradient
+                ? `url(#${gradientId}-${index})`
+                : themeFill(path.fill ?? packageIcon.fill)
+            }
           />
         ))}
       </Svg>

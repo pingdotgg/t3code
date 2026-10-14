@@ -33,8 +33,8 @@ export interface ProviderEnvironmentField {
 
 /**
  * A provider glyph as plain data, so web and mobile can each draw it with
- * their own SVG renderer. Colors are per theme; a path without a fill uses
- * the icon's `fill`.
+ * their own SVG renderer. Colors are per theme; a path without a fill or
+ * gradient uses the icon's `fill`.
  */
 export interface ProviderIcon {
   readonly viewBox: string;
@@ -43,7 +43,17 @@ export interface ProviderIcon {
     readonly d: string;
     readonly fillRule?: "evenodd" | "nonzero";
     readonly fill?: { readonly light: string; readonly dark: string };
+    /** A brand gradient, the same in both themes. Coordinates are in viewBox units. */
+    readonly gradient?: ProviderIconGradient;
   }>;
+}
+
+export interface ProviderIconGradient {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly stops: ReadonlyArray<{ readonly offset: number; readonly color: string }>;
 }
 
 export interface ProviderClientDefinition {
