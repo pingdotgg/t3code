@@ -1802,6 +1802,7 @@ export const make = Effect.gen(function* () {
             number: changeRequest.number,
             title: changeRequest.title,
             body: changeRequest.body,
+            displayBody: changeRequest.displayBody,
             url: changeRequest.url,
             author: changeRequest.author,
             state: changeRequest.state,

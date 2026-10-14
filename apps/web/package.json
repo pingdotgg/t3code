@@ -68,6 +68,7 @@
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
     "tailwind-merge": "^3.4.0",
     "unbash": "^5.0.0",
     "zustand": "^5.0.11"

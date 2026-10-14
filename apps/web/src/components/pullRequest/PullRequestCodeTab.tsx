@@ -533,7 +533,7 @@ function PullRequestCodeTab({
                         }:${thread.comments
                           .map(
                             (comment) =>
-                              `${comment.id}:${comment.author?.login ?? ""}:${comment.createdAt}:${comment.body}:${(
+                              `${comment.id}:${comment.author?.login ?? ""}:${comment.createdAt}:${comment.body}:${comment.displayBody ?? ""}:${(
                                 comment.reactions ?? []
                               )
                                 .map(
