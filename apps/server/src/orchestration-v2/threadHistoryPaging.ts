@@ -6,10 +6,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 
-/**
- * Match the V1 conversation windows. Item/byte budgets only apply to histories
- * without turn starts; tool activity must not split an ordinary conversation turn.
- */
+/** Match the V1 conversation windows without splitting a conversation turn. */
 export const THREAD_HISTORY_PAGE_POLICY = {
   maxUserTurns: 10,
   maxItems: 75,
@@ -177,9 +174,10 @@ export function isThreadHistoryUserTurn(item: HistoryRow["item"]): boolean {
 }
 
 /**
- * Walk a chronological timeline backward from the exclusive end, collecting rows
- * through complete user turns. Histories without turn starts use row budgets
- * and always admit at least one row so oversized items cannot deadlock paging.
+ * Walk a chronological timeline backward from the exclusive end. Anchored
+ * histories apply every limit at turn boundaries so pages keep turns intact.
+ * Every history admits its newest row or turn so oversized content cannot
+ * deadlock paging.
  */
 function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   readonly items: ReadonlyArray<Row>;
@@ -199,26 +197,54 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   let encodedBytes = 0;
   let userTurns = 0;
   let rawTurns = 0;
-  const turnLimit = input.items.slice(0, end).some((row) => isThreadHistoryUserTurn(row.item))
-    ? policy.maxUserTurns
-    : undefined;
-  for (let index = end - 1; index >= 0; index -= 1) {
-    const row = input.items[index]!;
-    const rowBytes = turnLimit === undefined ? rowCost(row) : 0;
-    if (
-      selected.length > 0 &&
-      (turnLimit === undefined
-        ? selected.length >= policy.maxItems || encodedBytes + rowBytes > policy.maxEncodedBytes
-        : userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)
-    ) {
-      break;
+  const hasUserTurns = input.items.slice(0, end).some((row) => isThreadHistoryUserTurn(row.item));
+  const turnLimit = policy.maxUserTurns;
+
+  if (hasUserTurns) {
+    let turnEnd = end;
+    for (let index = end - 1; index >= -1; index -= 1) {
+      const startsTurn = index >= 0 && isThreadHistoryTurnStart(input.items[index]!.item);
+      if (index >= 0 && !startsTurn) continue;
+
+      const turnStart = index < 0 ? 0 : index;
+      if (turnStart === turnEnd) continue;
+      const turnRows = input.items.slice(turnStart, turnEnd);
+      const turnBytes = turnRows.reduce((total, row) => total + rowCost(row), 0);
+      const turnUserCount = startsTurn && isThreadHistoryUserTurn(input.items[index]!.item) ? 1 : 0;
+      const turnRawCount = startsTurn ? 1 : 0;
+      const hasSelectedTurn = selected.length > 0;
+      if (
+        hasSelectedTurn &&
+        (selected.length + turnRows.length > policy.maxItems ||
+          encodedBytes + turnBytes > policy.maxEncodedBytes ||
+          (turnLimit !== undefined && userTurns >= turnLimit) ||
+          rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)
+      ) {
+        break;
+      }
+
+      selected.unshift(...turnRows);
+      encodedBytes += turnBytes;
+      userTurns += turnUserCount;
+      rawTurns += turnRawCount;
+      turnEnd = turnStart;
+      if (turnStart === 0) break;
     }
-    selected.push(row);
-    encodedBytes += rowBytes;
-    if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
-    if (isThreadHistoryTurnStart(row.item)) rawTurns += 1;
+  } else {
+    for (let index = end - 1; index >= 0; index -= 1) {
+      const row = input.items[index]!;
+      const rowBytes = rowCost(row);
+      if (
+        selected.length > 0 &&
+        (selected.length >= policy.maxItems || encodedBytes + rowBytes > policy.maxEncodedBytes)
+      ) {
+        break;
+      }
+      selected.push(row);
+      encodedBytes += rowBytes;
+    }
+    selected.reverse();
   }
-  selected.reverse();
 
   const oldest = selected[0];
   const oldestIndex = oldest

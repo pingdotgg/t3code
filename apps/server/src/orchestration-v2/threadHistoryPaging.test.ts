@@ -67,6 +67,27 @@ function makeRow(
   };
 }
 
+function makeTurnStartRow(
+  index: number,
+  createdBy: "user" | "agent" = "user",
+): OrchestrationV2ProjectedTurnItem {
+  const row = makeRow(index);
+  if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
+  return {
+    ...row,
+    item: {
+      ...row.item,
+      type: "user_message",
+      createdBy,
+      creationSource: "provider",
+      inputIntent: "turn_start",
+      messageId: MessageId.make(`prompt-${index}`),
+      text: `Prompt ${index}`,
+      attachments: [],
+    },
+  };
+}
+
 function interruptItem(
   id: string,
   type: "run_interrupt_request" | "run_interrupt_result",
@@ -177,30 +198,18 @@ describe("threadHistoryPaging", () => {
 
   it("keeps background turns with user turns, with main's 150-turn fan-out ceiling", () => {
     const items = Array.from({ length: 161 }, (_, turn) => {
-      const row = makeRow(turn * 2);
-      if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
-      const prompt: OrchestrationV2ProjectedTurnItem = {
-        ...row,
-        item: {
-          ...row.item,
-          type: "user_message",
-          createdBy: turn === 0 ? "user" : "agent",
-          creationSource: "provider",
-          inputIntent: "turn_start",
-          messageId: MessageId.make(`prompt-${turn}`),
-          text: `Prompt ${turn}`,
-          attachments: [],
-        },
-      };
+      const prompt = makeTurnStartRow(turn * 2, turn === 0 ? "user" : "agent");
       return [prompt, makeRow(turn * 2 + 1)];
     }).flat();
-    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    const policy = { maxUserTurns: 10, maxItems: 1_000, maxEncodedBytes: 10_000_000 };
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
     expect(first.items).toHaveLength(300);
     expect(first.items[0]?.sourceItemId).toBe("item-22");
     const older = selectHistoryPageFromCursor({
       items,
       cursor: first.nextCursor!,
       snapshotSequence: 1,
+      policy,
     });
     expect(older.items).toHaveLength(22);
     expect(older.hasMoreHistory).toBe(false);
@@ -306,6 +315,44 @@ describe("threadHistoryPaging", () => {
     expect(older.items[0]?.sourceItemId).toBe("item-0");
     expect(older.hasMoreHistory).toBe(false);
     expect(older.nextCursor).toBeNull();
+  });
+
+  it("applies item and byte budgets to anchored histories at turn boundaries", () => {
+    const items = [
+      makeTurnStartRow(0),
+      makeRow(1),
+      makeTurnStartRow(2),
+      makeRow(3),
+      makeTurnStartRow(4),
+      makeRow(5),
+    ];
+    const page = selectRecentTimelineWindow({
+      items,
+      snapshotSequence: 1,
+      policy: { maxUserTurns: 10, maxItems: 3, maxEncodedBytes: 1_000 },
+      rowEncodedBytes: () => 400,
+    });
+
+    expect(page.items.map((row) => String(row.sourceItemId))).toEqual(["item-4", "item-5"]);
+    expect(page.items[0]?.item.type).toBe("user_message");
+    expect(page.hasMoreHistory).toBe(true);
+  });
+
+  it("keeps one complete anchored turn when that turn exceeds the page budget", () => {
+    const items = [
+      makeTurnStartRow(0),
+      makeRow(1),
+      makeTurnStartRow(2),
+      makeRow(3, { outputBytes: 50_000 }),
+    ];
+    const page = selectRecentTimelineWindow({
+      items,
+      snapshotSequence: 1,
+      policy: { maxUserTurns: 10, maxItems: 1, maxEncodedBytes: 100 },
+    });
+
+    expect(page.items.map((row) => String(row.sourceItemId))).toEqual(["item-2", "item-3"]);
+    expect(page.hasMoreHistory).toBe(true);
   });
 
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
@@ -531,6 +578,30 @@ describe("threadHistoryPaging", () => {
     expect(projectedRowBoundedSnapshotEncodedBytes(sample, THREAD)).toBeGreaterThan(
       projectedRowEncodedBytes(sample),
     );
+  });
+
+  it("bounds anchored snapshots using the duplicated local-row cost", () => {
+    const rows = Array.from({ length: 4 }, (_, turn) => [
+      makeTurnStartRow(turn * 2),
+      makeRow(turn * 2 + 1, { outputBytes: 2_000 }),
+    ]).flat();
+    const maxEncodedBytes = 12_000;
+    const bounded = buildBoundedThreadProjection({
+      projection: makeProjection(rows),
+      snapshotSequence: 1,
+      policy: { maxUserTurns: 10, maxItems: 50, maxEncodedBytes },
+    });
+
+    expect(bounded.projection.visibleTurnItems.length).toBeLessThan(rows.length);
+    expect(bounded.projection.visibleTurnItems[0]?.item.type).toBe("user_message");
+    expect(
+      boundedTimelineEncodedBytes({
+        visibleTurnItems: bounded.projection.visibleTurnItems,
+        turnItems: bounded.projection.turnItems,
+      }),
+    ).toBeLessThanOrEqual(maxEncodedBytes);
+    expect(bounded.payloadBudgetExceeded).toBe(false);
+    expect(bounded.hasMoreHistory).toBe(true);
   });
 
   it("allows a single pathological bounded row to exceed the configured cap", () => {
