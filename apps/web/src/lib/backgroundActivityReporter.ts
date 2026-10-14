@@ -191,7 +191,8 @@ export const layer = Layer.effectDiscard(
         requestReport();
       }
     };
-    const passiveListenerOptions = { passive: true } as const;
+    // Captured, so a control that stops propagation (say, an editor's keydown) still counts.
+    const interactionListenerOptions = { capture: true, passive: true } as const;
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
@@ -219,10 +220,10 @@ export const layer = Layer.effectDiscard(
         window.addEventListener("focus", requestReport);
         window.addEventListener("blur", requestReport);
         window.addEventListener("online", requestReport);
-        window.addEventListener("pointermove", recordInteraction);
-        window.addEventListener("keydown", recordInteraction);
-        window.addEventListener("wheel", recordInteraction, passiveListenerOptions);
-        window.addEventListener("touchstart", recordInteraction, passiveListenerOptions);
+        window.addEventListener("pointermove", recordInteraction, interactionListenerOptions);
+        window.addEventListener("keydown", recordInteraction, interactionListenerOptions);
+        window.addEventListener("wheel", recordInteraction, interactionListenerOptions);
+        window.addEventListener("touchstart", recordInteraction, interactionListenerOptions);
       }),
       () =>
         Effect.sync(() => {
@@ -231,10 +232,10 @@ export const layer = Layer.effectDiscard(
           window.removeEventListener("focus", requestReport);
           window.removeEventListener("blur", requestReport);
           window.removeEventListener("online", requestReport);
-          window.removeEventListener("pointermove", recordInteraction);
-          window.removeEventListener("keydown", recordInteraction);
-          window.removeEventListener("wheel", recordInteraction);
-          window.removeEventListener("touchstart", recordInteraction);
+          window.removeEventListener("pointermove", recordInteraction, interactionListenerOptions);
+          window.removeEventListener("keydown", recordInteraction, interactionListenerOptions);
+          window.removeEventListener("wheel", recordInteraction, interactionListenerOptions);
+          window.removeEventListener("touchstart", recordInteraction, interactionListenerOptions);
         }),
     );
 

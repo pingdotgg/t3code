@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -93,6 +94,7 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
+  | ProviderInstallLock.ProviderInstallLock
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
@@ -107,6 +109,7 @@ export const layer: Layer.Layer<
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+    const installLock = yield* ProviderInstallLock.ProviderInstallLock;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
@@ -221,6 +224,10 @@ export const layer: Layer.Layer<
       readonly willRetry?: boolean;
     }) {
       const { runId } = input;
+      // The run is already persisted as starting, so a background updater sees it and
+      // waits. This only holds the start back while an install is mid-flight, here or
+      // in another server, so a CLI is never replaced under a launching turn.
+      yield* installLock.untilIdle;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {

@@ -7,12 +7,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as BackgroundPolicy from "./BackgroundPolicy.ts";
@@ -382,5 +384,37 @@ describe("BackgroundPolicy", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("an interaction resets the quiet clock and a heartbeat does not", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      const sessionId = AuthSessionId.make("session-1");
+      yield* TestClock.adjust("20 minutes");
+      assert.isTrue(
+        Duration.isGreaterThanOrEqualTo(
+          yield* policy.sinceLastClientInteraction,
+          Duration.minutes(20),
+        ),
+      );
+
+      yield* policy.reportClientActivity(
+        sessionId,
+        RpcClientId.make(1),
+        makeReport({ recentlyInteracted: false }),
+      );
+      assert.isTrue(
+        Duration.isGreaterThanOrEqualTo(
+          yield* policy.sinceLastClientInteraction,
+          Duration.minutes(20),
+        ),
+      );
+
+      yield* policy.reportClientActivity(sessionId, RpcClientId.make(1), makeReport());
+      yield* TestClock.adjust("1 minute");
+      assert.isTrue(
+        Duration.isLessThan(yield* policy.sinceLastClientInteraction, Duration.minutes(2)),
+      );
+    }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 });

@@ -18,8 +18,10 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -27,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -131,6 +134,7 @@ it("does not commit running state when inherited background routing cannot be re
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        Layer.mock(ProviderInstallLock.ProviderInstallLock)({ untilIdle: Effect.void }),
       ),
     ),
   );
@@ -527,6 +531,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        Layer.mock(ProviderInstallLock.ProviderInstallLock)({ untilIdle: Effect.void }),
       ),
     ),
   );
@@ -855,3 +860,49 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("holds a starting run back while a provider install is in flight", () =>
+  Effect.gen(function* () {
+    const installDone = yield* Deferred.make<void>();
+    const reads: Array<string> = [];
+    const layer = ProviderTurnStart.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          FileSystem.layerNoop({}),
+          Layer.mock(GitWorkflow.GitWorkflowService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getTurnStartContext: () =>
+              Effect.sync(() => {
+                reads.push("context");
+                return { runs: [] } as never;
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderAuthService.ProviderAuthService)({}),
+          Layer.mock(RunExecutionService.RunExecutionServiceV2)({}),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+          Layer.mock(ProviderInstallLock.ProviderInstallLock)({
+            untilIdle: Deferred.await(installDone),
+          }),
+        ),
+      ),
+    );
+    const start = Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId: ThreadId.make("thread_start_waits_for_install"),
+        runId: RunId.make("run_start_waits_for_install"),
+      });
+    }).pipe(Effect.provide(layer));
+    const fiber = yield* start.pipe(Effect.ignore, Effect.forkChild);
+    yield* Effect.yieldNow;
+    expect(reads).toEqual([]);
+
+    yield* Deferred.succeed(installDone, undefined);
+    yield* Fiber.join(fiber);
+    expect(reads).toEqual(["context"]);
+  }),
+);

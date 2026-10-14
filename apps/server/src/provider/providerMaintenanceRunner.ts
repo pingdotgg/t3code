@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the detached installer needs a raw spawn and a log fd
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -7,25 +8,30 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+import * as ProviderInstallLock from "./ProviderInstallLock.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
@@ -36,10 +42,14 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
-const UPDATE_TIMEOUT_MS = 5 * 60_000;
+// An installer is never cut off mid-write for taking long; this only frees the
+// install lock and held turn starts from one that hangs.
+const INSTALL_BACKSTOP = Duration.minutes(30);
+// Only these may run their own updater without a pinned `package@version`.
+const SELF_UPDATING_LOCK_KEY = /^(?:homebrew|grok|muse:.*|.+-native)$/;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // Every progress publish resends the provider list to each client, so the
 // installer's output is sampled rather than forwarded line by line.
@@ -65,6 +75,14 @@ export interface ProviderMaintenanceRunnerShape {
           readonly provider: ProviderDriverKind;
           readonly instanceId?: ProviderInstanceId | undefined;
           readonly targetVersion?: string | undefined;
+          /**
+           * Install `targetVersion` unattended: publishes no update state, refuses
+           * anything but a pinned (or self-updating) install, and skips when the
+           * installed version already reaches the target.
+           */
+          readonly background?: boolean | undefined;
+          /** Last check before a background install starts, run under the install lock. */
+          readonly beforeInstall?: Effect.Effect<boolean> | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
 }
@@ -86,123 +104,144 @@ interface VerifiedProviderRefresh {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceRunner.runCommand")(
-  function* (input: {
-    readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-    readonly command: string;
-    readonly args: ReadonlyArray<string>;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly onProgress?: (line: string) => Effect.Effect<void>;
-  }) {
-    const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
-      function* () {
-        // Resolve the executable for the host platform before spawning. On
-        // Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`),
-        // which a bare ChildProcess.spawn cannot launch (spawn npm ENOENT);
-        // resolveSpawnCommand finds the real `.cmd` and routes it through the
-        // shell. On Linux/macOS (incl. the WSL backend) this is a no-op.
-        const resolved = yield* resolveSpawnCommand(input.command, input.args);
-        const child = yield* input.spawner
-          .spawn(
-            ChildProcess.make(resolved.command, resolved.args, {
-              shell: resolved.shell,
-              ...(input.env ? { env: input.env, extendEnv: true } : {}),
-            }),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderMaintenanceCommandError({
-                  message: `Failed to run update command ${input.command}: ${cause.message}`,
-                  cause,
-                }),
-            ),
-          );
-        yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+export interface ProviderInstallInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly onProgress?: ((line: string) => Effect.Effect<void>) | undefined;
+  /** Called with the installer's pid once it is running, for the install lock. */
+  readonly recordChildPid: (pid: number) => Effect.Effect<void>;
+}
 
-        // Holds the newest output line not yet reported; the sampler takes it.
-        const pendingProgress = yield* Ref.make<string | null>(null);
-        const onProgress = input.onProgress;
-        if (onProgress) {
-          yield* Ref.getAndSet(pendingProgress, null).pipe(
-            Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
-            Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
-            Effect.forkScoped,
-          );
-        }
-        const trackProgress = <E>(stream: Stream.Stream<Uint8Array, E>) => {
-          if (!onProgress) {
-            return stream;
-          }
-          const decoder = new TextDecoder();
-          let partialLine = "";
-          return stream.pipe(
-            Stream.tap((chunk) => {
-              const split = splitOutputLines(partialLine, decoder.decode(chunk, { stream: true }));
-              partialLine = split.partialLine;
-              // A progress bar that redraws with a leading `\r` keeps its newest
-              // frame unterminated, so that frame is the latest status.
-              const line =
-                toProgressLine(split.partialLine) ??
-                split.lines.map(toProgressLine).findLast((value) => value !== null);
-              return line ? Ref.set(pendingProgress, line) : Effect.void;
-            }),
-          );
-        };
+/** Runs one provider installer to completion. */
+export class ProviderInstaller extends Context.Service<
+  ProviderInstaller,
+  {
+    readonly run: (
+      input: ProviderInstallInput,
+    ) => Effect.Effect<ProviderMaintenanceCommandResult, Error>;
+  }
+>()("t3/provider/providerMaintenanceRunner/ProviderInstaller") {}
 
-        const [stdout, stderr, exitCode] = yield* Effect.all(
-          [
-            collectUint8StreamText({
-              stream: trackProgress(child.stdout),
-              maxBytes: UPDATE_OUTPUT_MAX_BYTES,
-            }),
-            collectUint8StreamText({
-              stream: trackProgress(child.stderr),
-              maxBytes: UPDATE_OUTPUT_MAX_BYTES,
-            }),
-            child.exitCode,
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderMaintenanceCommandError({
-                message: cause instanceof Error ? cause.message : "Update command failed to run.",
-                cause,
-              }),
-          ),
-        );
+const noop = () => {};
 
-        return {
-          stdout: stdout.text,
-          stderr: stderr.text,
-          exitCode: Number(exitCode),
-          timedOut: false,
-          stdoutTruncated: stdout.truncated,
-          stderrTruncated: stderr.truncated,
-        } satisfies ProviderMaintenanceCommandResult;
+/**
+ * Runs an installer as a detached process whose output goes to a log file. It
+ * is not tied to this server: quitting the server neither kills the installer
+ * nor breaks its stdio (no EPIPE), so an npm extract is never cut in half. Only
+ * the backstop ends it, and a result is returned once it exits.
+ */
+export const runDetachedInstall = Effect.fn("ProviderMaintenanceRunner.runDetachedInstall")(
+  function* (
+    input: ProviderInstallInput,
+    spawnProcess: typeof NodeChildProcess.spawn = NodeChildProcess.spawn,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const platform = yield* HostProcess.Platform;
+    const environment = yield* HostProcess.Environment;
+    // Resolve the executable for the host platform before spawning. On
+    // Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`),
+    // which a bare spawn cannot launch (spawn npm ENOENT); resolveSpawnCommand
+    // finds the real `.cmd` and routes it through the shell. On Linux/macOS
+    // (incl. the WSL backend) this is a no-op.
+    const resolved = yield* resolveSpawnCommand(input.command, input.args, {
+      ...(input.env ? { env: input.env } : {}),
+      extendEnv: true,
+    });
+    const toError = (cause: unknown) =>
+      new ProviderMaintenanceCommandError({
+        message: `Failed to run update command ${input.command}: ${cause instanceof Error ? cause.message : "unknown error"}`,
+        cause,
+      });
+    const logPath = yield* fileSystem.makeTempFileScoped({ prefix: "t3-provider-install-" });
+    // The child gets its own copy of this fd, so it is closed here once the child has spawned.
+    const logFd = yield* Effect.acquireRelease(
+      Effect.sync(() => NodeFS.openSync(logPath, "a")),
+      (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+    );
+
+    // Listeners are registered in the spawn tick: Node emits `spawn` and `exit`
+    // asynchronously, and a late listener would wait forever.
+    const { spawned, exited } = yield* Effect.try({
+      try: () => {
+        const child = spawnProcess(resolved.command, resolved.args, {
+          shell: resolved.shell,
+          detached: true,
+          windowsHide: true,
+          stdio: ["ignore", logFd, logFd],
+          ...(input.env ? { env: { ...environment, ...input.env } } : {}),
+        });
+        const spawned = Deferred.makeUnsafe<number, Error>();
+        const exited = Deferred.makeUnsafe<number | null>();
+        child.on("error", (cause) => Deferred.doneUnsafe(spawned, Effect.fail(toError(cause))));
+        child.once("spawn", () => Deferred.doneUnsafe(spawned, Effect.succeed(child.pid ?? 0)));
+        child.once("exit", (code) => Deferred.doneUnsafe(exited, Effect.succeed(code)));
+        child.unref();
+        return { spawned, exited };
       },
-    );
+      catch: toError,
+    });
+    const pid = yield* Deferred.await(spawned);
+    yield* input.recordChildPid(pid);
 
-    return yield* collectCommandResult().pipe(
-      Effect.scoped,
-      Effect.timeoutOption(Duration.millis(UPDATE_TIMEOUT_MS)),
-      Effect.map((result) =>
-        Option.match(result, {
-          onSome: (value) => value,
-          onNone: () =>
-            ({
-              stdout: "",
-              stderr: "",
-              exitCode: null,
-              timedOut: true,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }) satisfies ProviderMaintenanceCommandResult,
+    const readLog = fileSystem.readFile(logPath).pipe(Effect.orElseSucceed(() => new Uint8Array()));
+    const onProgress = input.onProgress;
+    if (onProgress) {
+      yield* readLog.pipe(
+        Effect.map((bytes) => {
+          const split = splitOutputLines(
+            "",
+            new TextDecoder().decode(bytes.slice(-UPDATE_OUTPUT_MAX_BYTES)),
+          );
+          // A progress bar that redraws with a leading `\r` keeps its newest
+          // frame unterminated, so that frame is the latest status.
+          return (
+            toProgressLine(split.partialLine) ??
+            split.lines.map(toProgressLine).findLast((value) => value !== null) ??
+            null
+          );
         }),
-      ),
-    );
+        Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
+        Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
+        Effect.forkScoped,
+      );
+    }
+
+    const code = yield* Deferred.await(exited).pipe(Effect.timeoutOption(INSTALL_BACKSTOP));
+    if (Option.isNone(code)) {
+      yield* Effect.sync(() => {
+        if (platform === "win32") {
+          spawnProcess("taskkill", ["/PID", String(pid), "/T", "/F"], {
+            windowsHide: true,
+            stdio: "ignore",
+          }).on("error", noop);
+        } else {
+          signalProcessGroup(pid, "SIGKILL");
+        }
+      }).pipe(Effect.ignore);
+    }
+    const output = yield* readLog;
+    return {
+      stdout: new TextDecoder().decode(output.slice(-UPDATE_OUTPUT_MAX_BYTES)),
+      stderr: "",
+      exitCode: Option.isSome(code) ? code.value : null,
+      timedOut: Option.isNone(code),
+      stdoutTruncated: output.length > UPDATE_OUTPUT_MAX_BYTES,
+      stderrTruncated: false,
+    } satisfies ProviderMaintenanceCommandResult;
   },
+  Effect.scoped,
+);
+
+export const layerInstaller = Layer.effect(
+  ProviderInstaller,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return ProviderInstaller.of({
+      run: (input) =>
+        runDetachedInstall(input).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
+    });
+  }),
 );
 
 /**
@@ -289,20 +328,10 @@ function makeUpdateState(input: {
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const manifestService = yield* ModelManifest.ModelManifest;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const installer = yield* ProviderInstaller;
+  const installLock = yield* ProviderInstallLock.ProviderInstallLock;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-  const runMaintenanceCommand = (
-    update: ProviderMaintenanceCommandAction,
-    onProgress: (line: string) => Effect.Effect<void>,
-  ) =>
-    runProviderMaintenanceCommandWithSpawner({
-      spawner,
-      command: update.executable,
-      args: update.args,
-      onProgress,
-      ...(update.env ? { env: update.env } : {}),
-    });
   const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
     makeAlreadyRunningError: () =>
       new ServerProviderUpdateError({
@@ -390,6 +419,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
+    const background = typeof target !== "string" && target.background === true;
+    const beforeInstall = typeof target === "string" ? undefined : target.beforeInstall;
     const targetKey = `instance:${instanceId}`;
     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
       instanceId,
@@ -403,12 +434,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       });
     }
 
+    // A background install is silent: nobody asked for it, so clients never see its state.
     const setUpdateState = (state: ServerProviderUpdateState | null) =>
-      providerRegistry.setProviderMaintenanceActionState({
-        instanceId,
-        action: "update",
-        state,
-      });
+      background
+        ? providerRegistry.getProviders
+        : providerRegistry.setProviderMaintenanceActionState({
+            instanceId,
+            action: "update",
+            state,
+          });
     const setQueuedState = setUpdateState(
       makeUpdateState({
         status: "queued",
@@ -421,11 +455,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     const runProviderUpdate = Effect.fn("ProviderMaintenanceRunner.runProviderUpdate")(
       function* () {
         const finish = (state: ServerProviderUpdateState) =>
-          setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
+          (background
+            ? (state.status === "failed" ? Effect.logWarning : Effect.logInfo)(
+                "Background provider update finished",
+                { instanceId, status: state.status, message: state.message },
+              )
+            : Effect.void
+          ).pipe(
+            Effect.andThen(setUpdateState(state)),
+            Effect.map((providers) => ({ providers })),
+          );
         const startedAtRef = yield* Ref.make<string | null>(null);
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
-          function* () {
+          function* (recordChildPid: (pid: number) => Effect.Effect<void>) {
             const startedAt = yield* nowIso;
             yield* Ref.set(startedAtRef, startedAt);
             const setRunningMessage = (message: string) =>
@@ -447,7 +490,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+            const freshUpdate = fresh.update;
+            if (!freshUpdate || freshUpdate.lockKey !== update.lockKey) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -475,16 +519,27 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 provider,
                 candidateVersion,
               );
-            const command =
+            const pinnedCommand =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
-                : fresh.update;
-            const rejected =
-              targetVersion !== undefined
+                : null;
+            // Unattended installs run a pinned `package@version`; only a native
+            // self-updater or Homebrew may run unpinned.
+            const command = background
+              ? (pinnedCommand ??
+                (SELF_UPDATING_LOCK_KEY.test(freshUpdate.lockKey) ? freshUpdate : null))
+              : targetVersion !== undefined
+                ? pinnedCommand
+                : freshUpdate;
+            const incompatible =
+              advisory?.status === "broken" || advisory?.status === "unsupported";
+            const rejected = background
+              ? incompatible || targetVersion === undefined
+              : targetVersion !== undefined
                 ? !command ||
                   advisory?.recommendedVersion !== targetVersion ||
                   advisory.status !== "supported"
-                : advisory?.status === "broken" || advisory?.status === "unsupported";
+                : incompatible;
             if (rejected || !command) {
               return yield* finish(
                 makeUpdateState({
@@ -498,8 +553,46 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
+            const compareVersions = fresh.compareVersions ?? compareSemverVersions;
+            if (background && candidateVersion) {
+              // Re-probe under the lock: another server or a manual update may have won.
+              const current = (yield* providerRegistry.refreshInstance(instanceId)).find(
+                (candidate) => candidate.instanceId === instanceId,
+              );
+              if (
+                !current?.enabled ||
+                !current.installed ||
+                (current.version && compareVersions(current.version, candidateVersion) >= 0)
+              ) {
+                return yield* finish(
+                  makeUpdateState({
+                    status: "unchanged",
+                    startedAt,
+                    finishedAt: yield* nowIso,
+                    message: "No newer provider version is available.",
+                  }),
+                );
+              }
+              if (beforeInstall && !(yield* beforeInstall)) {
+                return yield* finish(
+                  makeUpdateState({
+                    status: "unchanged",
+                    startedAt,
+                    finishedAt: yield* nowIso,
+                    message: "Background update postponed until nothing is in use.",
+                  }),
+                );
+              }
+            }
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
-            const result = yield* runMaintenanceCommand(command, setRunningMessage);
+            const result = yield* installer.run({
+              command: command.executable,
+              args: command.args,
+              env: command.env,
+              // Nobody watches a background install, so its output is not sampled.
+              onProgress: background ? undefined : setRunningMessage,
+              recordChildPid,
+            });
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -529,13 +622,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // installer that exits 0 and leaves the binary missing is not a
             // success. A missing version alone is not held against it, since
             // Cursor's `about` probe can fail transiently on a healthy binary.
+            // A background install must reach its target, so a missing version
+            // counts there; a self-updater may land on a newer one.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
               verifiedProviders.some(
                 (verifiedProvider) =>
                   !isStillInstalled(verifiedProvider) ||
-                  (targetVersion !== undefined &&
-                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
+                  (background
+                    ? !verifiedProvider.version ||
+                      !candidateVersion ||
+                      compareVersions(verifiedProvider.version, candidateVersion) < 0
+                    : targetVersion !== undefined &&
+                      verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
               );
             const stillOutdated =
               targetVersion === undefined &&
@@ -572,7 +671,28 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           },
         );
 
-        return yield* runCommandAndVerify().pipe(Effect.catchCause(recordFailedUpdate));
+        // Held until the installer exits, so two servers never run the same installer at once.
+        return yield* installLock.tryRun(update.lockKey, runCommandAndVerify).pipe(
+          Effect.flatMap(
+            Option.match({
+              onSome: Effect.succeed,
+              onNone: () =>
+                nowIso.pipe(
+                  Effect.flatMap((finishedAt) =>
+                    finish(
+                      makeUpdateState({
+                        status: "failed",
+                        startedAt: null,
+                        finishedAt,
+                        message: "Another T3 server is already updating this provider.",
+                      }),
+                    ),
+                  ),
+                ),
+            }),
+          ),
+          Effect.catchCause(recordFailedUpdate),
+        );
       },
     );
 
@@ -594,6 +714,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ),
       );
   });
+
+  // A previous server may have quit while its detached installer kept running.
+  // Wait for it, then pick up the version it installed.
+  yield* installLock.anyHeld.pipe(
+    Effect.flatMap((held) =>
+      held ? installLock.untilIdle.pipe(Effect.andThen(providerRegistry.refresh())) : Effect.void,
+    ),
+    Effect.ignore,
+    Effect.forkScoped,
+  );
 
   return ProviderMaintenanceRunner.of({
     updateProvider,
