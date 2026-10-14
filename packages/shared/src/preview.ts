@@ -4,6 +4,7 @@
  * on what counts as "loopback" and how to normalise a free-form URL string.
  */
 
+import type { BrowserSearchEngine } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const TAB_ID_PREFIX = "tab_";
@@ -57,7 +58,6 @@ function previewUrlProtocol(rawUrl: string): string | undefined {
   return /^([A-Za-z][A-Za-z\d+.-]*):/.exec(rawUrl)?.[1]?.toLowerCase().concat(":");
 }
 
-const SEARCH_URL = "https://duckduckgo.com/?q=";
 /** A bare host that is always an address: localhost, an IPv4 literal, or a bracketed IPv6 one. */
 const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
 const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
@@ -82,14 +82,63 @@ const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
   "wss:",
 ]);
 
+/** Address bar search URL templates; `%s` is replaced with the encoded query. */
+const BROWSER_SEARCH_URL_TEMPLATES = {
+  duckduckgo: "https://duckduckgo.com/?q=%s",
+  google: "https://www.google.com/search?q=%s",
+  bing: "https://www.bing.com/search?q=%s",
+  brave: "https://search.brave.com/search?q=%s",
+  kagi: "https://kagi.com/search?q=%s",
+  ecosia: "https://www.ecosia.org/search?q=%s",
+} satisfies Record<Exclude<BrowserSearchEngine, "custom">, string>;
+
+function fillSearchUrlTemplate(template: string, query: string) {
+  return template.replaceAll("%s", encodeURIComponent(query));
+}
+
+/**
+ * Whether a custom search URL is an http(s) URL with `%s` where the query goes.
+ * `%s` in the host is rejected: any query with spaces would make it unreachable.
+ */
+export function isValidSearchUrlTemplate(template: string) {
+  if (!template.includes("%s")) return false;
+  try {
+    // Two different queries land on different hosts only when `%s` is in the host.
+    const url = new URL(fillSearchUrlTemplate(template, "a"));
+    const other = new URL(fillSearchUrlTemplate(template, "b"));
+    return (url.protocol === "http:" || url.protocol === "https:") && url.host === other.host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The search URL template for the user's chosen engine. An unusable custom
+ * template falls back to DuckDuckGo, so a query typed in the address bar
+ * always searches somewhere.
+ */
+export function resolveSearchUrlTemplate(settings: {
+  readonly browserSearchEngine: BrowserSearchEngine;
+  readonly browserCustomSearchUrl: string;
+}) {
+  if (settings.browserSearchEngine !== "custom") {
+    return BROWSER_SEARCH_URL_TEMPLATES[settings.browserSearchEngine];
+  }
+  const custom = settings.browserCustomSearchUrl.trim();
+  return isValidSearchUrlTemplate(custom) ? custom : BROWSER_SEARCH_URL_TEMPLATES.duckduckgo;
+}
+
 /**
  * Turns what a user typed in an address bar into the URL to open: an address
- * as `normalizePreviewUrl` reads it, or else a web search for the text. Text
- * is an address when it has a scheme, or no spaces and a host that has a dot,
- * a port, or is localhost or an IP. Throws only for empty input or an
- * explicit unsupported scheme (`ftp://`, `mailto:`, `data:`).
+ * as `normalizePreviewUrl` reads it, or else a web search for the text using
+ * `searchUrlTemplate`. Text is an address when it has a scheme, or no spaces
+ * and a host that has a dot, a port, or is localhost or an IP. Throws only for
+ * empty input or an explicit unsupported scheme (`ftp://`, `mailto:`, `data:`).
  */
-export function resolveAddressBarInput(rawInput: string): string {
+export function resolveAddressBarInput(
+  rawInput: string,
+  searchUrlTemplate: string = BROWSER_SEARCH_URL_TEMPLATES.duckduckgo,
+): string {
   const trimmed = rawInput.trim();
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
@@ -122,7 +171,7 @@ export function resolveAddressBarInput(rawInput: string): string {
       }
     }
   }
-  return `${SEARCH_URL}${encodeURIComponent(trimmed)}`;
+  return fillSearchUrlTemplate(searchUrlTemplate, trimmed);
 }
 
 /**

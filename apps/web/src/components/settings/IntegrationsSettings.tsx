@@ -17,6 +17,8 @@ import {
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserLinkTarget,
   type BrowserProfile,
+  BrowserSearchEngine,
+  DEFAULT_BROWSER_SEARCH_ENGINE,
   type EnvironmentId,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
@@ -39,6 +41,7 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -619,6 +622,85 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
         </Select>
       }
     />
+  );
+}
+
+const SEARCH_ENGINE_LABELS = {
+  duckduckgo: "DuckDuckGo",
+  google: "Google",
+  bing: "Bing",
+  brave: "Brave Search",
+  kagi: "Kagi",
+  ecosia: "Ecosia",
+  custom: "Custom",
+} satisfies Record<BrowserSearchEngine, string>;
+
+function BrowserSearchEngineSetting() {
+  const engine = useClientSettings((settings) => settings.browserSearchEngine);
+  const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("browser-search-engine")}
+        description="What the address bar searches with when you type something that isn't a URL."
+        resetAction={
+          engine !== DEFAULT_BROWSER_SEARCH_ENGINE ? (
+            <SettingResetButton
+              label="search engine"
+              onClick={() => updateSettings({ browserSearchEngine: DEFAULT_BROWSER_SEARCH_ENGINE })}
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={engine}
+            onValueChange={(value) => {
+              const next = BrowserSearchEngine.literals.find((literal) => literal === value);
+              if (next !== undefined) {
+                updateSettings({ browserSearchEngine: next });
+              }
+            }}
+          >
+            <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Search engine">
+              <SelectValue>{SEARCH_ENGINE_LABELS[engine]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {BrowserSearchEngine.literals.map((literal) => (
+                <SelectItem hideIndicator key={literal} value={literal}>
+                  {SEARCH_ENGINE_LABELS[literal]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      {engine === "custom" ? (
+        <SettingsRow
+          title="Custom search URL"
+          description="Use %s where the search terms go."
+          status={
+            customUrl !== "" && !isValidSearchUrlTemplate(customUrl)
+              ? "Enter an http or https URL containing %s. Searches use DuckDuckGo until then."
+              : undefined
+          }
+          control={
+            <DraftInput
+              nativeInput
+              size="sm"
+              className="w-full sm:w-64"
+              aria-label="Custom search URL"
+              placeholder="https://example.com/search?q=%s"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={customUrl}
+              onCommit={(next) => updateSettings({ browserCustomSearchUrl: next.trim() })}
+            />
+          }
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1545,6 +1627,8 @@ export function IntegrationsSettingsPanel() {
         ) : (
           previewDefaults
         )}
+        {/* Outside the desktop-only group: web clients search from server tabs too. */}
+        <BrowserSearchEngineSetting />
       </SettingsSection>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>
