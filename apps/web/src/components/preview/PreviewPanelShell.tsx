@@ -16,6 +16,7 @@ import {
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
 
 export { getPreviewPanelMaxWidth };
+import { useWorkspaceArea } from "../WorkspaceNavigation";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -28,6 +29,9 @@ export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
  * sheet/sidebar modes the parent owns the size.
  */
 interface PreviewPanelShellProps {
+  workspaceArea?: boolean;
+  workspaceFocusKey?: string;
+  workspaceLabel?: string;
   mode: PreviewPanelMode;
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
@@ -68,6 +72,7 @@ function PreviewPanelShellFrame(
     hostRef?: RefObject<HTMLDivElement | null>;
   },
 ) {
+  const panelArea = useWorkspaceArea("panel", 4, props.workspaceLabel ?? "Workspace panel");
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
@@ -116,6 +121,11 @@ function PreviewPanelShellFrame(
   return (
     <div
       ref={hostRef}
+      {...(props.workspaceArea ? panelArea : {})}
+      data-workspace-focus-key={props.workspaceFocusKey}
+      data-workspace-unavailable={collapsible && !open ? "true" : undefined}
+      inert={!open}
+      aria-hidden={!open ? true : undefined}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline

@@ -492,6 +492,22 @@ describe("onboarding completion persistence", () => {
   });
 });
 
+describe("accessible mode persistence", () => {
+  it("defaults to Auto and saves manual changes through client-only persistence", async () => {
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().accessibilitySupport).toBe("auto");
+    await persistClientSettingsPatch({ accessibilitySupport: "on" });
+    expect(getClientSettings().accessibilitySupport).toBe("on");
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ accessibilitySupport: "on" }),
+    );
+    await persistClientSettingsPatch({ accessibilitySupport: "off" });
+    expect(getClientSettings().accessibilitySupport).toBe("off");
+    await persistClientSettingsPatch({ accessibilitySupport: "auto" });
+    expect(getClientSettings().accessibilitySupport).toBe("auto");
+  });
+});
+
 it("uses the environment's model preferences after migration, including empty lists", () => {
   const client = {
     ...DEFAULT_CLIENT_SETTINGS,

@@ -327,9 +327,19 @@ describe("root reopen shortcut", () => {
 
   it("always forwards the layout toggles out of a focused desktop browser", async () => {
     await render();
-    expect(state.setShortcuts).toHaveBeenLastCalledWith([
-      expect.objectContaining({ command: "sidebar.toggle" }),
-      expect.objectContaining({ command: "rightPanel.toggle" }),
-    ]);
+    expect(state.setShortcuts).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "sidebar.toggle" }),
+        expect.objectContaining({ command: "rightPanel.toggle" }),
+        expect.objectContaining({
+          command: "workspace.focusNext",
+          shortcut: expect.objectContaining({ key: "f6", shiftKey: false }),
+        }),
+        expect.objectContaining({
+          command: "workspace.focusPrevious",
+          shortcut: expect.objectContaining({ key: "f6", shiftKey: true }),
+        }),
+      ]),
+    );
   });
 });

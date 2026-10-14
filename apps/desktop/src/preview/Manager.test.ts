@@ -696,6 +696,8 @@ describe("PreviewManager", () => {
   effectIt.effect.each([
     ["mod+shift+t", "view.reopenClosed"],
     ["ctrl+alt+u", "sidebar.toggle"],
+    ["f6", "workspace.focusNext"],
+    ["shift+f6", "workspace.focusPrevious"],
   ] as const)(
     "forwards only the configured command from the focused guest: %s",
     ([chord, command]) =>
@@ -703,8 +705,9 @@ describe("PreviewManager", () => {
         Effect.gen(function* () {
           const preview = makeFaviconWebContents();
           const send = vi.fn();
+          const focusHost = vi.fn();
           Object.assign(preview.webContents, {
-            hostWebContents: { isDestroyed: () => false, send },
+            hostWebContents: { isDestroyed: () => false, send, focus: focusHost },
           });
           fromId.mockReturnValue(preview.webContents);
           getFocusedWebContents.mockReturnValue(preview.webContents as never);
@@ -725,6 +728,7 @@ describe("PreviewManager", () => {
           beforeInput({ preventDefault } as never, input as never);
           expect(preventDefault).toHaveBeenCalledOnce();
           expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
+          expect(focusHost).toHaveBeenCalledTimes(command.startsWith("workspace.") ? 1 : 0);
           for (const overrides of [
             { isAutoRepeat: true },
             { type: "keyUp" },

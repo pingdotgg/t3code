@@ -1,11 +1,13 @@
+import { useWorkspaceArea } from "../components/WorkspaceNavigation";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
-import { SidebarInset } from "../components/ui/sidebar";
+import { SidebarInset, useSidebar } from "../components/ui/sidebar";
+import { requestWorkspaceFocus, SETTINGS_SEARCH_FOCUS_EVENT } from "../lib/workspaceFocus";
 import { useNavigateToMainApp } from "../components/sidebar/mainAppLocation";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
@@ -111,6 +113,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 }
 
 function SettingsContentLayout() {
+  const contentArea = useWorkspaceArea("settings", 1, "Settings content");
   const location = useLocation();
   const navigateToMainApp = useNavigateToMainApp();
   useEscapeToGoBack(navigateToMainApp);
@@ -120,9 +123,36 @@ function SettingsContentLayout() {
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
+  const { isMobile, setOpen, setOpenMobile } = useSidebar();
+  const focusSettingsSearch = useEffectEvent(() => {
+    if (isMobile) setOpenMobile(true);
+    else setOpen(true);
+    requestWorkspaceFocus({
+      area: "sidebar",
+      selector: 'input[aria-label="Search settings"]',
+      restore: false,
+    });
+  });
+  const focusSettingsOnEntry = useEffectEvent(() => {
+    // A search result owns its specific setting destination.
+    if (!location.hash) focusSettingsSearch();
+  });
+  useEffect(() => {
+    // This layout remains mounted while navigating Settings sections.
+    const frame = requestAnimationFrame(focusSettingsOnEntry);
+    window.addEventListener(SETTINGS_SEARCH_FOCUS_EVENT, focusSettingsSearch);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener(SETTINGS_SEARCH_FOCUS_EVENT, focusSettingsSearch);
+    };
+  }, []);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
+    <SidebarInset
+      {...contentArea}
+      role="main"
+      className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate"
+    >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
           <div className="flex w-full items-center gap-3">

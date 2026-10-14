@@ -50,6 +50,8 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
+import { useAccessibilitySupport } from "../../hooks/useAccessibilitySupport";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -110,6 +112,8 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const sectionNavigation = useSettingsSectionNavigation();
+  const accessible = useAccessibilitySupport();
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
@@ -336,8 +340,17 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <SidebarMenu>
-                {navItems.map((item) => {
+              <SidebarMenu
+                {...sectionNavigation}
+                role="tree"
+                aria-label="Settings sections"
+                aria-description={
+                  accessible
+                    ? "Use Up and Down, Home or End to focus a section. Enter opens it."
+                    : undefined
+                }
+              >
+                {navItems.map((item, index) => {
                   const Icon = item.icon;
                   const isGeneralDetailPage =
                     item.to === "/settings/general" &&
@@ -347,8 +360,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     pathname === item.to ||
                     pathname.startsWith(`${item.to}/`);
                   return (
-                    <SidebarMenuItem key={item.to}>
+                    <SidebarMenuItem key={item.to} role="presentation">
                       <SidebarMenuButton
+                        data-settings-section={item.to}
+                        role="treeitem"
+                        aria-level={1}
+                        aria-posinset={index + 1}
+                        aria-setsize={navItems.length}
+                        aria-selected={isActive}
+                        aria-current={isActive ? "page" : undefined}
                         isActive={isActive}
                         onClick={() => handleSectionClick(item.to)}
                       >

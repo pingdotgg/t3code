@@ -21,6 +21,9 @@ import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
+import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
+import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "~/lib/workspaceFocus";
+import { useWorkspaceFocusRecovery } from "~/hooks/useWorkspaceFocusRecovery";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -108,7 +111,23 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void;
 }) {
   const isMobile = useIsMobile();
-  const [openMobile, setOpenMobile] = React.useState(false);
+  const [openMobile, updateOpenMobile] = React.useState(false);
+  const changeVisibility = React.useCallback((visible: boolean) => {
+    const sidebar = document.querySelector<HTMLElement>("[data-app-sidebar]");
+    const label =
+      sidebar?.getAttribute("aria-label") === "Settings" ? "Settings sidebar" : "Threads sidebar";
+    announceSidebarVisibility(label, visible);
+    if (visible) requestWorkspaceFocus({ area: "sidebar" });
+    else if (sidebar?.contains(document.activeElement)) requestWorkspaceContentFocus();
+  }, []);
+  const setOpenMobile = React.useCallback(
+    (value: boolean) => {
+      if (value === openMobile) return;
+      changeVisibility(value);
+      updateOpenMobile(value);
+    },
+    [changeVisibility, openMobile],
+  );
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
   const setMobileSheetElement = React.useCallback((element: HTMLDivElement | null) => {
     setMobileSheetMounted(element !== null);
@@ -121,6 +140,8 @@ function SidebarProvider({
   const setOpen = React.useCallback(
     async (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === "function" ? value(open) : value;
+      if (openState === open) return;
+      if (!isMobile) changeVisibility(openState);
       if (setOpenProp) {
         setOpenProp(openState);
       } else {
@@ -135,17 +156,18 @@ function SidebarProvider({
         value: String(openState),
       });
     },
-    [setOpenProp, open],
+    [setOpenProp, open, isMobile, changeVisibility],
   );
 
   // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
-  }, [isMobile, setOpen]);
+    return isMobile ? setOpenMobile(!openMobile) : setOpen((open) => !open);
+  }, [isMobile, setOpen, setOpenMobile, openMobile]);
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
   const state = resolveSidebarState({ isMobile, open, openMobile });
+  useWorkspaceFocusRecovery("[data-app-sidebar]", `${isMobile}:${state}`);
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
@@ -165,6 +187,7 @@ function SidebarProvider({
       setOpen,
       isMobile,
       openMobile,
+      setOpenMobile,
       mobileSheetMounted,
       setMobileSheetElement,
       toggleSidebar,
@@ -272,7 +295,7 @@ function Sidebar({
             }
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>Sidebar</SheetTitle>
+              <SheetTitle>{props["aria-label"] ?? "Sidebar"}</SheetTitle>
               <SheetDescription>Displays the mobile sidebar.</SheetDescription>
             </SheetHeader>
             <div
@@ -300,6 +323,8 @@ function Sidebar({
         data-slot="sidebar"
         data-state={state}
         data-variant={variant}
+        inert={state === "collapsed" && collapsible === "offcanvas"}
+        aria-hidden={state === "collapsed" && collapsible === "offcanvas" ? true : undefined}
       >
         {/* This is what handles the sidebar gap on desktop */}
         <div
@@ -356,6 +381,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       aria-pressed={isOpen}
+      aria-expanded={isOpen}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();

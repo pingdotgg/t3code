@@ -1831,6 +1831,15 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON"))).toBe(true);
   });
 
+  it.each(["BUTTON", "SECTION", "MAIN", "LI"])(
+    "preserves deliberate workspace focus on a %s while a window-focus frame is pending",
+    (tagName) => {
+      expect(
+        shouldRefocusComposerOnWindowFocus(element(tagName, { within: "data-workspace-area" })),
+      ).toBe(false);
+    },
+  );
+
   it("leaves other text fields alone", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("INPUT"))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("TEXTAREA"))).toBe(false);

@@ -1,3 +1,4 @@
+import { useWorkspaceArea } from "../WorkspaceNavigation";
 import { useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ScrollArea } from "../ui/scroll-area";
@@ -12,6 +13,8 @@ import {
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
+import { useWorkspaceFocusRecovery } from "../../hooks/useWorkspaceFocusRecovery";
+import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
 /** One card owns its placement and folds content only when that content cannot fit. */
 export function ThreadDetailsCard({
@@ -27,6 +30,7 @@ export function ThreadDetailsCard({
   onPresentationChange: (presentation: ThreadPanelPresentation) => void;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
+  const detailsArea = useWorkspaceArea("details", 3, "Thread details");
   const canvas = useChatCanvas();
   const preferredPlacement = canvas
     ? resolveThreadDetailsCardLayout({
@@ -53,6 +57,7 @@ export function ThreadDetailsCard({
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
+  useWorkspaceFocusRecovery('[data-thread-details-panel="inline"]', `${mode}:${inlineOpen}`);
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
   const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}`;
   const [measurements, setMeasurements] = useState({
@@ -158,7 +163,8 @@ export function ThreadDetailsCard({
       {placement ? (
         inlineOpen ? (
           <aside
-            aria-label="Thread details"
+            {...detailsArea}
+            data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
             // Slides down to make room for the find bar, but returns in the same frame
             // the bar closes: a floating preview below moves up at once and would
             // otherwise overlap the card mid-slide.
@@ -183,6 +189,13 @@ export function ThreadDetailsCard({
         ) : null
       ) : (
         <PopoverPopup
+          {...detailsArea}
+          role="dialog"
+          data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
+          initialFocus={() => {
+            requestWorkspaceFocus({ area: "details" });
+            return false;
+          }}
           anchor={anchor}
           align="end"
           // Lines the card up with the find bar: the panel pads its card by 8px.

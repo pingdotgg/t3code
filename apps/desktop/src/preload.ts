@@ -116,6 +116,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
+  getAccessibilitySupport: () => ipcRenderer.invoke(IpcChannels.GET_ACCESSIBILITY_SUPPORT_CHANNEL),
+  onAccessibilitySupportChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, enabled: boolean) => listener(enabled);
+    ipcRenderer.on(IpcChannels.ACCESSIBILITY_SUPPORT_CHANGED_CHANNEL, handler);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.ACCESSIBILITY_SUPPORT_CHANGED_CHANNEL, handler);
+  },
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
   requestSnapShotPermissions: (includeAccessibility) =>

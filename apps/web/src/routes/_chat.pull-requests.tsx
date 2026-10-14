@@ -1,3 +1,6 @@
+import { useWorkspaceArea, useWorkspacePageFocus } from "../components/WorkspaceNavigation";
+import { useWorkspacePanelFocus } from "../hooks/useWorkspacePanelFocus";
+import { useWorkspaceFocusRecovery } from "../hooks/useWorkspaceFocusRecovery";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { useShortcutModifierState } from "~/shortcutModifierState";
@@ -508,6 +511,7 @@ function PullRequestsRouteView() {
   const selectedPullRequestSurface =
     selectedRightPanelSurface?.kind === "pull-request" ? selectedRightPanelSurface : null;
   const activePullRequestSurface = rightPanelState.isOpen ? selectedPullRequestSurface : null;
+  useWorkspacePanelFocus(PULL_REQUESTS_PANEL_REF);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = useMemo(
@@ -2602,6 +2606,9 @@ function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
+  const contentArea = useWorkspaceArea("pull-requests", 1, "Pull requests");
+  useWorkspacePageFocus("pull-requests");
+  useWorkspaceFocusRecovery('[data-workspace-area="pull-requests"]', maximizedAway, "panel");
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
   useEffect(() => {
@@ -2661,6 +2668,9 @@ function PullRequestsColumn({
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
     <div
+      {...contentArea}
+      inert={maximizedAway}
+      aria-hidden={maximizedAway ? true : undefined}
       className={cn(
         "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background",
         maximizedAway ? "w-0 flex-none" : "flex-1",

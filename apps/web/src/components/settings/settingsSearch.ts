@@ -165,6 +165,12 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "accessibility-support",
+    title: "Accessible mode",
+    to: "/settings/general",
+    searchTerms: ["accessibility screen reader auto on off keyboard navigation hints"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",

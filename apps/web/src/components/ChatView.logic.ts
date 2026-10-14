@@ -1281,9 +1281,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 }
 
 // Returning to the window should land the caret in the composer, so the reader can type right
-// away. The exceptions are places where focus is deliberate: another text field, a terminal in
-// the drawer or the right panel, or an open dialog or popup. A focused button outside those is
-// not one of them, so it yields to the composer.
+// away when nothing owns focus. Preserve deliberate focus in workspace areas, including
+// region containers and sidebar rows reached by F6 or arrows, as well as inputs and popups.
 export function shouldRefocusComposerOnWindowFocus(
   activeElement:
     | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
@@ -1303,7 +1302,7 @@ export function shouldRefocusComposerOnWindowFocus(
   }
   return (
     activeElement.closest(
-      '[role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-terminal-owner]',
+      '[data-workspace-area], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
 }
