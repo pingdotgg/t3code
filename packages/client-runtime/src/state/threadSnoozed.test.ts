@@ -189,6 +189,12 @@ describe("canSnooze", () => {
         { now: NOW },
       ),
     ).toBe(false);
+    expect(
+      canSnooze(
+        { ...makeShell({}), latestUserMessageAt: null, pendingSubagentRequest: "approval" },
+        { now: NOW },
+      ),
+    ).toBe(false);
   });
 
   it("refuses a queued turn start — same invisible-pending-work rule as settle", () => {

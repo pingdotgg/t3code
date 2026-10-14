@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ProjectId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
@@ -12,7 +13,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import { isThreadWorking } from "./threadInbox.ts";
+import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
@@ -148,6 +150,70 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(inputs)).toEqual([]);
     dispose();
+    registry.dispose();
+  });
+
+  it("brings a parent back from Working while a nested subagent waits for approval", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("review"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: {
+        ...v2ThreadShell.lineage,
+        parentThreadId: v2ThreadShell.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const grandchild = {
+      ...child,
+      id: ThreadId.make("review-helper"),
+      lineage: { ...child.lineage, parentThreadId: child.id },
+    };
+    // The parent's turn ended; the delegated review keeps it in Working.
+    const root = {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("root-run"),
+      status: "completed" as const,
+      pendingBackgroundTasks: [
+        { taskId: "review", kind: "subagent" as const, childThreadId: child.id },
+      ],
+    };
+    const approval = {
+      id: RuntimeRequestId.make("cat-file"),
+      kind: "command" as const,
+      createdAt: v2Now,
+    };
+    const parent = threads.threadShellAtom({ environmentId, threadId: root.id });
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const disposeParent = registry.mount(parent);
+    const disposeInputs = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, child, grandchild],
+    });
+    expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, child, { ...grandchild, pendingRuntimeRequest: approval }],
+    });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("approval");
+    expect(isThreadWorking(registry.get(parent)!)).toBe(false);
+    const asking = registry.get(inputs);
+    expect(asking.map((thread) => thread.id)).toEqual([grandchild.id]);
+    expect(childThreadInputsTitle(asking)).toBe("Subagent needs approval");
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, child, grandchild],
+    });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBeNull();
+    expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+    disposeInputs();
+    disposeParent();
     registry.dispose();
   });
 
