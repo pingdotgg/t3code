@@ -47,6 +47,7 @@ import {
   RELAY_ROUTE_ID,
   connectionRouteId,
   connectionRoutes,
+  credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
   mergeLearnedRoutes,
@@ -712,8 +713,10 @@ export const make = Effect.gen(function* () {
           // the equivalent runtime. Anything not yet connected may be using the
           // old bearer: an attempt in flight would fail with it and then wait
           // blocked for a manual retry. Retry with the new one instead. A
-          // connected session keeps its socket.
-          if (bearerReplaced) {
+          // connected session keeps its socket, but the server revoked the old
+          // bearer, so its HTTP requests (such as the session's scopes) move to
+          // the new one.
+          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
@@ -725,6 +728,23 @@ export const make = Effect.gen(function* () {
                   state.lastFailure.reason === "authentication")
               ) {
                 yield* scope.supervisor.retryNow;
+              } else if (state.phase === "connected") {
+                const token = registration.credential.token;
+                yield* SubscriptionRef.updateSome(scope.supervisor.prepared, (current) =>
+                  Option.isSome(current) &&
+                  current.value.target._tag === "BearerConnectionTarget" &&
+                  credentialConnectionId(current.value.target.connectionId) ===
+                    registration.target.connectionId &&
+                  current.value.httpAuthorization?._tag === "Bearer" &&
+                  current.value.httpAuthorization.token !== token
+                    ? Option.some(
+                        Option.some({
+                          ...current.value,
+                          httpAuthorization: { _tag: "Bearer", token },
+                        }),
+                      )
+                    : Option.none(),
+                );
               }
             }
           }

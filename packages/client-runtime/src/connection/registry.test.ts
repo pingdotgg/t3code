@@ -1410,6 +1410,48 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  // The desktop rotates the bootstrap token, so the renderer exchanges it again
+  // and the server revokes the old bearer while the socket stays open. HTTP
+  // reads such as the session's scopes must move to the new bearer (#13324).
+  it.effect("a replaced platform bearer reaches a connected session's HTTP requests", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        const preparedToken = registry.run(
+          BEARER_TARGET.environmentId,
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.prepared)),
+            Effect.map((prepared) =>
+              Option.isSome(prepared) && prepared.value.httpAuthorization?._tag === "Bearer"
+                ? prepared.value.httpAuthorization.token
+                : null,
+            ),
+          ),
+        );
+        yield* registry.reconcilePlatform([registration("old-bearer")]);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(yield* preparedToken).toBe("old-bearer");
+
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+
+        expect(yield* preparedToken).toBe("new-bearer");
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("a bearer replaced while an attempt is in flight retries with the new one", () =>
     Effect.gen(function* () {
       const attemptStarted = yield* Deferred.make<void>();
