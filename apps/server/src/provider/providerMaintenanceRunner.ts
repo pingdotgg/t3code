@@ -403,7 +403,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ),
       ),
       Effect.timeoutOption(SIBLING_REFRESH_TIMEOUT),
-      Effect.asVoid,
+      Effect.flatMap((completed) =>
+        Option.isNone(completed)
+          ? Effect.logWarning("Provider refresh after an update timed out", { provider })
+          : Effect.void,
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("Provider refresh after an update failed", {
           provider,
