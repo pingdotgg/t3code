@@ -36,6 +36,7 @@ import type {
   AnyProviderDriver,
   ProviderUsageReaderEnv,
 } from "@t3tools/provider-core/server/driver";
+import { KiroDriver, type KiroDriverEnv } from "./Drivers/KiroDriver.ts";
 
 /**
  * Union of infrastructure services required to construct any built-in
@@ -49,6 +50,7 @@ export type BuiltInDriversEnv =
   | CodexDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
+  | KiroDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
   | MuseDriverEnv;
@@ -65,6 +67,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  KiroDriver,
   PiDriver,
   MuseDriver,
   AcpRegistryDriver,

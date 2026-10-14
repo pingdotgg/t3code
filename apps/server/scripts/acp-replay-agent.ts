@@ -50,15 +50,41 @@ const transcript = JSON.parse(
     ? Buffer.from(encodedTranscript ?? "", "base64").toString("utf8")
     : NodeFS.readFileSync(transcriptPath, "utf8"),
 ) as ReplayTranscript;
-let cursor = 0;
+/**
+ * A recording can span processes: a `runtime_exit` mid-transcript marks where
+ * one agent process ended, and a respawned replay agent continues from the
+ * cursor the previous one left in the status file.
+ */
+function resumedCursor(): number {
+  try {
+    const previous = JSON.parse(NodeFS.readFileSync(statusPath ?? "", "utf8")) as {
+      readonly cursor?: unknown;
+      readonly failure?: unknown;
+    };
+    const resumeAt = typeof previous.cursor === "number" ? previous.cursor : 0;
+    return previous.failure === undefined &&
+      transcript.entries[resumeAt - 1]?.type === "runtime_exit"
+      ? resumeAt
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+let cursor = resumedCursor();
 let stopped = false;
 let nextAgentRequestId = 1;
 const pendingClientRequestIds = new Map<string, string | number>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
+/**
+ * The test reads the status while this process may still be writing it, so a
+ * write lands whole: an in-place rewrite truncates the file first, and a read
+ * in that window decodes an empty file.
+ */
 function writeStatus(failure?: unknown): void {
+  const pendingPath = `${replayStatusPath}.${process.pid}.pending`;
   NodeFS.writeFileSync(
-    replayStatusPath,
+    pendingPath,
     JSON.stringify({
       scenario: transcript.scenario,
       cursor,
@@ -67,6 +93,7 @@ function writeStatus(failure?: unknown): void {
     }),
     "utf8",
   );
+  NodeFS.renameSync(pendingPath, replayStatusPath);
 }
 
 function stableStringify(value: unknown): string {
@@ -234,6 +261,8 @@ function flushInbound(): void {
         return;
       }
       advance();
+      // Frames after a mid-transcript exit belong to the next process.
+      if (cursor < transcript.entries.length) return;
       continue;
     }
     const frame = entry.frame as LogicalFrame;
@@ -294,7 +323,8 @@ input.on("line", (line) => {
 });
 
 input.on("close", () => {
-  if (!stopped && cursor !== transcript.entries.length) {
+  const processEnded = transcript.entries[cursor - 1]?.type === "runtime_exit";
+  if (!stopped && cursor !== transcript.entries.length && !processEnded) {
     stopWithFailure("ACP replay input closed before transcript completion");
   }
 });
