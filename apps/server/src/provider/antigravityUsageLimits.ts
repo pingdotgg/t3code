@@ -30,6 +30,7 @@ const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
   expires_in: Schema.Number.check(Schema.isGreaterThan(0)),
 });
+const UserInfo = Schema.Struct({ id: Schema.NonEmptyString });
 const Quota = Schema.Struct({
   remainingFraction: Schema.optional(Schema.Number),
   resetTime: Schema.optional(Schema.String),
@@ -65,6 +66,7 @@ const Models = Schema.Struct({
 
 const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
+const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
 const decodeModels = Schema.decodeUnknownEffect(Models);
 
@@ -168,8 +170,19 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
-  let cached: { fingerprint: string; accessToken: string; expiresAt: number } | undefined;
+  let cached:
+    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
+    | undefined;
   let generation = 0;
+
+  const sha256 = (text: string) =>
+    crypto
+      .digest("SHA-256", new TextEncoder().encode(text))
+      .pipe(
+        Effect.map((digest) =>
+          Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        ),
+      );
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
@@ -193,17 +206,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       });
     }
     const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
-    const fingerprint = Array.from(
-      yield* crypto.digest(
-        "SHA-256",
-        new TextEncoder().encode(
-          `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
-        ),
-      ),
-      (byte) => byte.toString(16).padStart(2, "0"),
-    ).join("");
+    const fingerprint = yield* sha256(
+      `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
+    );
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
+    let account: string;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
       const refreshed = yield* request(
@@ -217,11 +225,28 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       ).pipe(Effect.flatMap(decodeTokenResponse));
       accessToken = refreshed.access_token;
+      // Each machine's sign-in has its own refresh token, so the Google
+      // account id is what lets clients merge one account across environments.
+      account = yield* request(
+        HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
+          HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
+        ),
+      ).pipe(
+        Effect.flatMap(decodeUserInfo),
+        Effect.flatMap((info) => sha256(`google-account\0${info.id}`)),
+        Effect.orElseSucceed(() => fingerprint),
+      );
       if (generation === startedGeneration) {
-        cached = { fingerprint, accessToken, expiresAt: now + refreshed.expires_in * 1000 };
+        cached = {
+          fingerprint,
+          account,
+          accessToken,
+          expiresAt: now + refreshed.expires_in * 1000,
+        };
       }
     } else {
       accessToken = cached.accessToken;
+      account = cached.account;
     }
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
@@ -259,7 +284,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Antigravity did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: fingerprint };
+    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
   });
   const probe = read.pipe(
     Effect.timeout("30 seconds"),
