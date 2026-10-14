@@ -192,7 +192,7 @@ const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
-    "Set a thread's provider, model and options with the existing selection command. Omit threadId for this thread. This does not change permission modes. Use orchestrator_capabilities to choose a selection.",
+    "Set a thread's provider, model and options. Omit threadId for this thread. A changed selection restarts a running turn and automatically continues its unfinished user request; an interrupted calling turn may not receive a tool result. An already-active selection is a no-op. Providers that cannot restart reject the change without interrupting the turn. This does not change permission modes. Use orchestrator_capabilities to choose a selection.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     modelSelection: ModelSelection,

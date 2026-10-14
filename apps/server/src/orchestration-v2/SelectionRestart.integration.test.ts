@@ -32,6 +32,10 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex-restart-test");
@@ -387,6 +391,268 @@ function makeCompletingHandoffAdapter(
       }),
   };
 }
+
+it.live.each([
+  "saved-model",
+  "options",
+  "provider",
+  "unchanged",
+  "idle",
+  "unsupported",
+  "preparing",
+  "disabled",
+  "archived",
+] as const)("configures the calling thread without losing work: %s", (scenario) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = `configure-continuation-${scenario}`;
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(`thread:${name}`);
+      const projectId = ProjectId.make(`project:${name}`);
+      const otherInstanceId = ProviderInstanceId.make("codex-configure-target");
+      const selection = {
+        ...initialSelection,
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      } satisfies ModelSelection;
+      const targetSelection: ModelSelection =
+        scenario === "unchanged"
+          ? { ...selection, options: selection.options.toReversed() }
+          : scenario === "options"
+            ? { ...selection, options: [{ id: "reasoningEffort", value: "xhigh" }] }
+            : {
+                ...replacementSelection,
+                instanceId:
+                  scenario === "provider" || scenario === "disabled"
+                    ? otherInstanceId
+                    : providerInstanceId,
+              };
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const starts: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
+      const capabilities = {
+        ...pooledCapabilities,
+        turns: {
+          ...pooledCapabilities.turns,
+          supportsSteeringByInterruptRestart: scenario !== "unsupported",
+        },
+      };
+      const adapters = [providerInstanceId, otherInstanceId].map((instanceId) => {
+        const base = makeRestartAdapter(state, capabilities, instanceId);
+        return {
+          ...base,
+          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" } as const),
+          openSession: (input) =>
+            base.openSession(input).pipe(
+              Effect.map((session) => ({
+                ...session,
+                startTurn: (input) =>
+                  Effect.gen(function* () {
+                    starts.push(input);
+                    yield* session.startTurn(input);
+                  }),
+              })),
+            ),
+        } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+      });
+      const registry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
+        get: (instanceId) =>
+          Effect.succeed(adapters.find((adapter) => adapter.instanceId === instanceId)!),
+        list: () => Effect.succeed([providerInstanceId, otherInstanceId]),
+        getMetadata: () =>
+          Effect.succeed({
+            driver,
+            continuationKey: "codex:home:/shared",
+            enabled: true,
+            capabilities,
+          }),
+      });
+      const layerDatabase = SqlitePersistence.layerMemory;
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId,
+          title: name,
+          modelSelection: selection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        if (scenario !== "idle") {
+          const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${name}:first`),
+            threadId,
+            messageId: MessageId.make(`${name}:first`),
+            text: "Switch to the requested model and finish the poem.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          if (scenario !== "preparing") {
+            yield* worker.drain();
+            yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "provider-turn.updated" && event.payload.status === "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+            );
+          }
+        }
+        if (scenario === "saved-model") {
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${name}:save-next-model`),
+            threadId,
+            modelSelection: targetSelection,
+          });
+          yield* worker.drain();
+        }
+        if (scenario === "archived") {
+          yield* orchestrator.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`${name}:archive`),
+            threadId,
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+        if (scenario === "archived") {
+          assert.isNotNull(before.thread.archivedAt);
+          const run = before.runs[0]!;
+          assert.equal(run.status, "running");
+          assert.isTrue(
+            before.providerTurns.some(
+              (turn) => turn.runAttemptId === run.activeAttemptId && turn.status === "running",
+            ),
+          );
+          assert.lengthOf(starts, 1);
+        }
+        const configure = threads.configureModelSelection({
+          projectId,
+          threadId,
+          commandId: CommandId.make(`${name}:configure`),
+          modelSelection: targetSelection,
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        if (
+          scenario === "unsupported" ||
+          scenario === "preparing" ||
+          scenario === "disabled" ||
+          scenario === "archived"
+        ) {
+          const error = yield* Effect.flip(configure);
+          assert.equal(
+            error._tag,
+            scenario === "archived"
+              ? "ThreadManagementThreadArchivedError"
+              : scenario === "disabled"
+                ? "ThreadManagementProviderInstanceDisabledError"
+                : scenario === "preparing"
+                  ? "ThreadManagementNoSteerableRunError"
+                  : "OrchestratorDispatchError",
+          );
+          if (scenario === "disabled") {
+            assert.deepEqual(before.runs[0]?.modelSelection, selection);
+            assert.equal(before.runs[0]?.status, "running");
+            assert.lengthOf(starts, 1);
+            assert.equal(
+              error.message,
+              `Provider instance "${otherInstanceId}" is disabled for project ${projectId}.`,
+            );
+          }
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+          return;
+        }
+        if (scenario === "unchanged" || scenario === "idle") {
+          const result = yield* configure;
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          if (scenario === "unchanged") {
+            assert.equal(result.sequence, sequence);
+            assert.deepEqual(after, before);
+          } else {
+            assert.deepEqual(after.thread.modelSelection, targetSelection);
+            assert.isEmpty(after.runs);
+            assert.isEmpty(after.messages);
+          }
+          return;
+        }
+        yield* configure;
+        yield* worker.drain();
+        yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence: sequence }).pipe(
+          Stream.filter(({ event }) =>
+            scenario === "options"
+              ? event.type === "provider-turn.updated" && event.payload.status === "running"
+              : event.type === "run.updated" && event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* worker.drain();
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(starts, 2);
+        assert.deepEqual(starts[1]?.modelSelection, targetSelection);
+        assert.match(starts[1]!.message.text, /continue|finish/i);
+        assert.equal(after.runs[0]?.id, before.runs[0]?.id);
+        assert.deepEqual(after.runs[0]?.modelSelection, targetSelection);
+        assert.deepEqual(after.thread.modelSelection, targetSelection);
+        assert.lengthOf(after.attempts, 2);
+        assert.equal(after.attempts[0]?.status, "superseded");
+        assert.equal(after.messages[1]?.createdBy, "agent");
+        assert.equal(after.messages[1]?.creationSource, "mcp");
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ServerSettings.layerTest({
+                  providerInstances: {
+                    [providerInstanceId]: { driver, enabled: true },
+                    [otherInstanceId]: { driver, enabled: true },
+                  },
+                  projectSettingsOverrides:
+                    scenario === "disabled"
+                      ? {
+                          [projectId]: {
+                            providerInstances: { [otherInstanceId]: { enabled: false } },
+                          },
+                        }
+                      : {},
+                }),
+                CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase)),
+                ProviderReplayHarness.layerWithRegistry({ name }, registry, {
+                  databaseLayer: layerDatabase,
+                  runEffectWorker: scenario !== "preparing" && scenario !== "archived",
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  ),
+);
 
 it.live("retries a failed selection restart session open before completing", () =>
   Effect.scoped(

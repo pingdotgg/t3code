@@ -269,6 +269,112 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+it.effect.each([
+  {
+    name: "reports an archived thread",
+    error: new ThreadManagement.ThreadManagementThreadArchivedError({ threadId }),
+    code: "thread_not_sendable",
+    message: `Thread ${threadId} is archived and cannot receive messages.`,
+  },
+  {
+    name: "reports a disabled provider instance",
+    error: new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
+      projectId: McpToolAccessTestkit.liveThreadShell(threadId).projectId,
+      instanceId: ProviderInstanceId.make("codex"),
+    }),
+    code: "invalid_request",
+    message: `Provider instance "codex" is disabled for project ${McpToolAccessTestkit.liveThreadShell(threadId).projectId}.`,
+  },
+  {
+    name: "reports a turn that cannot be restarted",
+    error: new ThreadManagement.ThreadManagementNoSteerableRunError({
+      threadId,
+      mode: "restart",
+    }),
+    code: "thread_not_sendable",
+    message: `Thread ${threadId} has no running turn that can be restarted.`,
+  },
+  {
+    name: "preserves a public dispatch rejection",
+    error: new OrchestratorDispatchError({
+      commandId: CommandId.make("mcp-core-configure"),
+      commandType: "session.model.set",
+      cause: "The target provider instance is unavailable.",
+    }),
+    code: "orchestration_error",
+    message: "The target provider instance is unavailable.",
+  },
+  {
+    name: "preserves a public command rejection",
+    error: new OrchestratorCommandRejectedError({
+      commandId: CommandId.make("mcp-core-configure"),
+      commandType: "session.model.set",
+      cause: "The model cannot be changed while the thread is archived.",
+    }),
+    code: "orchestration_error",
+    message: "The model cannot be changed while the thread is archived.",
+  },
+  {
+    name: "redacts a wrapped dispatch cause",
+    error: new OrchestratorDispatchError({
+      commandId: CommandId.make("mcp-core-configure"),
+      commandType: "session.model.set",
+      cause: new Error("private-storage-path"),
+    }),
+    code: "orchestration_error",
+    message: "The operation could not be completed.",
+  },
+  {
+    name: "redacts a service storage failure",
+    error: new ThreadManagement.ThreadManagementProjectionLoadError({
+      projectId: McpToolAccessTestkit.liveThreadShell(threadId).projectId,
+      threadId,
+      cause: "private-storage-path",
+    }),
+    code: "orchestration_error",
+    message: "The operation could not be completed.",
+  },
+])("thread configuration $name", ({ error, code, message }) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_configure",
+        arguments: { modelSelection: { instanceId: "codex", model: "gpt-5" } },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code,
+      message,
+    });
+    expect(result.structuredContent).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private-storage-path");
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(threadId),
+                ),
+              ),
+            configureModelSelection: () => Effect.fail(error),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
