@@ -92,6 +92,8 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  /** Actual server page backing. Older hosts may omit it. */
+  serverPageMode: Schema.optional(Schema.Literals(["native", "headless"])),
   control: Schema.optional(
     Schema.Struct({
       owner: PreviewAutomationTabOwner,
@@ -143,6 +145,7 @@ export const PreviewAutomationStatus = Schema.Struct({
         ownedByCaller: Schema.optional(Schema.Boolean),
         visible: Schema.optional(Schema.Boolean),
         profileId: Schema.optional(BrowserProfileId),
+        serverPageMode: Schema.optional(Schema.Literals(["native", "headless"])),
       }),
     ),
   ),

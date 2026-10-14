@@ -99,6 +99,51 @@ afterEach(async () => {
 });
 
 describe("HostedBrowserWebview settings hydration", () => {
+  it("releases a removed native guest without registering it when tab creation finishes late", async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await act(async () => ensureClientSettingsHydrated());
+    const tabCreation = deferred<void>();
+    mocks.createTab.mockReturnValueOnce(tabCreation.promise);
+    const threadRef = {
+      environmentId: EnvironmentId.make("headless-fallback"),
+      threadId: ThreadId.make("thread-fallback"),
+    };
+    const runtimeTabId = "late-native-fallback";
+    await act(() => {
+      renderer = create(
+        <HostedBrowserWebview
+          threadRef={threadRef}
+          tabId="server-tab"
+          runtimeTabId={runtimeTabId}
+          initialUrl="https://example.com"
+          viewport={FILL_PREVIEW_VIEWPORT}
+          pictureInPicture={false}
+          profileId="default"
+          zoomFactor={1}
+          serverDriven
+        />,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 41 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    expect(mocks.createTab).toHaveBeenCalledOnce();
+    expect(mocks.registerWebview).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    await act(async () => {
+      tabCreation.resolve();
+      await tabCreation.promise;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.registerWebview).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
+  });
+
   it("starts a retained background tab only after a settings read succeeds on retry", async () => {
     const firstRead = deferred<ClientSettings | null>();
     const retryRead = deferred<ClientSettings | null>();

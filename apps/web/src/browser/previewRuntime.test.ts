@@ -7,7 +7,11 @@ const state = vi.hoisted(() => ({
   serverBrowser: new Set<string>(),
 }));
 
-vi.mock("~/env", () => ({ isElectron: false }));
+vi.mock("~/env", () => ({
+  get isElectron() {
+    return state.desktop;
+  },
+}));
 vi.mock("~/previewStateStore", () => ({ isPreviewSupportedInRuntime: () => state.desktop }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => state.primary } }));
 vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
@@ -16,7 +20,11 @@ vi.mock("~/state/entities", () => ({
   useEnvironmentSupportsServerBrowser: () => false,
 }));
 
-import { alternatePreviewRuntime, previewRuntimeFor } from "./previewRuntime";
+import {
+  alternatePreviewRuntime,
+  previewRuntimeFor,
+  rendersServerTabNatively,
+} from "./previewRuntime";
 
 const local = "local" as EnvironmentId;
 const remote = "remote" as EnvironmentId;
@@ -56,5 +64,46 @@ describe("alternatePreviewRuntime", () => {
 
   it("offers no move outside the desktop app", () => {
     expect(alternatePreviewRuntime(remote, null, true, { runtime: "server" })).toBeNull();
+  });
+});
+
+describe("rendersServerTabNatively", () => {
+  it("streams a local tab after headless fallback while retaining native and legacy tabs", () => {
+    state.desktop = true;
+    expect(rendersServerTabNatively(local, local, { runtime: "server" })).toBe(true);
+    expect(
+      rendersServerTabNatively(local, local, {
+        runtime: "server",
+        serverPageMode: "native",
+      }),
+    ).toBe(true);
+    expect(
+      rendersServerTabNatively(local, local, {
+        runtime: "server",
+        serverPageMode: "headless",
+      }),
+    ).toBe(false);
+  });
+
+  it("never hosts remote or non-server tabs as local server webviews", () => {
+    state.desktop = true;
+    expect(
+      rendersServerTabNatively(remote, local, {
+        runtime: "server",
+        serverPageMode: "native",
+      }),
+    ).toBe(false);
+    expect(rendersServerTabNatively(local, null, { runtime: "server" })).toBe(false);
+    expect(rendersServerTabNatively(local, local, { runtime: "desktop" })).toBe(false);
+    expect(rendersServerTabNatively(local, local, null)).toBe(false);
+  });
+
+  it("streams native server pages in a web client", () => {
+    expect(
+      rendersServerTabNatively(local, local, {
+        runtime: "server",
+        serverPageMode: "native",
+      }),
+    ).toBe(false);
   });
 });

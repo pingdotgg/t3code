@@ -100,6 +100,89 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("publishes the server's page mode once and preserves a headless choice", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({
+        threadId,
+        runtime: "server",
+        url: "http://localhost:5173/",
+        profileId: "work",
+        automationOwner: "agent",
+      });
+      const native = yield* manager.setServerPageMode({
+        threadId,
+        tabId: opened.tabId,
+        mode: "native",
+      });
+      const headless = yield* manager.setServerPageMode({
+        threadId,
+        tabId: opened.tabId,
+        mode: "headless",
+      });
+      expect(native.serverPageMode).toBe("native");
+      expect(headless).toMatchObject({
+        ...opened,
+        serverPageMode: "headless",
+        updatedAt: expect.any(String),
+      });
+      const before = yield* manager.list({ threadId });
+      for (const mode of ["headless", "native"] as const) {
+        expect(yield* manager.setServerPageMode({ threadId, tabId: opened.tabId, mode })).toEqual(
+          headless,
+        );
+      }
+      const after = yield* manager.list({ threadId });
+      expect(after).toEqual(before);
+      const events = yield* collector.drain;
+      expect(events.map((event) => event.type)).toEqual(["opened", "resized", "resized"]);
+      expect(events.at(-1)).toMatchObject({ snapshot: headless, revision: after.revision });
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        serverControlled: true,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/next", title: "Next" },
+        canGoBack: true,
+        canGoForward: false,
+      });
+      yield* manager.resize({ threadId, tabId: opened.tabId, viewport: { _tag: "fill" } });
+      expect((yield* manager.list({ threadId })).sessions[0]?.serverPageMode).toBe("headless");
+    }),
+  );
+
+  it.effect(
+    "allows only server sessions to select a page mode, and never recreates a closed tab",
+    () =>
+      Effect.gen(function* () {
+        const threadId = freshThreadId();
+        const manager = yield* PreviewManager.PreviewManager;
+        const desktop = yield* manager.open({ threadId, serverPageMode: "headless" });
+        expect(desktop).not.toHaveProperty("serverPageMode");
+        expect(
+          (yield* manager
+            .setServerPageMode({ threadId, tabId: desktop.tabId, mode: "headless" })
+            .pipe(Effect.flip))._tag,
+        ).toBe("PreviewControlRequiredError");
+        const server = yield* manager.open({
+          threadId,
+          runtime: "server",
+          serverPageMode: "headless",
+        });
+        expect(server.serverPageMode).toBe("headless");
+        yield* manager.close({ threadId, tabId: server.tabId });
+        expect(
+          (yield* manager
+            .setServerPageMode({ threadId, tabId: server.tabId, mode: "headless" })
+            .pipe(Effect.flip))._tag,
+        ).toBe("PreviewSessionLookupError");
+        expect(
+          (yield* manager.list({ threadId })).sessions.map((session) => session.tabId),
+        ).toEqual([desktop.tabId]);
+      }),
+  );
+
   it.effect("lets any client size, theme, and zoom a server tab", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

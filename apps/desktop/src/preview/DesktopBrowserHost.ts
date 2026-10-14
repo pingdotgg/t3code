@@ -31,6 +31,8 @@ const lineEncoder = new TextEncoder();
 /** CDP commands through which an agent clicks, types, or navigates the page. */
 const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
+/** A capture waits for the page's next frame, which a hidden tab only draws on request. */
+const CAPTURE_COMMAND = /"method":"Page\.captureScreenshot"/;
 /** How long after an agent's input a download still counts as the agent's. */
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 
@@ -93,6 +95,8 @@ export class DesktopBrowserHost extends Context.Service<
       readonly x: number;
       readonly y: number;
     }>;
+    /** Server tabs whose page the server is waiting to capture, so they must draw. */
+    readonly frameRequests: Stream.Stream<DesktopBrowserTabKey>;
   }
 >()("@t3tools/desktop/preview/DesktopBrowserHost") {}
 
@@ -104,6 +108,7 @@ export const make = Effect.gen(function* () {
     readonly x: number;
     readonly y: number;
   }>(16);
+  const frameRequests = yield* PubSub.sliding<DesktopBrowserTabKey>(16);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
@@ -204,6 +209,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
+      if (CAPTURE_COMMAND.test(command.value.message))
+        runFork(PubSub.publish(frameRequests, tab.key));
       relayFor(tab).receive(command.value.message);
     });
 
@@ -226,6 +233,7 @@ export const make = Effect.gen(function* () {
 
   return DesktopBrowserHost.of({
     pointers: Stream.fromPubSub(pointers),
+    frameRequests: Stream.fromPubSub(frameRequests),
     // Subscribes before announcing, so no attach falls between the two.
     events: Stream.unwrap(
       Effect.gen(function* () {

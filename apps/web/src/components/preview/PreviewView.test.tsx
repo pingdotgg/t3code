@@ -6,10 +6,19 @@ import {
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
+  type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
-import { act, createElement, Profiler } from "react";
+import {
+  act,
+  createElement,
+  Profiler,
+  useEffect,
+  useImperativeHandle,
+  type ComponentProps,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ServerBrowserSurface } from "~/browser/ServerBrowserSurface";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
@@ -40,6 +49,62 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  electron: false,
+  runtime: undefined as PreviewSessionSnapshot["runtime"],
+  serverPageMode: undefined as PreviewSessionSnapshot["serverPageMode"],
+  chromeLoading: false,
+  chromeInputDisabled: false,
+  nativeSurfaceMounted: vi.fn(),
+  nativeSurfaceUnmounted: vi.fn(),
+  streamMounted: vi.fn(),
+  streamUnmounted: vi.fn(),
+  streamNavigate: vi.fn(),
+}));
+
+vi.mock("~/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/env")>()),
+  get isElectron() {
+    return mocks.electron;
+  },
+}));
+vi.mock("~/browser/previewRuntime", async (importOriginal) => {
+  const runtime = await importOriginal<typeof import("~/browser/previewRuntime")>();
+  return {
+    ...runtime,
+    useRendersServerTabNatively: (
+      environmentId: EnvironmentId,
+      snapshot: Pick<PreviewSessionSnapshot, "runtime" | "serverPageMode"> | null | undefined,
+    ) =>
+      runtime.rendersServerTabNatively(
+        environmentId,
+        EnvironmentId.make("environment-1"),
+        snapshot,
+      ),
+  };
+});
+vi.mock("~/browser/ServerBrowserSurface", () => ({
+  ServerBrowserSurface: (props: ComponentProps<typeof ServerBrowserSurface>) => {
+    useImperativeHandle(
+      props.ref,
+      () => ({
+        navigate: mocks.streamNavigate,
+        history: vi.fn(),
+        reload: vi.fn(),
+        viewport: vi.fn(),
+        canvas: () => null,
+      }),
+      [],
+    );
+    useEffect(() => {
+      mocks.streamMounted(props.tabId);
+      props.onControl?.({ controller: "you", canOperate: true, generation: 1, dialog: null });
+      props.onFirstFrame?.();
+      return () => {
+        mocks.streamUnmounted(props.tabId);
+      };
+    }, []);
+    return createElement("server-surface");
+  },
 }));
 
 const EMPTY_HISTORY: never[] = [];
@@ -135,6 +200,8 @@ vi.mock("~/previewStateStore", () => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
+            runtime: mocks.runtime,
+            serverPageMode: mocks.serverPageMode,
             navStatus: {
               _tag: "Success",
               url: "http://example.com/",
@@ -232,6 +299,8 @@ vi.mock("./previewBridge", () => ({
 vi.mock("./PreviewChromeRow", () => ({
   PreviewChromeRow: (props: {
     onSubmit: (url: string) => void;
+    loading: boolean;
+    inputDisabled?: boolean;
     onPickElement?: () => void;
     onPictureInPicture?: () => void;
     pictureInPicture?: boolean;
@@ -240,6 +309,8 @@ vi.mock("./PreviewChromeRow", () => ({
     };
   }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.chromeLoading = props.loading;
+    mocks.chromeInputDisabled = props.inputDisabled ?? false;
     mocks.toggleAnnotation = props.onPickElement ?? null;
     mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
     mocks.toggleNativePictureInPicture =
@@ -266,7 +337,17 @@ vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({
   AgentBrowserCursor: () => createElement("agent-cursor"),
 }));
-vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
+vi.mock("~/browser/BrowserSurfaceSlot", () => ({
+  BrowserSurfaceSlot: (props: { tabId: string }) => {
+    useEffect(() => {
+      mocks.nativeSurfaceMounted(props.tabId);
+      return () => {
+        mocks.nativeSurfaceUnmounted(props.tabId);
+      };
+    }, [props.tabId]);
+    return null;
+  },
+}));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
@@ -372,6 +453,52 @@ describe("PreviewView navigation", () => {
     mocks.recordingTabIds = new Set();
     mocks.recordingRuntimeTabId = null;
     mocks.recordVisitForThread.mockClear();
+    mocks.electron = false;
+    mocks.runtime = undefined;
+    mocks.serverPageMode = undefined;
+    mocks.nativeSurfaceMounted.mockClear();
+    mocks.nativeSurfaceUnmounted.mockClear();
+    mocks.streamMounted.mockClear();
+    mocks.streamUnmounted.mockClear();
+    mocks.streamNavigate.mockClear();
+  });
+
+  it("switches a native server tab to its stream and drops stale desktop state", async () => {
+    mocks.electron = true;
+    mocks.runtime = "server";
+    mocks.serverPageMode = "native";
+    mocks.loading = true;
+    const document = installTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const container = document.createElement("div");
+    const root = createRoot(container as unknown as Element);
+    const hasCursor = (node: TestNode): boolean =>
+      node.nodeName === "AGENT-CURSOR" || node.childNodes.some(hasCursor);
+    const view = () => <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />;
+    try {
+      await act(() => root.render(view()));
+      expect(mocks.nativeSurfaceMounted).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+      expect(mocks.streamMounted).not.toHaveBeenCalled();
+      expect(mocks.chromeLoading).toBe(true);
+      expect(hasCursor(container)).toBe(true);
+
+      mocks.serverPageMode = "headless";
+      await act(() => root.render(view()));
+      expect(mocks.nativeSurfaceUnmounted).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+      expect(mocks.streamMounted).toHaveBeenCalledTimes(1);
+      expect(mocks.streamMounted).toHaveBeenCalledWith("tab-1");
+      expect(mocks.chromeLoading).toBe(false);
+      expect(mocks.chromeInputDisabled).toBe(false);
+      expect(mocks.toggleAnnotation).toBeNull();
+      expect(hasCursor(container)).toBe(false);
+
+      await act(async () => mocks.submittedUrl?.("localhost:3000/stream"));
+      expect(mocks.streamNavigate).toHaveBeenCalledWith("http://localhost:3000/stream");
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows the cursor in a replacement browser while the old instance still records", async () => {

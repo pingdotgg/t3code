@@ -429,6 +429,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
     },
+    onFrameRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, tabId: unknown) => {
+        if (typeof tabId === "string") listener(tabId);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FRAME_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_FRAME_REQUEST_CHANNEL, wrappedListener);
+    },
     onOpenLink: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, linkEvent: unknown) => {
         if (typeof linkEvent !== "object" || linkEvent === null) return;

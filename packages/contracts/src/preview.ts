@@ -172,10 +172,10 @@ export const PreviewNavStatus = Schema.Union([
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 
 /**
- * Where a tab's page runs. `desktop` is an Electron <webview> owned by one
- * desktop client; `server` is headless Chromium owned by the environment
- * server, viewed by any client through `/api/preview-stream` and driven by
- * agents with no client attached. Absent means `desktop`.
+ * Who manages a tab. `desktop` is an Electron <webview> owned by one desktop
+ * client; `server` is owned by the environment server and driven by agents.
+ * A server tab can use its desktop host's native page or headless Chromium;
+ * other clients view either through `/api/preview-stream`. Absent means `desktop`.
  */
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
@@ -213,6 +213,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
    */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
+  /** Server-selected page backing. Absent preserves clients' existing host-based rendering choice. */
+  serverPageMode: Schema.optional(Schema.Literals(["native", "headless"])),
   /** Authenticated provider session owning an isolated server tab. */
   automationOwner: Schema.optional(Schema.String),
   /** An agent opened this tab and asked to show it, so viewers float it. */
