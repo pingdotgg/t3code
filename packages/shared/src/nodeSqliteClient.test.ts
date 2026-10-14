@@ -678,3 +678,87 @@ it.effect("does not hand out a worker that reports ready after another read time
     }),
   ),
 );
+
+const withCheckpointClient = <A, E>(
+  use: (
+    sql: SqlClient.SqlClient,
+    filename: string,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-checkpoint-" });
+    const filename = path.join(directory, "state.sqlite");
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      return yield* use(sql, filename);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+// Resolves once the worker has handled a request sent now, after every
+// statement so far. Earlier requests from the writer reply with null.
+const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        const onReply = (reply: unknown) => {
+          if (reply !== "barrier") return;
+          worker.off("message", onReply);
+          resolve();
+        };
+        worker.on("message", onReply);
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+        worker.postMessage("barrier");
+      }),
+  );
+
+it.effect("checkpoints the WAL on the worker instead of the writer", () =>
+  withCheckpointClient((sql, filename) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const walSize = Effect.map(fs.stat(`${filename}-wal`), (info) => Number(info.size));
+      const worker = startedWorkers.at(-1)!;
+      const limit = 1024 * 1024;
+      yield* sql.unsafe(`PRAGMA journal_size_limit = ${limit}`);
+      const autocheckpoint = yield* sql<{
+        readonly wal_autocheckpoint: number;
+      }>`PRAGMA wal_autocheckpoint`;
+      // The writer leaves a WAL of this size to the worker.
+      assert.equal(autocheckpoint[0]?.wal_autocheckpoint, 10_000);
+
+      // About 1200 frames, past the 1000 that start a checkpoint.
+      yield* sql`CREATE TABLE pages(payload BLOB)`;
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+        INSERT INTO pages(payload) SELECT randomblob(4000) FROM n
+      `;
+      yield* checkpointWorkerReply(worker);
+      const wal = yield* sql<{
+        readonly log: number;
+        readonly checkpointed: number;
+      }>`PRAGMA wal_checkpoint(NOOP)`;
+      assert.isAbove(wal[0]!.log, 1000);
+      assert.equal(wal[0]!.checkpointed, wal[0]!.log);
+
+      // Every frame is in the database, so the next commit restarts the WAL and
+      // cuts the file back to the size limit.
+      assert.isAbove(yield* walSize, limit);
+      yield* sql`INSERT INTO pages(payload) VALUES (x'00')`;
+      assert.isAtMost(yield* walSize, limit);
+    }),
+  ),
+);
+
+it.effect("hands checkpoints back to the writer when the worker stops", () =>
+  withCheckpointClient((sql) =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => startedWorkers.at(-1)!.terminate());
+      const autocheckpoint = yield* sql<{
+        readonly wal_autocheckpoint: number;
+      }>`PRAGMA wal_autocheckpoint`;
+      assert.equal(autocheckpoint[0]?.wal_autocheckpoint, 1000);
+    }),
+  ),
+);
