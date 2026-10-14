@@ -16,8 +16,8 @@ export function AnimatedWidth({
   useLayoutEffect(() => {
     const element = contentRef.current;
     if (!element) return;
-    return observeResize(element, () => {
-      const nextWidth = Math.ceil(element.getBoundingClientRect().width);
+    return observeResize(element, (entries) => {
+      const nextWidth = Math.ceil(entries.at(-1)?.contentRect.width ?? 0);
       if (nextWidth > 0) setWidth(nextWidth);
     });
   }, []);
