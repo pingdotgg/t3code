@@ -77,9 +77,7 @@ export interface ServiceUnit {
   readonly reload: () => Promise<void>;
 }
 
-export function serviceUnitFromEnvironment(
-  env: NodeJS.ProcessEnv = process.env,
-): ServiceUnit | undefined {
+function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
   const unitName = env[SERVICE_UNIT_ENV]?.trim();
   const home = env.HOME?.trim();
   if (!unitName || !home) return undefined;
