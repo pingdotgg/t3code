@@ -526,28 +526,36 @@ parentPort.on("message", (request) => {
 /**
  * Moves the writer's WAL checkpoints to a worker. Call the returned function
  * after each statement on the writer. While the worker runs, the writer only
- * checkpoints at WRITER_BACKSTOP_FRAMES. If the worker fails or exits, the
- * writer goes back to SQLite's default.
+ * checkpoints at WRITER_BACKSTOP_FRAMES. If the worker cannot start, fails or
+ * exits, the writer goes back to SQLite's default and one warning says why.
  */
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
 ) {
+  const warn = (reason: string) =>
+    Effect.logWarning(
+      "SQLite checkpoint worker unavailable; checkpoints run on the main connection",
+      { reason },
+    );
   let worker: NodeWorkerThreads.Worker;
   try {
     worker = new NodeWorkerThreads.Worker(checkpointWorkerSource, {
       eval: true,
       workerData: { filename, frames: CHECKPOINT_FRAMES, idleMs: CHECKPOINT_IDLE_MS },
     });
-  } catch {
+  } catch (cause) {
     // No worker threads here: the writer keeps checkpointing.
+    yield* warn(String(cause));
     return undefined;
   }
   writer.exec(`PRAGMA wal_autocheckpoint = ${WRITER_BACKSTOP_FRAMES};`);
+  // Worker events arrive outside any fiber; this keeps the client's loggers.
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
   let stopped = false;
   let checking = false;
   let checkAgain = false;
-  const handBack = () => {
+  const handBack = (reason: string) => {
     if (stopped) return;
     stopped = true;
     try {
@@ -555,10 +563,18 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     } catch {
       // The writer is already closed.
     }
+    runFork(warn(reason));
   };
-  worker.on("error", handBack);
-  worker.on("exit", handBack);
-  yield* Effect.addFinalizer(() => Effect.promise(() => worker.terminate()));
+  // A worker that throws, such as on SQLite before 3.51, emits "error" before "exit".
+  worker.on("error", (cause) => handBack(cause.message));
+  worker.on("exit", (code) => handBack(`exited with code ${code}`));
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => {
+      // A normal shutdown: the writer closes next, so there is nothing to hand back or report.
+      stopped = true;
+      return worker.terminate();
+    }),
+  );
 
   // At most one request is in flight. A statement that runs during it asks for
   // one more check, so the frames of a last commit before idle still get one.

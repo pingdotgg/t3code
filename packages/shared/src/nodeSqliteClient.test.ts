@@ -18,6 +18,8 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 // When on, workers run a script that never announces, like a worker stuck opening the file.
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
+// When set, workers throw this at startup, like a checkpoint worker on SQLite before 3.51.
+const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
@@ -26,7 +28,9 @@ vi.mock("node:worker_threads", async (importOriginal) => {
       super(
         ...((silentWorkers.on
           ? ["setInterval(() => {}, 1 << 30);", { eval: true }]
-          : args) as ConstructorParameters<typeof actual.Worker>),
+          : failingWorkers.message !== undefined
+            ? [`throw new Error(${JSON.stringify(failingWorkers.message)});`, { eval: true }]
+            : args) as ConstructorParameters<typeof actual.Worker>),
       );
       startedWorkers.push(this);
     }
@@ -762,3 +766,45 @@ it.effect("hands checkpoints back to the writer when the worker stops", () =>
     }),
   ),
 );
+
+it.effect("warns once and hands checkpoints back when the worker fails at startup", () => {
+  const { warnings, layer: logs } = captureWarnings();
+  const reason = "SQLite 3.50.4 has no NOOP checkpoint";
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      failingWorkers.message = reason;
+    }),
+    () =>
+      withCheckpointClient((sql) =>
+        Effect.gen(function* () {
+          const worker = startedWorkers.at(-1)!;
+          // threadId is -1 once the worker has exited and the client has seen "error" and "exit".
+          if (worker.threadId !== -1) {
+            yield* Effect.promise(() => new Promise((resolve) => worker.once("exit", resolve)));
+          }
+          const autocheckpoint = yield* sql<{
+            readonly wal_autocheckpoint: number;
+          }>`PRAGMA wal_autocheckpoint`;
+          assert.equal(autocheckpoint[0]?.wal_autocheckpoint, 1000);
+          assert.deepEqual(warnings, [
+            [
+              "SQLite checkpoint worker unavailable; checkpoints run on the main connection",
+              { reason },
+            ],
+          ]);
+        }),
+      ),
+    () =>
+      Effect.sync(() => {
+        failingWorkers.message = undefined;
+      }),
+  ).pipe(Effect.provide(logs));
+});
+
+it.effect("does not warn when the client stops its checkpoint worker", () => {
+  const { warnings, layer: logs } = captureWarnings();
+  return Effect.gen(function* () {
+    yield* withCheckpointClient(() => Effect.void);
+    assert.lengthOf(warnings, 0);
+  }).pipe(Effect.provide(logs));
+});
