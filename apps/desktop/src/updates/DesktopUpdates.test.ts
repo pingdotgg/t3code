@@ -926,6 +926,83 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect(
+    "filters multi-arch Windows update files to arm64 and ignores x64-only manifests on arm64 hosts",
+    () => {
+      let disableDifferentialCount = 0;
+      const harness = makeHarness({
+        platform: "win32",
+        processArch: "x64",
+        runningUnderArm64Translation: true,
+        setDisableDifferentialDownload: Effect.sync(() => {
+          disableDifferentialCount += 1;
+        }),
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const initialState = yield* updates.getState;
+          assert.equal(initialState.hostArch, "arm64");
+          assert.equal(initialState.appArch, "x64");
+          assert.isTrue(initialState.runningUnderArm64Translation);
+          assert.equal(disableDifferentialCount, 1);
+
+          const x64OnlyPayload = {
+            version: "1.2.4",
+            files: [
+              { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
+              { url: "T3-Code-setup.exe", sha512: "unknownsha", size: 100 },
+            ],
+          };
+          harness.emit("update-available", x64OnlyPayload);
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).status, "up-to-date");
+          assert.isNull((yield* updates.getState).availableVersion);
+
+          const multiArchPayload = {
+            version: "1.2.4",
+            files: [
+              { url: "T3-Code-setup.exe", sha512: "unknownsha", size: 100 },
+              { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
+              { url: "T3-Code-1.2.4-arm64.exe", sha512: "arm64sha", size: 95 },
+            ],
+          };
+          harness.emit("update-available", multiArchPayload);
+          yield* flushCallbacks;
+
+          const availableState = yield* updates.getState;
+          assert.equal(availableState.status, "available");
+          assert.equal(availableState.availableVersion, "1.2.4");
+          assert.deepEqual(multiArchPayload.files, [
+            { url: "T3-Code-1.2.4-arm64.exe", sha512: "arm64sha", size: 95 },
+          ]);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+  it.effect("keeps legacy untagged update manifests usable", () => {
+    const harness = makeHarness({ platform: "win32", processArch: "arm64" });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const payload = {
+          version: "1.2.4",
+          files: [{ url: "T3-Code-setup.exe", sha512: "legacysha", size: 100 }],
+        };
+        harness.emit("update-available", payload);
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "available");
+        assert.deepEqual(payload.files, [
+          { url: "T3-Code-setup.exe", sha512: "legacysha", size: 100 },
+        ]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 });
 
 describe("describeUpdateErrorCause", () => {

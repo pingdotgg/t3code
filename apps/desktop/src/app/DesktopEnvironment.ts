@@ -131,7 +131,7 @@ function resolveDesktopRuntimeInfo(input: {
 }): DesktopRuntimeInfo {
   const appArch = normalizeDesktopArch(input.processArch);
 
-  if (input.platform !== "darwin") {
+  if (input.platform !== "darwin" && input.platform !== "win32") {
     return {
       hostArch: appArch,
       appArch,

@@ -1,0 +1,40 @@
+diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
+--- a/out/NsisUpdater.js
++++ b/out/NsisUpdater.js
+@@ -27,10 +27,35 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+             this._verifyUpdateCodeSignature = value;
+         }
+     }
++    /** Filters update files to the appropriate architecture.
++     * On arm64 Windows hosts (including x64 builds running under Prism translation),
++     * arm64 files are preferred when available. On x64 hosts, arm64 files are excluded. */
++    static filterFilesForArch(files, isArm64Windows) {
++        const isArm64File = (file) => { var _a; return file.url.pathname.includes("arm64") || ((_a = file.info.url) === null || _a === void 0 ? void 0 : _a.includes("arm64")); };
++        const hasExplicitArch = files.some(file => /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.url.pathname) || /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.info.url || ""));
++        if (!hasExplicitArch) {
++            return files;
++        }
++        if (isArm64Windows && (process.arch === "arm64" || files.some(isArm64File))) {
++            return files.filter(file => isArm64Windows === isArm64File(file));
++        }
++        return files.filter(file => !isArm64File(file));
++    }
+     /*** @private */
+     doDownloadUpdate(downloadUpdateOptions) {
++        var _a;
+         const provider = downloadUpdateOptions.updateInfoAndProvider.provider;
+-        const fileInfo = (0, Provider_1.findFile)(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), "exe");
++        let isArm64Translation = false;
++        try {
++            const electronApp = (_a = this.app) === null || _a === void 0 ? void 0 : _a.app;
++            isArm64Translation = (electronApp != null ? electronApp.runningUnderARM64Translation : require("electron").app.runningUnderARM64Translation) === true;
++        }
++        catch (_ignored) {
++            // ignore
++        }
++        const isArm64Windows = process.arch === "arm64" || isArm64Translation || (process.env["PROCESSOR_ARCHITEW6432"] || "").toUpperCase() === "ARM64";
++        const files = NsisUpdater.filterFilesForArch(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), isArm64Windows);
++        const fileInfo = (0, Provider_1.findFile)(files, "exe");
+         return this.executeDownload({
+             fileExtension: "exe",
+             downloadUpdateOptions,

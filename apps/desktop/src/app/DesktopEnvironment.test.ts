@@ -200,4 +200,20 @@ describe("DesktopEnvironment", () => {
       );
     }),
   );
+
+  it.effect("detects x64 builds running under ARM64 translation on Windows", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "win32",
+        processArch: "x64",
+        runningUnderArm64Translation: true,
+      });
+
+      assert.deepEqual(environment.runtimeInfo, {
+        hostArch: "arm64",
+        appArch: "x64",
+        runningUnderArm64Translation: true,
+      });
+    }),
+  );
 });
