@@ -428,7 +428,8 @@ export const layerExecutor: Layer.Layer<
               .pipe(
                 // The last failed attempt tells waiting clients it failed,
                 // instead of leaving them to time out. Clients get a fixed
-                // message; the worker logs the full cause for each attempt.
+                // message unless the failure has a user-facing reason; the
+                // worker logs the full cause for each attempt.
                 Effect.tapCause((cause) =>
                   willRetry || Cause.hasInterruptsOnly(cause)
                     ? Effect.void
@@ -438,7 +439,10 @@ export const layerExecutor: Layer.Layer<
                           commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
                           threadId: effect.threadId,
                           requestId: effect.commandId,
-                          message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                          message: Option.match(Cause.findErrorOption(cause), {
+                            onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                            onSome: CheckpointRollbackService.rollbackFailureClientMessage,
+                          }),
                         })
                         .pipe(
                           Effect.catchCause((recordCause) =>

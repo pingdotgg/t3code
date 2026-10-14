@@ -8,6 +8,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,6 +30,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 
 // A root that does not exist never overlaps, so other owners decide isolation.
 const unrelatedProject = Option.some({
@@ -341,6 +343,123 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
     assert.equal(restore.mock.calls.length, 0);
   }).pipe(Effect.provide(layerTest));
 });
+
+it.effect.each([
+  {
+    name: "a held Git index lock",
+    restoreCause: new VcsProcessExitError({
+      operation: "GitVcsDriverCore.restoreCheckpoint",
+      command: "git",
+      cwd: process.cwd(),
+      exitCode: 128,
+      detail: GIT_INDEX_LOCKED_DETAIL,
+      failureKind: "command-failed",
+      retryable: true,
+    }),
+    expectedMessage: GIT_INDEX_LOCKED_DETAIL,
+  },
+  {
+    name: "raw Git output",
+    restoreCause: new VcsProcessExitError({
+      operation: "GitVcsDriver.restoreCheckpoint",
+      command: "git",
+      cwd: process.cwd(),
+      exitCode: 1,
+      detail: "error: could not clean /home/user/project/secret.txt",
+      failureKind: "command-failed",
+    }),
+    expectedMessage: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+  },
+  {
+    name: "an unclassified Git failure",
+    restoreCause: new VcsProcessExitError({
+      operation: "GitVcsDriverCore.restoreCheckpoint",
+      command: "git",
+      cwd: process.cwd(),
+      exitCode: 128,
+      detail: "Process exited with a non-zero status.",
+      failureKind: "command-failed",
+    }),
+    expectedMessage: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+  },
+])(
+  "tells clients about $name only when it is a held index lock",
+  ({ restoreCause, expectedMessage }) => {
+    const threadId = ThreadId.make("thread:rollback-restore-failed");
+    const providerThreadId = ProviderThreadId.make("provider-thread:rollback-restore-failed");
+    const providerSessionId = ProviderSessionId.make("provider-session:rollback-restore-failed");
+    const checkpointId = CheckpointId.make("checkpoint:rollback-restore-failed");
+    const scopeId = CheckpointScopeId.make("checkpoint-scope:rollback-restore-failed");
+    const providerInstanceId = ProviderInstanceId.make("provider_rollback_restore_failed");
+    // Checkpoint has no appRunOrdinal, so rollback targets thread_start and
+    // never needs a provider turn; it still goes through checkpoints.restore.
+    const restore = vi.fn(() =>
+      Effect.fail(
+        new CheckpointService.CheckpointRestoreError({
+          scopeId,
+          checkpointId,
+          cause: restoreCause,
+        }),
+      ),
+    );
+    const projection = {
+      thread: {
+        worktreePath: process.cwd(),
+        activeProviderThreadId: providerThreadId,
+        modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+      },
+      providerThreads: [{ id: providerThreadId, providerSessionId, providerInstanceId }],
+      providerSessions: [],
+      checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: null }],
+      checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
+      runs: [],
+      attempts: [],
+      providerTurns: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = layerCheckpointRollbackService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ThreadCommandExecutor.layer,
+          Layer.mock(CheckpointService.CheckpointServiceV2)({ restore }),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadRecords: () => Effect.succeed(projection),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 1,
+                snapshotSequence: 0,
+                threads: [],
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            open: () => Effect.succeed({} as never),
+          }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+            resolve: () => Effect.succeed({} as never),
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+      const error = yield* service
+        .execute({
+          threadId,
+          providerThreadId,
+          checkpointId,
+          scopeId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.reason, "unexpected-failure");
+      assert.equal(CheckpointRollbackService.rollbackFailureClientMessage(error), expectedMessage);
+      assert.equal(restore.mock.calls.length, 1);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
 
 it.effect.each([
   { restoreFiles: true, shared: "none" },
