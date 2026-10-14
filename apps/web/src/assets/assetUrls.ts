@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState,
   assetUrlStateFromResult,
+  blockedAssetUrlState,
   EMPTY_ASSET_URL_ATOM,
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
@@ -21,19 +22,14 @@ export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
-  const fileAccess = useFilesystemReadAccess(environmentId);
-  const canReadResource =
-    fileAccess.canReadFiles ||
-    (resource?._tag !== "workspace-file" &&
-      resource?._tag !== "media-file" &&
-      resource?._tag !== "draft-workspace-file");
+  const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
-    !canReadResource || environmentId === null || resource === null
+    blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  if (!canReadResource) return { _tag: fileAccess.isPending ? "Loading" : "Failure" };
+  if (blocked !== null) return blocked;
   return assetUrlStateFromResult(
     result,
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,

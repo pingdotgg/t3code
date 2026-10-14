@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
+  blockedAssetUrlState,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   EMPTY_ASSET_URL_ATOM,
@@ -43,26 +44,20 @@ export function useAssetUrlState(
     session: fileAccessSession.data,
     sessionError: fileAccessSession.error,
   });
-  const canReadResource =
-    fileAccess.canReadFiles ||
-    (resource?._tag !== "workspace-file" &&
-      resource?._tag !== "media-file" &&
-      resource?._tag !== "draft-workspace-file");
+  const blocked = blockedAssetUrlState(resource, fileAccess);
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = fileEnvironment.presentation?.connection.phase ?? "available";
   const result = useAtomValue(
-    !canReadResource || environmentId === null || resource === null
+    blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  const shared = !canReadResource
-    ? fileAccess.isPending
-      ? { _tag: "Loading" as const }
-      : { _tag: "Failure" as const }
-    : assetUrlStateFromResult(
-        result,
-        preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
-      );
+  const shared =
+    blocked ??
+    assetUrlStateFromResult(
+      result,
+      preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
+    );
   return deriveAssetUrlState({
     connectionPhase,
     // A failure left over from an outage is re-queried as soon as the

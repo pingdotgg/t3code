@@ -1,7 +1,7 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { AssetUrlState as SharedAssetUrlState } from "@t3tools/client-runtime/state/assets";
 
-export type AssetUrlFailureReason = "disconnected" | "failed";
+export type AssetUrlFailureReason = "disconnected" | "failed" | "missing-file-access";
 
 /** The shared state plus a reason on failure, so previews can offer the right retry. */
 export type AssetUrlState =
@@ -42,7 +42,7 @@ export function deriveAssetUrlState(input: {
       return { _tag: "Loading" };
     case "connected":
       return input.shared._tag === "Failure"
-        ? { _tag: "Failure", reason: "failed" }
+        ? { _tag: "Failure", reason: input.shared.reason ?? "failed" }
         : { _tag: "Loading" };
   }
 }
