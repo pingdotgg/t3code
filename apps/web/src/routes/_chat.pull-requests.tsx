@@ -411,9 +411,12 @@ function PullRequestsRouteView() {
   // the one wrong answer the empty state can give.
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
   // Only the projects the page can actually read: one on an environment that cannot list pull
-  // requests could neither be listed nor acted on.
+  // requests could neither be listed nor acted on, and the Scratch folder is never a repository.
   const projects = useMemo(
-    () => allProjects.filter((project) => environmentIds.includes(project.environmentId)),
+    () =>
+      allProjects.filter(
+        (project) => !project.isScratch && environmentIds.includes(project.environmentId),
+      ),
     [allProjects, environmentIds],
   );
   const environmentLabels = useMemo(
