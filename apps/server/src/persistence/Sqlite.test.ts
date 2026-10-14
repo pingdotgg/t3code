@@ -114,6 +114,21 @@ it.effect("collects planner statistics for an existing database on open", () => 
   );
 });
 
+it.effect("only fsyncs the database file at WAL checkpoints", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    // 1 is NORMAL.
+    assert.equal(rows[0]?.synchronous, 1);
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
 it.effect("applies busy_timeout in the shared persistence setup", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
