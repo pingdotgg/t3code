@@ -791,6 +791,36 @@ describe("ChatMarkdown file option chips", () => {
   });
 });
 
+describe("ChatMarkdown Codex follow-up suggestions", () => {
+  it.each([true, false])("renders the label with parseRawHtml=%s", (parseRawHtml) => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          'Done.\n\n- :codex-followup[Prepare print version]{prompt="Prepare the document for printing."}'
+        }
+        lineBreaks={!parseRawHtml}
+        parseRawHtml={parseRawHtml}
+      />,
+    );
+
+    expect(html).toContain("Prepare print version");
+    expect(html).not.toContain("codex-followup");
+    expect(html).not.toContain("Prepare the document for printing.");
+  });
+
+  it("keeps the label of a malformed follow-up created by over-indented list recovery", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="-       Next :codex-followup[Prepare print version]"
+      />,
+    );
+
+    expect(html).toContain("<li>Next :codex-followup[Prepare print version]</li>");
+  });
+});
+
 const ARTIFACT_TEMPLATE_DIRECTIVE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
 
