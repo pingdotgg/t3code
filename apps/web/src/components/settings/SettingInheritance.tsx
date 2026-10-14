@@ -114,7 +114,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
  * An environment's own value for a setting. `storageCleanup` holds one rule
  * per field, so its rows name the field they show.
  */
-export function environmentSettingValue(
+function environmentSettingValue(
   settings: ServerSettings,
   key: keyof ServerSettings,
   field?: keyof StorageCleanupSettings,
