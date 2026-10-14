@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
+import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -13,6 +14,7 @@ const testState = vi.hoisted(() => ({
   scopes: new Set<string>(),
   snapshot: null as EnvironmentCloudLinkStateResult | null,
   renderedSnapshot: null as EnvironmentCloudLinkStateResult | null,
+  relayProviderKind: null as RelayManagedEndpointProviderKind | null,
   getToken: vi.fn<() => Promise<string | null>>(),
   link: vi.fn(),
   unlink: vi.fn(),
@@ -22,12 +24,26 @@ const testState = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => ({
+    environments: new Map(
+      testState.relayProviderKind === null
+        ? []
+        : [
+            [
+              "primary",
+              { environment: { endpoint: { providerKind: testState.relayProviderKind } } },
+            ],
+          ],
+    ),
+  }),
+}));
 vi.mock("@clerk/react", () => ({
   useAuth: () => ({ getToken: testState.getToken, isSignedIn: true }),
 }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: testState.toast } }));
 vi.mock("../state/relay", () => ({
-  relayEnvironmentDiscovery: { refresh: testState.refreshDiscovery },
+  relayEnvironmentDiscovery: { refresh: testState.refreshDiscovery, stateValueAtom: {} },
 }));
 vi.mock("../state/session", () => ({
   readEnvironmentScope: (_environmentId: string, scope: string) => testState.scopes.has(scope),
@@ -105,6 +121,7 @@ beforeEach(() => {
   testState.scopes = new Set([AuthRelayReadScope, AuthRelayWriteScope]);
   testState.snapshot = linkedState;
   testState.renderedSnapshot = linkedState;
+  testState.relayProviderKind = null;
   testState.getToken.mockReset().mockResolvedValue("clerk-token");
   for (const command of [
     testState.link,
@@ -189,6 +206,30 @@ describe("useCloudLinkController", () => {
       target,
       publishAgentActivity: true,
     });
+  });
+
+  it("shows a link the relay holds as publish-only as off and relinks it as managed", async () => {
+    testState.relayProviderKind = "manual";
+    await mountController();
+
+    expect(controller?.managedTunnelActive).toBe(false);
+    expect(controller?.managedTunnelOutOfSync).toBe(true);
+    expect(await reconcile({ managedTunnel: true, publish: false })).toBe(true);
+    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
+      target,
+      clerkToken: "clerk-token",
+      mode: "managed",
+    });
+  });
+
+  it("keeps a managed link that the relay also holds as managed", async () => {
+    testState.relayProviderKind = "cloudflare_tunnel";
+    await mountController();
+
+    expect(controller?.managedTunnelActive).toBe(true);
+    expect(controller?.managedTunnelOutOfSync).toBe(false);
+    expect(await reconcile({ managedTunnel: true, publish: false })).toBe(true);
+    expect(testState.link).not.toHaveBeenCalled();
   });
 
   it("stops the preference write if management permission is lost after linking", async () => {

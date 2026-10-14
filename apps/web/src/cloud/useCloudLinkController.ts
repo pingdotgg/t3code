@@ -1,6 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import { EnvironmentId, AuthRelayReadScope, AuthRelayWriteScope } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  type EnvironmentCloudLinkStateResult,
+} from "@t3tools/contracts";
+import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -28,6 +35,24 @@ export interface CloudLinkDesiredState {
 }
 
 /**
+ * Whether the link has a working managed tunnel. The local tunnel config can
+ * outlive a relay link that drifted to publish-only, and clients then get
+ * `endpoint_provider_not_managed`. So when relay discovery has this
+ * environment's record, it must also say managed. Older environment servers
+ * predate managedTunnelActive; for them a link always implies a tunnel.
+ */
+function isManagedTunnelActive(
+  linkState: EnvironmentCloudLinkStateResult,
+  relayProviderKind: RelayManagedEndpointProviderKind | undefined,
+) {
+  const localManagedTunnel = linkState.managedTunnelActive ?? linkState.linked;
+  return (
+    localManagedTunnel &&
+    (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
+  );
+}
+
+/**
  * Drives the primary environment's T3 Connect link. T3 Connect (managed
  * tunnel) and agent-activity publishing are independent capabilities backed by
  * a single relay link, so consumers express the full desired state and
@@ -52,6 +77,11 @@ export function useCloudLinkController() {
     { reportFailure: false },
   );
   const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const relayEnvironments = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments;
+  const primaryEnvironmentId = primaryCloudLinkState.target?.environmentId;
+  const relayProviderKind = primaryEnvironmentId
+    ? relayEnvironments.get(primaryEnvironmentId)?.environment.endpoint.providerKind
+    : undefined;
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
@@ -74,10 +104,12 @@ export function useCloudLinkController() {
     });
   };
 
-  // Older environment servers predate the managedTunnelActive field; for them a
-  // link always implies a managed tunnel, so fall back to `linked`.
-  const managedTunnelActive =
-    primaryCloudLinkState.data?.managedTunnelActive ?? primaryCloudLinkState.data?.linked ?? false;
+  const linkData = primaryCloudLinkState.data;
+  const managedTunnelActive = linkData ? isManagedTunnelActive(linkData, relayProviderKind) : false;
+  // Local state says managed but the relay holds a publish-only link. Turning
+  // T3 Connect on relinks as managed, which repairs it.
+  const managedTunnelOutOfSync =
+    linkData !== null && !managedTunnelActive && isManagedTunnelActive(linkData, undefined);
   const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
   const holdWebhooksWhileOffline = primaryCloudLinkState.data?.holdWebhooksWhileOffline ?? false;
   const linked = primaryCloudLinkState.data?.linked ?? false;
@@ -145,7 +177,7 @@ export function useCloudLinkController() {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
       }
-      const currentManagedTunnel = currentLinkState.managedTunnelActive ?? currentLinkState.linked;
+      const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
       if (!currentLinkState.linked || currentManagedTunnel !== desired.managedTunnel) {
         const linkResult = await linkPrimaryEnvironment({
           target,
@@ -194,6 +226,7 @@ export function useCloudLinkController() {
     linkState: primaryCloudLinkState,
     linked,
     managedTunnelActive,
+    managedTunnelOutOfSync,
     publishAgentActivity,
     holdWebhooksWhileOffline,
     operationError,
