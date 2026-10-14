@@ -1,8 +1,10 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+
+const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 import type { PendingUserInput } from "../../session-logic";
 
 const prompt: PendingUserInput = {
@@ -28,6 +30,8 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}
+      cwd="/repo"
+      threadRef={threadRef}
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
@@ -67,5 +71,16 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Which approach should the migration take?");
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
+  });
+
+  it("links URLs in the question text", () => {
+    const url = "https://accounts.t3.codes/device?user_code=RTJS-TQGS";
+    const question = prompt.questions[0]!;
+    const markup = renderPanel({
+      ...prompt,
+      questions: [{ ...question, question: `Authorize BeeBox at ${url} and confirm.` }],
+    });
+
+    expect(markup).toMatch(new RegExp(`<a[^>]*href="${url.replace(/[?.]/g, "\\$&")}"`));
   });
 });
