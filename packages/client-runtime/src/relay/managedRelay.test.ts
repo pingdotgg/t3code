@@ -12,6 +12,7 @@ import * as Tracer from "effect/Tracer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -596,6 +597,45 @@ describe("ManagedRelayClient", () => {
         _tag: "ManagedRelayRequestFailedError",
         traceId: "trace-managed-relay",
       });
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
+  it.effect("explains a relay deadline 504 on link and keeps its trace ID", () => {
+    const fetchFn = (() =>
+      Promise.resolve(
+        Response.json(
+          { error: "relay_request_deadline_exceeded" },
+          {
+            status: 504,
+            headers: {
+              traceparent: "00-4684d7d140f34f0393d42744d240e207-0baf648c44f4bce6-01",
+            },
+          },
+        ),
+      )) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .linkEnvironment({
+          clerkToken: "clerk-token",
+          payload: {
+            proof: "link-proof",
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayRequestFailedError",
+        status: 504,
+        traceId: "4684d7d140f34f0393d42744d240e207",
+      });
+      expect(
+        error._tag === "ManagedRelayRequestFailedError" ? relayRequestFailureDetail(error) : null,
+      ).toBe(RELAY_GATEWAY_TIMEOUT_MESSAGE);
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 

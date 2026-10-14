@@ -68,6 +68,26 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
   }
 }
 
+// The relay cuts off a request it cannot finish in time with a 504 that no
+// endpoint declares, so the client sees only the status.
+export const RELAY_GATEWAY_TIMEOUT_MESSAGE =
+  "Relay timed out before it finished the request (HTTP 504). Try again in a few minutes. If it keeps failing, copy the trace ID when you report it.";
+
+/**
+ * User-facing detail for a failed relay request: the relay's typed error, or
+ * the HTTP status when the relay sent a response the contract does not declare.
+ * Null when the request got no response.
+ */
+export function relayRequestFailureDetail(error: {
+  readonly relayError?: RelayProtectedError | undefined;
+  readonly status?: number | undefined;
+}): string | null {
+  if (error.relayError) return relayProtectedErrorMessage(error.relayError);
+  if (error.status === 504) return RELAY_GATEWAY_TIMEOUT_MESSAGE;
+  if (error.status !== undefined) return `Relay returned an unexpected HTTP ${error.status}.`;
+  return null;
+}
+
 // A host with a current build gets a new tunnel on its own within minutes of
 // coming back, which clears this reason. While it is still reported, the host
 // is either still off or running a build too old to do that.
