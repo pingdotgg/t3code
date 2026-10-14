@@ -23,8 +23,9 @@ export const IS_NIGHTLY_BUILD =
   parseSemver(APP_VERSION)?.prerelease[0] === "nightly" || HOSTED_APP_CHANNEL === "nightly";
 
 const IOS_TESTFLIGHT_URL = "https://testflight.apple.com/join/XgaxaRtd";
-const ANDROID_BETA_GROUP_URL = "https://groups.google.com/g/t3-code-v2-beta";
-const ANDROID_PLAY_TESTING_URL = "https://play.google.com/apps/testing/com.t3tools.t3code";
+// Google banned the Play testing group, so new testers can't join it. CI mirrors
+// the Play-signed beta APK to this release instead (mobile-android-apk.yml).
+const ANDROID_APK_RELEASE_URL = "https://github.com/pingdotgg/t3code/releases/tag/android-nightly";
 
 const ROW_ID = "nightly-mobile-beta";
 const NOTICE_DISMISSED_STORAGE_KEY = "t3code:nightly-mobile-beta-notice-dismissed:v1";
@@ -133,22 +134,12 @@ export function NightlyMobileBetaRow() {
             <PopoverPopup align="end">
               <div className="flex flex-col gap-3">
                 <div className="space-y-1">
-                  <PopoverTitle>Google Play beta</PopoverTitle>
-                  <p className="max-w-72 text-xs text-muted-foreground">
-                    Use the same Google account for both steps. Step 2 can take up to an hour to
-                    work after you join the group.
+                  <PopoverTitle>Android beta APK</PopoverTitle>
+                  <p className="max-w-56 text-xs text-muted-foreground">
+                    Scan with your phone, then download and install the APK.
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <p className="text-center text-xs font-medium">1. Join the group</p>
-                    <BetaLinkQr url={ANDROID_BETA_GROUP_URL} label="Android beta group link" />
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-center text-xs font-medium">2. Become a tester</p>
-                    <BetaLinkQr url={ANDROID_PLAY_TESTING_URL} label="Google Play beta link" />
-                  </div>
-                </div>
+                <BetaLinkQr url={ANDROID_APK_RELEASE_URL} label="Android beta APK link" />
               </div>
             </PopoverPopup>
           </Popover>
