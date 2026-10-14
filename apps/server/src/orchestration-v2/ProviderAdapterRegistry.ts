@@ -46,6 +46,11 @@ export const ProviderAdapterRegistryV2Error = Schema.Union([
 export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
 
 export interface ProviderAdapterRegistryV2Shape {
+  /**
+   * Returns the same adapter object until the instance is rebuilt. Live
+   * sessions compare it to notice a settings change, so a wrapper built per
+   * call would restart every session on every turn.
+   */
   readonly get: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
@@ -79,6 +84,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   ProviderAdapterRegistryV2,
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    // One wrapper per instance build, so a live session can compare adapters
+    // to tell that a settings change rebuilt its instance.
+    const signInGated = new WeakMap<object, ProviderAdapter.ProviderAdapterV2["Service"]>();
     return ProviderAdapterRegistryV2.of({
       get: (instanceId) =>
         instances.getInstance(instanceId).pipe(
@@ -88,7 +96,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
             const adapter = instance.orchestrationAdapter;
             const auth = instance.auth;
             if (!auth) return Effect.succeed(adapter);
-            return Effect.succeed({
+            const cached = signInGated.get(instance);
+            if (cached) return Effect.succeed(cached);
+            const gated = {
               ...adapter,
               openSession: (input) => {
                 const open = Effect.gen(function* () {
@@ -134,7 +144,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                   ),
                 );
               },
-            } satisfies ProviderAdapter.ProviderAdapterV2["Service"]);
+            } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+            signInGated.set(instance, gated);
+            return Effect.succeed(gated);
           }),
         ),
       list: () =>

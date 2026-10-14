@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -53,41 +54,54 @@ const CodexHistoryReplayHarness: typeof CodexOrchestratorReplayHarness = {
       ProviderAdapterRegistry.ProviderAdapterRegistryV2,
       Effect.gen(function* () {
         const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+        // `get` must keep returning the same adapter; a new wrapper per call
+        // would look like a rebuilt instance and restart the session.
+        const wrapped = new WeakMap<
+          ProviderAdapter.ProviderAdapterV2["Service"],
+          ProviderAdapter.ProviderAdapterV2["Service"]
+        >();
+        const wrap = (
+          adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+        ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
+          ...adapter,
+          openSession: (input) =>
+            adapter.openSession(input).pipe(
+              Effect.map((session) => ({
+                ...session,
+                injectHistory: (history) =>
+                  Effect.sync(() => {
+                    const userTexts = history.messages
+                      .filter((message) => message.role === "user")
+                      .map((message) => message.text);
+                    assert.lengthOf(userTexts, 1);
+                    assert.include(
+                      [
+                        THREAD_MERGE_BACK_FORK_PROMPT,
+                        THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+                        THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+                      ],
+                      userTexts[0],
+                    );
+                    assert.isTrue(
+                      history.messages.some(
+                        (message) =>
+                          message.role === "assistant" && message.text.includes("stored"),
+                      ),
+                    );
+                    return true;
+                  }),
+              })),
+            ),
+        });
         return {
           ...registry,
           get: (id) =>
             registry.get(id).pipe(
-              Effect.map((adapter) => ({
-                ...adapter,
-                openSession: (input) =>
-                  adapter.openSession(input).pipe(
-                    Effect.map((session) => ({
-                      ...session,
-                      injectHistory: (history) =>
-                        Effect.sync(() => {
-                          const userTexts = history.messages
-                            .filter((message) => message.role === "user")
-                            .map((message) => message.text);
-                          assert.lengthOf(userTexts, 1);
-                          assert.include(
-                            [
-                              THREAD_MERGE_BACK_FORK_PROMPT,
-                              THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
-                              THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
-                            ],
-                            userTexts[0],
-                          );
-                          assert.isTrue(
-                            history.messages.some(
-                              (message) =>
-                                message.role === "assistant" && message.text.includes("stored"),
-                            ),
-                          );
-                          return true;
-                        }),
-                    })),
-                  ),
-              })),
+              Effect.map((adapter) => {
+                const cached = wrapped.get(adapter) ?? wrap(adapter);
+                wrapped.set(adapter, cached);
+                return cached;
+              }),
             ),
         };
       }),
