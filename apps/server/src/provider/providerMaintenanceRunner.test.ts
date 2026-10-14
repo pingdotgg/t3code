@@ -674,6 +674,48 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("finishes an update when a sibling refresh never completes", () =>
+    Effect.gen(function* () {
+      const personalInstanceId = ProviderInstanceId.make("codex_personal");
+      const workInstanceId = ProviderInstanceId.make("codex_work");
+      const { registry } = yield* makeRegistry([
+        { ...baseProvider, instanceId: personalInstanceId, version: "0.124.0-alpha.3" },
+        { ...baseProvider, instanceId: workInstanceId, version: "0.124.0-alpha.3" },
+      ]);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: "@openai/codex-instance-test",
+              updateExecutable: "vp",
+              updateArgs: ["i", "-g", "@openai/codex"],
+              updateLockKey: "vite-plus-global",
+            }),
+          ),
+        refreshInstance: (instanceId) =>
+          instanceId === workInstanceId ? Effect.never : registry.refreshInstance(instanceId),
+      });
+
+      const fiber = yield* updater
+        .updateProvider({ provider: CODEX_DRIVER, instanceId: personalInstanceId })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(30));
+      const result = yield* Fiber.join(fiber);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("0.124.0-alpha.3"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
+
   it.effect("records command failure output in provider update state", () =>
     Effect.gen(function* () {
       const { registry } = yield* makeRegistry();
