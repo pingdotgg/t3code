@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import type { SearchBarCommands } from "react-native-screens";
 
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -26,8 +27,7 @@ export function WorkspaceToolbar(props: {
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
-  const focusSearch = useCallback(() => {
-    if (!workspace.isTabActive(selectedTab)) return false;
+  const enterSearch = useCallback(() => {
     workspace.dispatch({
       type: "scroll",
       tab: selectedTab,
@@ -35,9 +35,14 @@ export function WorkspaceToolbar(props: {
     });
     workspace.dispatch({ type: "search", tab: selectedTab });
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
+  }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
+  const focusSearch = useCallback(() => {
+    if (!workspace.isTabActive(selectedTab)) return false;
+    // A mounted bar enters search from its own onFocus.
+    if (!NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
+  }, [workspace, selectedTab, enterSearch]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const restoreSearch = useCallback(() => {
     if (isTabActive(selectedTab) && tab.searchMode !== "resting")
@@ -59,8 +64,10 @@ export function WorkspaceToolbar(props: {
       <NativeStackScreenOptions
         optionsVersion={[selectedTab, tab.searchMode]}
         options={{
+          // Liquid Glass keeps search mounted as UIKit's own header button, which
+          // morphs into the field; swapping a stacked bar in and out cannot animate.
           headerSearchBarOptions:
-            tab.searchMode !== "resting"
+            NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting"
               ? {
                   ref: searchRef,
                   autoFocus: tab.searchMode === "active",
@@ -68,12 +75,15 @@ export function WorkspaceToolbar(props: {
                   hideNavigationBar: false,
                   hideWhenScrolling: false,
                   obscureBackground: false,
-                  placement: "stacked",
-                  allowToolbarIntegration: false,
+                  placement: NATIVE_LIQUID_GLASS_SUPPORTED ? "integratedButton" : "stacked",
+                  allowToolbarIntegration: NATIVE_LIQUID_GLASS_SUPPORTED,
                   placeholder:
                     selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
                   cancelButtonText: "✕",
-                  onFocus: () => workspace.dispatch({ type: "search", tab: selectedTab }),
+                  onFocus: () =>
+                    tab.searchMode === "resting"
+                      ? enterSearch()
+                      : workspace.dispatch({ type: "search", tab: selectedTab }),
                   onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
                   onSearchButtonPress: () => searchRef.current?.blur(),
                   onChangeText: ({ nativeEvent }) =>
@@ -102,13 +112,15 @@ export function WorkspaceToolbar(props: {
             })
           }
         />
-        <NativeHeaderToolbar.Button
-          accessibilityLabel={
-            selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
-          }
-          icon="magnifyingglass"
-          onPress={focusSearch}
-        />
+        {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={
+              selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
+            }
+            icon="magnifyingglass"
+            onPress={focusSearch}
+          />
+        )}
       </NativeHeaderToolbar>
       <NativeHeaderToolbar placement="bottom">
         {nativeToolbarCompose ? <NativeHeaderToolbar.Spacer flexible /> : null}
