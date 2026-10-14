@@ -1,6 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  resolveSubagentMetadata,
+  resolveSubagentModelTraits,
+} from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -19,6 +22,8 @@ type SubagentRowSubagent = Pick<
   | "threadId"
   | "childThreadId"
   | "model"
+  | "modelSelection"
+  | "origin"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -118,6 +123,18 @@ function SubagentMetadata(props: {
     parentProject,
     childProject,
   });
+  const { effortLabel, speed } = resolveSubagentModelTraits({
+    model: subagent.model,
+    providerInstanceId: subagent.providerInstanceId,
+    origin: subagent.origin,
+    modelSelection: subagent.modelSelection,
+    childThread: child,
+    provider,
+  });
+  const traits = [
+    effortLabel,
+    speed === "ultrafast" ? "Ultrafast" : speed === "fast" ? "Fast" : null,
+  ].filter((trait) => trait !== null);
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       <ProviderIcon
@@ -127,7 +144,7 @@ function SubagentMetadata(props: {
       />
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
-        {modelLabel}
+        {[modelLabel, ...traits].join(" · ")}
       </Text>
       {workspace.map(({ label, value }) => (
         // The row reads this label in place of the icon. collapsable keeps the
