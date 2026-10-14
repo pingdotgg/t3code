@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
@@ -6,12 +7,18 @@ import {
 } from "@t3tools/client-runtime/state/pull-requests";
 import type {
   EnvironmentId,
+  ProjectId,
   PullRequestListInput,
   PullRequestListStatsInput,
   PullRequestListEntry,
   PullRequestRef,
   PullRequestSummary,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import {
+  threadPullRequestKeyOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo } from "react";
@@ -24,6 +31,7 @@ import {
   type MergedPullRequestList,
 } from "../components/pullRequest/pullRequestList.logic";
 import { formatEnvironmentQueryError } from "./query";
+import { environmentThreadShells } from "./threads";
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
 export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFamily(
@@ -149,6 +157,58 @@ function observePullRequestSummary(
   });
 }
 
+export function threadPullRequestLinkToSummary(
+  link: ThreadPullRequestLink,
+  projectId: ProjectId,
+): PullRequestSummary | null {
+  // Without the host update time a snapshot cannot be ordered against a fresh read, so it sits out.
+  const updatedAt = link.snapshot?.updatedAt;
+  if (link.snapshot === null || updatedAt == null) return null;
+  return {
+    ...link.snapshot,
+    provider: (
+      sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
+    ).kind,
+    projectId,
+    repository: link.repository,
+    number: link.number,
+    url: link.url,
+    updatedAt,
+  };
+}
+
+// Saved thread snapshots by environment and host-qualified link, indexed once per shell update
+// rather than per control. The host keeps a link to another forge from matching the project's PR.
+function savedPullRequestKey(
+  environmentId: EnvironmentId,
+  reference: Pick<PullRequestRef, "host" | "repository" | "number">,
+): string {
+  return reference.host === undefined
+    ? ""
+    : `${environmentId}:${threadPullRequestKeyOf({ ...reference, host: reference.host })}`;
+}
+
+const savedPullRequestSummariesAtom = Atom.make((get) => {
+  const summaries = new Map<string, PullRequestSummary>();
+  for (const thread of get(environmentThreadShells.threadShellsAtom)) {
+    for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      const summary = threadPullRequestLinkToSummary(link, thread.projectId);
+      if (summary === null) continue;
+      const key = savedPullRequestKey(thread.environmentId, link);
+      summaries.set(key, newestPullRequestSummary(summaries.get(key) ?? null, summary) ?? summary);
+    }
+  }
+  return summaries;
+});
+
+const savedPullRequestSummaryAtom = Atom.family((key: string) =>
+  Atom.make((get) => get(savedPullRequestSummariesAtom).get(key) ?? null).pipe(
+    // Shell updates also resend unchanged links; keep their subscribers quiet.
+    Atom.withEquality((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
+    Atom.setIdleTTL(5 * 60_000),
+  ),
+);
+
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
   reference: PullRequestRef | null,
@@ -161,17 +221,24 @@ export function useSharedPullRequestSummary(
       : pullRequestSummaryKey(environmentId, reference);
   const atom = observedPullRequestSummaryAtom(key);
   const observed = useAtomValue(atom);
+  const saved = useAtomValue(
+    savedPullRequestSummaryAtom(
+      environmentId === null || reference === null
+        ? ""
+        : savedPullRequestKey(environmentId, reference),
+    ),
+  );
   useLayoutEffect(() => {
     if (environmentId === null || reference === null || current === null || observedAt === null)
       return;
     observePullRequestSummary(environmentId, reference, current, observedAt);
   }, [current, environmentId, reference, observedAt]);
-  return (
+  const summary =
     newestPullRequestObservation(
       observed,
       current === null || observedAt === null ? null : { summary: current, observedAt },
-    )?.summary ?? current
-  );
+    )?.summary ?? current;
+  return newestPullRequestSummary(summary, saved);
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
