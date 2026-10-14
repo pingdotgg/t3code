@@ -138,6 +138,15 @@ export function museApprovalMode(runtimeMode: RuntimeMode) {
   return runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
 }
 
+/**
+ * The permission profile `session/start` and `session/resume` select. Without
+ * one Muse applies its own default, which can be `:auto-review`, where an AI
+ * reviewer decides eligible approvals instead of the user.
+ */
+export function musePermissionProfile(runtimeMode: RuntimeMode) {
+  return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
+}
+
 /** The `muse serve` arguments for a host: read-only hosts get no shell, writes, or workspace trust. */
 export function museServeArgs(
   options: Pick<MuseSdkHostOptions, "readOnly" | "sessionLogging" | "runtimeMode">,
