@@ -94,9 +94,9 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
 ) {
   const stateDir = NodePath.dirname(statePath);
   const crypto = yield* Crypto.Crypto;
-  const ownerId = yield* crypto.randomUUIDv4.pipe(
-    Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })),
-  );
+  const ownerId = yield* crypto
+    .randomUUIDv4()
+    .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
