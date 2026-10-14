@@ -30,10 +30,18 @@ ready to commit.
 A failed or timed-out trial returns to the old version. After commit, the target
 is authoritative and the service manager's ordinary restart policy applies.
 
+The prepared deadline is long because migrations and SQLite's open-time optimize
+scale with the database and block the trial's main thread, so it cannot report
+progress. A missed deadline restores the snapshot, and the retry pays the same
+cost again. A crashed trial is caught when it exits; the deadline bounds only a
+stuck one. Client update waits must outlast the deadline, or a slow update shows
+as failed.
+
 ## Database rollback
 
-After the old child exits, the launcher snapshots SQLite's main file, WAL, and
-shared-memory file. This makes trial migrations reversible without down
+Before stopping the old child, the launcher refuses an update whose snapshot will
+not fit on disk, so a full disk does not cause an outage. After the old child
+exits, the launcher snapshots SQLite's main file, WAL, and shared-memory file. This makes trial migrations reversible without down
 migrations. The snapshot is made once per update and survives launcher restarts;
 replacing it during a retry could capture changes from the failed trial.
 
