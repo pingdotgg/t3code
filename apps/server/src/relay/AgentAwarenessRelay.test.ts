@@ -431,6 +431,60 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("a stalled response body releases later threads and uses bounded retries", () =>
+    Effect.gen(function* () {
+      const bodyStarted = Promise.withResolvers<void>();
+      const secondRead = yield* Deferred.make<void>();
+      const currentShell = yield* Ref.make(shell());
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          threadId === SECOND_THREAD_ID
+            ? Deferred.succeed(secondRead, undefined).pipe(
+                Effect.as(shell({ id: SECOND_THREAD_ID })),
+              )
+            : Ref.get(currentShell),
+        respond: (attempt) => {
+          if (attempt !== 1) return new Response("relay unavailable", { status: 503 });
+          const response = new Response(null, {
+            headers: { "content-type": "application/json" },
+          });
+          return Object.assign(response, {
+            arrayBuffer: () => {
+              bodyStarted.resolve();
+              return new Promise<ArrayBuffer>(() => {});
+            },
+          });
+        },
+      });
+      const first = yield* relay.publishThread(THREAD_ID).pipe(Effect.forkChild);
+      yield* Effect.promise(() => bodyStarted.promise);
+      const second = yield* relay.publishThread(SECOND_THREAD_ID).pipe(Effect.forkChild);
+      yield* TestClock.adjust("9999 millis");
+      assert.equal(publications.length, 1);
+      yield* Ref.set(currentShell, shell({ title: "Latest title" }));
+      yield* TestClock.adjust("1 millis");
+      // Assert progress before draining so the base fails instead of hanging.
+      assert.isTrue(yield* Deferred.isDone(secondRead));
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      assert.equal(publications.length, 2);
+      assert.isTrue(publications[1]?.url.includes(SECOND_THREAD_ID) ?? false);
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+        const attempts = publications.length;
+        yield* TestClock.adjust(delay - 1);
+        yield* relay.drain;
+        assert.equal(publications.length, attempts);
+        yield* TestClock.adjust(1);
+        yield* relay.drain;
+        assert.equal(publications.length, attempts + 2);
+        assert.equal(publications[attempts]?.state?.threadTitle, "Latest title");
+      }
+      yield* TestClock.adjust("1 minute");
+      yield* relay.drain;
+      assert.equal(publications.length, 12);
+    }),
+  );
+
   it.effect("retries a failed final state without another thread event", () =>
     Effect.gen(function* () {
       const { relay, currentShell, shellReads, publications } = yield* makeTestRelay({

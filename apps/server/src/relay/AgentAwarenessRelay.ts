@@ -502,16 +502,18 @@ export const make = Effect.gen(function* () {
           reason: input.reason,
         });
 
-        const response = yield* relayClient.server.publishAgentActivity({
-          params: {
-            environmentId,
-            threadId,
-          },
-          payload: {
-            state: input.state,
-            proof,
-          },
-        });
+        const response = yield* relayClient.server
+          .publishAgentActivity({
+            params: {
+              environmentId,
+              threadId,
+            },
+            payload: {
+              state: input.state,
+              proof,
+            },
+          })
+          .pipe(Effect.timeout("10 seconds"));
 
         yield* Effect.logInfo("agent activity publish completed", {
           environmentId,
