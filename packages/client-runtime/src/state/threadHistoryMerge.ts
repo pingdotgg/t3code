@@ -87,11 +87,13 @@ export function mergeOlderHistoryIntoProjection(
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
-      // Hidden live items stay hidden. Cold snapshots also retain interrupt
-      // requests outside the visible window; paging may reveal those requests.
       if (currentItem !== undefined) {
+        // The bounded snapshot keeps interrupt requests and still-running
+        // background work outside its visible window; they take their place
+        // when their history page arrives, with their live state. A live event
+        // may instead have hidden the item while the page was in flight; do
+        // not resurrect the stale page copy.
         if (
-          currentItem.type !== "run_interrupt_request" ||
           !isOrchestrationV2TurnItemVisible({
             item: currentItem,
             runs: projection.runs,

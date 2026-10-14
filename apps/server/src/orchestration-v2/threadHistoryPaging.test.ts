@@ -8,6 +8,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -493,6 +494,40 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.turnItems.some((item) => item.type === "run_interrupt_result")).toBe(
       false,
     );
+  });
+
+  it("keeps an older running command in turnItems so Stop still finds it", () => {
+    const running = makeRow(0);
+    const runningRow = { ...running, item: { ...running.item, status: "running" as const } };
+    const finished = makeRow(1);
+    const recent = makeRow(2);
+    const full = makeProjection([runningRow, finished, recent]);
+    // The latest run already settled; only the old command still runs.
+    const projection = {
+      ...full,
+      runs: [{ ...full.runs[0]!, ordinal: 1, status: "completed" as const }],
+    };
+    const bounded = buildBoundedThreadProjection({
+      projection,
+      snapshotSequence: 3,
+      policy: { maxItems: 1, maxEncodedBytes: 10_000_000 },
+    });
+
+    expect(bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId))).toEqual([
+      "item-2",
+    ]);
+    expect(bounded.projection.turnItems.map((item) => String(item.id)).sort()).toEqual([
+      "item-0",
+      "item-2",
+    ]);
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: bounded.projection.runs.at(-1),
+        providerThreads: bounded.projection.providerThreads,
+        turnItems: bounded.projection.turnItems,
+        runs: bounded.projection.runs,
+      }).map((task) => task.taskId),
+    ).toEqual(["item-0"]);
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {
