@@ -100,6 +100,8 @@ const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSch
 /** The agent cursor glides to its target, then pulses just before the press, like desktop tabs. */
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
+/** A dialog that opens mid-read blocks page script, so a desktop size read gives up after this. */
+const DESKTOP_VIEWPORT_READ_TIMEOUT_MS = 1_000;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -326,8 +328,10 @@ interface ServerTab {
   zoomFactor: number;
   /** Last CSS size measured on the desktop, usable while a dialog blocks page script. */
   desktopViewport: { readonly width: number; readonly height: number } | null;
-  /** Counts desktop size reads, so a slower older read cannot overwrite a newer one. */
+  /** Numbers desktop size reads, so a slower older read cannot overwrite a newer one. */
   desktopViewportReads: number;
+  /** The read that stored `desktopViewport`. */
+  desktopViewportApplied: number;
   loading: boolean;
   closing: boolean;
   recording: Recording | null;
@@ -619,14 +623,13 @@ const make = Effect.gen(function* () {
   /**
    * Reads the desktop page's CSS size, including scrollbars and native zoom, in
    * an isolated world so page script cannot override it. Keeps the last size
-   * while a dialog blocks script, when a navigation destroys the world mid-read,
-   * when a newer read already stored one, and for a hidden webview's 0x0.
+   * while a dialog blocks script, when a read fails or times out, when a newer
+   * read already stored a size, and for a hidden webview's 0x0.
    */
   const measureDesktopViewport = async (tab: ServerTab) => {
     if (tab.dialog) return tab.desktopViewport;
     const read = ++tab.desktopViewportReads;
-    let value: unknown;
-    try {
+    const readSize = async () => {
       const { frameTree } = await tab.cdp.send("Page.getFrameTree");
       const { executionContextId } = await tab.cdp.send("Page.createIsolatedWorld", {
         frameId: frameTree.frame.id,
@@ -637,15 +640,22 @@ const make = Effect.gen(function* () {
         contextId: executionContextId,
         returnByValue: true,
       });
-      value = result.value;
-    } catch {
-      return tab.desktopViewport;
-    }
-    if (read !== tab.desktopViewportReads && tab.desktopViewport) return tab.desktopViewport;
-    const size = asRecord(value);
+      return asRecord(result.value);
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const size = await Promise.race([
+      // A navigation can destroy the isolated world mid-read.
+      readSize().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), DESKTOP_VIEWPORT_READ_TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (read < tab.desktopViewportApplied) return tab.desktopViewport;
     if (!size || typeof size.width !== "number" || typeof size.height !== "number")
       return tab.desktopViewport;
     if (size.width <= 0 || size.height <= 0) return tab.desktopViewport;
+    tab.desktopViewportApplied = read;
     tab.desktopViewport = { width: size.width, height: size.height };
     return tab.desktopViewport;
   };
@@ -844,6 +854,7 @@ const make = Effect.gen(function* () {
       zoomFactor: 1,
       desktopViewport: null,
       desktopViewportReads: 0,
+      desktopViewportApplied: 0,
       loading: false,
       closing: false,
       recording: null,
@@ -862,6 +873,14 @@ const make = Effect.gen(function* () {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
       cdp.on("Page.frameResized", () => {
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+      });
+      // Someone at the desktop can close a dialog in its own window, outside resolveDialog.
+      cdp.on("Page.javascriptDialogClosed", () => {
+        if (!tab.dialog) return;
+        tab.dialog = null;
+        ServerBrowserPage.invalidateRefs(page);
+        broadcastControl(tab);
+        if (tab.viewers.size > 0) void broadcastViewport(tab).catch(constVoid);
       });
       await cdp.send("Page.enable");
     }
@@ -2259,6 +2278,8 @@ const make = Effect.gen(function* () {
       const recentFrames: Array<number> = [];
       let screencastParams = Promise.resolve();
       let screencastScale = 1;
+      // The stream closes at `gone` or `reconnect`; nothing queued after it is read.
+      let ended = false;
       const startScreencast = (scale: number) => {
         screencastScale = scale;
         screencastParams = screencastParams.then(async () => {
@@ -2283,18 +2304,36 @@ const make = Effect.gen(function* () {
         pressedButtons: new Map(),
         push: (next) => {
           // Dropped frames must still release Chromium.
+          if (ended) {
+            if (next._tag === "frame") runFork(next.ack);
+            return;
+          }
+          if (next._tag === "gone" || next._tag === "reconnect") ended = true;
           if (Queue.offerUnsafe(output, next)) return;
           if (next._tag === "frame") runFork(next.ack);
           // State a stalled viewer cannot miss replaces its backlog. It runs
           // synchronously so an older replacement can never land after a newer one.
-          else if (next._tag === "gone" || next._tag === "control" || next._tag === "fileChooser") {
+          else if (["gone", "control", "viewport", "fileChooser"].includes(next._tag)) {
             const dropped = Effect.runSyncExit(Queue.clear(output));
             if (dropped._tag === "Failure") return;
             Queue.offerUnsafe(output, next);
+            // Without its latest size the viewer cannot map input at all.
+            for (const tag of ["control", "viewport"] as const) {
+              if (next._tag === tag) continue;
+              const retained = dropped.value.findLast((item) => item._tag === tag);
+              if (retained) Queue.offerUnsafe(output, retained);
+            }
             // The controller's open picker may have been in the dropped backlog.
-            const chooser = next._tag === "control" ? fileChooserMessage(tab) : null;
+            const chooser =
+              next._tag === "control" || next._tag === "viewport" ? fileChooserMessage(tab) : null;
             if (chooser && tab.control.controller === viewer.id) Queue.offerUnsafe(output, chooser);
-            for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
+            // One-time notifications cannot be rebuilt from state; keep them in order.
+            // A former controller may still cache an older picker, so closes stay too.
+            for (const item of dropped.value) {
+              if (["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag))
+                Queue.offerUnsafe(output, item);
+              else if (item._tag === "frame") runFork(item.ack);
+            }
           }
         },
         pause: () => {
