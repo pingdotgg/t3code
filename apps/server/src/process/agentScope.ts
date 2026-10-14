@@ -132,8 +132,9 @@ export const make = Effect.gen(function* () {
           "true",
         ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
       // Stop the whole scope when the kernel kills one of its processes, and
-      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253;
-      // older user managers still get plain scopes, without the OOM label.
+      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253.
+      // Older user managers get plain scopes: 252 still stops them on an OOM
+      // kill and records it, 251 and older do neither.
       const oomOptions = ["--property=OOMPolicy=stop"];
       const scopeOptions = (yield* probe(oomOptions))
         ? oomOptions
@@ -168,6 +169,9 @@ export const make = Effect.gen(function* () {
         systemctl,
         runtimeDir,
         scopeOptions,
+        // A shared process keeps serving its other threads when the kernel
+        // kills one of its tools, so its scope keeps running instead.
+        sharedScopeOptions: scopeOptions.length > 0 ? ["--property=OOMPolicy=continue"] : [],
       };
     }),
   );
@@ -290,22 +294,29 @@ export const make = Effect.gen(function* () {
     });
 
   return {
-    wrap: Effect.fn("AgentScope.wrap")(function* ({ command, args, name, threadId, env }) {
+    wrap: Effect.fn("AgentScope.wrap")(function* ({ command, args, name, threadId, env, shared }) {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       // Leave unresolved commands alone so the spawn reports the missing binary.
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved, args });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
-      if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
+      // With OOMPolicy=continue systemd never records `Result=oom-kill`, so a
+      // shared scope answers for no thread. Launching one still ends the
+      // thread's previous answer. Without OOMPolicy systemd may still stop
+      // the scope and record it, so the thread tracks it like any other.
+      const continuing = shared === true && scope.sharedScopeOptions.length > 0;
+      const owned = threadId !== undefined && !continuing;
+      if (threadId !== undefined) yield* track(scope.systemctl, threadId, owned ? unit : undefined);
+      const options = continuing ? scope.sharedScopeOptions : scope.scopeOptions;
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
         slice: AGENT_SLICE,
         unit,
-        // Without a thread nothing reads the result, so let systemd unload
-        // the unit even when it fails.
-        options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
+        // Without an owning thread nothing reads the result, so let systemd
+        // unload the unit even when it fails.
+        options: owned ? options : [...options, "--collect"],
       };
       return agentScopeCommand({ command: resolved, args, scope: systemdScope });
     }),

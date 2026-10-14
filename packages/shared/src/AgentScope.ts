@@ -25,6 +25,14 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
+    /**
+     * Several threads use this process, as with the Codex app-server. On
+     * systemd 253 or newer its scope runs with OOMPolicy=continue: it keeps
+     * running when the kernel kills one of its processes for memory, and
+     * `oomKilled` answers false for it at once. Older systemd treats it like
+     * any other scope.
+     */
+    readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   /**
    * Whether the latest agent scope of this thread was killed because the
