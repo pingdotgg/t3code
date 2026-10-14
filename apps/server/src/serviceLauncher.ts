@@ -814,8 +814,11 @@ export class Launcher {
     this.#state = next;
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
-    await sendMessage(child.process, { type: "committed", updateId: committed.id });
-    await this.#repointServiceUnit(committed.targetVersion);
+    try {
+      await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    } finally {
+      await this.#repointServiceUnit(committed.targetVersion);
+    }
   }
 
   // The commit is durable before this runs: a unit that could not be rewritten
