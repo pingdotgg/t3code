@@ -79,6 +79,19 @@ class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintena
   readonly cause?: unknown;
 }> {}
 
+function isSameUpdateAction(
+  left: ProviderMaintenanceCapabilities["update"],
+  right: NonNullable<ProviderMaintenanceCapabilities["update"]>,
+): boolean {
+  return (
+    left !== null &&
+    left.executable === right.executable &&
+    left.lockKey === right.lockKey &&
+    left.args.join("\0") === right.args.join("\0") &&
+    JSON.stringify(left.env ?? {}) === JSON.stringify(right.env ?? {})
+  );
+}
+
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly verifiedProviders: ReadonlyArray<ServerProvider>;
@@ -381,6 +394,40 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
+  // Instances that run the same install get the new version too, so refresh
+  // them instead of letting them keep offering the update that just landed.
+  const refreshInstancesSharingInstall = (
+    provider: ProviderDriverKind,
+    instanceId: ProviderInstanceId,
+    update: NonNullable<ProviderMaintenanceCapabilities["update"]>,
+  ): Effect.Effect<void> =>
+    providerRegistry.getProviders.pipe(
+      Effect.flatMap((providers) =>
+        Effect.forEach(
+          providers.filter(
+            (candidate) => candidate.driver === provider && candidate.instanceId !== instanceId,
+          ),
+          (sibling) =>
+            providerRegistry
+              .getProviderMaintenanceCapabilitiesForInstance(sibling.instanceId, provider)
+              .pipe(
+                Effect.flatMap((capabilities) =>
+                  isSameUpdateAction(capabilities.update, update)
+                    ? providerRegistry.refreshInstance(sibling.instanceId)
+                    : Effect.void,
+                ),
+              ),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Provider refresh after a shared install update failed", {
+          provider,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
@@ -525,6 +572,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               verified,
               instanceId,
             );
+            if (fresh.update) {
+              yield* refreshInstancesSharingInstall(provider, instanceId, fresh.update);
+            }
             // "Succeeded" needs the provider to still be installed: an
             // installer that exits 0 and leaves the binary missing is not a
             // success. A missing version alone is not held against it, since

@@ -98,8 +98,14 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly args: ReadonlyArray<string>;
     /** Paths the provider's own installer owns; omit when it has none. */
     readonly isCommandPath?: (commandPath: string) => boolean;
-    /** Environment the native updater needs to target this instance's install. */
-    readonly env?: NodeJS.ProcessEnv;
+    /**
+     * Environment the native updater needs to target this instance's install.
+     * A function receives where the executable was found, for updaters that
+     * locate their install from it.
+     */
+    readonly env?:
+      | NodeJS.ProcessEnv
+      | ((context: ProviderMaintenanceResolutionContext) => NodeJS.ProcessEnv);
   } | null;
 }
 
@@ -387,6 +393,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const packageName = definition.npmPackageName;
 
   const nativeUpdate = definition.nativeUpdate;
+  const nativeEnv =
+    typeof nativeUpdate?.env === "function" ? nativeUpdate.env(context) : nativeUpdate?.env;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
         provider: definition.provider,
@@ -395,7 +403,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateArgs: nativeUpdate.args,
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
-        ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeEnv ? { env: nativeEnv } : {}),
       })
     : manual;
   if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {

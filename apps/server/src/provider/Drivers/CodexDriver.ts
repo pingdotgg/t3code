@@ -83,15 +83,26 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 // The standalone installer lays out `<CODEX_HOME>/packages/standalone/…`;
 // CODEX_HOME is not always `~/.codex`.
+const CODEX_STANDALONE_SEGMENT = "/packages/standalone/";
+
 function isCodexStandaloneCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/packages/standalone/");
+  return normalizeCommandPath(commandPath).includes(CODEX_STANDALONE_SEGMENT);
+}
+
+/** The `CODEX_HOME` whose standalone tree holds this executable, if any. */
+function codexStandaloneHome(commandPath: string): string | null {
+  // Normalizing keeps the length, so the index applies to the original path.
+  const index = normalizeCommandPath(commandPath).lastIndexOf(CODEX_STANDALONE_SEGMENT);
+  return index > 0 ? commandPath.slice(0, index) : null;
 }
 
 /**
- * `codex update` replaces the standalone tree under `CODEX_HOME`. That tree
- * lives in the shared home even when an auth-overlay shadow home is in use
- * (the overlay only carries auth and a few local entries), so the updater
- * runs against `sharedHomePath` rather than the instance's effective home.
+ * `codex update` replaces the standalone tree under `CODEX_HOME` and refuses
+ * when the running executable is outside that tree. Several instances can
+ * share one install while each keeps its own home, so the updater targets the
+ * home that holds the executable. Otherwise it targets `sharedHomePath`: the
+ * tree lives in the shared home even when an auth-overlay shadow home is in use
+ * (the overlay only carries auth and a few local entries).
  */
 function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
@@ -100,7 +111,12 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
     nativeUpdate: {
       args: ["update"],
       isCommandPath: isCodexStandaloneCommandPath,
-      env: { CODEX_HOME: sharedHomePath },
+      env: (context) => ({
+        CODEX_HOME:
+          codexStandaloneHome(context.realCommandPath) ??
+          codexStandaloneHome(context.resolvedCommandPath) ??
+          sharedHomePath,
+      }),
     },
   });
 }

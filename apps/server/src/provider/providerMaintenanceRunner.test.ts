@@ -595,7 +595,18 @@ describe("providerMaintenanceRunner", () => {
     },
   );
 
-  it.effect("updates a single provider instance without touching sibling instances", () => {
+  it.effect.each([
+    {
+      name: "refreshes a sibling instance that runs the same install",
+      workExecutable: "vp",
+      refreshed: ["codex_personal", "codex_work"],
+    },
+    {
+      name: "leaves a sibling instance with its own install alone",
+      workExecutable: "/opt/work/codex",
+      refreshed: ["codex_personal"],
+    },
+  ])("updates a single provider instance and $name", (fixture) => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
       const personalInstanceId = ProviderInstanceId.make("codex_personal");
@@ -620,12 +631,10 @@ describe("providerMaintenanceRunner", () => {
             makeProviderMaintenanceCapabilities({
               provider,
               packageName: "@openai/codex-instance-test",
-              updateExecutable: "vp",
+              updateExecutable: instanceId === workInstanceId ? fixture.workExecutable : "vp",
               updateArgs: ["i", "-g", "@openai/codex"],
               updateLockKey: "vite-plus-global",
             }),
-          ).pipe(
-            Effect.tap(() => Effect.sync(() => assert.strictEqual(instanceId, personalInstanceId))),
           ),
         refreshInstance: (instanceId) =>
           registry.refreshInstance(instanceId).pipe(
@@ -648,7 +657,7 @@ describe("providerMaintenanceRunner", () => {
           args: ["i", "-g", "@openai/codex"],
         },
       ]);
-      assert.deepStrictEqual(refreshedInstanceIds, [personalInstanceId]);
+      assert.deepStrictEqual(refreshedInstanceIds, fixture.refreshed);
       assert.strictEqual(result.providers[0]?.instanceId, personalInstanceId);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[1]?.instanceId, workInstanceId);

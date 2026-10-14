@@ -593,6 +593,30 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect.skipIf(windowsHost)("gives an environment function the found executable", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-env-fn");
+      const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+      writeExecutable(nativePath);
+      const resolver = makePackageManagedProviderMaintenanceResolver({
+        provider: driver("nativePackageTool"),
+        npmPackageName: "@example/native-package-tool",
+        nativeUpdate: {
+          args: ["update"],
+          isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+          env: (context) => ({ TOOL_HOME: NodePath.dirname(context.realCommandPath) }),
+        },
+      });
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+        binaryPath: nativePath,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update?.env).toEqual({ TOOL_HOME: NodePath.dirname(nativePath) });
+    }),
+  );
+
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(
       homebrewOwnershipFromCommandPath("/opt/homebrew/Cellar/claude-code@latest/2.1.0/bin/claude"),
