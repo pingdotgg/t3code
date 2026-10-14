@@ -980,6 +980,63 @@ describe("providerMaintenanceRunner", () => {
   });
 });
 
+it.effect("checks compatibility against the installer's current latest, not a cached one", () => {
+  const calls: string[] = [];
+  const manifest: ModelManifest.ModelManifestData = {
+    version: 1,
+    currentModels: {},
+    compatibility: [
+      {
+        driver: "codex",
+        t3CodeRange: ">=0.0.42",
+        ranges: [
+          { range: "<=2.0.0", status: "supported" },
+          { range: ">2.0.0", status: "broken" },
+        ],
+      },
+    ],
+  };
+  return Effect.gen(function* () {
+    const { registry } = yield* makeRegistry();
+    const brewLatest = yield* Ref.make("2.0.0");
+    const capabilities = makeProviderMaintenanceCapabilities({
+      provider: CODEX_DRIVER,
+      packageName: "@openai/codex",
+      updateExecutable: "/opt/homebrew/bin/brew",
+      updateArgs: ["upgrade", "--cask", "codex"],
+      updateLockKey: "homebrew",
+      latestVersion: null,
+      lookupLatestVersion: Ref.get(brewLatest),
+    });
+    const updater = yield* makeTestRunner(
+      {
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
+      },
+      manifest,
+    );
+    // Verifying this update caches Homebrew's answer, 2.0.0.
+    yield* updater.updateProvider(CODEX_DRIVER);
+    assert.deepStrictEqual(calls, ["upgrade --cask codex"]);
+
+    yield* Ref.set(brewLatest, "3.0.0");
+    const refused = yield* updater.updateProvider(CODEX_DRIVER);
+    assert.strictEqual(refused.providers[0]?.updateState?.status, "failed");
+    assert.deepStrictEqual(calls, ["upgrade --cask codex"]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("9.9.9"),
+        layerMockSpawner((_command, args) => {
+          calls.push(args.join(" "));
+          return { stdout: "upgraded" };
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect("refuses incompatible latest versions and unapproved or unpinnable targets", () => {
   const calls: string[] = [];
   const manifest: ModelManifest.ModelManifestData = {
