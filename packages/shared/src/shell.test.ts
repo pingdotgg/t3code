@@ -22,7 +22,6 @@ import {
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
-  readPathFromLoginShell,
   resolveCommandPath,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
@@ -57,7 +56,7 @@ const recordCommandTrace = Effect.fnUntraced(function* <A, E, R>(effect: Effect.
   return { result, spans };
 });
 
-describe("readPathFromLoginShell", () => {
+describe("readEnvironmentFromLoginShell probe", () => {
   it("uses a shell-agnostic printenv PATH probe", () => {
     const execFile = vi.fn<
       (
@@ -67,7 +66,9 @@ describe("readPathFromLoginShell", () => {
       ) => string
     >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
 
-    expect(readPathFromLoginShell("/opt/homebrew/bin/fish", execFile)).toBe("/a:/b");
+    expect(readEnvironmentFromLoginShell("/opt/homebrew/bin/fish", ["PATH"], execFile).PATH).toBe(
+      "/a:/b",
+    );
     expect(execFile).toHaveBeenCalledTimes(1);
 
     const firstCall = execFile.mock.calls[0] as

@@ -172,13 +172,6 @@ export function listLoginShellCandidates(
   return candidates;
 }
 
-export function readPathFromLoginShell(
-  shell: string,
-  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
-): string | undefined {
-  return readEnvironmentFromLoginShell(shell, ["PATH"], execFile).PATH;
-}
-
 export function readPathFromLaunchctl(
   execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
 ): string | undefined {
