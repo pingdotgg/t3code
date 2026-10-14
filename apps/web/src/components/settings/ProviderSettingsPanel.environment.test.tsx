@@ -4,9 +4,12 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstanceConfig,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
@@ -333,6 +336,278 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
+  type InstanceUpdate = (current: ProviderInstanceConfig) => ProviderInstanceConfig;
+  const setField =
+    <Key extends keyof ProviderInstanceConfig>(key: Key, value: ProviderInstanceConfig[Key]) =>
+    (current: ProviderInstanceConfig): ProviderInstanceConfig => ({ ...current, [key]: value });
+  const clearField =
+    (key: keyof ProviderInstanceConfig) =>
+    (current: ProviderInstanceConfig): ProviderInstanceConfig => {
+      const { [key]: _omit, ...rest } = current;
+      return rest as ProviderInstanceConfig;
+    };
+  const codexCardUpdate = (panel: ReactElement<Record<string, unknown>>) =>
+    visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId && typeof element.props.onUpdate === "function",
+    )?.props.onUpdate as (update: InstanceUpdate) => void;
+  const savedInstance = (call: number) =>
+    (settingsState.mutateProviderInstance.mock.calls[call]?.[0] as { instance: unknown }).instance;
+  const holdFirstSave = () => {
+    let finish!: () => void;
+    settingsState.mutateProviderInstance.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ _tag: "Success", value: {} });
+        }),
+    );
+    return () => finish();
+  };
+
+  it("keeps a badge label still being saved when an icon is picked before it returns", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+
+    onUpdate(setField("badgeLabel", "PX"));
+    onUpdate(setField("icon", "openai"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "openai" });
+  });
+
+  it("clears a color that is still being saved", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(1)).not.toHaveProperty("accentColor");
+  });
+
+  it("keeps another client's change that arrives while an edit is saving", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    codexCardUpdate(renderPanel())(setField("badgeLabel", "PX"));
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), icon: "anthropic" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({
+      icon: "anthropic",
+      badgeLabel: "PX",
+      displayName: "Work",
+    });
+  });
+
+  it("keeps a saved edit when the default slot rerenders before the server sends it back", async () => {
+    atoms.providers = [provider()];
+    codexCardUpdate(renderPanel())(setField("badgeLabel", "PX"));
+    await flushPromises();
+    // The unconfigured default slot is a fresh object on this render, with the same content.
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "openai" });
+  });
+
+  it("keeps a saved edit the server has not sent back when an earlier one arrives", async () => {
+    atoms.providers = [provider()];
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("badgeLabel", "PX"));
+    onUpdate(setField("icon", "openai"));
+    await flushPromises();
+    // Only the first save has come back so far.
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), badgeLabel: "PX" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(2)).toMatchObject({
+      badgeLabel: "PX",
+      icon: "openai",
+      displayName: "Work",
+    });
+  });
+
+  it("keeps a later clear when the server already lacks the cleared value", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    // Neither save has come back; the server still has no color.
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(2)).toMatchObject({ icon: "openai" });
+    expect(savedInstance(2)).not.toHaveProperty("accentColor");
+  });
+
+  it("keeps a clear when an older save's echo arrives after it", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    onUpdate(setField("icon", "openai"));
+    finishFirstSave();
+    await flushPromises();
+    // The color save's echo arrives before the later ones.
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), accentColor: "#ff0000" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(3)).toMatchObject({ icon: "openai", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("accentColor");
+  });
+
+  it("starts an edit made right after a reset from the default", async () => {
+    atoms.providers = [provider()];
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), accentColor: "#ff0000" },
+      },
+    };
+    const panel = renderPanel();
+    const reset = visitElements(
+      panel,
+      (element) =>
+        typeof element.props.label === "string" &&
+        element.props.label.endsWith("provider settings") &&
+        typeof element.props.onClick === "function",
+    );
+    (reset?.props.onClick as () => void)();
+    // Before the server sends the reset back, the card still shows the color.
+    codexCardUpdate(panel)(setField("icon", "openai"));
+    await flushPromises();
+
+    const afterReset = settingsState.mutateProviderInstance.mock.calls.at(-1)?.[0] as {
+      readonly instance: ProviderInstanceConfig;
+    };
+    expect(afterReset.instance).toEqual({
+      driver: ProviderDriverKind.make("codex"),
+      icon: "openai",
+    });
+  });
+
+  it("keeps a clear whose echo arrives after the next edit", async () => {
+    atoms.providers = [provider()];
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    await flushPromises();
+    // Both saves have finished, but nothing has been sent back yet.
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    await flushPromises();
+    // Now the color save's echo arrives, before the clear's.
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), accentColor: "#ff0000" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(3)).toMatchObject({ icon: "openai", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("accentColor");
+  });
+
+  it("does not replay edits made before the provider was reset", async () => {
+    atoms.providers = [provider()];
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), displayName: "Work" },
+      },
+    };
+    const panel = renderPanel();
+    codexCardUpdate(panel)(setField("badgeLabel", "PX"));
+    await flushPromises();
+    const reset = visitElements(
+      panel,
+      (element) =>
+        typeof element.props.label === "string" &&
+        element.props.label.endsWith("provider settings") &&
+        typeof element.props.onClick === "function",
+    );
+    (reset?.props.onClick as () => void)();
+    await flushPromises();
+    settingsState.value = DEFAULT_UNIFIED_SETTINGS;
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    await flushPromises();
+
+    const afterReset = settingsState.mutateProviderInstance.mock.calls.at(-1)?.[0] as {
+      readonly instance: ProviderInstanceConfig;
+    };
+    expect(afterReset.instance).toMatchObject({ icon: "openai" });
+    expect(afterReset.instance).not.toHaveProperty("badgeLabel");
+  });
+
+  it("keeps a failed clear that a later successful save carried", async () => {
+    atoms.providers = [provider()];
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    await flushPromises();
+    let failClear!: () => void;
+    settingsState.mutateProviderInstance.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          failClear = () =>
+            resolve(AsyncResult.failure(Cause.fail(new Error("settings write failed"))));
+        }),
+    );
+    onUpdate(clearField("accentColor"));
+    onUpdate(setField("icon", "openai"));
+    failClear();
+    await flushPromises();
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(3)).toMatchObject({ icon: "openai", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("accentColor");
+  });
+
+  it("starts the next edit from the server's state after a save fails", async () => {
+    atoms.providers = [provider()];
+    settingsState.mutateProviderInstance.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
+    );
+    const onUpdate = codexCardUpdate(renderPanel());
+
+    onUpdate(setField("badgeLabel", "PX"));
+    await flushPromises();
+    onUpdate(setField("icon", "openai"));
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({ icon: "openai" });
+    expect(savedInstance(1)).not.toHaveProperty("badgeLabel");
+  });
+
   it("opens the requested provider instance instead of the first provider", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -545,7 +820,7 @@ describe("EnvironmentProviderSettings routing", () => {
       enabled: false,
       displayName: "Work",
     };
-    (card?.props.onUpdate as ((instance: typeof next) => void) | undefined)?.(next);
+    (card?.props.onUpdate as ((update: () => typeof next) => void) | undefined)?.(() => next);
     await flushPromises();
 
     expect(settingsState.mutateProviderInstance).toHaveBeenCalledWith(

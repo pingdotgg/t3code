@@ -179,6 +179,8 @@ export interface LimitAccount {
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
   /** Environments the account is signed in on; empty when only a hub reports it. */
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -248,6 +250,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       displayName: previous.displayName ?? next.displayName,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
+      icon: previous.icon ?? next.icon,
+      badgeLabel: previous.badgeLabel ?? next.badgeLabel,
       environments,
       // A hub only names the account when no environment has it natively.
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
@@ -281,6 +285,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         email: provider.auth.email,
         plan: provider.auth.label,
         accentColor: provider.accentColor,
+        icon: provider.icon,
+        badgeLabel: provider.badgeLabel,
         environments: [{ environmentId, label }],
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
@@ -763,6 +769,8 @@ export function collectProviderUsageLimits(
           : { instanceId: provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.icon ? { icon: provider.icon } : {}),
+      ...(provider.badgeLabel ? { badgeLabel: provider.badgeLabel } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: showHubCredits
         ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }

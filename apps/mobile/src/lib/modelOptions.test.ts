@@ -265,12 +265,20 @@ describe("mobile model options", () => {
       };
       const config = {
         providers: state === "missing" ? [] : [provider],
-        settings: { providerInstances: { google_work: { driver: "antigravity" } } },
+        settings: {
+          providerInstances: {
+            google_work: { driver: "antigravity", icon: "initials", badgeLabel: "GW" },
+          },
+        },
       } as unknown as ServerConfig;
       const options = buildModelOptions(config, selection, selection.instanceId, null);
       expect(options).toEqual(buildModelOptions(config, selection, undefined, null));
       expect(options).toHaveLength(1);
-      expect(options[0]).toMatchObject({ selection, isUnavailable: true });
+      expect(options[0]).toMatchObject({
+        selection,
+        isUnavailable: true,
+        providerAppearance: { icon: "initials", badgeLabel: "GW" },
+      });
     },
   );
 

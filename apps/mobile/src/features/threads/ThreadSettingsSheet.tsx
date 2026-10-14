@@ -141,6 +141,7 @@ const FAVORITES_PROVIDER_FILTER = "@favorites";
 function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
+  readonly appearance: ModelOption["providerAppearance"] | undefined;
   readonly label: string;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
@@ -149,7 +150,12 @@ function ProviderHeader(props: {
 }) {
   const content = (
     <>
-      <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
+      <ProviderIcon
+        iconUrl={props.iconUrl}
+        provider={props.driver}
+        appearance={props.appearance}
+        size={15}
+      />
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
       {props.collapsible ? (
         <>
@@ -698,6 +704,7 @@ type ThreadSettingsProviderCatalog = {
   readonly key: string;
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
+  readonly appearance: ModelOption["providerAppearance"] | undefined;
   readonly label: string;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
@@ -778,6 +785,7 @@ function ThreadSettingsProviderListHeader(props: {
       collapsed={props.provider.collapsed}
       driver={props.provider.driver}
       iconUrl={props.provider.iconUrl}
+      appearance={props.provider.appearance}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
       onToggle={onToggle}
@@ -847,6 +855,7 @@ function useThreadSettingsCatalogItems(
           key: group.providerKey,
           driver,
           iconUrl: group.models[0]?.providerIconUrl,
+          appearance: group.models[0]?.providerAppearance,
           label: group.providerLabel,
           collapsible,
           collapsed,

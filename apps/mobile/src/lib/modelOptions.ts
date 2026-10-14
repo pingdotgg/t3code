@@ -21,6 +21,13 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  /** The instance's chosen glyph and badge text, for its provider icon. */
+  readonly providerAppearance?: {
+    readonly icon?: string | undefined;
+    readonly badgeLabel?: string | undefined;
+    readonly displayName: string;
+    readonly accentColor?: string | undefined;
+  };
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
@@ -315,6 +322,12 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
+        providerAppearance: {
+          icon: provider.icon,
+          badgeLabel: provider.badgeLabel,
+          displayName: providerLabel,
+          accentColor: provider.accentColor,
+        },
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
@@ -373,6 +386,12 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        providerAppearance: {
+          icon: provider?.icon ?? instanceConfig?.icon,
+          badgeLabel: provider?.badgeLabel ?? instanceConfig?.badgeLabel,
+          displayName: providerLabel,
+          accentColor: provider?.accentColor ?? instanceConfig?.accentColor,
+        },
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||

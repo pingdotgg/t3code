@@ -85,6 +85,12 @@ export interface ProviderInstance {
   readonly continuationIdentity: ProviderContinuationIdentity;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
+  /**
+   * Current icon and badge label from config. Set by the instance registry,
+   * which updates it in place so editing them never rebuilds the runtime.
+   * Drivers leave it unset.
+   */
+  readonly appearance?: Effect.Effect<ProviderInstanceAppearance> | undefined;
   readonly enabled: boolean;
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
@@ -128,6 +134,12 @@ export interface ProviderInstance {
       readonly providerId: string;
     }) => Effect.Effect<void, AcpRegistryOperationError>;
   };
+}
+
+/** User-chosen glyph and badge text, stamped onto every published snapshot. */
+export interface ProviderInstanceAppearance {
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
 }
 
 export interface ProviderContinuationIdentity {

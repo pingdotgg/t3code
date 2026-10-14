@@ -553,6 +553,15 @@ function AccessGatedProviderSettings({
   );
 }
 
+/** The edits a providers page has made to one instance, in order. */
+interface InstanceEdits {
+  readonly updates: Array<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
+  /** How many leading edits a successful save carried. */
+  confirmed: number;
+  /** Saves in flight. */
+  saving: number;
+}
+
 export function EnvironmentProviderSettings({
   environmentId,
   environmentLabel,
@@ -614,6 +623,15 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
+  // The edits made here to each instance, in order. Every save replays them onto
+  // the server's latest instance, so quick edits compose whatever the server
+  // has sent back so far, and a change from elsewhere to a field not edited
+  // here survives. Saves run in order and each carries every edit before it,
+  // so a successful one confirms them all; edits after the last confirmed one
+  // are dropped once every save has failed past it. A reset starts a new list
+  // with itself as the first edit; deleting the instance or leaving the page
+  // discards the list.
+  const instanceEditsRef = useRef(new Map<ProviderInstanceId, InstanceEdits>());
 
   const acceptUrlAuthentication = useCallback(
     (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
@@ -828,25 +846,49 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
+  const settleInstanceEdits = (
+    instanceId: ProviderInstanceId,
+    edits: InstanceEdits,
+    carried: number,
+    succeeded: boolean,
+  ) => {
+    // Reset or deleted meanwhile: these edits were discarded.
+    if (instanceEditsRef.current.get(instanceId) !== edits) return;
+    edits.saving -= 1;
+    if (succeeded) edits.confirmed = Math.max(edits.confirmed, carried);
+    // Nothing left in flight could still carry them: the server kept its own state.
+    else if (edits.saving === 0) edits.updates.length = edits.confirmed;
+  };
+
   const updateProviderInstance = async (
     row: InstanceRow,
-    next: ProviderInstanceConfig,
+    update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
     options?: {
       readonly textGenerationModelSelection?: Parameters<
         typeof buildProviderInstanceUpdatePatch
       >[0]["textGenerationModelSelection"];
     },
   ) => {
+    let edits = instanceEditsRef.current.get(row.instanceId);
+    if (edits === undefined) {
+      edits = { updates: [], confirmed: 0, saving: 0 };
+      instanceEditsRef.current.set(row.instanceId, edits);
+    }
+    edits.updates.push(update);
+    edits.saving += 1;
+    const carried = edits.updates.length;
+    const instance = edits.updates.reduce((current, apply) => apply(current), row.instance);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
-      instance: next,
+      instance,
       textGenerationModelSelection: options?.textGenerationModelSelection,
     });
     const result = await persistProviderInstance(
-      { operation: "upsert", instanceId: row.instanceId, instance: next },
+      { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
+    settleInstanceEdits(row.instanceId, edits, carried, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -858,6 +900,7 @@ export function EnvironmentProviderSettings({
   };
 
   const deleteProviderInstance = async (row: InstanceRow) => {
+    instanceEditsRef.current.delete(row.instanceId);
     const updateResult = await persistProviderInstance({
       operation: "remove",
       instanceId: row.instanceId,
@@ -895,10 +938,16 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
-    const result = await persistProviderInstance({
-      operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
-    });
+    const instanceId = defaultInstanceIdForDriver(driverKind);
+    // An edit made before the server sends the reset back still starts from the default.
+    const edits: InstanceEdits = {
+      updates: [(current) => ({ driver: current.driver })],
+      confirmed: 0,
+      saving: 1,
+    };
+    instanceEditsRef.current.set(instanceId, edits);
+    const result = await persistProviderInstance({ operation: "remove", instanceId });
+    settleInstanceEdits(instanceId, edits, 1, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -996,7 +1045,9 @@ export function EnvironmentProviderSettings({
               authMethod={readAntigravityAuthMethod(row.instance.config)}
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
-              onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+              onEnable={() =>
+                updateProviderInstance(row, (current) => ({ ...current, enabled: true }))
+              }
             />
           ) : mode === "editor" &&
             row.driver === "codex" &&
@@ -1009,17 +1060,17 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onModeChange={(setupMode) =>
-                updateProviderInstance(row, {
-                  ...row.instance,
+                updateProviderInstance(row, (current) => ({
+                  ...current,
                   enabled: true,
                   config: {
-                    ...(row.instance.config !== null && typeof row.instance.config === "object"
-                      ? row.instance.config
+                    ...(current.config !== null && typeof current.config === "object"
+                      ? current.config
                       : {}),
                     enabled: true,
                     setupMode,
                   },
-                })
+                }))
               }
             />
           ) : mode === "editor" &&
@@ -1045,16 +1096,16 @@ export function EnvironmentProviderSettings({
             />
           ) : null
         }
-        onUpdate={(next) => {
+        onUpdate={(update) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
-          const isDisabling = next.enabled === false && wasEnabled;
+          const isDisabling = update(row.instance).enabled === false && wasEnabled;
           const shouldClearTextGen =
             isDisabling &&
             textGenInstanceId === row.instanceId &&
             readEnvironmentScope(environmentId, AuthSettingsWriteScope);
           updateProviderInstance(
             row,
-            next,
+            update,
             shouldClearTextGen
               ? {
                   textGenerationModelSelection:

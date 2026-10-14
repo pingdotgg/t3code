@@ -6,7 +6,7 @@ import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, type ProviderGlyphAppearance } from "../../components/ProviderIcon";
 import { RequestActionButton } from "./RequestActionButton";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
@@ -17,7 +17,9 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
  */
 export function ProviderSubagentBar(props: {
   /** Driver and catalog icon of the provider running the subagent. */
-  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  readonly provider:
+    | (ProviderGlyphAppearance & { readonly driver: string; readonly iconUrl?: string | undefined })
+    | null;
   readonly modelLabel: string;
   /** Reasoning effort as the composer names it, when the subagent has one. */
   readonly effortLabel: string | null;
@@ -44,6 +46,7 @@ export function ProviderSubagentBar(props: {
             <ProviderIcon
               iconUrl={props.provider.iconUrl}
               provider={props.provider.driver}
+              appearance={props.provider}
               size={16}
             />
           ) : null}
