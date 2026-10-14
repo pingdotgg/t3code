@@ -1,3 +1,4 @@
+import * as GenerationSpeedHistory from "./usage/GenerationSpeedHistory.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -290,6 +291,7 @@ const layerBackground = BackgroundPolicy.layer.pipe(
 );
 
 const layerUsage = UsageService.layer.pipe(
+  Layer.provide(GenerationSpeedHistory.layer),
   Layer.provide(
     Layer.mergeAll(
       AntigravityUsage.layer,

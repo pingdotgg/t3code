@@ -348,22 +348,25 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "provider-thread.updated":
       return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
-    case "provider-turn.updated":
+    case "provider-turn.updated": {
+      const current = base.providerTurns.find((turn) => turn.id === event.payload.id);
       return {
         ...base,
         providerTurns: upsertEntity(base.providerTurns, {
           ...event.payload,
-          ...((event.payload.tokenUsage ??
-            base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage) ===
-          undefined
+          ...((event.payload.generationSpeed ?? current?.generationSpeed) === undefined
             ? {}
             : {
-                tokenUsage:
-                  event.payload.tokenUsage ??
-                  base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage,
+                generationSpeed: event.payload.generationSpeed ?? current?.generationSpeed,
+              }),
+          ...((event.payload.tokenUsage ?? current?.tokenUsage) === undefined
+            ? {}
+            : {
+                tokenUsage: event.payload.tokenUsage ?? current?.tokenUsage,
               }),
         }),
       };
+    }
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":

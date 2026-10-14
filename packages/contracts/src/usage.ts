@@ -19,6 +19,44 @@ export const UsageProviderKind = Schema.Literals([
 ]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
+/** Tokens and time from completed model responses, excluding tools and request waits. */
+export const GenerationSpeed = Schema.Struct({
+  outputTokens: NonNegativeInt,
+  durationMs: NonNegativeInt,
+  responses: NonNegativeInt,
+  startedAt: TrimmedNonEmptyString,
+});
+export type GenerationSpeed = typeof GenerationSpeed.Type;
+
+export const GenerationSpeedMeasurement = Schema.Struct({
+  ...GenerationSpeed.fields,
+  provider: UsageProviderKind,
+  model: TrimmedNonEmptyString,
+  reasoningEffort: Schema.optional(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(TrimmedNonEmptyString),
+});
+export type GenerationSpeedMeasurement = typeof GenerationSpeedMeasurement.Type;
+
+export const GenerationSpeedBucket = Schema.Struct({
+  day: TrimmedNonEmptyString,
+  hourStart: Schema.optional(TrimmedNonEmptyString),
+  ...GenerationSpeedMeasurement.fields,
+});
+export type GenerationSpeedBucket = typeof GenerationSpeedBucket.Type;
+
+export const GenerationSpeedHistory = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+  trackingStartedAt: TrimmedNonEmptyString,
+  buckets: ForwardCompatibleArray(GenerationSpeedBucket),
+});
+export type GenerationSpeedHistory = typeof GenerationSpeedHistory.Type;
+
+/**
+ * A calendar day in the reporting time zone, formatted `YYYY-MM-DD`.
+ *
+ * Days are bucketed server-side so that a turn always lands on the day the user
+ * experienced it, not the UTC day.
+ */
 const USAGE_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const UsageDay = TrimmedNonEmptyString.check(Schema.isPattern(USAGE_DAY_PATTERN)).pipe(
@@ -150,6 +188,7 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
   /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
   modelFilter: Schema.optional(UsageModelFilter),
+  generationSpeed: Schema.optional(GenerationSpeedHistory),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

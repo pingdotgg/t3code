@@ -15,6 +15,12 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
+**Tokens → Generation speed** shows estimated output tokens per second for new Codex and Claude
+responses, including thinking. It excludes tool execution, approvals, and waiting for generation
+to start. Each environment shows when tracking began; earlier turns have no speed measurement.
+Completed chat responses also show their generation speed. Expand the speed history to compare
+days, or hours in the past 24 hours.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in

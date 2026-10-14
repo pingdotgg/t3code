@@ -542,6 +542,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./generation-speed": {
+      "types": "./src/generationSpeed.ts",
+      "default": "./src/generationSpeed.ts"
     }
   },
   "scripts": {

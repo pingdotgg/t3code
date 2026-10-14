@@ -1836,6 +1836,106 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
+  it.effect(
+    "records Codex generation speed including reasoning without double-counting its tokens",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "generation-speed-thread";
+          const nativeTurnId = "generation-speed-turn";
+          const startedAtMs = 1782622445000;
+          const reasoning = {
+            type: "reasoning",
+            id: "generation-reasoning",
+            summary: ["Thinking"],
+            content: [],
+          };
+          const answer = { type: "agentMessage", id: "generation-answer", text: "Done" };
+          const usage = {
+            totalTokens: 300,
+            inputTokens: 100,
+            cachedInputTokens: 0,
+            outputTokens: 200,
+            reasoningOutputTokens: 120,
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: "generation-speed-including-reasoning",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Think and reply." }),
+              ...[
+                { method: "item/started", item: reasoning, startedAtMs },
+                { method: "item/completed", item: reasoning, completedAtMs: startedAtMs + 3_000 },
+                { method: "item/started", item: answer, startedAtMs: startedAtMs + 3_000 },
+                { method: "item/completed", item: answer, completedAtMs: startedAtMs + 4_000 },
+              ].map(({ method, ...params }) => ({
+                type: "emit_inbound" as const,
+                label: method,
+                frame: {
+                  method,
+                  params: { ...params, threadId: nativeThreadId, turnId: nativeTurnId },
+                },
+              })),
+              ...["usage", "duplicate-usage"].map((label) => ({
+                type: "emit_inbound" as const,
+                label,
+                frame: {
+                  method: "thread/tokenUsage/updated",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
+                  },
+                },
+              })),
+              {
+                type: "emit_inbound",
+                label: "complete",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("generation-speed-attempt"),
+              text: "Think and reply.",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const completed = harness.events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type === "provider_turn.updated") {
+            assert.equal(completed.providerTurn.turnTokenUsage?.outputTokens, 200);
+            assert.equal(completed.providerTurn.turnTokenUsage?.reasoningTokens, 120);
+            assert.deepEqual(completed.providerTurn.generationSpeed, {
+              provider: "codex",
+              model: CODEX_TEST_MODEL_SELECTION.model,
+              outputTokens: 200,
+              durationMs: 4_000,
+              responses: 1,
+              startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
+            });
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer, NodeCrypto.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {

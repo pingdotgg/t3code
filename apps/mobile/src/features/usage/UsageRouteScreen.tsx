@@ -1,3 +1,4 @@
+import { GenerationSpeedStats } from "./GenerationSpeedStats";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
@@ -377,6 +378,7 @@ function UsageScreen(props: {
                       />
                       <CostSection merged={merged} wide={wide} />
                       <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                      {metric === "tokens" ? <GenerationSpeedStats environments={selectedEnvironments} timeZone={window.timeZone} /> : null}
                     </UsageUpdating>
                   </>
                 )}

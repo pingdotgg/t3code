@@ -34,6 +34,12 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  runGenerationSpeedLabel,
+  GENERATION_SPEED_DESCRIPTION,
+} from "@t3tools/client-runtime/generation-speed";
+import { environmentThreadDetails } from "../../state/threads";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
@@ -2301,6 +2307,13 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {timestampLabel}
             </Text>
+            {message.projectedItem?.item.runId ? (
+              <AssistantGenerationSpeed
+                environmentId={props.environmentId}
+                sourceThreadId={message.projectedItem.sourceThreadId}
+                runId={message.projectedItem.item.runId}
+              />
+            ) : null}
           </View>
         ) : null}
       </Animated.View>
@@ -2651,6 +2664,30 @@ function DisclosureRow(props: {
     >
       {props.children}
     </Animated.View>
+  );
+}
+
+function AssistantGenerationSpeed({
+  environmentId,
+  sourceThreadId,
+  runId,
+}: {
+  environmentId: EnvironmentId;
+  sourceThreadId: ThreadId;
+  runId: RunId;
+}) {
+  const label = useAtomValue(
+    environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, sourceThreadId)),
+    (thread) => runGenerationSpeedLabel(thread?.projection, runId),
+  );
+  if (label === null) return null;
+  return (
+    <Text
+      accessibilityLabel={`Generation speed ${label}. ${GENERATION_SPEED_DESCRIPTION}`}
+      className="font-t3-medium text-xs tabular-nums text-foreground-secondary"
+    >
+      {label}
+    </Text>
   );
 }
 

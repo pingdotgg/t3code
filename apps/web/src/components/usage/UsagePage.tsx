@@ -1,4 +1,5 @@
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { GenerationSpeedStats } from "./GenerationSpeedStats";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -574,6 +575,13 @@ export function UsagePage() {
                 onSelectModel={selectUsageModel}
               />
             )}
+            {metric === "tokens" && selectedEnvironments.length > 0 ? (
+              <GenerationSpeedStats
+                environments={selectedEnvironments}
+                hiddenProviders={hiddenProviders}
+                timeZone={window.timeZone}
+              />
+            ) : null}
           </WorkspacePageContainer>
         </ScrollArea>
       </div>

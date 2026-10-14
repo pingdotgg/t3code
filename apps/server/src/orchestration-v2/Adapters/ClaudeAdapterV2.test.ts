@@ -5911,6 +5911,132 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "records Claude generation speed including thinking and excludes gaps and child streams",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("generation-speed-attempt"),
+            text: "Think and reply.",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown, parent: string | null = null) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: parent,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "generation-stream-frame",
+          });
+        const startedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* harness.offerAndWait(
+          stream({
+            type: "message_start",
+            message: { id: "generation-first", usage: { output_tokens: 1 } },
+          }),
+        );
+        yield* harness.offerAndWait(
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          }),
+        );
+        yield* TestClock.adjust("3 seconds");
+        yield* harness.offerAndWait(
+          stream({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "Thought" },
+          }),
+        );
+        yield* harness.offerAndWait(
+          stream({
+            type: "message_delta",
+            usage: { output_tokens: 101 },
+            delta: { stop_reason: "tool_use" },
+          }),
+        );
+        yield* TestClock.adjust("60 seconds");
+        yield* harness.offerAndWait(
+          stream({
+            type: "message_start",
+            message: { id: "generation-second", usage: { output_tokens: 1 } },
+          }),
+        );
+        yield* harness.offerAndWait(
+          stream(
+            {
+              type: "message_start",
+              message: { id: "child-response", usage: { output_tokens: 1 } },
+            },
+            "child-tool",
+          ),
+        );
+        yield* TestClock.adjust("1 second");
+        yield* harness.offerAndWait(
+          stream({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "Done" },
+          }),
+        );
+        yield* harness.offerAndWait(
+          stream({
+            type: "message_delta",
+            usage: { output_tokens: 201 },
+            delta: { stop_reason: "end_turn" },
+          }),
+        );
+        yield* harness.offerAndWait(
+          stream(
+            {
+              type: "message_delta",
+              usage: { output_tokens: 10_000 },
+              delta: { stop_reason: "end_turn" },
+            },
+            "child-tool",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "generation-result", result: "Done" }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const completed = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type === "provider_turn.updated") {
+          assert.deepEqual(completed.providerTurn.generationSpeed, {
+            provider: "claude",
+            model: CLAUDE_TEST_MODEL_SELECTION.model,
+            reasoningEffort: "ultrathink",
+            outputTokens: 300,
+            durationMs: 4_000,
+            responses: 2,
+            startedAt,
+          });
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("re-sends the model on the turn after a live selection change fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
