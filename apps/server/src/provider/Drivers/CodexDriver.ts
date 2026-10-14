@@ -89,11 +89,15 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes(CODEX_STANDALONE_SEGMENT);
 }
 
+// Greedy, so it finds the last standalone segment in the path.
+const CODEX_STANDALONE_HOME_PATTERN = /^(.+)\/packages\/standalone\//is;
+
 /** The `CODEX_HOME` whose standalone tree holds this executable, if any. */
 function codexStandaloneHome(commandPath: string): string | null {
-  // Normalizing keeps the length, so the index applies to the original path.
-  const index = normalizeCommandPath(commandPath).lastIndexOf(CODEX_STANDALONE_SEGMENT);
-  return index > 0 ? commandPath.slice(0, index) : null;
+  // Only backslashes are rewritten, which keeps the length, so the match lines
+  // up with the original path. Lowercasing can change the length (`İ`).
+  const match = CODEX_STANDALONE_HOME_PATTERN.exec(commandPath.replaceAll("\\", "/"));
+  return match?.[1] ? commandPath.slice(0, match[1].length) : null;
 }
 
 /**

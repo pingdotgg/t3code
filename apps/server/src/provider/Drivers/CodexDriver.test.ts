@@ -322,7 +322,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
           .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
         // One standalone install, linked onto PATH and used by two account homes.
-        const installHome = NodePath.join(tempDir, "codex-install");
+        // `İ` gets longer when lowercased, so the home must not be sliced from a
+        // lowercased copy of the path.
+        const installHome = NodePath.join(tempDir, "codex-İnstall");
         const realBinaryPath = NodePath.join(
           installHome,
           "packages",
