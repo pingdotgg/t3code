@@ -11,6 +11,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
+  localThemeFile: Schema.optionalKey(Schema.NullOr(Schema.String)),
   linuxPasswordStore: Schema.optionalKey(
     Schema.Literals(["auto", "gnome-libsecret", "kwallet", "kwallet5", "kwallet6"]),
   ),
@@ -91,6 +92,23 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it.effect("remembers a local theme file across launches and can return to system colors", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        const before = yield* settings.get;
+        const themePath = "/home/alice/Themes/My palette.json";
+
+        assert.isTrue((yield* settings.setLocalThemeFile(themePath)).changed);
+        assert.deepEqual(yield* settings.load, { ...before, localThemeFile: themePath });
+        assert.isFalse((yield* settings.setLocalThemeFile(themePath)).changed);
+
+        assert.isTrue((yield* settings.setLocalThemeFile(null)).changed);
+        assert.deepEqual(yield* settings.load, before);
+      }),
+    ),
+  );
   it.effect(
     "persists disabling and re-enabling local execution without clearing backend settings",
     () =>
@@ -125,6 +143,7 @@ describe("DesktopSettings", () => {
       {
         linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
+        localThemeFile: null,
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
@@ -155,6 +174,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
+          localThemeFile: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -263,6 +283,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localThemeFile: null,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -320,6 +341,7 @@ describe("DesktopSettings", () => {
           assert.deepEqual(yield* settings.load, {
             linuxPasswordStore: "auto",
             localEnvironmentEnabled: true,
+            localThemeFile: null,
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
@@ -397,6 +419,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localThemeFile: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -426,6 +449,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localThemeFile: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -454,6 +478,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localThemeFile: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",

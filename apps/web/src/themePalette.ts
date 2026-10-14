@@ -1,3 +1,4 @@
+import type { DesktopLocalThemeState } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import "culori/css";
@@ -245,6 +246,39 @@ const EMPTY_CUSTOM_THEMES: ReadonlyArray<ThemeDefinition> = [];
 export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   const snapshot = getCustomThemeLibrarySnapshot();
   return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
+}
+
+export const DESKTOP_LOCAL_THEME_ID = "desktop-local-theme";
+// Resolve a saved desktop selection before its first asynchronous snapshot.
+let desktopLocalTheme: ThemeDefinition = {
+  id: DESKTOP_LOCAL_THEME_ID,
+  label: "System theme",
+  appearance: "light",
+  colors: T3_CODE_LIGHT_THEME_COLORS,
+  variants: { dark: T3_CODE_DARK_THEME_COLORS },
+};
+let desktopThemeState: DesktopLocalThemeState | null = null;
+
+export function getDesktopThemeState(): DesktopLocalThemeState | null {
+  return desktopThemeState;
+}
+
+export function setDesktopThemeState(state: DesktopLocalThemeState | null): boolean {
+  if (Equal.equals(desktopThemeState, state)) return false;
+  desktopThemeState = state;
+  notifyCustomThemeListeners();
+  return true;
+}
+
+export function getDesktopLocalTheme(): ThemeDefinition {
+  return desktopLocalTheme;
+}
+
+export function setDesktopLocalTheme(theme: ThemeDefinition): boolean {
+  if (Equal.equals(desktopLocalTheme, theme)) return false;
+  desktopLocalTheme = theme;
+  notifyCustomThemeListeners();
+  return true;
 }
 
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
@@ -1091,6 +1125,7 @@ const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEM
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
+  if (desktopLocalTheme?.id === themeId) return desktopLocalTheme;
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??

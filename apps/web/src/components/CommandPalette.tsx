@@ -88,6 +88,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -109,7 +110,13 @@ import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
-import { getThemeDefinition } from "../themePalette";
+import {
+  DESKTOP_LOCAL_THEME_ID,
+  getDesktopThemeState,
+  getDesktopLocalTheme,
+  subscribeToCustomThemes,
+  getThemeDefinition,
+} from "../themePalette";
 import {
   STANDARD_THEME_CARDS,
   getThemeCardDefinition,
@@ -711,11 +718,21 @@ function OpenCommandPaletteDialog(props: {
   } = useTheme();
   const customThemes = useCustomThemes();
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const desktopThemeState = useSyncExternalStore(
+    subscribeToCustomThemes,
+    getDesktopThemeState,
+    () => null,
+  );
   const themeCards = useMemo(() => {
     const seen = new Set<string>();
     return [
       ...STANDARD_THEME_CARDS.map((card) => ({ ...card, id: null })),
-      ...[...BUILT_IN_THEMES, ...customThemes, ...environmentThemes]
+      ...[
+        ...(desktopThemeState === null ? [] : [getDesktopLocalTheme()]),
+        ...BUILT_IN_THEMES,
+        ...customThemes,
+        ...environmentThemes,
+      ]
         .filter((definition) => {
           if (seen.has(definition.id)) return false;
           seen.add(definition.id);
@@ -723,7 +740,7 @@ function OpenCommandPaletteDialog(props: {
         })
         .map(getThemeCardDefinition),
     ];
-  }, [customThemes, environmentThemes]);
+  }, [customThemes, environmentThemes, desktopThemeState]);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByEnvironmentAndInstanceId = useMemo(() => {
     const map = new Map<string, ProviderInstanceEntry>();
@@ -2134,7 +2151,8 @@ function OpenCommandPaletteDialog(props: {
               previews.length === 1 && id !== null
                 ? setThemeHalf(previews[0]!.mode, id)
                 : setTheme(id ?? appearanceMode);
-            if (!saved) notifyThemeSaveFailure();
+            if (!saved || (id === DESKTOP_LOCAL_THEME_ID && !setAppearanceMode("system")))
+              notifyThemeSaveFailure();
           },
         })),
       },

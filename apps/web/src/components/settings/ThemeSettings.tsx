@@ -9,12 +9,17 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactElement } from "react";
+import { applyDesktopThemeState } from "../../desktopTheme";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
+  getDesktopThemeState,
+  getDesktopLocalTheme,
+  DESKTOP_LOCAL_THEME_ID,
+  subscribeToCustomThemes,
   singleAppearanceOf,
   getThemeModes,
   removeCustomThemes,
@@ -101,6 +106,7 @@ function ThemeLibraryCard({
   theme,
   isActive,
   onUse,
+  useDescription,
   onUseMode,
   activeModes,
   onEdit,
@@ -112,6 +118,7 @@ function ThemeLibraryCard({
   theme: ThemeCardDefinition;
   isActive: boolean;
   onUse: () => void;
+  useDescription?: string;
   onUseMode: (mode: ThemeMode) => void;
   activeModes: ReadonlyArray<ThemeMode>;
   onEdit?: () => void;
@@ -411,11 +418,12 @@ function ThemeLibraryCard({
         }
       />
       <TooltipPopup>
-        {variantNavigation
-          ? "Use the first variants for light and dark"
-          : cardModes.length > 1
-            ? "Use for both light and dark"
-            : `Use for ${cardModes[0]} mode only`}
+        {useDescription ??
+          (variantNavigation
+            ? "Use the first variants for light and dark"
+            : cardModes.length > 1
+              ? "Use for both light and dark"
+              : `Use for ${cardModes[0]} mode only`)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -521,7 +529,7 @@ export function ThemeLibrary({
   setAppearanceMode: (mode: ThemeMode) => boolean;
   customThemes: ReadonlyArray<ThemeDefinition>;
   initialAppearance: ThemeAppearance;
-  refreshTheme: () => void;
+  refreshTheme: (options?: { preservePreview?: boolean }) => void;
   isImportOpen: boolean;
   onImportOpenChange: (open: boolean) => void;
   themeHalves: ThemeHalves | null;
@@ -529,6 +537,14 @@ export function ThemeLibrary({
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const desktopThemeState = useSyncExternalStore(
+    subscribeToCustomThemes,
+    getDesktopThemeState,
+    () => null,
+  );
+  const desktopTheme = desktopThemeState === null ? null : getDesktopLocalTheme();
+  const [isChangingDesktopSource, setIsChangingDesktopSource] = useState(false);
+  const [desktopSourceError, setDesktopSourceError] = useState<string | null>(null);
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -684,6 +700,30 @@ export function ThemeLibrary({
 
   const setMode = (mode: ThemeMode) => {
     if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
+  };
+
+  const useDesktopTheme = () => {
+    if (!persistTheme(DESKTOP_LOCAL_THEME_ID)) return;
+    if (!setAppearanceMode("system")) notifyThemeSaveFailure();
+  };
+
+  const changeDesktopSource = async (pickFile: boolean) => {
+    const bridge = window.desktopBridge;
+    const picker = bridge?.pickLocalThemeFile;
+    if (!bridge?.setLocalThemeFile || (pickFile && !picker)) return;
+    setIsChangingDesktopSource(true);
+    setDesktopSourceError(null);
+    try {
+      const filePath = pickFile && picker ? await picker() : null;
+      if (pickFile && filePath === null) return;
+      const next = await bridge.setLocalThemeFile(filePath);
+      applyDesktopThemeState(next);
+      refreshTheme({ preservePreview: true });
+    } catch {
+      setDesktopSourceError("Could not change the theme source. Try again.");
+    } finally {
+      setIsChangingDesktopSource(false);
+    }
   };
 
   // ----- Wireframe tiles on top, two-ball cards below --------------------
@@ -916,6 +956,92 @@ export function ThemeLibrary({
           </Button>
         </div>
       </div>
+      {desktopThemeState !== null && desktopTheme !== null ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="w-full shrink-0 sm:w-64">
+            <TooltipProvider>
+              <ThemeLibraryCard
+                activeModes={pickedModesFor(DESKTOP_LOCAL_THEME_ID)}
+                isActive={theme === DESKTOP_LOCAL_THEME_ID}
+                onUse={useDesktopTheme}
+                useDescription="Follow your desktop appearance and colors"
+                onUseMode={handlePairPick(DESKTOP_LOCAL_THEME_ID)}
+                onDuplicate={() =>
+                  openThemeEditor({
+                    editingThemeId: null,
+                    seedThemeId: DESKTOP_LOCAL_THEME_ID,
+                    seedName: `${desktopTheme.label} copy`,
+                    initialAppearance,
+                  })
+                }
+                theme={{ ...getThemeCardDefinition(desktopTheme), label: "System theme" }}
+              />
+            </TooltipProvider>
+          </div>
+          <div className="min-w-0 space-y-2 px-3 sm:px-0">
+            <p className="text-sm text-muted-foreground">
+              Match your desktop appearance and available colors.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {desktopThemeState.source === "omarchy"
+                ? "Omarchy palette"
+                : desktopThemeState.source === "file"
+                  ? "Custom theme file"
+                  : "Native system colors"}
+            </p>
+            {desktopThemeState.filePath ? (
+              <p className="break-all text-xs text-muted-foreground">
+                {desktopThemeState.filePath}
+              </p>
+            ) : null}
+            {desktopThemeState.status === "missing" || desktopThemeState.status === "invalid" ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {desktopThemeState.status === "missing"
+                  ? "Theme file is missing. Keeping the last valid colors."
+                  : "Theme file is invalid. Keeping the last valid colors."}
+              </p>
+            ) : null}
+            {desktopThemeState.status === "unavailable" ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                System colors are unavailable. Using T3 Code colors.
+              </p>
+            ) : null}
+            {window.desktopBridge?.setLocalThemeFile ? (
+              <div className="flex flex-wrap gap-2">
+                {window.desktopBridge.pickLocalThemeFile ? (
+                  <Button
+                    disabled={isChangingDesktopSource}
+                    size="xs"
+                    variant="outline"
+                    onClick={() => void changeDesktopSource(true)}
+                  >
+                    {isChangingDesktopSource
+                      ? "Saving source…"
+                      : desktopThemeState.filePath
+                        ? "Change theme file"
+                        : "Choose theme file"}
+                  </Button>
+                ) : null}
+                {desktopThemeState.filePath ? (
+                  <Button
+                    disabled={isChangingDesktopSource}
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => void changeDesktopSource(false)}
+                  >
+                    Use automatic colors
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {desktopSourceError ? (
+              <p role="alert" className="text-xs text-destructive">
+                {desktopSourceError}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {renderPairGrid()}
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {

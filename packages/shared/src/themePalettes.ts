@@ -18,6 +18,7 @@ export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS]
  */
 export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
   "system",
+  "desktop-local-theme",
   "light",
   "dark",
   ...BUILT_IN_THEME_IDS,

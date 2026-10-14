@@ -93,3 +93,27 @@ view.
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
+
+## Desktop colors
+
+On desktop, select **System theme** in **Settings → Appearance** to match your computer's
+appearance and available accent color. Other surfaces keep T3 Code's standard colors.
+If the desktop does not provide an accent, the standard accent is used. This works with local
+environments disabled and remote server connections. Existing selections stay unchanged until
+you choose System theme.
+
+Omarchy's generated T3 Code palette is detected automatically on Linux. When available,
+System theme follows its full palette, including code and terminal colors. No launcher,
+environment variable, or separate theme broker is required.
+
+For custom matching, import or create themes and assign their light and dark previews.
+Choose **System** appearance to switch between them with your desktop. Alternatively, choose
+**Choose theme file** beside System theme to follow JSON exported by T3 Code or produced by
+another theme tool. The selected path and file status are shown in Settings; **Use automatic
+colors** returns to desktop detection. Changing the source does not replace a manually selected
+theme. Select System theme to use it.
+
+Replace files atomically. Missing or invalid files retain the last valid palette from that
+source, or use native colors until a valid palette arrives. Files must be regular files no
+larger than 32 KiB; symbolic links to files are not followed. Choosing another theme persists
+through file updates, navigation, and app restarts. Web and mobile clients are unaffected.

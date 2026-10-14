@@ -42,6 +42,7 @@ import { ProviderAuthCallbackCoordinator } from "../components/settings/Provider
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
+import { useDesktopLocalThemeSync } from "../hooks/useDesktopLocalTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -141,6 +142,7 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteView() {
+  useDesktopLocalThemeSync();
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();

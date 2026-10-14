@@ -3,7 +3,7 @@ import { useEffect } from "react";
 
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerSettingsAtom } from "../state/server";
-import { getThemeDefinition, singleAppearanceOf } from "../themePalette";
+import { DESKTOP_LOCAL_THEME_ID, getThemeDefinition, singleAppearanceOf } from "../themePalette";
 import { useEnvironmentThemeDefinitions } from "./useEnvironmentTheme";
 import { useTheme } from "./useTheme";
 
@@ -74,7 +74,7 @@ export function useDefaultThemeAdoption(): void {
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
-  const { setTheme, setAppearanceMode } = useTheme();
+  const { theme, themeHalves, setTheme, setAppearanceMode } = useTheme();
   // Re-runs adoption when a late-arriving published theme makes the
   // requested id resolvable.
   const environmentThemes = useEnvironmentThemeDefinitions();
@@ -82,6 +82,18 @@ export function useDefaultThemeAdoption(): void {
   useEffect(() => {
     if (typeof window === "undefined" || environmentId === null) return;
     const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
+    if (
+      theme === DESKTOP_LOCAL_THEME_ID ||
+      themeHalves?.light === DESKTOP_LOCAL_THEME_ID ||
+      themeHalves?.dark === DESKTOP_LOCAL_THEME_ID
+    ) {
+      // Consume a server default ignored while following this desktop, so
+      // leaving System theme cannot replay it over a later manual choice.
+      if (defaultTheme.length > 0) {
+        writeAppliedGeneration(storageKey, defaultThemeGeneration(defaultTheme, defaultThemeSetAt));
+      }
+      return;
+    }
     const definition = getThemeDefinition(defaultTheme);
     const generation = defaultThemeToApply({
       environmentId,
@@ -105,6 +117,8 @@ export function useDefaultThemeAdoption(): void {
     if (half !== null && !setAppearanceMode(half)) return;
     writeAppliedGeneration(storageKey, generation);
   }, [
+    theme,
+    themeHalves,
     environmentId,
     defaultTheme,
     defaultThemeSetAt,

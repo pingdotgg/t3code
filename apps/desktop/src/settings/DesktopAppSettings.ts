@@ -27,6 +27,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
+  readonly localThemeFile: string | null;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
@@ -76,6 +77,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
+  localThemeFile: null,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
@@ -98,6 +100,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
+  localThemeFile: Schema.optionalKey(Schema.NullOr(Schema.String)),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
@@ -159,6 +162,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly get: Effect.Effect<DesktopSettings>;
     readonly setLocalEnvironmentEnabled: (
       enabled: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setLocalThemeFile: (
+      path: string | null,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
@@ -233,6 +239,7 @@ function normalizeDesktopSettingsDocument(
 
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
+    localThemeFile: parsed.localThemeFile ?? null,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
@@ -258,6 +265,10 @@ function toDesktopSettingsDocument(
 
   if (settings.localEnvironmentEnabled !== defaults.localEnvironmentEnabled) {
     document.localEnvironmentEnabled = settings.localEnvironmentEnabled;
+  }
+
+  if (settings.localThemeFile !== defaults.localThemeFile) {
+    document.localThemeFile = settings.localThemeFile;
   }
 
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
@@ -387,6 +398,10 @@ function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean)
   return settings.localEnvironmentEnabled === enabled
     ? settings
     : { ...settings, localEnvironmentEnabled: enabled };
+}
+
+function setLocalThemeFile(settings: DesktopSettings, path: string | null): DesktopSettings {
+  return settings.localThemeFile === path ? settings : { ...settings, localThemeFile: path };
 }
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
@@ -580,6 +595,10 @@ export const make = Effect.gen(function* () {
       persist((settings) => setLocalEnvironmentEnabled(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setLocalEnvironmentEnabled", { attributes: { enabled } }),
       ),
+    setLocalThemeFile: (path) =>
+      persist((settings) => setLocalThemeFile(settings, path)).pipe(
+        Effect.withSpan("desktop.settings.setLocalThemeFile"),
+      ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -623,6 +642,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         setLocalEnvironmentEnabled: (enabled) =>
           update((settings) => setLocalEnvironmentEnabled(settings, enabled)),
+        setLocalThemeFile: (path) => update((settings) => setLocalThemeFile(settings, path)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });

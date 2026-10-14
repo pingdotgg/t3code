@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
+  DESKTOP_LOCAL_THEME_ID,
+  getDesktopThemeState,
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
   canonicalThemePreference,
@@ -145,6 +147,10 @@ function emitChange() {
 }
 
 function getSystemDark() {
+  const desktop = getDesktopThemeState();
+  if (desktop !== null && getStored() === DESKTOP_LOCAL_THEME_ID) {
+    return desktop.appearance === "dark";
+  }
   return (
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
