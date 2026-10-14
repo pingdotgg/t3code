@@ -127,7 +127,7 @@ export const runCommand = Effect.fn("runCommand")(function* (
   const spawnCommand = yield* resolveSpawnCommand(command, args);
   const processContext = {
     command,
-    argumentCount: spawnCommand.args.length,
+    argumentCount: args.length,
     cwd,
     shell: spawnCommand.shell,
   } as const;

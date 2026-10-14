@@ -693,8 +693,11 @@ describe("CodexAdapterV2 process spawning", () => {
       if (!ChildProcess.isStandardCommand(command)) {
         return;
       }
-      assert.equal(command.command, '^"C:\\npm\\codex.cmd^"');
-      assert.deepEqual(command.args, ['^"app-server^"', '^"argument^ with^ spaces^"']);
+      assert.equal(
+        command.command,
+        '^"C:\\npm\\codex.cmd^" ^"app-server^" ^"argument^ with^ spaces^"',
+      );
+      assert.deepEqual(command.args, []);
       assert.equal(command.options.shell, true);
       assert.equal(command.options.cwd, "C:\\workspace");
       assert.deepEqual(command.options.env, { CUSTOM: "1" });

@@ -46,10 +46,10 @@ const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
 /**
  * Escapes a single argument for `cmd.exe` shell mode (`spawn(..., { shell: true })`
- * on Windows). Node joins the command and arguments with spaces and hands the
- * resulting string to `cmd.exe` without any quoting, so every dynamic argument
- * must be escaped to survive both cmd.exe parsing and the target program's
- * `CommandLineToArgvW` parsing. Mirrors cross-spawn's argument escaping.
+ * on Windows). Node hands the command string to `cmd.exe /d /s /c "<command>"`
+ * without any quoting, so every dynamic argument must be escaped to survive both
+ * cmd.exe parsing and the target program's `CommandLineToArgvW` parsing.
+ * Mirrors cross-spawn's argument escaping.
  */
 function escapeWindowsShellArg(arg: string): string {
   // Double up backslashes that precede a double quote, then escape the quote
@@ -61,18 +61,6 @@ function escapeWindowsShellArg(arg: string): string {
   escaped = `"${escaped}"`;
   // Escape cmd.exe metacharacters so cmd passes them through verbatim.
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
-}
-
-/**
- * Escapes arguments for shell-mode spawns: applies {@link escapeWindowsShellArg}
- * when the platform is `win32` (where `shell: true` routes through `cmd.exe`)
- * and returns the arguments untouched everywhere else.
- */
-function sanitizeShellModeArgsForPlatform(
-  args: ReadonlyArray<string>,
-  platform: NodeJS.Platform,
-): Array<string> {
-  return platform === "win32" ? args.map(escapeWindowsShellArg) : [...args];
 }
 
 export interface ResolvedSpawnCommand {
@@ -773,9 +761,12 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     return { command: resolvedCommand, args: [...args], shell: false };
   }
 
+  // Node runs a shell spawn as `cmd.exe /d /s /c "<command> <args...>"`, but
+  // passing args with `shell: true` prints DEP0190. Build the same escaped line
+  // here and pass no args.
   return {
-    command: escapeWindowsShellArg(resolvedCommand),
-    args: sanitizeShellModeArgsForPlatform(args, platform),
+    command: [resolvedCommand, ...args].map(escapeWindowsShellArg).join(" "),
+    args: [],
     shell: true,
   };
 });
