@@ -10,7 +10,9 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
@@ -410,6 +412,99 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
     ),
   ),
 );
+
+it.effect("labels SQL spans with their connection and how long they waited for its lock", () => {
+  const spans: Array<Tracer.NativeSpan> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  return withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* Effect.forkChild(
+        sql.withTransaction(
+          Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        ),
+      );
+      yield* Deferred.await(held);
+      // Each waiter runs until it blocks on the writer lock, before the clock moves.
+      const statement = yield* Effect.forkChild(sql`SELECT 1`, { startImmediately: true });
+      const transaction = yield* Effect.forkChild(sql.withTransaction(countEntries(sql)), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("25 millis");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(statement);
+      yield* Fiber.join(transaction);
+      yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
+    }),
+  ).pipe(
+    // The server turns this on, so a statement's span is current while it waits.
+    Effect.provideService(Statement.SpanPropagationEnabled, true),
+    Effect.withTracer(tracer),
+    Effect.map(() => {
+      // Statements inside a transaction reuse its connection, so only the
+      // statements and transactions that took a lock are labeled.
+      const labeled = spans
+        .filter((span) => span.attributes.has("db.connection"))
+        .map((span) => [
+          span.name,
+          span.attributes.get("db.connection"),
+          span.attributes.get("db.lock_wait_ms"),
+        ]);
+      assert.deepStrictEqual(labeled.slice(3), [
+        ["sql.transaction", "writer", 0],
+        ["sqlite", "writer", 25],
+        ["sql.transaction", "writer", 25],
+        ["sql.transaction", "reader", 0],
+      ]);
+    }),
+  );
+});
+
+it.effect("labels only the span of the statement or transaction that took the lock", () => {
+  const spans: Array<Tracer.NativeSpan> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const transaction = sql.withTransaction(sql`SELECT 1`);
+    yield* transaction;
+    // Run again nested, the same Effect reuses the outer connection and takes no lock.
+    yield* sql.withTransaction(transaction);
+    // With tracing off, Statement does not make its span current.
+    yield* sql`SELECT 2`.pipe(Effect.withTracerEnabled(false));
+  }).pipe(
+    Effect.withSpan("caller"),
+    Effect.provide(SqliteClient.layer({ filename: ":memory:" })),
+    Effect.provideService(Statement.SpanPropagationEnabled, true),
+    Effect.withTracer(tracer),
+    Effect.map(() => {
+      assert.deepStrictEqual(
+        spans
+          .filter((span) => span.name === "caller" || span.name === "sql.transaction")
+          .map((span) => [span.name, span.attributes.get("db.connection")]),
+        [
+          ["caller", undefined],
+          ["sql.transaction", "writer"],
+          ["sql.transaction", "writer"],
+          ["sql.transaction", undefined],
+        ],
+      );
+    }),
+  );
+});
 
 it.effect("keeps large parameters off the reader worker's cached statements", () =>
   withReaderClient((sql) =>

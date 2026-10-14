@@ -9,6 +9,7 @@ import * as NodeUtil from "node:util";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,11 +18,13 @@ import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Client from "effect/sql/SqlClient";
 import type { Connection } from "effect/sql/SqlConnection";
@@ -71,6 +74,33 @@ const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Re
  */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, ReadOnly, true);
+
+/**
+ * Which connection ran the SQL, and how long it waited for that connection's
+ * lock. The wait is time queued behind other SQL, not time the event loop was
+ * blocked.
+ */
+interface Acquired {
+  readonly connection: "writer" | "reader";
+  readonly lockWaitMs: number;
+}
+
+const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquired | undefined) => {
+  const span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
+  if (span?._tag !== "Span" || acquired === undefined) return;
+  span.attribute("db.connection", acquired.connection);
+  span.attribute("db.lock_wait_ms", acquired.lockWaitMs);
+};
+
+/**
+ * Provided by the client's `withTransaction`. Effect acquires a transaction's
+ * connection before it makes the `sql.transaction` span current, so the acquire
+ * leaves its result here and the transaction body puts it on the span.
+ */
+const TransactionAcquire = Context.Reference<{ acquired?: Acquired } | undefined>(
+  "@t3tools/shared/nodeSqliteClient/TransactionAcquire",
+  { defaultValue: () => undefined },
+);
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
   "UnsupportedNodeSqliteVersionError",
@@ -785,7 +815,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
     options.readerWorker && isFileDatabase ? yield* makeReader(options) : undefined;
   const readerSemaphore = yield* Semaphore.make(1);
 
-  const writer = { lock: semaphore, connection };
+  const writer = { name: "writer" as const, lock: semaphore, connection };
   // Picks the reader only for `readOnly` work, and the writer whenever the
   // reader is turned off.
   const route = Effect.withFiber((fiber) =>
@@ -793,28 +823,59 @@ const make = Effect.fn("makeWithDatabase")(function* (
       ? Effect.map(acquireReader, (readerConnection) =>
           readerConnection === undefined
             ? writer
-            : { lock: readerSemaphore, connection: readerConnection },
+            : { name: "reader" as const, lock: readerSemaphore, connection: readerConnection },
         )
       : Effect.succeed(writer),
   );
 
+  const acquired = (
+    target: { readonly name: Acquired["connection"] },
+    clock: Clock.Clock,
+    start: bigint,
+  ): Acquired => ({
+    connection: target.name,
+    lockWaitMs: Number((clock.monotonicTimeNanosUnsafe() - start) / 1000n) / 1000,
+  });
+
   const acquirer = Effect.flatMap(route, (target) =>
-    target.lock.withPermits(1)(Effect.succeed(target.connection)),
+    Effect.withFiber((fiber) => {
+      // The statement's span is current here only when it propagates, which
+      // Statement skips while tracing is off. Otherwise the current span is
+      // the caller's, so leave it alone.
+      if (
+        !fiber.getRef(References.TracerEnabled) ||
+        !fiber.getRef(Statement.SpanPropagationEnabled)
+      ) {
+        return target.lock.withPermits(1)(Effect.succeed(target.connection));
+      }
+      const clock = fiber.getRef(Clock.Clock);
+      const start = clock.monotonicTimeNanosUnsafe();
+      return target.lock.withPermits(1)(
+        Effect.sync(() => {
+          annotateAcquired(fiber, acquired(target, clock, start));
+          return target.connection;
+        }),
+      );
+    }),
   );
   const transactionAcquirer = Effect.flatMap(route, (target) =>
     Effect.uninterruptibleMask((restore) => {
       const fiber = Fiber.getCurrent()!;
       const scope = Context.getUnsafe(fiber.context, Scope.Scope);
+      const clock = fiber.getRef(Clock.Clock);
+      const start = clock.monotonicTimeNanosUnsafe();
       return Effect.as(
-        Effect.tap(restore(target.lock.take(1)), () =>
-          Scope.addFinalizer(scope, target.lock.release(1)),
-        ),
+        Effect.tap(restore(target.lock.take(1)), () => {
+          const pending = fiber.getRef(TransactionAcquire);
+          if (pending !== undefined) pending.acquired = acquired(target, clock, start);
+          return Scope.addFinalizer(scope, target.lock.release(1));
+        }),
         target.connection,
       );
     }),
   );
 
-  return yield* Client.make({
+  const client = yield* Client.make({
     acquirer,
     compiler,
     transactionAcquirer,
@@ -830,6 +891,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
       [ATTR_DB_SYSTEM_NAME, "sqlite"],
     ],
     transformRows,
+  });
+  const withTransaction = client.withTransaction;
+  return Object.assign(client, {
+    // Each run gets its own holder, so a reused transaction Effect never
+    // carries an earlier run's attributes.
+    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.suspend(() => {
+        const pending: { acquired?: Acquired } = {};
+        // The body runs with the `sql.transaction` span current. A nested
+        // transaction acquires nothing, so its span gets no attributes.
+        const body = Effect.withFiber<A, E, R>((fiber) => {
+          annotateAcquired(fiber, pending.acquired);
+          return effect;
+        });
+        return withTransaction(body).pipe(Effect.provideService(TransactionAcquire, pending));
+      }),
   });
 });
 
