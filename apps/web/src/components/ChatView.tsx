@@ -7472,10 +7472,13 @@ export default function ChatView(props: ChatViewProps) {
           : `${childThreadInputs.length} subagents need input`,
       description: childThreadInputs.map((child, index) => (
         <Fragment key={child.id}>
-          {index > 0 ? ", " : null}
-          <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
-            {child.title}
-          </InlineButton>
+          {index > 0 ? " " : null}
+          <span className="whitespace-nowrap">
+            <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
+              {child.title}
+            </InlineButton>
+            {index < childThreadInputs.length - 1 ? "," : null}
+          </span>
         </Fragment>
       )),
       actions: (
@@ -7643,19 +7646,26 @@ export default function ChatView(props: ChatViewProps) {
           ? undefined
           : presentation.items.map((item, index) => {
               const childThreadId = item.childThreadId;
+              const separator = index < presentation.items.length - 1 ? "," : null;
               return (
                 <Fragment key={item.taskId}>
-                  {index > 0 ? ", " : null}
+                  {index > 0 ? " " : null}
                   {childThreadId === undefined ? (
-                    item.label
-                  ) : (
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`Open subagent ${item.label}`}
-                      onClick={() => onOpenRelatedThread(childThreadId)}
-                    >
+                    <>
                       {item.label}
-                    </InlineButton>
+                      {separator}
+                    </>
+                  ) : (
+                    <span className="whitespace-nowrap">
+                      <InlineButton
+                        tone="muted"
+                        aria-label={`Open subagent ${item.label}`}
+                        onClick={() => onOpenRelatedThread(childThreadId)}
+                      >
+                        {item.label}
+                      </InlineButton>
+                      {separator}
+                    </span>
                   )}
                 </Fragment>
               );
