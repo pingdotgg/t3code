@@ -118,6 +118,10 @@ If dragging is unavailable for one environment, update the T3 Code server runnin
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+New threads refresh their generated title after the first agent turn completes, so the title
+can reflect what the agent learned. Manually renaming or regenerating the title cancels this
+automatic refresh.
+
 To generate a fresh title from the conversation, open a thread's menu and choose
 **Regenerate title**. The action is unavailable while title generation is in progress
 or when the connected environment needs a server update.

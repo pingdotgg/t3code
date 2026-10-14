@@ -1,3 +1,6 @@
+import * as Stream from "effect/Stream";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -107,6 +110,7 @@ function makeHarness(
   return {
     layer: Layer.mergeAll(
       layerOrchestrator,
+      IdAllocator.layer,
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
@@ -147,6 +151,7 @@ function dispatchUserMessage(input: {
   readonly threadId: ThreadId;
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  readonly titleSeed?: string;
 }) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -157,6 +162,7 @@ function dispatchUserMessage(input: {
       messageId: MessageId.make(`${input.command}:message`),
       text: input.text,
       attachments: input.attachments ?? [],
+      ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
       modelSelection,
       dispatchMode: { type: "defer_start" },
       createdBy: "user",
@@ -283,6 +289,162 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
+  it.effect.each(["landed", "pending"] as const)(
+    "refreshes after the first agent turn with the initial title %s",
+    (initialState) =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          generateTitle: (input) =>
+            Effect.succeed({
+              title: input.previousTitle === undefined ? "Investigate link" : "Fix OAuth redirects",
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const sink = yield* EventSink.EventSinkV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const outbox = yield* EffectOutbox.EffectOutboxV2;
+          const threadId = yield* createThread({
+            command: "create:first-turn",
+            thread: "first-turn",
+          });
+          const initialRequestId = CommandId.make("message:first-turn");
+          const messageId = MessageId.make(`${initialRequestId}:message`);
+          yield* dispatchUserMessage({
+            command: initialRequestId,
+            threadId,
+            text: "Can you investigate https://example.com/issue/123?",
+            titleSeed: "Investigate link",
+          });
+          assert.equal(
+            (yield* threads.getThreadProjection(threadId)).thread.titleRefreshMessageId,
+            messageId,
+          );
+          if (initialState === "landed")
+            yield* service.execute({
+              threadId,
+              requestId: initialRequestId,
+              kind: { type: "initial", messageId },
+            });
+
+          const before = yield* threads.getThreadProjection(threadId);
+          const run = before.runs[0]!;
+          const userMessage = before.messages[0]!;
+          const requestId = CommandId.make(`command:thread-title.after-first-turn:${run.id}`);
+          const now = yield* DateTime.now;
+          const refresh = yield* sink
+            .stream({
+              threadId,
+              afterSequence: yield* sink.latestSequence({ threadId }),
+              eventType: "thread.metadata-updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "thread.metadata-updated" &&
+                  stored.event.payload.titleRegeneration?.requestId === requestId,
+              ),
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+          yield* sink.write({
+            events: [
+              {
+                id: yield* ids.allocate.event({ threadId }),
+                type: "message.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...userMessage,
+                  id: MessageId.make("assistant:first-turn"),
+                  role: "assistant",
+                  text: "The linked issue describes an OAuth redirect loop. I found and fixed the callback handler.",
+                  runId: run.id,
+                  streaming: false,
+                },
+              },
+              {
+                id: yield* ids.allocate.event({ threadId }),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* Fiber.join(refresh);
+          assert.deepEqual(
+            (yield* outbox.listByCommandId(requestId)).map((effect) => effect.request),
+            [{ type: "thread-title.generate", kind: { type: "regenerate" } }],
+          );
+          assert.isNull(
+            (yield* threads.getThreadProjection(threadId)).thread.titleRefreshMessageId,
+          );
+          yield* service.execute({ threadId, requestId, kind: { type: "regenerate" } });
+          const generated = harness.generateThreadTitle.mock.calls.at(-1)?.[0];
+          assert.include(
+            generated?.message,
+            "USER:\nCan you investigate https://example.com/issue/123?",
+          );
+          assert.include(
+            generated?.message,
+            "ASSISTANT:\nThe linked issue describes an OAuth redirect loop.",
+          );
+          assert.equal(generated?.previousTitle, "Investigate link");
+          assert.equal(
+            (yield* threads.getThreadProjection(threadId)).thread.title,
+            "Fix OAuth redirects",
+          );
+          if (initialState === "pending") {
+            const calls = harness.generateThreadTitle.mock.calls.length;
+            yield* service.execute({
+              threadId,
+              requestId: initialRequestId,
+              kind: { type: "initial", messageId },
+            });
+            assert.equal(harness.generateThreadTitle.mock.calls.length, calls);
+            assert.equal(
+              (yield* threads.getThreadProjection(threadId)).thread.title,
+              "Fix OAuth redirects",
+            );
+          }
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.effect.each([{ title: "My title" }, { regenerateTitle: true }, { regenerateTitle: false }])(
+    "cancels the first-turn refresh on an explicit title change: %j",
+    (change) =>
+      Effect.gen(function* () {
+        const harness = makeHarness();
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const threadId = yield* createThread({ command: "create:cancel", thread: "cancel" });
+          yield* dispatchUserMessage({
+            command: "message:cancel",
+            threadId,
+            text: "Look into this",
+            titleSeed: "Look into this",
+          });
+          assert.isNotNull(
+            (yield* threads.getThreadProjection(threadId)).thread.titleRefreshMessageId,
+          );
+          yield* threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("title:cancel"),
+            threadId,
+            ...change,
+          });
+          assert.isNull(
+            (yield* threads.getThreadProjection(threadId)).thread.titleRefreshMessageId,
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
   it.effect(
     "titles an image-only first message without sending bootstrap text to the title model",
     () =>

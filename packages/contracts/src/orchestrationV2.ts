@@ -497,6 +497,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   opens: Schema.optional(LenientThreadOpens),
+  /** Refresh the initial generated title once this message's agent turn completes. */
+  titleRefreshMessageId: Schema.optional(Schema.NullOr(MessageId)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
