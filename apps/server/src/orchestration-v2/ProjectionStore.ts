@@ -85,7 +85,7 @@ import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
-  isThreadHistoryTurnStart,
+  threadHistoryTurnStarts,
   THREAD_HISTORY_MAX_RAW_TURNS,
   selectHistoryPageFromCursor,
   selectRecentTimelineWindow,
@@ -2824,12 +2824,54 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           AND request.type = 'run_interrupt_request'
                       )
                     )
+                ), run_starts AS (
+                  -- A wake (PR watch, task completion) starts its run with a
+                  -- notification instead of a user message. Read the first
+                  -- input of each run, newest run first, and add the
+                  -- notifications to the user-message turn starts. A run
+                  -- without an eligible first input (queued, rolled back) is
+                  -- skipped, so it cannot hide older turns. CROSS JOIN keeps
+                  -- the runs as the outer loop, and each probe reads only the
+                  -- first rows of a run.
+                  SELECT start.ordinal, start.type
+                  FROM orchestration_v2_projection_runs AS recent_run
+                  CROSS JOIN eligible AS start ON start.item_rowid = (
+                    SELECT first_input.rowid
+                    FROM orchestration_v2_projection_turn_items AS first_input
+                    WHERE first_input.run_id = recent_run.run_id
+                      AND first_input.type IN ('user_message', 'notification')
+                    ORDER BY first_input.ordinal
+                    LIMIT 1
+                  )
+                  WHERE recent_run.thread_id = ${threadId}
+                    AND recent_run.ordinal <= COALESCE(
+                      (
+                        SELECT anchor_run.ordinal
+                        FROM orchestration_v2_projection_turn_items AS anchor_item
+                        JOIN orchestration_v2_projection_runs AS anchor_run
+                          ON anchor_run.run_id = anchor_item.run_id
+                        WHERE anchor_item.thread_id = ${threadId}
+                          AND anchor_item.turn_item_id = ${window.anchorItemId ?? null}
+                        LIMIT 1
+                      ),
+                      9223372036854775807
+                    )
+                    AND ${window.userTurnLimit ?? null} IS NOT NULL
+                  ORDER BY recent_run.ordinal DESC
+                  LIMIT ${THREAD_HISTORY_MAX_RAW_TURNS + 2}
                 ), turn_anchors AS (
                   SELECT ordinal, payload_json
-                  FROM eligible
-                  WHERE type = 'user_message'
-                    AND json_extract(payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
-                    AND ${window.userTurnLimit ?? null} IS NOT NULL
+                  FROM (
+                    SELECT ordinal, payload_json
+                    FROM eligible
+                    WHERE type = 'user_message'
+                      AND json_extract(payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
+                      AND ${window.userTurnLimit ?? null} IS NOT NULL
+                    ORDER BY ordinal DESC
+                    LIMIT ${THREAD_HISTORY_MAX_RAW_TURNS + 2}
+                  )
+                  UNION ALL
+                  SELECT ordinal, NULL FROM run_starts WHERE type = 'notification'
                   ORDER BY ordinal DESC
                   LIMIT ${THREAD_HISTORY_MAX_RAW_TURNS + 2}
                 ), user_anchors AS (
@@ -6679,12 +6721,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     (row) => row.sourceItemId === options.anchorItemId,
                   ) + 1;
             const candidates = snapshot.projection.visibleTurnItems.slice(0, anchorIndex);
+            const turnStarts = threadHistoryTurnStarts(candidates.map((row) => row.item));
             const turnAnchors =
               options.userTurnLimit === undefined
                 ? []
-                : candidates.flatMap((row, index) =>
-                    isThreadHistoryTurnStart(row.item) ? [index] : [],
-                  );
+                : candidates.flatMap((_row, index) => (turnStarts[index] ? [index] : []));
             const rawStart = turnAnchors.at(-(THREAD_HISTORY_MAX_RAW_TURNS + 2)) ?? 0;
             const anchors = turnAnchors.filter(
               (index) => index >= rawStart && isThreadHistoryUserTurn(candidates[index]!.item),
