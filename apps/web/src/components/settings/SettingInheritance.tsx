@@ -290,7 +290,7 @@ export function SettingInheritance({
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup align="start" width="md" padding="none">
+      <PopoverPopup align="start" width="lg" padding="none">
         <div className="divide-y divide-border/60">
           {groups.map((members) => {
             const first = members[0];
@@ -324,7 +324,7 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <span className="max-w-44 truncate">{layer.value}</span>
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -453,7 +453,7 @@ export function SettingInheritance({
                               </span>
                             ) : null}
                           </span>
-                          <span className="max-w-32 truncate text-muted-foreground tabular-nums">
+                          <span className="max-w-44 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
                               ? formatValue(
                                   key,
