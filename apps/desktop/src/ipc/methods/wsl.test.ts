@@ -11,6 +11,7 @@ import * as DesktopState from "../../app/DesktopState.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
+import * as ElectronUpdater from "../../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
@@ -71,6 +72,10 @@ const layerUnusedLifecycleRuntime = Layer.mergeAll(
   Layer.succeed(
     ElectronTheme.ElectronTheme,
     ElectronTheme.ElectronTheme.of({} as ElectronTheme.ElectronTheme["Service"]),
+  ),
+  Layer.succeed(
+    ElectronUpdater.ElectronUpdater,
+    ElectronUpdater.ElectronUpdater.of({} as ElectronUpdater.ElectronUpdater["Service"]),
   ),
   Layer.succeed(
     ElectronDialog.ElectronDialog,

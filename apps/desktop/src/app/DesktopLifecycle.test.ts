@@ -8,6 +8,7 @@ import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -18,6 +19,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
   quit: Effect.Effect<void> = Effect.void,
+  relaunch: Effect.Effect<void> = Effect.void,
 ) {
   const registerListener = (eventName: string, listener: (...args: readonly unknown[]) => void) =>
     Effect.acquireRelease(
@@ -37,7 +39,7 @@ function layerElectronApp(
     whenReady: Effect.void,
     quit,
     exit: () => Effect.void,
-    relaunch: () => Effect.void,
+    relaunch: () => relaunch,
     setPath: () => Effect.void,
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
@@ -217,6 +219,52 @@ describe("DesktopLifecycle", () => {
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
         }),
       ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("disarms install-on-quit before a settings relaunch", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const relaunched = yield* Deferred.make<void>();
+      const events: string[] = [];
+      const layerElectronUpdater = Layer.succeed(ElectronUpdater.ElectronUpdater, {
+        setAutoInstallOnAppQuit: (value: boolean) =>
+          Effect.sync(() => {
+            events.push(`autoInstallOnAppQuit=${value}`);
+          }),
+      } as unknown as ElectronUpdater.ElectronUpdater["Service"]);
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "win32",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layerShutdown = Layer.succeed(DesktopShutdown.DesktopShutdown, {
+        request: Effect.void,
+        awaitRequest: Effect.void,
+        markComplete: Effect.void,
+        awaitComplete: Effect.void,
+        isComplete: Effect.succeed(true),
+      });
+      const relaunch = Effect.sync(() => {
+        events.push("relaunch");
+      }).pipe(Effect.andThen(Deferred.succeed(relaunched, undefined)), Effect.asVoid);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners, Effect.void, relaunch)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(layerShutdown),
+        Layer.provideMerge(layerElectronUpdater),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.relaunch("serverExposureMode=network-accessible");
+        yield* Deferred.await(relaunched);
+
+        assert.deepEqual(events, ["autoInstallOnAppQuit=false", "relaunch"]);
+      }).pipe(Effect.provide(layer));
     }),
   );
 

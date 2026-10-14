@@ -347,6 +347,9 @@ export const make = Effect.gen(function* () {
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  // Versions whose download failed. Pollers skip them: they run every few
+  // minutes, so a persistent failure would otherwise redownload forever.
+  const failedDownloads = new Set<string>();
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -527,18 +530,26 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    const releaseFailedDownload = Effect.sync(() => {
+      if (state.availableVersion !== null) failedDownloads.add(state.availableVersion);
+    }).pipe(Effect.andThen(electronUpdater.setAutoInstallOnAppQuit(false)));
+
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
+      // electron-updater reads this flag when the download completes. A .deb
+      // install asks for a password, so it waits for an explicit Install.
+      yield* electronUpdater.setAutoInstallOnAppQuit(!isDebPackage);
       yield* electronUpdater.downloadUpdate;
       return { accepted: true, completed: true };
     }).pipe(
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
           function* (error) {
+            yield* releaseFailedDownload;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
             );
@@ -552,9 +563,14 @@ export const make = Effect.gen(function* () {
         ),
       }),
       Effect.onInterrupt(() =>
-        updateState((current) => (current.status === "downloading" ? state : current)).pipe(
-          Effect.asVoid,
-        ),
+        electronUpdater
+          .setAutoInstallOnAppQuit(false)
+          .pipe(
+            Effect.andThen(
+              updateState((current) => (current.status === "downloading" ? state : current)),
+            ),
+            Effect.asVoid,
+          ),
       ),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -562,6 +578,7 @@ export const make = Effect.gen(function* () {
         }
         const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
         return Effect.gen(function* () {
+          yield* releaseFailedDownload;
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
@@ -576,6 +593,19 @@ export const make = Effect.gen(function* () {
       Effect.ensuring(finishUpdateAction("download")),
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+
+  // Updates the pollers find download on their own; a manual check keeps its
+  // Download button. A downloaded update installs on quit, so pollers leave it
+  // alone: a newer download would discard its installer.
+  const checkAndDownloadInBackground = Effect.fn("desktop.updates.checkAndDownloadInBackground")(
+    function* (reason: "startup" | "poll") {
+      if ((yield* Ref.get(updateStateRef)).downloadedVersion !== null) return;
+      if (!(yield* checkForUpdates(reason)) || (yield* Ref.get(desktopState.quitting))) return;
+      const version = (yield* Ref.get(updateStateRef)).availableVersion;
+      if (version === null || failedDownloads.has(version)) return;
+      yield* downloadAvailableUpdate;
+    },
+  );
 
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
@@ -767,7 +797,7 @@ export const make = Effect.gen(function* () {
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
-      Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(checkAndDownloadInBackground("startup")),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -782,7 +812,7 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(checkAndDownloadInBackground("poll")),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1064,6 +1094,8 @@ export const make = Effect.gen(function* () {
             ),
           );
 
+        // The reset below drops any download of the old channel.
+        yield* electronUpdater.setAutoInstallOnAppQuit(false);
         const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
 

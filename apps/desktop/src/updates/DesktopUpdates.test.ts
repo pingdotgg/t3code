@@ -928,6 +928,158 @@ describe("DesktopUpdates", () => {
   });
 });
 
+/** A harness whose update feed announces `feed.version` on every check. */
+function makeFeedHarness(
+  options: Parameters<typeof makeHarness>[0] = {},
+  feed: { version: string | null } = { version: "1.2.4" },
+) {
+  let emit: ReturnType<typeof makeHarness>["emit"] | undefined;
+  const harness = makeHarness({
+    ...options,
+    checkForUpdates: Effect.sync(() => {
+      if (feed.version === null) emit?.("update-not-available");
+      else emit?.("update-available", { version: feed.version });
+    }),
+  });
+  emit = harness.emit;
+  return { harness, feed };
+}
+
+const failDownload = Effect.fail(
+  new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+    channel: null,
+    cause: new Error("blocked"),
+  }),
+);
+
+describe("DesktopUpdates background downloads", () => {
+  it.effect("downloads what the startup check finds and installs it on quit", () => {
+    const { harness } = makeFeedHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.millis(15_000));
+
+        assert.equal(harness.downloadCount(), 1);
+        assert.deepEqual(harness.autoInstallOnAppQuitCalls, [false, true]);
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "downloaded");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("leaves the download to the button after a manual check", () => {
+    const { harness } = makeFeedHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const result = yield* updates.check("manual");
+        assert.isTrue(result.checked);
+        assert.equal(result.state.status, "available");
+        assert.equal(harness.downloadCount(), 0);
+        assert.deepEqual(harness.autoInstallOnAppQuitCalls, [false]);
+
+        const download = yield* updates.download;
+        assert.isTrue(download.completed);
+        assert.deepEqual(harness.autoInstallOnAppQuitCalls, [false, true]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not arm install on quit for a .deb", () => {
+    const { harness } = makeFeedHarness({ platform: "linux", packageType: "deb" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.millis(15_000));
+
+        assert.equal(harness.downloadCount(), 1);
+        assert.deepEqual(harness.autoInstallOnAppQuitCalls, [false, false]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("stops polling once an update is downloaded", () => {
+    const { harness } = makeFeedHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.millis(15_000));
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust(Duration.minutes(12));
+        assert.equal(harness.checkCount(), 1);
+        assert.equal(harness.downloadCount(), 1);
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+
+        const manual = yield* updates.check("manual");
+        assert.isTrue(manual.checked);
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not retry a failed download until a newer release", () => {
+    const { harness, feed } = makeFeedHarness({ downloadUpdate: failDownload });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.millis(15_000));
+        assert.equal(harness.downloadCount(), 1);
+        assert.deepEqual(harness.autoInstallOnAppQuitCalls, [false, true, false]);
+
+        yield* TestClock.adjust(Duration.minutes(9));
+        assert.isAtLeast(harness.checkCount(), 3);
+        assert.equal(harness.downloadCount(), 1);
+
+        const retry = yield* updates.download;
+        assert.isTrue(retry.accepted);
+        assert.equal(harness.downloadCount(), 2);
+
+        feed.version = "1.2.5";
+        yield* TestClock.adjust(Duration.minutes(4));
+        assert.equal(harness.downloadCount(), 3);
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("disarms install on quit when the channel changes", () => {
+    const { harness } = makeFeedHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.millis(15_000));
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
+
+        const state = yield* updates.setChannel("nightly");
+        assert.equal(state.channel, "nightly");
+        assert.isNull(state.downloadedVersion);
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+});
+
 describe("describeUpdateErrorCause", () => {
   it("preserves network and nested failure reasons", () => {
     const networkError = Object.assign(new Error("getaddrinfo ENOTFOUND updates.example.com"), {

@@ -226,6 +226,7 @@ function SidebarUpdateControl() {
   // Providers leave the list once queued, so the run keeps its own state.
   const isRunningEverything = isUpdatingEverything && !isDownloading;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
+    hasUpdateAction: action !== "none" || isDownloading,
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
     prefersReducedMotion,

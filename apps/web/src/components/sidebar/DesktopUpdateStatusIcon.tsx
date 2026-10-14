@@ -21,14 +21,20 @@ function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {
 }
 
 export function shouldShowDesktopUpdateCheckIcon({
+  hasUpdateAction,
   isAnimationLatched,
   isChecking,
   prefersReducedMotion,
 }: {
+  /** An update is available, downloading, or downloaded. Background downloads
+      start while the check animation is still latched, and the spinner would
+      hide their progress. */
+  readonly hasUpdateAction: boolean;
   readonly isAnimationLatched: boolean;
   readonly isChecking: boolean;
   readonly prefersReducedMotion: boolean;
 }): boolean {
+  if (hasUpdateAction) return false;
   return isChecking || (isAnimationLatched && !prefersReducedMotion);
 }
 

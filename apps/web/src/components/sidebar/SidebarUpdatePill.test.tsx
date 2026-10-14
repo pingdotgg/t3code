@@ -1,6 +1,7 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { shouldShowDesktopUpdateCheckIcon } from "./DesktopUpdateStatusIcon";
 import {
   handleSidebarUpdateReleaseNotesPopoverOpenChange,
   openSidebarUpdateReleaseNotesPopoverOnForwardTab,
@@ -82,5 +83,33 @@ describe("sidebar update release notes popover", () => {
     );
 
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar update check icon", () => {
+  const checking = {
+    hasUpdateAction: false,
+    isAnimationLatched: true,
+    isChecking: true,
+    prefersReducedMotion: false,
+  };
+
+  it("spins while checking or while the check animation is latched", () => {
+    expect(shouldShowDesktopUpdateCheckIcon(checking)).toBe(true);
+    expect(shouldShowDesktopUpdateCheckIcon({ ...checking, isChecking: false })).toBe(true);
+    expect(
+      shouldShowDesktopUpdateCheckIcon({
+        ...checking,
+        isChecking: false,
+        prefersReducedMotion: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("yields to an available, downloading, or downloaded update", () => {
+    expect(shouldShowDesktopUpdateCheckIcon({ ...checking, hasUpdateAction: true })).toBe(false);
+    expect(
+      shouldShowDesktopUpdateCheckIcon({ ...checking, hasUpdateAction: true, isChecking: false }),
+    ).toBe(false);
   });
 });
