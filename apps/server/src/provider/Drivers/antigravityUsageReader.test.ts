@@ -136,6 +136,219 @@ describe("readAntigravityUsage", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("counts id-less Antigravity step, generation and list copies once", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const usage = [
+        ...protoNumber(1, 1016),
+        ...protoNumber(2, 100),
+        ...protoNumber(3, 40),
+        ...protoNumber(4, 5),
+        ...protoNumber(5, 20),
+        ...protoNumber(9, 10),
+        ...protoNumber(10, 30),
+      ];
+      yield* seedDatabase(path.join(dir, "id-less.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            7,
+            new Uint8Array(protoBytes(9, usage)),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, [...protoBytes(4, usage), ...protoBytes(17, protoBytes(2, usage))]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      const read = records(result);
+      assert.strictEqual(read.length, 1);
+      assert.deepStrictEqual(read[0]?.totals, {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 20,
+        cacheCreationTokens: 5,
+        outputTokens: 40,
+        reasoningTokens: 10,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "counts id-less Antigravity retried calls once per attempt instead of adding the total",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const dir = yield* tempDir;
+        const counters = (
+          input: number,
+          output: number,
+          cache: number,
+          read: number,
+          thinking: number,
+        ) => [
+          ...protoNumber(1, 1016),
+          ...protoNumber(2, input),
+          ...protoNumber(3, output),
+          ...protoNumber(4, cache),
+          ...protoNumber(5, read),
+          ...protoNumber(9, thinking),
+          ...protoNumber(10, output - thinking),
+        ];
+        const first = counters(100, 40, 5, 20, 10);
+        const second = counters(200, 60, 7, 30, 15);
+        const total = counters(300, 100, 12, 50, 25);
+        yield* seedDatabase(path.join(dir, "attempts.db"), (db) =>
+          Effect.gen(function* () {
+            yield* createTables(db);
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              211,
+              new Uint8Array(protoBytes(9, first)),
+            ]);
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              213,
+              new Uint8Array(protoBytes(9, second)),
+            ]);
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              104,
+              new Uint8Array(
+                protoBytes(1, [
+                  ...protoBytes(4, total),
+                  ...protoBytes(17, protoBytes(2, first)),
+                  ...protoBytes(17, protoBytes(2, second)),
+                ]),
+              ),
+            ]);
+          }),
+        );
+        const result = yield* readAntigravityUsage(dir, 0);
+        assert.deepStrictEqual(result.errors, []);
+        assert.deepStrictEqual(
+          records(result).map((record) => record.totals),
+          [
+            {
+              uncachedInputTokens: 100,
+              cachedInputTokens: 20,
+              cacheCreationTokens: 5,
+              outputTokens: 40,
+              reasoningTokens: 10,
+            },
+            {
+              uncachedInputTokens: 200,
+              cachedInputTokens: 30,
+              cacheCreationTokens: 7,
+              outputTokens: 60,
+              reasoningTokens: 15,
+            },
+          ],
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the response id of an Antigravity usage whose single attempt has none", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const counters = [
+        ...protoNumber(2, 100),
+        ...protoNumber(3, 40),
+        ...protoNumber(5, 20),
+        ...protoNumber(10, 40),
+      ];
+      yield* seedDatabase(path.join(dir, "id-on-main.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            3,
+            new Uint8Array([
+              ...protoBytes(9, [...counters, ...protoText(11, "response-1")]),
+              ...protoBytes(28, protoBytes(2, counters)),
+            ]),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, protoBytes(4, [...counters, ...protoText(11, "response-1")])),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      const read = records(result);
+      assert.strictEqual(read.length, 1);
+      assert.strictEqual(read[0]?.totals.uncachedInputTokens, 100);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the Antigravity total when the attempts share one response id", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const counters = (input: number, output: number) => [
+        ...protoNumber(2, input),
+        ...protoNumber(3, output),
+        ...protoNumber(10, output),
+        ...protoText(11, "response-1"),
+      ];
+      yield* seedDatabase(path.join(dir, "shared-id.db"), (db) =>
+        Effect.gen(function* () {
+          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoBytes(4, counters(300, 30)),
+                ...protoBytes(17, protoBytes(2, counters(100, 10))),
+                ...protoBytes(17, protoBytes(2, counters(200, 20))),
+              ]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      const read = records(result);
+      assert.strictEqual(read.length, 1);
+      assert.strictEqual(read[0]?.totals.uncachedInputTokens, 300);
+      assert.strictEqual(read[0]?.totals.outputTokens, 30);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps an Antigravity list entry apart when it carries another response id", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const counters = [
+        ...protoNumber(2, 100),
+        ...protoNumber(3, 40),
+        ...protoNumber(5, 20),
+        ...protoNumber(10, 40),
+      ];
+      yield* seedDatabase(path.join(dir, "other-id.db"), (db) =>
+        Effect.gen(function* () {
+          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoBytes(4, [...counters, ...protoText(11, "response-1")]),
+                ...protoBytes(17, protoBytes(2, [...counters, ...protoText(11, "response-2")])),
+              ]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.strictEqual(records(result).length, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the matching Antigravity generation model for each model-less step", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
