@@ -4,6 +4,7 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -37,6 +38,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
+    /** An account-switch cleanup must not detach a later binding to the source. */
+    expectedTargetInstanceId: Schema.optional(ProviderInstanceId),
     /** Set on terminal detaches (thread archive/delete): revoke the thread's MCP credentials. */
     revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),

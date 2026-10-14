@@ -687,6 +687,28 @@ export const layer: Layer.Layer<
           return resumed.success;
         }
 
+        if (session.driver === "codex") {
+          // A transcript summary cannot recover native Codex context. Preserve
+          // the reference so retries keep resuming the same conversation.
+          if (input.willRetry === true) return yield* resumed.failure;
+          yield* settleStartFailure({
+            signal: "provider-native-resume-failure",
+            title: "Codex native conversation could not resume",
+            error: new ProviderAdapter.ProviderAdapterResumeThreadError({
+              driver: session.driver,
+              providerSessionId,
+              providerThreadId: providerThread.id,
+              cause: new Error(
+                uncertainDelivery
+                  ? "Codex history delivery was not acknowledged. Retry after checking the native history, or intentionally start a new conversation with a context handoff. The saved native thread has been preserved."
+                  : "Codex could not resume the saved native conversation. Retry after checking account access and the shared Codex home, and stopping any other writer. You can intentionally start a new conversation with a context handoff. The saved native thread has been preserved.",
+                { cause: resumed.failure },
+              ),
+            }),
+          });
+          return undefined;
+        }
+
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
           driver: session.driver,
           providerThreadId: providerThread.id,

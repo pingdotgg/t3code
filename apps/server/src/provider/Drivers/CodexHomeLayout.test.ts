@@ -305,6 +305,56 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "shares native writer locks before a shadow account starts first",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-first-writer-");
+          const shadowHome = path.join(yield* makeTempDir("t3code-codex-first-shadow-"), "shadow");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          yield* materializeCodexShadowHome(layout);
+          const locks = path.join(sharedHome, "thread-writer-locks");
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "thread-writer-locks"))).toBe(
+            locks,
+          );
+          yield* writeTextFile(
+            path.join(shadowHome, "thread-writer-locks", "synthetic-native.lock"),
+            "synthetic lock marker",
+          );
+          expect(yield* fileSystem.readFileString(path.join(locks, "synthetic-native.lock"))).toBe(
+            "synthetic lock marker",
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "preserves an existing private writer lock directory and reports the conflict",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-writer-");
+          const shadowHome = path.join(
+            yield* makeTempDir("t3code-codex-private-writer-"),
+            "shadow",
+          );
+          const privateLock = path.join(shadowHome, "thread-writer-locks", "synthetic-native.lock");
+          yield* writeTextFile(privateLock, "preserved lock marker");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          const exit = yield* materializeCodexShadowHome(layout).pipe(Effect.result);
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag !== "Failure") return;
+          expect(exit.failure).toBeInstanceOf(CodexShadowHomeEntryConflictError);
+          expect(yield* fileSystem.readFileString(privateLock)).toBe("preserved lock marker");
+        }),
+    );
+
     it.effect("preserves filesystem operation, paths, and cause", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

@@ -135,6 +135,9 @@ export const layerExecutor: Layer.Layer<
                 providerSessionId: effect.request.providerSessionId,
                 threadId: effect.threadId,
                 ...(effect.request.detail === undefined ? {} : { detail: effect.request.detail }),
+                ...(effect.request.expectedTargetInstanceId === undefined
+                  ? {}
+                  : { expectedTargetInstanceId: effect.request.expectedTargetInstanceId }),
                 ...(effect.request.revokeMcpCredential === undefined
                   ? {}
                   : { revokeMcpCredential: effect.request.revokeMcpCredential }),

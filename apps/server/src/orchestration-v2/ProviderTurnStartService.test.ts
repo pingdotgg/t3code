@@ -166,6 +166,7 @@ function makeLocalCommandHarness(input: {
    * fallback succeeds, then reading history for its handoff fails.
    */
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly nativeResumeFailure?: string;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -342,7 +343,7 @@ function makeLocalCommandHarness(input: {
     checkpoints: [],
     updatedAt: now,
   };
-  if ("historyReadFailureAfterFallback" in input) {
+  if ("historyReadFailureAfterFallback" in input || input.nativeResumeFailure !== undefined) {
     const nativeThreadRef = {
       driver: providerThread.driver,
       nativeId: "native-resume-thread",
@@ -381,22 +382,26 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const ensureReplacementThread = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
-    driver: providerThread.driver,
+    driver:
+      input.nativeResumeFailure === undefined
+        ? ProviderDriverKind.make("claudeAgent")
+        : providerThread.driver,
     resumeThread: () =>
       Effect.fail(
         new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: providerThread.driver,
           providerSessionId,
-          cause: "native thread is gone",
+          cause: input.nativeResumeFailure ?? "native thread is gone",
         }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: ensureReplacementThread,
   };
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
+      : "historyReadFailureAfterFallback" in input || input.nativeResumeFailure !== undefined
         ? Effect.succeed(resumeFallbackSession as never)
         : "ensureThreadFailure" in input
           ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -429,7 +434,7 @@ function makeLocalCommandHarness(input: {
                     updatedAt: now,
                     lastError: null,
                   },
-                  ensureThread: () => Effect.succeed(providerThread),
+                  ensureThread: ensureReplacementThread,
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
@@ -532,6 +537,7 @@ function makeLocalCommandHarness(input: {
   );
   return {
     open,
+    ensureReplacementThread,
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -855,3 +861,25 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect.each([
+  "no rollout found",
+  "already has an active writer",
+  "authentication required",
+  "invalid resume response",
+])("preserves Codex native identity when resume fails: %s", (nativeResumeFailure) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", nativeResumeFailure });
+    const before = harness.projection().providerThreads.at(-1)?.nativeThreadRef;
+    const result = yield* Effect.result(harness.start);
+    expect(harness.ensureReplacementThread).not.toHaveBeenCalled();
+    expect(result._tag).toBe("Success");
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().providerThreads.at(-1)?.nativeThreadRef).toEqual(before);
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: expect.stringContaining("Retry") } },
+    ]);
+    expect(harness.events.some((event) => event.type === "context-handoff.updated")).toBe(false);
+  }),
+);

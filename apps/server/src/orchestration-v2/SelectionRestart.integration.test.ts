@@ -985,7 +985,9 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
             { instanceId: targetId, nativeId: originalThread.nativeThreadRef?.nativeId },
           ]);
           assert.deepEqual(messages, ["first", "second"]);
-          assert.equal((yield* Ref.get(state)).closedSessionCount, mode === "pooled" ? 0 : 1);
+          // This fixture has no peer attachment. Confirmed account transfer
+          // retires an unused Codex process even when it supports pooling.
+          assert.equal((yield* Ref.get(state)).closedSessionCount, 1);
           if (mode === "pooled") {
             assert.isFalse(
               second.providerSessions.some(

@@ -26,6 +26,8 @@ const KNOWN_SHARED_DIRECTORIES = [
   "cache",
   "logs",
   "mcp-oauth-locks",
+  // Native writers must coordinate before either account starts its first thread.
+  "thread-writer-locks",
 ] as const;
 
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);

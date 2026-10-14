@@ -14,7 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -4505,8 +4505,8 @@ it.effect(
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 4);
 
-        // The second thread has no persisted provider thread, so nothing is unloaded.
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        // Loaded native state must be released even before a provider-thread row is persisted.
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
@@ -4514,7 +4514,10 @@ it.effect(
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
         // The runtime stays up for the second thread; the first thread's
         // native state is unloaded after its turn is interrupted.
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
+          "native-thread",
+        ]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
         yield* TestClock.adjust("1 second");
@@ -4645,7 +4648,10 @@ function runIdleThreadUnloadScenario(
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
-  options: { readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean> } = {},
+  options: {
+    readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly beforeUnload?: Effect.Effect<void>;
+  } = {},
 ) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -4762,6 +4768,7 @@ function runIdleThreadUnloadScenario(
         layerTest({
           state,
           idleTimeoutMs: 1000,
+          ...(options.beforeUnload === undefined ? {} : { beforeUnload: options.beforeUnload }),
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
@@ -4825,6 +4832,53 @@ it.effect(
             ]);
           }),
         { hasPendingBackgroundWorkForThread: Ref.get(pendingWork) },
+      );
+    }),
+);
+
+it.effect.each([false, true])(
+  "failed idle unload keeps ownership until retry or a new load (reattach: %s)",
+  (reattach) =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      yield* runIdleThreadUnloadScenario(
+        `retry-idle-${reattach}`,
+        ({ state, threadA, startTurn, endTurn, resume }) =>
+          Effect.gen(function* () {
+            yield* startTurn(threadA, 1);
+            yield* endTurn(threadA, 1);
+            yield* TestClock.adjust("1 second");
+            assert.equal(yield* Ref.get(calls), 1);
+            assert.equal((yield* Ref.get(state)).closeCount, 0, "running peer remains attached");
+            if (!reattach) {
+              yield* TestClock.adjust("1 second");
+              assert.equal(
+                yield* Ref.get(calls),
+                2,
+                "idle cleanup revisits an unconfirmed native writer",
+              );
+            }
+            const before = (yield* Ref.get(state)).resumeCount;
+            yield* resume(threadA);
+            assert.equal(
+              (yield* Ref.get(state)).resumeCount,
+              before + 1,
+              "failed or confirmed unload invalidates the native load cache",
+            );
+            yield* TestClock.adjust("1 second");
+            assert.equal(
+              yield* Ref.get(calls),
+              2,
+              "old idle generation cannot unload a reattached writer",
+            );
+          }),
+        {
+          beforeUnload: Ref.updateAndGet(calls, (n) => n + 1).pipe(
+            Effect.flatMap((n) =>
+              n === 1 ? Effect.die("fixture idle unload rejected") : Effect.void,
+            ),
+          ),
+        },
       );
     }),
 );
@@ -5006,4 +5060,621 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+it.effect.each([true, false])(
+  "unloads the native writer owned by a session after its projected row is rebound (session changed: %s)",
+  (sessionChanged) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:rebound-native-writer");
+        const sessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId: sessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* runtime.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId: sessionId,
+            now,
+          }),
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const replacementSessionId = ProviderSessionId.make("session:replacement-writer");
+        // The outbox runs after this rebind commits. It must unload the native
+        // reference in the old process, never the new row's replacement ref.
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: sessionChanged ? replacementSessionId : sessionId,
+                nativeThreadRef: {
+                  driver: CODEX_DRIVER,
+                  nativeId: "replacement-native-ref",
+                  strength: "strong",
+                },
+              },
+            },
+          ],
+        });
+        yield* manager.detach({ threadId, providerSessionId: sessionId });
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          loaded.nativeThreadRef!.nativeId!,
+        ]);
+        yield* manager.detach({ threadId, providerSessionId: sessionId });
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          loaded.nativeThreadRef!.nativeId!,
+        ]);
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexCapabilities })),
+      );
+    }),
+);
+
+it.effect.each([false, true])(
+  "releases the old Codex account writer only when no other conversation is attached (sibling: %s)",
+  (hasSibling) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:release-empty-codex");
+        const siblingId = ThreadId.make("thread:keep-codex-sibling");
+        const providerSessionId = ids.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: siblingId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* runtime.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId,
+            now,
+          }),
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: ProviderSessionId.make("session:alternate-account"),
+              },
+            },
+          ],
+        });
+        if (hasSibling) {
+          yield* manager.open({
+            threadId: siblingId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+        }
+        yield* manager.detach({ threadId, providerSessionId });
+        assert.equal((yield* Ref.get(state)).closeCount, hasSibling ? 0 : 1);
+        assert.equal(Option.isSome(yield* manager.get(providerSessionId)), hasSibling);
+        if (hasSibling) yield* manager.close(providerSessionId);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* manager.detach({ threadId, providerSessionId });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexCapabilities })),
+      );
+    }),
+);
+
+it.effect(
+  "keeps a Codex writer and its peer alive while an account switch waits for background work",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pending = yield* Ref.make(true);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const sourceThread = ThreadId.make("thread:background-switch-source");
+        const peerThread = ThreadId.make("thread:background-switch-peer");
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: sourceThread, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThread, now }),
+          ],
+        });
+        const sourceSession = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: sourceThread,
+        });
+        const peerSession = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: peerThread,
+        });
+        const source = yield* manager.open({
+          threadId: sourceThread,
+          providerSessionId: sourceSession,
+          modelSelection,
+          runtimePolicy,
+        });
+        const peer = yield* manager.open({
+          threadId: peerThread,
+          providerSessionId: peerSession,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* source.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId: sourceThread,
+            providerSessionId: sourceSession,
+            now,
+          }),
+          threadId: sourceThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* sink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId: sourceThread }),
+              type: "provider-thread.updated",
+              threadId: sourceThread,
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: ProviderSessionId.make("session:background-target"),
+              },
+            },
+          ],
+        });
+        const failure = yield* manager
+          .detach({ threadId: sourceThread, providerSessionId: sourceSession })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(failure));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(sourceSession)), source);
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(peerSession)), peer);
+        yield* Ref.set(pending, false);
+        yield* manager.detach({ threadId: sourceThread, providerSessionId: sourceSession });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.isTrue(Option.isNone(yield* manager.get(sourceSession)));
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(peerSession)), peer);
+        yield* manager.detach({ threadId: sourceThread, providerSessionId: sourceSession });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            capabilities: CodexProviderCapabilitiesV2,
+            hasPendingBackgroundWorkForThread: Ref.get(pending),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("ignores a stale Codex detach retry while a peer has background work", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const pending = yield* Ref.make(false);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const sourceThread = ThreadId.make("thread:stale-detach-source");
+      const peerThread = ThreadId.make("thread:stale-detach-peer");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: sourceThread, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThread, now }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId: sourceThread,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: peerThread,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const loaded = yield* runtime.resumeThread({
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId: sourceThread,
+          providerSessionId: sessionId,
+          now,
+        }),
+        threadId: sourceThread,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId: sourceThread }),
+            type: "provider-thread.updated",
+            threadId: sourceThread,
+            occurredAt: now,
+            payload: {
+              ...loaded,
+              providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+              providerSessionId: ProviderSessionId.make("session:stale-detach-target"),
+            },
+          },
+        ],
+      });
+      yield* manager.detach({ threadId: sourceThread, providerSessionId: sessionId });
+      yield* Ref.set(pending, true);
+      yield* manager.detach({ threadId: sourceThread, providerSessionId: sessionId });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+        loaded.nativeThreadRef!.nativeId!,
+      ]);
+      assert.strictEqual(Option.getOrThrow(yield* manager.get(sessionId)), runtime);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          capabilities: CodexProviderCapabilitiesV2,
+          hasPendingBackgroundWork: Ref.get(pending),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("does not replay an account-switch detach against a returned source binding", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:returned-account-detach");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const loaded = yield* runtime.resumeThread({
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId,
+          providerSessionId: sessionId,
+          now,
+        }),
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: loaded,
+          },
+        ],
+      });
+      // The caller has returned to A. A retry from the old A -> B switch
+      // must leave this live A writer, its attachment, and credential intact.
+      yield* manager.detach({
+        threadId,
+        providerSessionId: sessionId,
+        expectedTargetInstanceId: ProviderInstanceId.make("codex-alternate"),
+      });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+      assert.strictEqual(Option.getOrThrow(yield* manager.get(sessionId)), runtime);
+      yield* manager.detach({ threadId, providerSessionId: sessionId });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+        loaded.nativeThreadRef!.nativeId!,
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, capabilities: CodexProviderCapabilitiesV2 }),
+      ),
+    );
+  }),
+);
+
+it.effect.each(
+  (["timeout", "rejected", "interrupted"] as const).flatMap((failure) =>
+    [false, true].map((sibling) => ({ failure, sibling })),
+  ),
+)("failed native release retains retryable ownership (%j)", ({ failure, sibling }) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const calls = yield* Ref.make(0);
+    const entered = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("audit:unload-source");
+      const peerId = ThreadId.make("audit:unload-peer");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerId, now }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      if (sibling)
+        yield* manager.open({
+          threadId: peerId,
+          providerSessionId: sessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+      const loaded = yield* runtime.resumeThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId,
+          providerSessionId: sessionId,
+          now,
+        }),
+      });
+      const target = ProviderInstanceId.make("codex-alternate");
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...loaded,
+              providerInstanceId: target,
+              providerSessionId: ProviderSessionId.make("audit:target-session"),
+            },
+          },
+        ],
+      });
+      const input = { threadId, providerSessionId: sessionId, expectedTargetInstanceId: target };
+      const first = yield* manager.detach(input).pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      if (failure === "timeout") yield* TestClock.adjust("10 seconds");
+      if (failure === "interrupted") yield* Fiber.interrupt(first);
+      const result =
+        failure === "interrupted" ? yield* Fiber.await(first) : yield* Fiber.join(first);
+      assert.equal((yield* Ref.get(state)).closeCount, 0, "peer must keep its process");
+      yield* manager.detach(input);
+      assert.equal(yield* Ref.get(calls), 2, "a retry must revisit the unconfirmed native writer");
+      assert.isTrue(
+        result._tag === "Failure",
+        "unconfirmed writer shutdown cannot acknowledge successful detach",
+      );
+      yield* manager.detach(input);
+      assert.equal(yield* Ref.get(calls), 2, "confirmed release is not repeated");
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+      assert.equal(
+        (yield* Ref.get(state)).closeCount,
+        sibling ? 0 : 1,
+        "confirmed cleanup retires only an unused runtime",
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 600_000,
+          capabilities: CodexProviderCapabilitiesV2,
+          beforeUnload: Ref.updateAndGet(calls, (n) => n + 1).pipe(
+            Effect.flatMap((n) =>
+              n === 1
+                ? Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(
+                      failure === "rejected" ? Effect.die("fixture unload rejected") : Effect.never,
+                    ),
+                  )
+                : Effect.void,
+            ),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("a failed cleanup generation cannot unload a returned source binding", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const calls = yield* Ref.make(0);
+    const closureEntered = yield* Deferred.make<void>();
+    const confirmClosure = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("retry-generation-source");
+      const peerId = ThreadId.make("retry-generation-peer");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerId, now }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: peerId,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const resumeInput = {
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId,
+          providerSessionId: sessionId,
+          now,
+        }),
+      };
+      const loaded = yield* runtime.resumeThread(resumeInput);
+      const target = ProviderInstanceId.make("retry-generation-target");
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...loaded,
+              providerInstanceId: target,
+              providerSessionId: ProviderSessionId.make("retry-generation-target-session"),
+            },
+          },
+        ],
+      });
+      const detach = { threadId, providerSessionId: sessionId, expectedTargetInstanceId: target };
+      assert.isTrue(Exit.isFailure(yield* manager.detach(detach).pipe(Effect.exit)));
+      const returning = yield* runtime.resumeThread(resumeInput).pipe(Effect.forkScoped);
+      yield* Deferred.await(closureEntered);
+      assert.equal(
+        (yield* Ref.get(state)).resumeCount,
+        1,
+        "a successful resume cannot substitute for confirmation of the old writer's closure",
+      );
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      yield* Deferred.succeed(confirmClosure, undefined);
+      const returned = yield* Fiber.join(returning);
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: returned,
+          },
+        ],
+      });
+      assert.equal(
+        (yield* Ref.get(state)).resumeCount,
+        2,
+        "an unconfirmed unload must not reuse the loaded-thread cache",
+      );
+      yield* manager.detach(detach);
+      assert.equal(
+        yield* Ref.get(calls),
+        2,
+        "old target cleanup must not unload the new source generation",
+      );
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.equal(returned.nativeThreadRef?.nativeId, loaded.nativeThreadRef?.nativeId);
+      yield* manager.detach({ threadId, providerSessionId: sessionId });
+      assert.equal(yield* Ref.get(calls), 3);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 600_000,
+          capabilities: CodexProviderCapabilitiesV2,
+          beforeUnload: Ref.updateAndGet(calls, (n) => n + 1).pipe(
+            Effect.flatMap((n) =>
+              n === 1
+                ? Effect.die("fixture release rejected")
+                : n === 2
+                  ? Deferred.succeed(closureEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(confirmClosure)),
+                    )
+                  : Effect.void,
+            ),
+          ),
+        }),
+      ),
+    );
+  }),
 );

@@ -50,6 +50,7 @@ export interface CodexAppServerPatchedProtocolOptions {
 }
 
 export interface CodexAppServerPatchedProtocol {
+  readonly terminated: Effect.Effect<CodexError.CodexAppServerError>;
   readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
   readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
   readonly request: (
@@ -474,6 +475,10 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       });
 
     return {
+      terminated: Deferred.await(terminationSignal).pipe(
+        Effect.andThen(Ref.get(terminationFailure)),
+        Effect.map(Option.getOrThrow),
+      ),
       incomingNotifications: Stream.fromQueue(incomingNotifications),
       incomingRequests: Stream.fromQueue(incomingRequests),
       request,

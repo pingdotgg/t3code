@@ -1426,23 +1426,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.modelSelection,
         queuedRun.modelSelection,
       );
-      const switchPlan = selectionChanged
-        ? yield* providerSwitchService
-            .plan({ projection, targetModelSelection: queuedRun.modelSelection })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestratorDispatchError({
-                    commandId,
-                    commandType: "message.dispatch",
-                    cause,
-                  }),
-              ),
-            )
-        : null;
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
+      const instanceChanged =
+        activeProviderThread !== undefined &&
+        activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
+      // Selection commands can run before delivery. Native history still belongs
+      // to the active provider thread, just as in immediate message dispatch.
+      const switchPlan =
+        selectionChanged || instanceChanged
+          ? yield* providerSwitchService
+              .plan({
+                projection: instanceChanged
+                  ? {
+                      ...projection,
+                      thread: {
+                        ...projection.thread,
+                        modelSelection: {
+                          ...projection.thread.modelSelection,
+                          instanceId: activeProviderThread.providerInstanceId,
+                        },
+                      },
+                    }
+                  : projection,
+                targetModelSelection: queuedRun.modelSelection,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId,
+                      commandType: "message.dispatch",
+                      cause,
+                    }),
+                ),
+              )
+          : null;
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
         switchPlan.transition.type === "restart_and_resume" &&
@@ -1910,6 +1930,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach" as const,
               providerSessionId: session.id,
               detail: "Provider or model selection changed.",
+              ...(canResumeAcrossInstances
+                ? { expectedTargetInstanceId: queuedRun.providerInstanceId }
+                : {}),
             },
           })),
           {
@@ -3417,6 +3440,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // so for settle this only ever stops an idle session; commands are
     // decided serially against the projection, so a turn start that
     // re-engages the thread cannot race this detach.
+    // Selection applies to future turns. Keep the active run's session bound
+    // until its terminal event is accepted; the next starter handles the switch.
+    const deferSelectionDetach =
+      providerSwitchPlan !== null &&
+      providerSwitchPlan.releaseProviderSessionIds.length > 0 &&
+      (yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(mapDispatchError(command))).runs.some(isBlockingRun);
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
@@ -3430,7 +3461,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
                 )
                 .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+            : deferSelectionDetach
+              ? []
+              : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
@@ -3474,6 +3507,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               request: {
                 type: "provider-session.detach",
                 providerSessionId: session.id,
+                ...(session.driver === "codex" &&
+                (command.type === "provider.switch" ||
+                  command.type === "thread.model-selection.set") &&
+                command.modelSelection.instanceId !== session.providerInstanceId
+                  ? { expectedTargetInstanceId: command.modelSelection.instanceId }
+                  : {}),
                 detail:
                   command.type === "thread.archive"
                     ? "Thread archived."
@@ -6580,6 +6619,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach",
               providerSessionId: previousProviderSessionId,
               detail: "Provider account changed; continuing the native thread.",
+              expectedTargetInstanceId: modelSelection.instanceId,
             },
           } satisfies PendingOrchestrationEffectV2,
         ]);

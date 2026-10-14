@@ -1,7 +1,9 @@
 import { vi } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CodexSettings,
   CommandId,
   type ChatAttachment,
   EventId,
@@ -64,7 +66,23 @@ import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
+import { resolveCodexHomeLayout } from "../../provider/Drivers/CodexHomeLayout.ts";
+import { resolveManagedCodexHomeLayout } from "../../provider/CodexManagedHome.ts";
+
+interface NativeLifecycle {
+  readonly method:
+    | "session/open"
+    | "session/close"
+    | "thread/start"
+    | "thread/resume"
+    | "thread/unsubscribe";
+  readonly instanceId: ProviderInstanceId;
+  readonly sessionId: ProviderSessionId;
+  readonly nativeId?: string;
+}
+
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const threadId = ThreadId.make("thread:provider-switch");
 const projectId = ProjectId.make("project:provider-switch");
@@ -106,6 +124,8 @@ function makeTestAdapter(input: {
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
+  readonly lifecycle?: Ref.Ref<ReadonlyArray<NativeLifecycle>>;
+  readonly writers?: Ref.Ref<ReadonlyMap<string, ProviderSessionId>>;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
@@ -116,8 +136,17 @@ function makeTestAdapter(input: {
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
+  readonly retainWriterAfterUnsubscribe?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly holdTurns?: ReadonlyMap<
+    ThreadId,
+    {
+      readonly ordinal: number;
+      readonly started: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    }
+  >;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -126,6 +155,48 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
+        const record = (method: NativeLifecycle["method"], nativeId?: string) =>
+          input.lifecycle === undefined
+            ? Effect.void
+            : Ref.update(input.lifecycle, (entries) => [
+                ...entries,
+                {
+                  method,
+                  instanceId: input.instanceId,
+                  sessionId: sessionInput.providerSessionId,
+                  ...(nativeId === undefined ? {} : { nativeId }),
+                },
+              ]);
+        const releaseWriter = (nativeId: string) =>
+          input.writers === undefined
+            ? Effect.void
+            : Ref.update(input.writers, (current) => {
+                const next = new Map(current);
+                if (next.get(nativeId) === sessionInput.providerSessionId) next.delete(nativeId);
+                return next;
+              });
+        const claimWriter = (nativeId: string) =>
+          Effect.gen(function* () {
+            if (input.writers === undefined) return;
+            const current = yield* Ref.get(input.writers);
+            const owner = current.get(nativeId);
+            if (owner !== undefined && owner !== sessionInput.providerSessionId)
+              return yield* unimplemented(input.driver, "already has an active writer");
+            yield* Ref.update(input.writers, (entries) =>
+              new Map(entries).set(nativeId, sessionInput.providerSessionId),
+            );
+          });
+        yield* record("session/open");
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            if (input.writers !== undefined) {
+              for (const [nativeId, owner] of yield* Ref.get(input.writers)) {
+                if (owner === sessionInput.providerSessionId) yield* releaseWriter(nativeId);
+              }
+            }
+            yield* record("session/close");
+          }),
+        );
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
@@ -161,6 +232,8 @@ function makeTestAdapter(input: {
                   ? ""
                   : `:${yield* Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1)}`;
               const nativeThreadId = `${input.driver}:${threadInput.threadId}${generation}`;
+              yield* record("thread/start", nativeThreadId);
+              yield* claimWriter(nativeThreadId);
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
                 driver: input.driver,
@@ -184,15 +257,34 @@ function makeTestAdapter(input: {
                 updatedAt: createdAt,
               } satisfies OrchestrationV2ProviderThread;
             }),
+          unloadThread: ({ providerThread }) => {
+            const nativeId = providerThread.nativeThreadRef?.nativeId;
+            return nativeId == null
+              ? Effect.void
+              : record("thread/unsubscribe", nativeId).pipe(
+                  Effect.andThen(
+                    input.retainWriterAfterUnsubscribe === true
+                      ? Effect.void
+                      : releaseWriter(nativeId),
+                  ),
+                );
+          },
           resumeThread: ({ providerThread }) =>
             Effect.gen(function* () {
+              const nativeId = providerThread.nativeThreadRef?.nativeId;
+              yield* record("thread/resume", nativeId ?? undefined);
+              if (nativeId != null) yield* claimWriter(nativeId);
               if (
                 input.failResume ||
                 (input.failResumeOnce !== undefined &&
                   (yield* Ref.getAndSet(input.failResumeOnce, false)))
               )
                 return yield* unimplemented(input.driver, "simulated native resume failure");
-              return providerThread;
+              return {
+                ...providerThread,
+                providerInstanceId: input.instanceId,
+                providerSessionId: sessionInput.providerSessionId,
+              };
             }),
           ...(input.injectedHistory === undefined
             ? {}
@@ -252,6 +344,11 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const heldTurn = input.holdTurns?.get(turnInput.threadId);
+              if (heldTurn?.ordinal === turnInput.runOrdinal) {
+                yield* Deferred.succeed(heldTurn.started, undefined);
+                yield* Deferred.await(heldTurn.release);
+              }
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
@@ -1816,187 +1913,555 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live("resumes a queued account switch without requiring a portable handoff", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("queued-account-switch");
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const started = yield* Deferred.make<void>();
-        const alternateSelection: ModelSelection = {
-          ...CODEX_MODEL_SELECTION,
-          instanceId: ProviderInstanceId.make("codex-alternate"),
-        };
-        const alternateCapabilities = {
-          ...CodexProviderCapabilitiesV2,
-          canConsumeHandoffSummaries: false,
-        };
-        const adapters = [
-          makeTestAdapter({
-            instanceId: CODEX_MODEL_SELECTION.instanceId,
-            driver: CODEX_DRIVER,
-            capabilities: CodexProviderCapabilitiesV2,
-            modelSelection: CODEX_MODEL_SELECTION,
-            responseByRunOrdinal: {},
-            capturedTurns,
-            holdFirstTurn: started,
-          }),
-          makeTestAdapter({
-            instanceId: alternateSelection.instanceId,
-            driver: CODEX_DRIVER,
-            capabilities: alternateCapabilities,
-            modelSelection: alternateSelection,
-            responseByRunOrdinal: { 2: "Alternate account complete" },
-            capturedTurns,
-          }),
-        ];
-        const layerRegistry = Layer.succeed(
-          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
-          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
-            get: (instanceId) => {
-              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
-              return adapter === undefined
-                ? Effect.fail(
-                    new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
-                  )
-                : Effect.succeed(adapter);
-            },
-            list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
-            getMetadata: (instanceId) => {
-              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
-              return adapter === undefined
-                ? Effect.fail(
-                    new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
-                  )
-                : Effect.succeed({
-                    driver: CODEX_DRIVER,
-                    continuationKey: "codex:shared-native-account-history",
-                    enabled: true,
-                    capabilities:
-                      instanceId === alternateSelection.instanceId
-                        ? alternateCapabilities
-                        : CodexProviderCapabilitiesV2,
-                  });
-            },
-          }),
-        );
-        const queuedThreadId = ThreadId.make("thread:queued-account-switch");
-        const projection = yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const eventSink = yield* EventSink.EventSinkV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:queued-account-switch:create"),
-            threadId: queuedThreadId,
-            projectId: ProjectId.make("project:queued-account-switch"),
-            title: "Queued account switch",
-            modelSelection: CODEX_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:queued-account-switch:first"),
-            threadId: queuedThreadId,
-            messageId: MessageId.make("message:queued-account-switch:first"),
-            text: "First account turn",
-            attachments: [],
-            modelSelection: CODEX_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* Deferred.await(started);
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:queued-account-switch:second"),
-            threadId: queuedThreadId,
-            messageId: MessageId.make("message:queued-account-switch:second"),
-            text: "Alternate account turn",
-            attachments: [],
-            modelSelection: alternateSelection,
-            dispatchMode: { type: "queue_after_active" },
-          });
-          const queued = yield* orchestrator.getThreadProjection(queuedThreadId);
-          assert.deepEqual(
-            queued.runs.map((run) => run.status),
-            ["running", "queued"],
-          );
-          assert.equal(queued.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
-          const sourceNativeRef = queued.providerThreads.find(
-            (providerThread) => providerThread.id === queued.runs[0]?.providerThreadId,
-          )?.nativeThreadRef;
-          assert.isNotNull(sourceNativeRef);
-          const now = yield* DateTime.now;
-          yield* eventSink.write({
-            events: [
-              {
-                id: EventId.make("event:queued-account-switch:first-complete"),
-                type: "run.updated",
-                threadId: queuedThreadId,
-                runId: queued.runs[0]!.id,
-                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
-                occurredAt: now,
-                payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
-              },
-            ],
-          });
-          yield* orchestrator.resumeQueuedRuns;
-          yield* orchestrator.streamStoredEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.event.type === "run.updated" &&
-                event.event.runId === queued.runs[1]?.id &&
-                event.event.payload.status === "completed",
-            ),
-            Stream.runHead,
-          );
-          yield* worker.drain();
-          const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
-          const targetNativeRef = delivered.providerThreads.find(
-            (providerThread) => providerThread.id === delivered.runs[1]?.providerThreadId,
-          )?.nativeThreadRef;
-          assert.deepEqual(targetNativeRef, sourceNativeRef);
-          return delivered;
-        }).pipe(
-          Effect.provide(
-            ProviderReplayHarness.layerWithRegistry(
-              {
-                name: "queued-account-switch",
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: {
-                    type: "readOnly",
-                    access: { type: "fullAccess" },
-                    networkAccess: false,
-                  },
-                },
-              },
-              layerRegistry,
+  it.live.each(
+    (["cli", "managed"] as const)
+      .flatMap((mode) =>
+        ([false, true] as const).flatMap((queued) =>
+          ([false, true] as const).flatMap((reverse) =>
+            ([1, 20] as const).flatMap((historyLength) =>
+              (["dispatch", "thread.model-selection.set", "provider.switch"] as const).map(
+                (selectionCommand) => ({
+                  mode,
+                  queued,
+                  reverse,
+                  historyLength,
+                  selectionCommand,
+                  incompatible: false,
+                }),
+              ),
             ),
           ),
-        );
-        assert.deepEqual(
-          projection.runs.map((run) => [run.providerInstanceId, run.status]),
-          [
-            [CODEX_MODEL_SELECTION.instanceId, "completed"],
-            [alternateSelection.instanceId, "completed"],
-          ],
-        );
-        assert.lengthOf(projection.contextHandoffs, 0);
-        assert.deepEqual(
-          (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
-          ["First account turn", "Alternate account turn"],
-        );
-      }),
+        ),
+      )
+      .concat(
+        ([false, true] as const).map((queued) => ({
+          mode: "cli" as const,
+          queued,
+          reverse: false,
+          historyLength: 1 as const,
+          selectionCommand: "thread.model-selection.set" as const,
+          incompatible: true,
+        })),
+      ),
+  )(
+    "handles Codex account continuity $mode queued=$queued reverse=$reverse history=$historyLength selection=$selectionCommand incompatible=$incompatible",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("native-account-continuity");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const lifecycle = yield* Ref.make<ReadonlyArray<NativeLifecycle>>([]);
+          const writers = yield* Ref.make<ReadonlyMap<string, ProviderSessionId>>(new Map());
+          const nativeThreadGeneration = yield* Ref.make(0);
+          const started = yield* Deferred.make<void>();
+          const releaseStarted = yield* Deferred.make<void>();
+          const alternate: ModelSelection = {
+            ...CODEX_MODEL_SELECTION,
+            instanceId: ProviderInstanceId.make("codex-alternate"),
+          };
+          const source = scenario.reverse ? alternate : CODEX_MODEL_SELECTION;
+          const target = scenario.reverse ? CODEX_MODEL_SELECTION : alternate;
+          const layouts = yield* Effect.forEach([CODEX_MODEL_SELECTION, alternate], (selection) => {
+            const settings = decodeCodexSettings({
+              homePath:
+                scenario.incompatible && selection.instanceId === alternate.instanceId
+                  ? "/synthetic/incompatible-codex-home"
+                  : "/synthetic/shared-codex-home",
+              ...(scenario.mode === "cli" &&
+              selection.instanceId !== CODEX_MODEL_SELECTION.instanceId
+                ? { shadowHomePath: "/synthetic/account-b-shadow" }
+                : {}),
+            });
+            return (
+              scenario.mode === "managed"
+                ? resolveManagedCodexHomeLayout(
+                    "/synthetic/t3-state",
+                    selection.instanceId,
+                    settings,
+                  )
+                : resolveCodexHomeLayout(settings)
+            ).pipe(Effect.provide(NodeServices.layer));
+          });
+          const adapters = [source, target].map((selection) =>
+            makeTestAdapter({
+              instanceId: selection.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: selection,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              nativeThreadGeneration,
+              lifecycle,
+              writers,
+              retainWriterAfterUnsubscribe: true,
+              ...(scenario.queued && selection.instanceId === source.instanceId
+                ? {
+                    holdFirstTurn: started,
+                    releaseFirstTurn: releaseStarted,
+                    holdRunOrdinal: scenario.historyLength,
+                  }
+                : {}),
+            }),
+          );
+          const registry = Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+              get: (instanceId) => {
+                const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+                return adapter === undefined
+                  ? Effect.fail(
+                      new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                        instanceId,
+                      }),
+                    )
+                  : Effect.succeed(adapter);
+              },
+              list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+              getMetadata: (instanceId) =>
+                Effect.succeed({
+                  driver: CODEX_DRIVER,
+                  continuationKey:
+                    layouts[instanceId === CODEX_MODEL_SELECTION.instanceId ? 0 : 1]!
+                      .continuationKey,
+                  enabled: true,
+                  capabilities: CodexProviderCapabilitiesV2,
+                }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const testThreadId = ThreadId.make("thread:synthetic-native-continuity");
+            const dispatch = (ordinal: number, selection: ModelSelection, queue = false) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`continuity:message:${ordinal}`),
+                threadId: testThreadId,
+                messageId: MessageId.make(`continuity:message:${ordinal}`),
+                text: `Synthetic request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
+              });
+            const completion = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    ["completed", "failed"].includes(event.payload.status),
+                ),
+                Stream.runHead,
+                Effect.forkScoped,
+              );
+            const runToCompletion = Effect.fn("NativeContinuity.runToCompletion")(function* (
+              ordinal: number,
+              selection: ModelSelection,
+            ) {
+              const completed = yield* completion(ordinal);
+              yield* dispatch(ordinal, selection);
+              yield* Fiber.join(completed);
+              yield* worker.drain();
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("continuity:create"),
+              threadId: testThreadId,
+              projectId: ProjectId.make("project:synthetic-continuity"),
+              title: "Synthetic native continuity",
+              modelSelection: source,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            for (let ordinal = 1; ordinal <= scenario.historyLength; ordinal++) {
+              if (scenario.queued && ordinal === scenario.historyLength) {
+                yield* dispatch(ordinal, source);
+                yield* Deferred.await(started);
+              } else yield* runToCompletion(ordinal, source);
+            }
+            const before = yield* orchestrator.getThreadProjection(testThreadId);
+            const nativeRef = before.providerThreads.find(
+              (thread) => thread.id === before.thread.activeProviderThreadId,
+            )!.nativeThreadRef;
+            assert.isNotNull(nativeRef);
+            if (scenario.selectionCommand !== "dispatch")
+              yield* orchestrator.dispatch({
+                type: scenario.selectionCommand,
+                commandId: CommandId.make("continuity:select"),
+                threadId: testThreadId,
+                modelSelection: target,
+              });
+            const switchedCompletion = yield* completion(scenario.historyLength + 1);
+            yield* dispatch(scenario.historyLength + 1, target, scenario.queued);
+            if (scenario.queued) {
+              const pending = yield* orchestrator.getThreadProjection(testThreadId);
+              assert.equal(pending.runs.at(-1)?.status, "queued");
+              const heldCompletion = yield* completion(scenario.historyLength);
+              const active = pending.providerThreads.find(
+                (thread) => thread.id === before.thread.activeProviderThreadId,
+              )!;
+              assert.equal(
+                active.providerSessionId,
+                before.providerThreads.find(
+                  (thread) => thread.id === before.thread.activeProviderThreadId,
+                )!.providerSessionId,
+                "selection must retain the active writer's session binding",
+              );
+              assert.isNotNull(active.providerSessionId);
+              yield* Deferred.succeed(releaseStarted, undefined);
+              yield* Fiber.join(heldCompletion);
+              yield* orchestrator.resumeQueuedRuns;
+            }
+            yield* Fiber.join(switchedCompletion);
+            yield* worker.drain();
+            const switched = yield* orchestrator.getThreadProjection(testThreadId);
+            assert.equal(switched.runs.at(-1)?.status, "completed");
+            if (scenario.incompatible) {
+              assert.lengthOf(switched.contextHandoffs, 1);
+              assert.equal(switched.contextHandoffs[0]?.strategy, "full_thread_summary");
+              assert.notDeepEqual(
+                switched.providerThreads.find(
+                  (thread) => thread.id === switched.thread.activeProviderThreadId,
+                )?.nativeThreadRef,
+                nativeRef,
+              );
+              assert.equal(yield* Ref.get(nativeThreadGeneration), 2);
+              assert.isFalse(
+                (yield* Ref.get(lifecycle)).some(
+                  (op) =>
+                    op.instanceId === target.instanceId &&
+                    op.method === "thread/resume" &&
+                    op.nativeId === nativeRef?.nativeId,
+                ),
+              );
+              return;
+            }
+            assert.lengthOf(switched.contextHandoffs, 0);
+            assert.equal(switched.thread.providerInstanceId, target.instanceId);
+            assert.deepEqual(
+              switched.providerThreads.find(
+                (thread) => thread.id === switched.thread.activeProviderThreadId,
+              )?.nativeThreadRef,
+              nativeRef,
+            );
+            // Return to A, then detach and resume as after a server restart.
+            yield* runToCompletion(scenario.historyLength + 2, source);
+            const returned = yield* orchestrator.getThreadProjection(testThreadId);
+            const active = returned.providerThreads.find(
+              (thread) => thread.id === returned.thread.activeProviderThreadId,
+            )!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("continuity:restart"),
+              threadId: testThreadId,
+              providerSessionId: active.providerSessionId!,
+            });
+            yield* worker.drain();
+            yield* runToCompletion(scenario.historyLength + 3, source);
+            const final = yield* orchestrator.getThreadProjection(testThreadId);
+            assert.isTrue(final.runs.every((run) => run.status === "completed"));
+            assert.lengthOf(final.contextHandoffs, 0);
+            assert.equal(yield* Ref.get(nativeThreadGeneration), 1);
+            assert.isTrue(
+              (yield* Ref.get(capturedTurns)).every(
+                (turn) => turn.nativeThreadId === nativeRef?.nativeId,
+              ),
+            );
+            assert.deepEqual(
+              final.providerThreads.find(
+                (thread) => thread.id === final.thread.activeProviderThreadId,
+              )?.nativeThreadRef,
+              nativeRef,
+            );
+            const operations = yield* Ref.get(lifecycle);
+            assert.equal(operations.filter((op) => op.method === "thread/start").length, 1);
+            assert.isAtLeast(operations.filter((op) => op.method === "thread/resume").length, 3);
+            assert.equal((yield* Ref.get(writers)).size, 1);
+            for (const run of final.runs) {
+              const attempt = final.attempts.find((attempt) => attempt.id === run.activeAttemptId)!;
+              assert.equal(attempt.providerInstanceId, run.providerInstanceId);
+              assert.equal(attempt.nativeThreadId, nativeRef?.nativeId);
+            }
+            const finalThread = final.providerThreads.find(
+              (thread) => thread.id === final.thread.activeProviderThreadId,
+            )!;
+            assert.equal(
+              final.providerSessions.find((session) => session.id === finalThread.providerSessionId)
+                ?.providerInstanceId,
+              source.instanceId,
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "native-account-continuity",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                registry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live.each(
+    [2, 5, 10].flatMap((count) =>
+      [false, true].flatMap((queued) => [1, 2, 3].map((repeat) => ({ count, queued, repeat }))),
     ),
+  )(
+    "transfers a released Codex writer with $count conversations and an active peer queued=$queued repeat=$repeat",
+    ({ count, queued }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("exclusive-codex-writers");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const lifecycle = yield* Ref.make<ReadonlyArray<NativeLifecycle>>([]);
+          const writers = yield* Ref.make<ReadonlyMap<string, ProviderSessionId>>(new Map());
+          const generation = yield* Ref.make(0);
+          const ids = Array.from({ length: count }, (_, index) =>
+            ThreadId.make(`thread:exclusive-codex:${index}`),
+          );
+          const heldMain = {
+            ordinal: 2,
+            started: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          const heldPeer = {
+            ordinal: 2,
+            started: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          const target: ModelSelection = {
+            ...CODEX_MODEL_SELECTION,
+            instanceId: ProviderInstanceId.make("codex-alternate"),
+          };
+          const registry = Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+              get: (instanceId) =>
+                Effect.succeed(
+                  makeTestAdapter({
+                    instanceId,
+                    driver: CODEX_DRIVER,
+                    capabilities: CodexProviderCapabilitiesV2,
+                    modelSelection:
+                      instanceId === target.instanceId ? target : CODEX_MODEL_SELECTION,
+                    responseByRunOrdinal: {},
+                    capturedTurns,
+                    lifecycle,
+                    writers,
+                    nativeThreadGeneration: generation,
+                    retainWriterAfterUnsubscribe: false,
+                    ...(instanceId === CODEX_MODEL_SELECTION.instanceId
+                      ? {
+                          holdTurns: new Map([
+                            [ids[1]!, heldPeer],
+                            ...(queued ? [[ids[0]!, heldMain] as const] : []),
+                          ]),
+                        }
+                      : {}),
+                  }),
+                ),
+              list: () => Effect.succeed([CODEX_MODEL_SELECTION.instanceId, target.instanceId]),
+              getMetadata: () =>
+                Effect.succeed({
+                  driver: CODEX_DRIVER,
+                  continuationKey: "codex-home:/synthetic/shared-codex-home",
+                  enabled: true,
+                  capabilities: CodexProviderCapabilitiesV2,
+                }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const completion = (id: ThreadId, ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.threadId === id &&
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    ["completed", "failed"].includes(event.payload.status),
+                ),
+                Stream.runHead,
+                Effect.forkScoped,
+              );
+            const dispatch = (
+              id: ThreadId,
+              ordinal: number,
+              selection: ModelSelection,
+              queue = false,
+            ) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`exclusive:${id}:${ordinal}`),
+                threadId: id,
+                messageId: MessageId.make(`exclusive:${id}:${ordinal}`),
+                text: `Synthetic request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
+              });
+            const run = Effect.fn("ExclusiveCodex.run")(function* (
+              id: ThreadId,
+              ordinal: number,
+              selection: ModelSelection,
+            ) {
+              const completed = yield* completion(id, ordinal);
+              yield* dispatch(id, ordinal, selection);
+              yield* Fiber.join(completed);
+            });
+            for (const id of ids) {
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`exclusive:create:${id}`),
+                threadId: id,
+                projectId: ProjectId.make("project:exclusive-codex"),
+                title: "Synthetic exclusive writer",
+                modelSelection: CODEX_MODEL_SELECTION,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: cwd,
+              });
+              yield* run(id, 1, CODEX_MODEL_SELECTION);
+            }
+            yield* worker.drain();
+            const before = yield* Effect.forEach(ids, (id) => orchestrator.getThreadProjection(id));
+            const nativeRefs = before.map(
+              (p) =>
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .nativeThreadRef!,
+            );
+            const sourceSessions = before.map(
+              (p) =>
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .providerSessionId!,
+            );
+            assert.equal(
+              new Set(sourceSessions).size,
+              1,
+              "peers must exercise the same pooled process",
+            );
+            const peerCompletion = yield* completion(ids[1]!, heldPeer.ordinal);
+            yield* dispatch(ids[1]!, heldPeer.ordinal, CODEX_MODEL_SELECTION);
+            yield* Deferred.await(heldPeer.started);
+            let nextOrdinal = heldMain.ordinal;
+            for (let cycle = 0; cycle < 3; cycle++) {
+              if (queued && cycle === 0) {
+                const mainCompletion = yield* completion(ids[0]!, nextOrdinal);
+                yield* dispatch(ids[0]!, nextOrdinal++, CODEX_MODEL_SELECTION);
+                yield* Deferred.await(heldMain.started);
+                const switchedCompletion = yield* completion(ids[0]!, nextOrdinal);
+                yield* orchestrator.dispatch({
+                  type: "thread.model-selection.set",
+                  commandId: CommandId.make("exclusive:queued-select"),
+                  threadId: ids[0]!,
+                  modelSelection: target,
+                });
+                yield* dispatch(ids[0]!, nextOrdinal++, target, true);
+                assert.equal(
+                  (yield* orchestrator.getThreadProjection(ids[0]!)).runs.at(-1)?.status,
+                  "queued",
+                );
+                yield* Deferred.succeed(heldMain.release, undefined);
+                yield* Fiber.join(mainCompletion);
+                yield* orchestrator.resumeQueuedRuns;
+                yield* Fiber.join(switchedCompletion);
+              } else yield* run(ids[0]!, nextOrdinal++, target);
+              yield* run(ids[0]!, nextOrdinal++, CODEX_MODEL_SELECTION);
+              const operations = yield* Ref.get(lifecycle);
+              for (const peerSession of sourceSessions.slice(1)) {
+                assert.isFalse(
+                  operations.some(
+                    (op) => op.sessionId === peerSession && op.method === "session/close",
+                  ),
+                  "switching must not stop a peer process, including the active peer",
+                );
+              }
+              assert.equal((yield* Ref.get(writers)).size, count);
+            }
+            yield* Deferred.succeed(heldPeer.release, undefined);
+            yield* Fiber.join(peerCompletion);
+            for (const id of ids.slice(2)) yield* run(id, heldPeer.ordinal, CODEX_MODEL_SELECTION);
+            yield* worker.drain();
+            for (let index = 0; index < ids.length; index++) {
+              const p = yield* orchestrator.getThreadProjection(ids[index]!);
+              assert.isTrue(p.runs.every((r) => r.status === "completed"));
+              assert.lengthOf(p.contextHandoffs, 0);
+              assert.deepEqual(
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .nativeThreadRef,
+                nativeRefs[index],
+              );
+              assert.isTrue(
+                p.attempts.every(
+                  (attempt) => attempt.nativeThreadId === nativeRefs[index]!.nativeId,
+                ),
+              );
+              if (index > 0)
+                assert.equal(
+                  p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                    .providerSessionId,
+                  sourceSessions[index],
+                );
+            }
+            assert.equal(
+              yield* Ref.get(generation),
+              count,
+              "switching must resume instead of starting replacement threads",
+            );
+            const calls = yield* Ref.get(capturedTurns);
+            assert.equal(
+              calls.length,
+              count * 2 + 5 + (queued ? 1 : 0),
+              "no turn may execute twice",
+            );
+            assert.equal(
+              (yield* Ref.get(lifecycle)).filter((op) => op.method === "thread/start").length,
+              count,
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "exclusive-codex-writers",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                registry,
+              ),
+            ),
+          );
+        }),
+      ),
   );
 
   it.live("finishes earlier queued Codex turns before handing context to queued Claude", () =>
@@ -2745,7 +3210,7 @@ describe("orchestration v2 provider switching", () => {
     () => importedFailureScenario(true),
   );
 
-  it.live("uses portable fallback when native resume fails after a provider switch", () =>
+  it.live("preserves Codex history and reports a failed resume after a provider switch", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("provider-switch");
@@ -2839,7 +3304,7 @@ describe("orchestration v2 provider switching", () => {
           );
           yield* waitForIdle(threadId);
           // Stopping the shared Codex process drops its loaded native thread, so
-          // returning to Codex has to resume it (and fall back when that fails).
+          // returning to Codex must resume it or preserve its identity with an explicit failure.
           const codexSession = (yield* orchestrator.getThreadProjection(
             threadId,
           )).providerSessions.find(
@@ -2884,72 +3349,25 @@ describe("orchestration v2 provider switching", () => {
           [
             ["codex", "completed"],
             ["claudeAgent", "completed"],
-            ["codex", "completed"],
+            ["codex", "failed"],
           ],
         );
-        assert.lengthOf(projection.providerThreads, 2);
-        assert.equal(projection.runs[0]?.providerThreadId, projection.runs[2]?.providerThreadId);
-        assert.notEqual(projection.runs[0]?.providerThreadId, projection.runs[1]?.providerThreadId);
-        // The failed resume bound a fresh native Codex thread to the same row.
-        assert.equal(yield* Ref.get(codexNativeThreadGeneration), 2);
+        assert.lengthOf(turns, 2);
+        assert.equal(yield* Ref.get(codexNativeThreadGeneration), 1);
         const codexThread = projection.providerThreads.find(
-          (providerThread) => providerThread.id === projection.runs[2]?.providerThreadId,
+          (thread) => thread.id === projection.runs[2]?.providerThreadId,
         );
-        assert.equal(codexThread?.nativeThreadRef?.nativeId, `codex:${threadId}:1`);
+        assert.equal(codexThread?.nativeThreadRef?.nativeId, `codex:${threadId}:0`);
         assert.deepEqual(
-          projection.contextHandoffs.map((handoff) => [
-            handoff.strategy,
-            handoff.coveredRunOrdinals,
-            handoff.delivery?.status,
-            handoff.delivery?.nativeThreadId,
-          ]),
-          [
-            ["full_thread_summary", { from: 1, to: 1 }, "inline", `claudeAgent:${threadId}`],
-            ["delta_since_target_last_seen", { from: 2, to: 2 }, "inline", `codex:${threadId}:1`],
-            ["full_thread_summary", { from: 1, to: 2 }, "inline", `codex:${threadId}:1`],
-          ],
+          projection.contextHandoffs.map((handoff) => handoff.strategy),
+          ["full_thread_summary", "delta_since_target_last_seen"],
         );
-        assert.deepEqual(
-          projection.contextTransfers.map((transfer) => [
-            transfer.type,
-            transfer.status,
-            transfer.resolution?.strategy,
-          ]),
-          [
-            ["provider_handoff", "consumed", "portable_context"],
-            ["provider_handoff", "consumed", "delta_context"],
-            ["provider_handoff", "resolved_portable", "portable_context"],
-          ],
+        assert.isTrue(
+          projection.turnItems.some(
+            (item) =>
+              item.type === "error" && item.title === "Codex native conversation could not resume",
+          ),
         );
-        assert.deepEqual(
-          projection.turnItems
-            .filter((item) => item.type === "user_message")
-            .map((item) => item.text),
-          [firstPrompt, claudePrompt, returnPrompt],
-        );
-        assert.deepEqual(
-          projection.providerThreads.map((providerThread) => [
-            providerThread.driver,
-            providerThread.status,
-            providerThread.handoffIds.length,
-          ]),
-          [
-            ["codex", "idle", 1],
-            ["claudeAgent", "idle", 1],
-          ],
-        );
-        assert.equal(turns[0]?.text, firstPrompt);
-        assert.include(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
-        assert.include(turns[1]?.text ?? "", "codex before switch");
-        assert.include(turns[1]?.text ?? "", claudePrompt);
-        // The fresh native thread has none of the earlier Codex turn, so the
-        // portable fallback re-sends it alongside the Claude delta.
-        assert.include(turns[2]?.text ?? "", "Context handoff (full_thread_summary):");
-        assert.include(turns[2]?.text ?? "", "Context handoff (delta_since_target_last_seen):");
-        assert.include(turns[2]?.text ?? "", "codex before switch");
-        assert.include(turns[2]?.text ?? "", "claude switched response");
-        assert.include(turns[2]?.text ?? "", returnPrompt);
-        assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
       }),
     ),
   );
@@ -3415,20 +3833,36 @@ describe("orchestration v2 provider switching", () => {
             (transfer) => transfer.type === "merge_back",
           );
 
-          if (failResume)
-            assert.isAtLeast(
-              projection.contextHandoffs.filter(
-                (handoff) => handoff.targetRunId === projection.runs.at(-1)?.id,
-              ).length,
-              2,
-            );
-          assert.isDefined(mergedTurn);
-          if (failResume)
-            assert.notEqual(
-              projection.providerThreads.find((thread) => thread.id === mergedTurn.providerThreadId)
-                ?.nativeThreadRef?.nativeId,
+          if (failResume) {
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            assert.equal(
+              projection.providerThreads.find(
+                (thread) => thread.id === projection.runs[0]?.providerThreadId,
+              )?.nativeThreadRef?.nativeId,
               "unloaded-native-merge-target",
             );
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) =>
+                  item.type === "error" &&
+                  item.title === "Codex native conversation could not resume",
+              ),
+            );
+            assert.isDefined(mergeTransfer);
+            // Dispatch reserved the transfer, but native loading failed before
+            // any of the prepared handoffs reached the provider.
+            assert.isTrue(
+              projection.contextHandoffs
+                .filter((handoff) => handoff.targetRunId === projection.runs.at(-1)?.id)
+                .every(
+                  (handoff) =>
+                    handoff.delivery?.status !== "inline" &&
+                    handoff.delivery?.status !== "injected",
+                ),
+            );
+            return;
+          }
+          assert.isDefined(mergedTurn);
           assert.include(mergedTurn.text, "Context handoff (full_thread_summary):");
           assert.include(mergedTurn.text, firstSourcePrompt);
           assert.include(mergedTurn.text, "I will remember amber.");
