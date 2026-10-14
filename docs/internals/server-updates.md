@@ -35,7 +35,10 @@ is authoritative and the service manager's ordinary restart policy applies.
 After the old child exits, the launcher snapshots SQLite's main file, WAL, and
 shared-memory file. This makes trial migrations reversible without down
 migrations. The snapshot is made once per update and survives launcher restarts;
-replacing it during a retry could capture changes from the failed trial.
+replacing it during a retry could capture changes from the failed trial. A stop
+while the snapshot is still copying aborts it and starts no trial, because a trial
+must never migrate without a complete snapshot. The update stays pending, and the
+next launch copies from scratch.
 
 Rollback stops the trial before restoring. A durable restore marker makes an
 interrupted restore finish before either version boots. Keep the snapshot until

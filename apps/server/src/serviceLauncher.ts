@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 
 import type {
   PendingServiceUpdate,
@@ -33,6 +34,14 @@ import {
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
 const TERMINATE_GRACE_MS = 5_000;
+const BACKUP_PROGRESS_INTERVAL_MS = 15_000;
+const BACKUP_CHUNK_BYTES = 1024 * 1024;
+
+type LauncherLog = (line: string) => void;
+
+const logToStderr: LauncherLog = (line) => {
+  process.stderr.write(`[service-launcher] ${line}\n`);
+};
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -106,12 +115,92 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
+function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+const elapsedSeconds = (startedAt: number) =>
+  `${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
+
+/**
+ * Logs on a timer rather than per chunk, so the final fsync of a large copy
+ * keeps reporting too and a long backup never looks hung.
+ */
+function startBackupProgress(totalBytes: number, log: LauncherLog) {
+  let copiedBytes = 0;
+  const timer = setInterval(() => {
+    if (copiedBytes >= totalBytes) {
+      log("Database backup copied; flushing it to disk.");
+      return;
+    }
+    const percent = Math.floor((copiedBytes / totalBytes) * 100);
+    log(
+      `Database backup in progress: ${formatBytes(copiedBytes)} of ${formatBytes(totalBytes)} copied (${percent}%).`,
+    );
+  }, BACKUP_PROGRESS_INTERVAL_MS);
+  return {
+    onCopied: (bytes: number) => {
+      copiedBytes += bytes;
+    },
+    stop: () => clearInterval(timer),
+  };
+}
+
+async function databaseFilesToBackUp(dbPath: string) {
+  const files = [];
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const source = `${dbPath}${suffix}`;
+    if (suffix !== "" && !(await pathExists(source))) continue;
+    files.push({ suffix, source, bytes: (await NodeFSP.stat(source)).size });
+  }
+  return files;
+}
+
+// Instant where the platform clones files (Linux on btrfs or XFS). Elsewhere the
+// copy is streamed so it can count progress and a stop can abort it between chunks.
+async function copyDatabaseFile(
+  file: { readonly source: string; readonly bytes: number },
+  destination: string,
+  options: { readonly signal: AbortSignal; readonly onCopied: (bytes: number) => void },
+): Promise<void> {
+  try {
+    await NodeFSP.copyFile(file.source, destination, NodeFS.constants.COPYFILE_FICLONE_FORCE);
+    options.onCopied(file.bytes);
+    return;
+  } catch {
+    await NodeFSP.rm(destination, { force: true });
+  }
+  await NodeStreamPromises.pipeline(
+    NodeFS.createReadStream(file.source, { highWaterMark: BACKUP_CHUNK_BYTES }),
+    async function* (chunks: AsyncIterable<Buffer>) {
+      for await (const chunk of chunks) {
+        options.onCopied(chunk.length);
+        yield chunk;
+      }
+    },
+    NodeFS.createWriteStream(destination),
+    { signal: options.signal },
+  );
+}
+
 /**
  * Snapshots the database once per update before the first trial. A completed
  * backup is never overwritten because a restarted launcher may be looking at
- * database writes from an earlier attempt by the same trial.
+ * database writes from an earlier attempt by the same trial. Aborting leaves no
+ * staging files behind, so the next launcher start backs up from scratch.
  */
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  options: { readonly signal: AbortSignal; readonly log: LauncherLog },
+): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
@@ -119,15 +208,29 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${pending.dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
-      await syncFile(destination);
+    const files = await databaseFilesToBackUp(pending.dbPath);
+    const totalBytes = files.reduce((sum, file) => sum + file.bytes, 0);
+    options.log(
+      `Backing up the database (${formatBytes(totalBytes)}) to ${backupDir} before starting t3@${pending.targetVersion}.`,
+    );
+    const startedAt = performance.now();
+    const progress = startBackupProgress(totalBytes, options.log);
+    try {
+      for (const file of files) {
+        options.signal.throwIfAborted();
+        const destination = databaseBackupFile(stagingDir, file.suffix);
+        await copyDatabaseFile(file, destination, {
+          signal: options.signal,
+          onCopied: progress.onCopied,
+        });
+        await syncFile(destination);
+      }
+    } finally {
+      progress.stop();
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
+    options.log(`Database backup finished in ${elapsedSeconds(startedAt)}.`);
   } catch (cause) {
     await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     throw cause;
@@ -280,17 +383,20 @@ const restartPendingPath = (baseDir: string) =>
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
+  readonly #log: LauncherLog;
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
+  readonly #stopController = new AbortController();
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(baseDir: string, state: ServiceState, log: LauncherLog = logToStderr) {
     this.#baseDir = baseDir;
+    this.#log = log;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -345,12 +451,17 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
+    this.#stopController.abort();
     this.#clearTimer();
     this.#enqueue(async () => {
       // Let an update transition already in progress start its replacement
       // before this queued stop tears it down. That replacement owns the
       // pre-activation tunnel cleanup path and observes the marker above.
+      // A stop during the database backup aborts it instead: a trial must not
+      // migrate without a backup, so no replacement starts and the tunnel is
+      // kept for the next launch, which retries the update.
       this.#stopping = true;
+      this.#clearTimer();
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -401,8 +512,18 @@ export class Launcher {
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     // The previous child is dead here, so all three SQLite files are quiescent.
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
-    } catch {
+      await backupDatabaseOnce(this.#baseDir, pending, {
+        signal: this.#stopController.signal,
+        log: this.#log,
+      });
+    } catch (cause) {
+      if (this.#stopRequested) {
+        this.#log("Database backup stopped; the next launch starts it again.");
+        return;
+      }
+      this.#log(
+        `Database backup failed (${cause instanceof Error ? cause.message : String(cause)}); returning to t3@${pending.fromVersion}.`,
+      );
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
     }

@@ -356,4 +356,91 @@ if (context.update?.status === "pending") {
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
     }),
   );
+
+  it.effect("a stop during the pre-update backup keeps the update pending for the next start", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, statePath, backupDir } = yield* writePendingUpdate(fs, path);
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(state.update?.status, "pending");
+      assert.isFalse(yield* fs.exists(backupDir));
+      assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
+    }),
+  );
+
+  it.effect("announces the pre-update backup and how long it took", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, statePath, backupDir } = yield* writePendingUpdate(fs, path);
+      const lines: Array<string> = [];
+      const backupFinished = Promise.withResolvers<void>();
+      const log = (line: string) => {
+        lines.push(line);
+        if (line.startsWith("Database backup finished")) backupFinished.resolve();
+      };
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        log,
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => backupFinished.promise);
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      assert.equal(
+        lines[0],
+        `Backing up the database (8 B) to ${backupDir} before starting t3@1.1.0.`,
+      );
+      assert.match(lines[1] ?? "", /^Database backup finished in \d+\.\ds\.$/);
+    }),
+  );
 });
+
+const PENDING_UPDATE_ID = "update-1";
+
+// A launcher restarted mid-update: the old server is gone, the target runtime
+// is installed, and the database still needs its pre-update backup.
+const writePendingUpdate = (fs: FileSystem.FileSystem, path: Path.Path) =>
+  Effect.gen(function* () {
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-pending-" });
+    const statePath = path.join(root, "runtime", "service-state.json");
+    const databasePath = path.join(root, "userdata", "state.sqlite");
+    yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+    yield* fs.writeFileString(databasePath, "database");
+    for (const version of ["1.0.0", "1.1.0"]) {
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", version),
+        "setInterval(() => {}, 1_000);\n",
+      );
+    }
+    yield* Effect.promise(() =>
+      writeServiceState(statePath, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: PENDING_UPDATE_ID,
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath: databasePath,
+          status: "pending",
+        },
+      }),
+    );
+    return {
+      root,
+      statePath,
+      backupDir: path.join(root, "runtime", "db-backup", PENDING_UPDATE_ID),
+    };
+  });
