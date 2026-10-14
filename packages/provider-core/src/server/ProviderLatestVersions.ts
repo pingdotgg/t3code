@@ -27,32 +27,45 @@ export class ProviderLatestVersions extends Context.Service<
 
 export const make = (seed: Iterable<readonly [key: string, version: string | null]> = []) =>
   Effect.gen(function* () {
-    const entries = yield* Ref.make(
-      new Map<string, Entry>(
+    // `invalidate` bumps the generation in the same update that drops the
+    // entry, so a lookup that started before it cannot store the answer the
+    // invalidation meant to drop.
+    const state = yield* Ref.make({
+      generation: 0,
+      entries: new Map<string, Entry>(
         Array.from(seed, ([key, version]) => [
           key,
           { version, expiresAt: Number.MAX_SAFE_INTEGER },
         ]),
       ),
-    );
+    });
     return ProviderLatestVersions.of({
       cached: (key, lookup, options) =>
         Effect.gen(function* () {
           const now = DateTime.toEpochMillis(yield* DateTime.now);
-          const existing = (yield* Ref.get(entries)).get(key);
+          const { generation, entries } = yield* Ref.get(state);
+          const existing = entries.get(key);
           if (!options?.fresh && existing && existing.expiresAt > now) return existing.version;
           const version = yield* lookup;
           const ttl = version === null ? MISSING_TTL : FOUND_TTL;
-          yield* Ref.update(entries, (current) =>
-            new Map(current).set(key, { version, expiresAt: now + Duration.toMillis(ttl) }),
+          yield* Ref.update(state, (current) =>
+            current.generation === generation
+              ? {
+                  generation,
+                  entries: new Map(current.entries).set(key, {
+                    version,
+                    expiresAt: now + Duration.toMillis(ttl),
+                  }),
+                }
+              : current,
           );
           return version;
         }),
       invalidate: (key) =>
-        Ref.update(entries, (current) => {
-          const next = new Map(current);
-          next.delete(key);
-          return next;
+        Ref.update(state, (current) => {
+          const entries = new Map(current.entries);
+          entries.delete(key);
+          return { generation: current.generation + 1, entries };
         }),
     });
   });

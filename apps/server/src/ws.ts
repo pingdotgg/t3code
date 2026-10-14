@@ -170,6 +170,7 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { invalidateLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
@@ -2175,8 +2176,12 @@ const layerWsRpc = (
                     const maintenance = yield* instance.snapshot.resolveMaintenance({
                       fresh: true,
                     });
-                    if (maintenance.packageName)
-                      yield* providerLatestVersions.invalidate(maintenance.packageName);
+                    yield* invalidateLatestProviderVersion(maintenance).pipe(
+                      Effect.provideService(
+                        ProviderLatestVersions.ProviderLatestVersions,
+                        providerLatestVersions,
+                      ),
+                    );
                   }),
                 { concurrency: "unbounded", discard: true },
               );

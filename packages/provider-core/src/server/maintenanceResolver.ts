@@ -121,6 +121,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -143,6 +144,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
   };
 }
 
@@ -470,9 +472,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     }
     const args =
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
-    // Homebrew lags npm by hours on every release, so compare against what
-    // `brew upgrade` can actually deliver.
-    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -480,7 +480,17 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: args,
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
-      latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
+      // Homebrew lags npm by hours on every release, so compare against what
+      // `brew upgrade` can actually deliver and never fall back to npm.
+      latestVersion: null,
+      lookupLatestVersion: runHomebrew(
+        brewPath,
+        ["info", "--json=v2", homebrew.name],
+        context.env,
+      ).pipe(
+        Effect.map((info) => (info ? parseHomebrewLatestVersion(info, homebrew) : null)),
+        Effect.provideContext(services),
+      ),
     });
   }
 
@@ -698,9 +708,31 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+/**
+ * The installer's answer depends on what its update command upgrades and
+ * through which executable (a brew prefix, a formula or cask), so that is the key.
+ */
+function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
+  const update = capabilities.update;
+  return capabilities.lookupLatestVersion && update
+    ? [update.lockKey, update.executable, ...update.args].join("\0")
+    : null;
+}
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
+    const installerLatest = yield* latestVersions.cached(
+      installerKey,
+      maintenanceCapabilities.lookupLatestVersion,
+    );
+    if (installerLatest !== null) {
+      return installerLatest;
+    }
+  }
   if (maintenanceCapabilities.latestVersion !== undefined) {
     return maintenanceCapabilities.latestVersion;
   }
@@ -709,9 +741,23 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
+
+/**
+ * Drop every cached latest version these capabilities read, so the next
+ * advisory asks the installer and the registry again.
+ */
+export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
+  function* (maintenanceCapabilities: ProviderMaintenanceCapabilities) {
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+    if (installerKey) yield* latestVersions.invalidate(installerKey);
+    if (maintenanceCapabilities.packageName) {
+      yield* latestVersions.invalidate(maintenanceCapabilities.packageName);
+    }
+  },
+);
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   "enrichProviderSnapshotWithVersionAdvisory",
