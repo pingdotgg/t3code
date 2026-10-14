@@ -14,7 +14,7 @@ import {
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
@@ -307,8 +307,14 @@ const runPackageManagerProbe = Effect.fn("runPackageManagerProbe")(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
+    // On Windows a package manager is a `.cmd` shim that only runs through cmd.exe.
+    const spawnCommand = yield* resolveSpawnCommand(executable, args, { env, extendEnv: true });
     const child = yield* spawner.spawn(
-      ChildProcess.make(executable, args, { env, extendEnv: true }),
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env,
+        extendEnv: true,
+        shell: spawnCommand.shell,
+      }),
     );
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
     // stderr is drained so a chatty tool cannot block on a full pipe.
