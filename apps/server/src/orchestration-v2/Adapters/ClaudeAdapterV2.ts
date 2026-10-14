@@ -3191,6 +3191,32 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
+// Builds the approval prompt. The user approves the command itself; Claude's
+// title and description only summarize it. The reason the ask escalated (such
+// as a PreToolUse hook's message) follows on its own line instead of being
+// dropped. It may carry ANSI escapes.
+function claudeApprovalPrompt(
+  options: {
+    readonly title?: string;
+    readonly description?: string;
+    readonly decisionReason?: string;
+  },
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string {
+  const command = inputRecordValue(input, "command");
+  const base =
+    (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
+    options.title ??
+    options.description ??
+    summarizeClaudeToolRequest(toolName, input);
+  const reason =
+    options.decisionReason === undefined
+      ? ""
+      : NodeUtil.stripVTControlCharacters(options.decisionReason).trim();
+  return reason === "" || reason === base ? base : `${base}\n${reason}`;
+}
+
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -9903,14 +9929,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          // The user approves the command itself; Claude's title and description only summarize it.
-          const command = inputRecordValue(nativeToolInput, "command");
-          const prompt =
-            (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
-            callbackOptions.title ??
-            callbackOptions.description ??
-            callbackOptions.decisionReason ??
-            summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const prompt = claudeApprovalPrompt(callbackOptions, toolName, nativeToolInput);
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
