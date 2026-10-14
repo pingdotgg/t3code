@@ -2107,6 +2107,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         providerSessionId: input.providerSessionId,
         providerSession: session,
         events: Stream.fromQueue(events),
+        // Workflows and subagents run in this session's own `muse` host.
+        backgroundTasksEndWithProcess: true,
         // A running workflow or a held Muse turn keeps the host: idle release must wait.
         hasPendingBackgroundWork: Effect.sync(
           () => observedChildren.size > 0 || wake !== undefined,

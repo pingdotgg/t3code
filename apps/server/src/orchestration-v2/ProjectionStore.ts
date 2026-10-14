@@ -1056,7 +1056,8 @@ const encodeSubagentPayload = Schema.encodeEffect(
 const encodeProviderSessionPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
 );
-const encodeProviderThreadPayload = Schema.encodeEffect(
+/** Encodes a provider thread exactly as its projection row stores `payload_json`. */
+export const encodeProviderThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
 );
 const encodeProviderTurnPayload = Schema.encodeEffect(
