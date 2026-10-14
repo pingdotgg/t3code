@@ -309,6 +309,57 @@ it.effect("shares detail and activity for a minute, and for ten once merged", ()
   }),
 );
 
+it.effect("re-reads an open pull request after a turn, but not a merged one", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`detail #${number}`);
+              return {
+                ...hostedChangeRequest("Description"),
+                number,
+                state: number === 1 ? ("open" as const) : ("merged" as const),
+              };
+            }),
+          getChangeRequestActivity: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`activity #${number}`);
+              return {
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              };
+            }),
+        }),
+      ],
+    });
+    // What every client showing #1 (open) and #2 (merged) does on each refresh signal.
+    const merged = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
+    const reread = Effect.forEach([1, 2], (number) => {
+      const ref = { ...merged, number };
+      return Effect.andThen(service.detail(ref), service.activity(ref));
+    }).pipe(
+      Effect.andThen(Effect.yieldNow),
+      Effect.andThen(Effect.sync(() => reads.splice(0).toSorted())),
+    );
+
+    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #2", "detail #1", "detail #2"]);
+    for (let turn = 0; turn < 3; turn++) {
+      yield* service.refreshAfterTurn(merged.projectId);
+      assert.deepStrictEqual(yield* reread, ["activity #1", "detail #1"]);
+    }
+    // The refresh button still reads a merged pull request again.
+    yield* service.invalidate({ reference: merged });
+    assert.deepStrictEqual(yield* reread, ["activity #2", "detail #2"]);
+  }),
+);
+
 it.effect("does not wait for an in-flight detail read to display a preview", () =>
   Effect.gen(function* () {
     const detailStarted = yield* Deferred.make<void>();
