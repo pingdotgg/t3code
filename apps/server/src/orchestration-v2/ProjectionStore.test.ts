@@ -2689,6 +2689,86 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("projects pending question blocking capability into SQL and memory shells", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:question-blocking");
+      const nodeId = NodeId.make("node:question-blocking");
+      const requestId = RuntimeRequestId.make("request:question-blocking");
+      yield* store.apply({
+        id: EventId.make("event:question-blocking:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:question-blocking"),
+          title: "Pending question",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      for (const [responseCapability, blocking] of [
+        [{ type: "message" }, false],
+        [
+          { type: "live", providerSessionId: ProviderSessionId.make("session:question-blocking") },
+          true,
+        ],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`event:question-blocking:${responseCapability.type}`),
+          type: "runtime-request.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability,
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        const projection = yield* store.getThreadProjection(threadId);
+        const sqlShell = (yield* store.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        );
+        assert.isDefined(sqlShell);
+        for (const shell of [sqlShell, ProjectionStore.threadShellFromProjection(projection)]) {
+          assert.deepEqual(shell.pendingRuntimeRequest, {
+            id: requestId,
+            kind: "user_input",
+            createdAt: now,
+            blocking,
+          });
+        }
+      }
+    }),
+  );
+
   it.effect("only exposes interruptible runs through the shell activeRunId", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
