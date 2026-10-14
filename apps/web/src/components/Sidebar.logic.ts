@@ -655,10 +655,11 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestRun"
   | "runtime"
-> & {
-  lastVisitedAt?: string | null | undefined;
-  pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
-};
+> &
+  Partial<Pick<SidebarThreadSummary, "blockedOnThreadWait">> & {
+    lastVisitedAt?: string | null | undefined;
+    pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+  };
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -978,7 +979,8 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
->;
+> &
+  Partial<Pick<SidebarThreadSummary, "blockedOnThreadWait">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -986,6 +988,11 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.hasPendingUserInput) {
     return "input";
+  }
+  // A turn blocked in a call that waits for another thread does nothing until
+  // that thread finishes, so it reads as Waiting, not Working.
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
+    return "waiting";
   }
   if (
     thread.runtime !== null &&
@@ -1199,7 +1206,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.runtime?.status === "running" || thread.runtime?.status === "waiting") {
+  if (
+    thread.runtime?.status === "waiting" ||
+    (thread.runtime?.status === "running" && thread.blockedOnThreadWait !== true)
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -1221,7 +1231,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+  if (
+    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
+    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",

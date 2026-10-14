@@ -9,6 +9,7 @@ import type {
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
+import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -50,6 +51,34 @@ const SETTLED_FOR_BACKGROUND_WAIT_RUN_STATUSES = new Set<OrchestrationV2Run["sta
 void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
+
+/**
+ * Whether a running turn item is a T3 tool call that blocks until another
+ * thread finishes: t3_thread_wait, or delegate_task with mode "wait".
+ */
+export function isThreadWaitToolItem(
+  item: Pick<OrchestrationV2TurnItem, "type" | "status"> & {
+    readonly toolName?: string | null;
+    readonly input?: unknown;
+  },
+): boolean {
+  // A pending call has not started blocking yet, so only a call that runs counts.
+  if (item.type !== "dynamic_tool" || (item.status !== "running" && item.status !== "waiting")) {
+    return false;
+  }
+  // The shared resolver accepts every provider's spelling of a T3 tool and
+  // rejects same-named tools from other MCP servers.
+  const toolId = resolveT3McpToolId(item.toolName);
+  if (toolId === "t3_thread_wait") return true;
+  if (toolId !== "delegate_task") return false;
+  const input = item.input;
+  return (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Reflect.get(input, "mode") === "wait"
+  );
+}
 
 /**
  * Whether a turn-item update can end background work that a settled run is

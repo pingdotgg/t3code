@@ -3,6 +3,7 @@ import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  isThreadWaitToolItem,
   turnItemUpdateCanEndBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
@@ -16,6 +17,35 @@ describe("turnItemUpdateCanEndBackgroundWork", () => {
     ["a finished assistant message", false, { type: "assistant_message", status: "completed" }],
   ] as const)("%s: %s", (_case, canEnd, item) => {
     expect(turnItemUpdateCanEndBackgroundWork(item)).toBe(canEnd);
+  });
+});
+
+describe("isThreadWaitToolItem", () => {
+  it.each([
+    ["Claude's prefixed wait", true, "mcp__t3-code__t3_thread_wait", "running", {}],
+    ["a dotted wait", true, "t3-code.t3_thread_wait", "running", {}],
+    ["a bare wait", true, "t3_thread_wait", "waiting", {}],
+    ["a blocking delegation", true, "mcp__t3-code__delegate_task", "running", { mode: "wait" }],
+    ["an async delegation", false, "mcp__t3-code__delegate_task", "running", { mode: "async" }],
+    ["a thread read", false, "mcp__t3-code__t3_thread_read", "running", {}],
+    ["a wait that has not started", false, "mcp__t3-code__t3_thread_wait", "pending", {}],
+    ["a finished wait", false, "mcp__t3-code__t3_thread_wait", "completed", {}],
+    ["an unrelated suffix", false, "my_t3_thread_wait_helper", "running", {}],
+    ["another server's wait", false, "mcp__other__t3_thread_wait", "running", {}],
+    ["a dotted third-party wait", false, "weather.t3_thread_wait", "running", {}],
+    ["another server's delegation", false, "other.delegate_task", "running", { mode: "wait" }],
+  ] as const)("%s: %s", (_case, expected, toolName, status, input) => {
+    expect(isThreadWaitToolItem({ type: "dynamic_tool", status, toolName, input })).toBe(expected);
+  });
+
+  it("ignores items that are not dynamic tools", () => {
+    expect(
+      isThreadWaitToolItem({
+        type: "command_execution",
+        status: "running",
+        toolName: "t3_thread_wait",
+      }),
+    ).toBe(false);
   });
 });
 

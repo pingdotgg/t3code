@@ -1980,6 +1980,13 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * The running turn is blocked inside a call that waits for another T3 thread
+   * (t3_thread_wait, or delegate_task in wait mode). The agent is idle until
+   * that thread finishes, so lists show Waiting, not Working. Omitted by
+   * servers that predate it.
+   */
+  blockedOnThreadWait: Schema.optional(Schema.Boolean),
   // Distinct provider instances that have owned a root provider thread here,
   // in first-use order, so lists can show where a handed-off thread has been.
   // Omitted by servers that predate it; decodes to [].

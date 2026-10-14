@@ -5573,6 +5573,115 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("flags a running turn blocked in a call that waits for another thread", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:blocked-on-thread-wait");
+      const runId = RunId.make("run:blocked-on-thread-wait");
+      const waitItemId = TurnItemId.make("turn-item:blocked-on-thread-wait:wait");
+      const at = DateTime.makeUnsafe("2026-10-12T12:00:00.000Z");
+      yield* store.apply({
+        id: EventId.make("event:blocked-on-thread-wait:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:blocked-on-thread-wait"),
+          title: "Waits on a thread",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: at,
+          updatedAt: at,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:blocked-on-thread-wait:run"),
+        type: "run.created",
+        threadId,
+        runId,
+        driver,
+        providerInstanceId,
+        occurredAt: at,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:blocked-on-thread-wait"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: at,
+          startedAt: at,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const applyToolItem = (id: string, status: "running" | "completed", toolName: string) =>
+        store.apply({
+          id: EventId.make(`event:blocked-on-thread-wait:${id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          driver,
+          occurredAt: at,
+          payload: {
+            id: waitItemId,
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status,
+            title: "Wait for a T3 thread",
+            startedAt: at,
+            completedAt: status === "completed" ? at : null,
+            updatedAt: at,
+            type: "dynamic_tool",
+            toolName,
+            input: {},
+          },
+        });
+      const observe = Effect.gen(function* () {
+        const shell = yield* store.getThreadShell(threadId);
+        const listed = (yield* store.getShellSnapshot()).threads.find(
+          (candidate) => candidate.id === threadId,
+        );
+        assert.equal(listed?.blockedOnThreadWait, shell?.blockedOnThreadWait);
+        return shell?.blockedOnThreadWait;
+      });
+
+      assert.equal(yield* observe, false);
+      yield* applyToolItem("read", "running", "mcp__t3-code__t3_thread_read");
+      assert.equal(yield* observe, false);
+      yield* applyToolItem("wait", "running", "mcp__t3-code__t3_thread_wait");
+      assert.equal(yield* observe, true);
+      yield* applyToolItem("done", "completed", "mcp__t3-code__t3_thread_wait");
+      assert.equal(yield* observe, false);
+    }),
+  );
+
   it.effect("a pull request watch keeps a finished thread working until it ends", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

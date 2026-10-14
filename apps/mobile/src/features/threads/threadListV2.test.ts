@@ -111,6 +111,23 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("reports waiting for a running turn blocked on another thread", () => {
+    const thread = makeThread({
+      id: ThreadId.make("blocked"),
+      title: "Blocked on a thread",
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("working");
+    expect(resolveThreadListV2Status({ ...thread, blockedOnThreadWait: true })).toBe("waiting");
+  });
+
   it("distinguishes usage limits from ordinary failures and clears the label after recovery", () => {
     const thread = makeThread({
       id: ThreadId.make("limited"),

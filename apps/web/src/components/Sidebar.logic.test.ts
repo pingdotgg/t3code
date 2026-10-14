@@ -930,6 +930,27 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("working");
   });
 
+  it("reports waiting for a running turn blocked on another thread", () => {
+    expect(resolveSidebarThreadStatus({ ...idle, runtime, blockedOnThreadWait: true })).toBe(
+      "waiting",
+    );
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: { ...runtime, status: "starting" as const },
+        blockedOnThreadWait: true,
+      }),
+    ).toBe("working");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingApprovals: true,
+        runtime,
+        blockedOnThreadWait: true,
+      }),
+    ).toBe("approval");
+  });
+
   it("keeps usage-limit stops Limited and visible until the thread recovers", () => {
     const limited = {
       ...runtime,
@@ -1293,6 +1314,14 @@ describe("resolveThreadStatusPill", () => {
       dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     });
+  });
+
+  it("shows waiting for a running turn blocked on another thread", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, blockedOnThreadWait: true },
+      }),
+    ).toMatchObject({ label: "Waiting", pulse: false });
   });
 
   it("keeps an active turn working when background tasks are also present", () => {
