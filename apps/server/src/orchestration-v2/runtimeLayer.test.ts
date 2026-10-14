@@ -4860,6 +4860,93 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
   );
 });
 
+it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", (it) => {
+  it.effect("persists only the changed PR link and replays it without losing other links", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("compact-pr-sync");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("compact-pr-create"),
+        threadId,
+        projectId: ProjectId.make("compact-pr-project"),
+        title: "PR sync",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code" };
+      for (const number of [1, 2, 3]) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`compact-pr-link-${number}`),
+          threadId,
+          ...key,
+          number,
+          url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+          source: "manual",
+        });
+      }
+      const before = yield* orchestrator.getThreadShell(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("compact-pr-sync"),
+        threadId,
+        ...key,
+        number: 2,
+        snapshot: {
+          state: "open",
+          title: "Updated PR",
+          headBranch: "feature/pr",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-13T12:00:00.000Z",
+        },
+        stack: {
+          kind: "native",
+          id: "updated",
+          number: 2,
+          url: "https://github.com/pingdotgg/t3code/pull/2",
+          base: "main",
+          layers: [],
+        },
+      });
+      const rows = yield* sql<{ event_type: string; payload_json: string }>`
+        SELECT event_type, payload_json FROM orchestration_events
+        WHERE command_id = ${"compact-pr-sync"}
+      `;
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.event_type, "thread.pull-request-link-updated");
+      const payload = JSON.parse(rows[0]!.payload_json);
+      assert.equal(payload.number, 2);
+      assert.isUndefined(payload.pullRequests);
+      const after = yield* orchestrator.getThreadShell(threadId);
+      assert.equal(after?.pullRequests?.length, 3);
+      assert.deepEqual(after?.pullRequests?.[0], before?.pullRequests?.[0]);
+      assert.deepEqual(after?.pullRequests?.[2], before?.pullRequests?.[2]);
+      assert.equal(after?.pullRequests?.[1]?.stack?.id, "updated");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
+        after?.pullRequests,
+      );
+      yield* maintenance.compactEventStore;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
+        after?.pullRequests,
+      );
+    }),
+  );
+});
+
 it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (it) => {
   it.effect("orders retained project transactions and V2 thread transactions in one source", () =>
     Effect.gen(function* () {

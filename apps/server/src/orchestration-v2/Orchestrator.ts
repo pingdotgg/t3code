@@ -3251,6 +3251,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (
+      command.type === "thread.pull-request-link.sync" ||
+      command.type === "thread.pull-request-watch.sync"
+    ) {
+      if (updatedThread === thread) return;
+      const link = threadPullRequestsOf(updatedThread).find((candidate) =>
+        threadPullRequestKeysEqual(candidate, normalizeThreadPullRequestKey(command)),
+      );
+      if (link === undefined) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.pull-request-link-updated",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: now,
+        payload: link,
+      });
+      return;
+    }
     const eventType = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -3282,9 +3303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
-        case "thread.pull-request-link.sync":
         case "thread.pull-request.watch":
-        case "thread.pull-request-watch.sync":
         case "thread.pull-request.sync":
           return "thread.pull-request-synced" as const;
         case "thread.runtime-mode.set":
