@@ -488,6 +488,29 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps a working socket open while a slow server config snapshot arrives", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        ready: () => Effect.sleep("40 seconds"),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "synchronizing",
+      );
+      yield* TestClock.adjust("39 seconds");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connecting");
+
+      yield* TestClock.adjust("1 second");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("retries when a session never becomes ready", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -501,7 +524,8 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "synchronizing",
       );
-      yield* TestClock.adjust("14 seconds");
+      // 15 seconds of setup plus 75 for the snapshot; setup finished instantly.
+      yield* TestClock.adjust("89 seconds");
       expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
 
       yield* TestClock.adjust("1 second");
@@ -1740,6 +1764,38 @@ describe("EnvironmentSupervisor routes", () => {
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
       expect(prepared.target._tag).toBe("BearerConnectionTarget");
     }),
+  );
+
+  it.effect(
+    "gives the next route its own snapshot budget after a route fails while synchronizing",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          // The LAN session fails 50 seconds into its snapshot; T3 Connect needs 40.
+          ready: (attempt) =>
+            attempt === 1
+              ? Effect.sleep("50 seconds").pipe(Effect.andThen(Effect.fail(transient())))
+              : Effect.sleep("40 seconds"),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connecting" && state.stage === "synchronizing",
+        );
+        yield* TestClock.adjust("50 seconds");
+        yield* TestClock.adjust("40 seconds");
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("still tries a silent LAN route after the T3 Connect route fails", () =>
