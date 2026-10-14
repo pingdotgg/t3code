@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -67,6 +68,9 @@ export class ElectronUpdater extends Context.Service<
     readonly setAllowDowngrade: (value: boolean) => Effect.Effect<void>;
     readonly setFullChangelog: (value: boolean) => Effect.Effect<void>;
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
+    /** Where electron-updater keeps a finished download, with an update-info.json
+        naming its file and sha512. downloadUpdate reuses it when the sha matches. */
+    readonly pendingDownloadDirectory: Effect.Effect<Option.Option<string>>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
     readonly quitAndInstall: (options: {
@@ -123,6 +127,18 @@ export const make = ElectronUpdater.of({
       autoUpdater.disableDifferentialDownload = value;
       return Effect.void;
     }),
+  // The cache helper is private, but resolving through it keeps this directory
+  // the one downloadUpdate itself reads and writes.
+  pendingDownloadDirectory: Effect.tryPromise(() =>
+    (
+      autoUpdater as unknown as {
+        getOrCreateDownloadHelper: () => Promise<{ readonly cacheDirForPendingUpdate: string }>;
+      }
+    ).getOrCreateDownloadHelper(),
+  ).pipe(
+    Effect.map((helper) => Option.some(helper.cacheDirForPendingUpdate)),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  ),
   checkForUpdates: Effect.suspend(() => {
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
