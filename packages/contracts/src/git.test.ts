@@ -54,14 +54,20 @@ describe("GitPreparePullRequestThreadResult", () => {
 describe("GitRunStackedActionInput", () => {
   it("accepts logical commit splitting", () => {
     const parsed = decodeRunStackedActionInput({
-      actionId: "action-1", cwd: "/repo", action: "commit", splitCommits: true,
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      splitCommits: true,
     });
     expect(parsed.splitCommits).toBe(true);
   });
 
   it("accepts a force-with-lease push", () => {
     const parsed = decodeRunStackedActionInput({
-      actionId: "action-force-push", cwd: "/repo", action: "push", forceWithLease: true,
+      actionId: "action-force-push",
+      cwd: "/repo",
+      action: "push",
+      forceWithLease: true,
     });
     expect(parsed.forceWithLease).toBe(true);
   });

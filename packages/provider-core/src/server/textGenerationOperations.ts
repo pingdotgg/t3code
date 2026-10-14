@@ -98,21 +98,22 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     };
   });
 
-  const generateCommitPlan: ProviderTextGeneration["generateCommitPlan"] =
-    Effect.fn(`${name}.generateCommitPlan`)(function* (input) {
-      const generated = yield* run({
-        operation: "generateCommitPlan",
-        cwd: input.cwd,
-        modelSelection: input.modelSelection,
-        ...buildCommitPlanPrompt({
-          branch: input.branch,
-          changeUnitSummary: input.changeUnitSummary,
-          annotatedPatch: input.annotatedPatch,
-          policy: input.policy,
-        }),
-      });
-      return { commits: sanitizeCommitPlan(generated.commits) };
+  const generateCommitPlan: ProviderTextGeneration["generateCommitPlan"] = Effect.fn(
+    `${name}.generateCommitPlan`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateCommitPlan",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildCommitPlanPrompt({
+        branch: input.branch,
+        changeUnitSummary: input.changeUnitSummary,
+        annotatedPatch: input.annotatedPatch,
+        policy: input.policy,
+      }),
     });
+    return { commits: sanitizeCommitPlan(generated.commits) };
+  });
 
   const generatePrContent: ProviderTextGeneration["generatePrContent"] = Effect.fn(
     `${name}.generatePrContent`,

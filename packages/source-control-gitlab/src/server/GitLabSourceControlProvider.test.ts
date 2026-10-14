@@ -14,10 +14,10 @@ import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import { definition } from "../shared/definition.ts";
 
-function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
+function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>, git?: TestSourceControlHost.TestSourceControlHostOptions["git"]) {
   return GitLabSourceControlProvider.make.pipe(
     Effect.provide(
-      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer()),
+      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer(git === undefined ? {} : { git })),
     ),
   );
 }
@@ -279,5 +279,43 @@ it.effect.each(["read", "decode"] as const)(
       assert.notInclude(error.message, "private response text");
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
+    }),
+);
+
+it.effect("prefers GitLab's configured template without reading repository defaults", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      getConfiguredChangeRequestTemplate: () => Effect.succeed("Configured template"),
+    });
+    const template = yield* provider.readChangeRequestTemplate!({ cwd: "/repo", treeish: "main" });
+    assert.deepEqual(template, Option.some("Configured template"));
+  }),
+);
+
+it.effect(
+  "falls back to the committed default template when GitLab has no configured template",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider(
+        { getConfiguredChangeRequestTemplate: () => Effect.succeed(null) },
+        {
+          execute: (input) =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout:
+                input.args[0] === "ls-tree"
+                  ? `100644 blob ${"a".repeat(40)}\t.gitlab/merge_request_templates/Default.md\0`
+                  : "Repository template\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        },
+      );
+      const template = yield* provider.readChangeRequestTemplate!({
+        cwd: "/repo",
+        treeish: "main",
+      });
+      assert.deepEqual(template, Option.some("Repository template"));
     }),
 );
