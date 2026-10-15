@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { HttpClient, HttpServer } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
@@ -34,6 +34,8 @@ const withService = <A, E>(
     readonly relayFails?: boolean;
     readonly failActivityRead?: boolean;
     readonly failHoldRead?: boolean;
+    /** The `Date` the relay answers a clock check with. */
+    readonly relayDate?: string;
     /** The first relay call reports itself, then waits for this before answering. */
     readonly holdFirstRelayCall?: {
       readonly started: () => void;
@@ -42,6 +44,7 @@ const withService = <A, E>(
   },
   body: (input: {
     readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
+    readonly linkState: CloudLink.CloudLink["Service"]["linkState"];
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
   }) => Effect.Effect<A, E, never>,
@@ -105,13 +108,27 @@ const withService = <A, E>(
       Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
       Layer.succeed(
         HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("unused")),
+        HttpClient.make((request) =>
+          options.relayDate === undefined
+            ? Effect.die("unused")
+            : Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(null, { status: 404, headers: { date: options.relayDate } }),
+                ),
+              ),
+        ),
       ),
       NodeServices.layer,
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
+      return yield* body({
+        preferences: { update: link.updatePreferences },
+        linkState: link.linkState,
+        stored,
+        relayCalls,
+      });
     }).pipe(
       Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -272,3 +289,22 @@ it.effect("an update the client walks away from still finishes", () => {
     }),
   );
 });
+
+// The test clock starts at the epoch.
+it.effect("reports how far off this machine's clock is when it breaks T3 Connect", () =>
+  withService({ relayDate: "Thu, 01 Jan 1970 00:07:00 GMT" }, ({ linkState }) =>
+    Effect.gen(function* () {
+      const state = yield* linkState();
+      assert.equal(state.clockSkewSeconds, -420);
+    }),
+  ),
+);
+
+it.effect("leaves the clock out of the link state when it is close enough", () =>
+  withService({ relayDate: "Thu, 01 Jan 1970 00:00:30 GMT" }, ({ linkState }) =>
+    Effect.gen(function* () {
+      const state = yield* linkState();
+      assert.isUndefined(state.clockSkewSeconds);
+    }),
+  ),
+);

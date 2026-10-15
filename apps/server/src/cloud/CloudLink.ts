@@ -102,6 +102,7 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
+import { checkRelayClock } from "./relayClock.ts";
 import {
   filterRelayResponse,
   relayRequestError,
@@ -470,6 +471,7 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | RelayRequestError
     >;
+    /** The saved link, plus how far this machine's clock is off when that breaks it. */
     readonly linkState: () => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkInternalError
@@ -1024,10 +1026,10 @@ const make = Effect.gen(function* () {
   /**
    * Marks the link revoked after the relay answered 401 to `credential`, usually
    * because the environment was deregistered. Retrying cannot fix that, and
-   * relinking is the user's call, so only mark it. Nothing stored is removed:
-   * the relay also answers 401 for a skewed clock, and the next accepted
-   * registration clears the mark. Returns false, without marking, when a relink
-   * replaced the credential while the rejected request was in flight.
+   * relinking is the user's call, so only mark it. Nothing stored is removed,
+   * and the next accepted registration clears the mark. Returns false, without
+   * marking, when a relink replaced the credential while the rejected request
+   * was in flight.
    */
   const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
     endpointRuntime.withLinkStateLock(
@@ -1044,6 +1046,11 @@ const make = Effect.gen(function* () {
         return true;
       }),
     );
+
+  // The relay also answers 401 while this machine's clock is wrong. That
+  // refusal is retried instead, since fixing the clock is enough to recover.
+  const isLinkRevocation = (error: RelayRequestError) =>
+    error.rejection === "unauthorized" && error.clockSkewSeconds === undefined;
 
   const registerManagedTunnelRecovery = Effect.fn(
     "environment.cloud.registerManagedCloudTunnelRecovery",
@@ -1101,7 +1108,7 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.catchTags({
         RelayRequestError: (error) =>
-          error.rejection === "unauthorized"
+          isLinkRevocation(error)
             ? markLinkRevoked(credential, error).pipe(
                 Effect.map((marked) => (marked ? ("revoked" as const) : ("superseded" as const))),
               )
@@ -1191,7 +1198,7 @@ const make = Effect.gen(function* () {
       // A running host learns of a Deregister here, when its dead tunnel asks
       // for a replacement. The rejection still fails the recovery.
       Effect.tapError((error) =>
-        error.rejection === "unauthorized" ? markLinkRevoked(credential, error) : Effect.void,
+        isLinkRevocation(error) ? markLinkRevoked(credential, error) : Effect.void,
       ),
     );
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
@@ -1398,7 +1405,13 @@ const make = Effect.gen(function* () {
 
   const linkState = Effect.fn("environment.cloud.linkState")(
     function* () {
-      return yield* readCloudLinkState();
+      const state = yield* readCloudLinkState();
+      // Only a configured link has a relay whose clock matters.
+      if (state.relayUrl === null) return state;
+      const clockSkewSeconds = yield* checkRelayClock(state.relayUrl).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      return clockSkewSeconds === null ? state : { ...state, clockSkewSeconds };
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );

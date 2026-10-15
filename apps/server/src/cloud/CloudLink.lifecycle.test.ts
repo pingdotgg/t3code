@@ -716,7 +716,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
       });
       expect((yield* link.linkState()).linkRevoked).toBe(true);
       // One registration request, no relink, and nothing started or removed.
-      expect(requests).toHaveLength(1);
+      // linkState also sends a HEAD to read the relay's clock.
+      expect(requests.filter((request) => request.method !== "HEAD")).toHaveLength(1);
       expect(applyConfigCalls).toEqual([]);
       expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(true);
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
@@ -738,6 +739,49 @@ describe("releaseManagedTunnelOnShutdown", () => {
       }),
     );
   });
+
+  it.effect(
+    "does not mark a link revoked when the rejection came while the clock was wrong",
+    () => {
+      const { store, values } = makeMemorySecretStore([
+        [
+          CLOUD_ENDPOINT_RUNTIME_CONFIG,
+          '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+        ],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+        [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
+      ]);
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        const error = yield* link
+          .registerManagedTunnelRecovery("http://127.0.0.1:3773")
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "RelayRequestError", clockSkewSeconds: -420 });
+        expect((yield* link.linkState()).linkRevoked).toBe(false);
+        expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls: [],
+          requests: [],
+          respond: () =>
+            Response.json(
+              {
+                _tag: "RelayAuthInvalidError",
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId: "trace-clock",
+              },
+              // The test clock starts at the epoch, so this relay is 7 minutes ahead.
+              { status: 401, headers: { date: "Thu, 01 Jan 1970 00:07:00 GMT" } },
+            ),
+        }),
+      );
+    },
+  );
 
   it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
     const { store, values } = makeMemorySecretStore([

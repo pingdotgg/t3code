@@ -195,6 +195,10 @@
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"
     },
+    "./clockSkew": {
+      "types": "./src/clockSkew.ts",
+      "import": "./src/clockSkew.ts"
+    },
     "./oauthScope": {
       "types": "./src/oauthScope.ts",
       "import": "./src/oauthScope.ts"

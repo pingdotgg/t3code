@@ -427,6 +427,9 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   // was deregistered from T3 Connect. The link stays stored until it is linked
   // again. Optional so newer clients tolerate older environment servers.
   linkRevoked: Schema.optional(Schema.Boolean),
+  // Seconds this environment's clock is ahead of (positive) or behind the
+  // relay's, present only when the gap is large enough to break T3 Connect.
+  clockSkewSeconds: Schema.optional(Schema.Number),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
