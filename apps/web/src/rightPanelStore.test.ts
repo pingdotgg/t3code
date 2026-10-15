@@ -959,6 +959,27 @@ describe("rightPanelStore", () => {
     expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
+  it("remembers each thread's pull request detail tab", () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const id = pullRequestSurfaceId(pr);
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, pr);
+    store.openPullRequest(refB, pr);
+    store.setPullRequestDetailTab(refA, id, "code");
+    store.openPullRequest(refA, { ...pr, url: "https://github.com/pingdotgg/t3code/pull/4909" });
+
+    const byThreadKey = useRightPanelStore.getState().byThreadKey;
+    expect(selectActiveRightPanelSurface(byThreadKey, refA)).toMatchObject({ detailTab: "code" });
+    expect(selectActiveRightPanelSurface(byThreadKey, refB)).not.toHaveProperty("detailTab");
+
+    // Reporting the tab already shown is not a new panel choice.
+    const revision = store.getUserActionRevision(refA);
+    store.setPullRequestDetailTab(refA, id, "code");
+    store.setPullRequestDetailTab(refB, id, "summary");
+    expect(useRightPanelStore.getState().byThreadKey).toBe(byThreadKey);
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
   it("keeps matching repository and number on different hosts as separate tabs", () => {
     const first = { projectId: "project-a", repository: "acme/api", number: 7, host: "github.com" };
     const second = { ...first, host: "github.example.com" };

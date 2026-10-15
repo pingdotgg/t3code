@@ -33,6 +33,8 @@ const RIGHT_PANEL_KINDS = [
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
+export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
+
 export interface DeviceTabTarget {
   hostId: string;
   deviceId: string;
@@ -83,6 +85,8 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
+      /** The detail tab last shown, so coming back to the thread lands where the reader left. */
+      detailTab?: PullRequestDetailTab;
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" };
@@ -163,6 +167,11 @@ interface RightPanelStoreState {
       number: number;
       url?: string;
     },
+  ) => void;
+  setPullRequestDetailTab: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    detailTab: PullRequestDetailTab,
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -700,12 +709,34 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
+                    entry.id === surface.id && entry.kind === "pull-request"
+                      ? {
+                          ...surface,
+                          ...(entry.detailTab ? { detailTab: entry.detailTab } : {}),
+                        }
+                      : entry,
                   ),
                 }
               : next;
           }),
         ),
+      setPullRequestDetailTab: (ref, surfaceId, detailTab) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request" || (existing.detailTab ?? "summary") === detailTab)
+            return state;
+          return userAction(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId && surface.kind === "pull-request"
+                ? { ...surface, detailTab }
+                : surface,
+            ),
+          }));
+        }),
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
