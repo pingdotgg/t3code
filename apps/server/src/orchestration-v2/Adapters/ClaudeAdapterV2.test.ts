@@ -7754,6 +7754,136 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // A background subagent finishes while the root is idle; the continuation run
+  // starts with only its notification buffered, no frame of a wake turn.
+  const startSubagentWakeWithoutWakeTurn = Effect.gen(function* () {
+    const TASK_ID = "task-wake-never-opened";
+    const TOOL_USE_ID = "toolu-wake-never-opened";
+    const harness = yield* makeWakeHarness;
+    const now = yield* DateTime.now;
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-wake-never-opened-1"),
+        text: "Audit in the background.",
+        attachments: [],
+      }),
+    );
+    for (const frame of [
+      makeSubagentTaskStartedFrame({
+        taskId: TASK_ID,
+        toolUseId: TOOL_USE_ID,
+        uuid: "00000000-0000-4000-8000-000000000981",
+      }),
+      makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000982",
+        result: "Auditing in the background.",
+      }),
+    ]) {
+      yield* Queue.offer(harness.sdkMessages, frame);
+    }
+    yield* awaitUntil(() => harness.terminalEvents().length === 1, "launch turn terminal");
+    yield* Queue.offer(
+      harness.sdkMessages,
+      makeSubagentNotificationFrame({
+        taskId: TASK_ID,
+        toolUseId: TOOL_USE_ID,
+        summary: "Audit done.",
+        uuid: "00000000-0000-4000-8000-000000000983",
+      }),
+    );
+    yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-wake-never-opened-2"),
+        text: "Background task completed.",
+        attachments: [],
+        providerTurnOrdinal: 2,
+        messageCreatedBy: "agent",
+        messageCreationSource: "provider",
+      }),
+    );
+    let quietYields = 0;
+    yield* awaitUntil(() => quietYields++ >= 50, "continuation waiting for the wake turn");
+    assert.lengthOf(harness.terminalEvents(), 1);
+    return harness;
+  });
+
+  it.effect("settles a subagent wake run when Claude never opens the wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* startSubagentWakeWithoutWakeTurn;
+
+        yield* TestClock.adjust("2 minutes");
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles a subagent wake run although a subagent reports progress meanwhile", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* startSubagentWakeWithoutWakeTurn;
+
+        // Another subagent's progress is not Claude opening the wake turn.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: "task-still-running-elsewhere",
+            description: "Reading more files",
+            uuid: "00000000-0000-4000-8000-000000000984",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        let progressYields = 0;
+        yield* awaitUntil(() => progressYields++ >= 50, "progress frame handled");
+        yield* TestClock.adjust("2 minutes");
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a subagent wake run open while Claude works on the wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* startSubagentWakeWithoutWakeTurn;
+
+        yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
+        let initYields = 0;
+        yield* awaitUntil(() => initYields++ >= 50, "wake turn init handled");
+        yield* TestClock.adjust("2 minutes");
+        let quietYields = 0;
+        yield* awaitUntil(() => quietYields++ >= 50, "deadline passed");
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a nested subagent's launch in order while the root turn is idle", () =>
     Effect.scoped(
       Effect.gen(function* () {

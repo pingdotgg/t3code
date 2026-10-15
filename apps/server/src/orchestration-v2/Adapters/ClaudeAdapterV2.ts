@@ -234,6 +234,10 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK puts no deadline on control requests. The CLI answers
 // mcp_set_servers once each server connected or hit its own 30 s timeout.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+// How long a continuation run waits for Claude to open a wake turn it only got
+// a notification for. Claude's first frame after a prompt arrives within
+// seconds; a subagent result already read in the turn before never opens one.
+const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
 
 /**
  * Starts the Claude CLI as the leader of its own process group. When the CLI
@@ -2132,6 +2136,15 @@ function isClaudeTurnStartMessage(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
 
+/** A frame of the root session's own turn: its `init` or a root user or assistant message. */
+function isClaudeRootTurnFrame(message: SDKMessage): boolean {
+  return (
+    isClaudeTurnStartMessage(message) ||
+    ((message.type === "user" || message.type === "assistant") &&
+      message.parent_tool_use_id == null)
+  );
+}
+
 function claudePendingBackgroundTasksFromRoster(
   roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
@@ -3540,6 +3553,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        // Counts frames of the root session's own turn, so a waiting wake turn
+        // can tell whether Claude opened it; subagent frames do not count.
+        const rootTurnFramesHandled = yield* Ref.make(0);
         const sdkMessageLock = yield* Semaphore.make(1);
         // Survives turn settle: members mostly finish after the launching
         // turn has ended, and each transition must be emitted exactly once.
@@ -7990,6 +8006,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          if (isClaudeRootTurnFrame(message)) {
+            yield* Ref.update(rootTurnFramesHandled, (count) => count + 1);
+          }
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (
@@ -8923,6 +8942,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (hasOpaqueTaskNotification && !hasNativeWakeFrame) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
+                } else if (!hasNativeWakeFrame) {
+                  // A subagent notification alone waits for Claude to open the
+                  // wake turn. If Claude already read the result in the turn
+                  // before, it never does: settle unless the turn opens in time.
+                  const framesAtDrain = yield* Ref.get(rootTurnFramesHandled);
+                  yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE).pipe(
+                    Effect.andThen(
+                      Effect.gen(function* () {
+                        if ((yield* Ref.get(activeTurn)) !== context) return;
+                        if ((yield* Ref.get(rootTurnFramesHandled)) !== framesAtDrain) return;
+                        yield* Effect.logWarning("orchestration-v2.claude-wake-turn-never-opened", {
+                          providerTurnId: context.providerTurnId,
+                          nativeThreadId,
+                        });
+                        const completedAt = yield* DateTime.now;
+                        yield* finalizeActiveTurn({ context, status: "completed", completedAt });
+                      }),
+                    ),
+                    Effect.forkIn(sessionScope),
+                  );
                 }
               }),
             );
