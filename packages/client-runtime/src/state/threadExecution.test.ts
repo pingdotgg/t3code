@@ -191,6 +191,27 @@ describe("thread execution presentation", () => {
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
   });
 
+  it.each(["preparing", "starting", "running", "waiting", "completed", "failed"] as const)(
+    "keeps %s idle compaction out of thread activity",
+    (status) => {
+      const completed = { ...run("completed", 1, "completed"), completedAt: now };
+      const maintenance = {
+        ...run("maintenance", 2, status),
+        idleCompactionOfRunId: completed.id,
+      };
+      const projection = { ...v2Projection, runs: [completed, maintenance] };
+      expect(deriveLatestThreadRun(projection)?.runId).toBe(completed.id);
+      expect(deriveThreadActivityRun(projection)?.runId).toBe(completed.id);
+      const runtime = deriveThreadRuntime(projection);
+      expect(runtime).toMatchObject({
+        status: "completed",
+        activeRunId: null,
+        activityStartedAt: null,
+      });
+      expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+    },
+  );
+
   it("presents a held queue as the stopped run instead of queued work", () => {
     const interrupted = { ...run("run-interrupted", 1, "interrupted"), completedAt: now };
     const held = { ...run("run-held", 2, "queued"), queueHeld: true };

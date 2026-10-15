@@ -4013,6 +4013,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   Effect.ignore({ log: true }),
                 );
               }
+              // Compaction never takes an execution OpenCode is running on its own:
+              // its answer belongs to the continuation, and a hidden idle compaction
+              // would lose it.
+              if (
+                turnInput.message.attachments.length === 0 &&
+                turnInput.message.text.trim().toLowerCase() === "/compact" &&
+                state.wakes.at(-1)?.running === true
+              ) {
+                yield* begin;
+                return yield* finishTurn(state, {
+                  status: "failed",
+                  failure: makeProviderFailure({
+                    message: "OpenCode is delivering background work. Compact again in a moment.",
+                    class: "provider_error",
+                  }),
+                });
+              }
               // A selection changed since the last turn applies now; OpenCode keeps
               // the session's model otherwise.
               if (!sameModel(model, state.model)) {

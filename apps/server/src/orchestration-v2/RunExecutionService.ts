@@ -591,6 +591,7 @@ export const layer: Layer.Layer<
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
+      readonly idleCompactionFallbackOrdinal?: number;
       readonly refreshAfterTurn: Effect.Effect<void>;
       readonly writeIfRunCurrent?: {
         readonly activeAttemptId: RunAttemptId;
@@ -713,6 +714,45 @@ export const layer: Layer.Layer<
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
+            // Cursor's /compress completes without a native compaction item.
+            // Keep idle maintenance visible for adapters with that behavior.
+            ...(input.run.idleCompactionOfRunId !== undefined &&
+            input.terminal.status === "completed" &&
+            input.idleCompactionFallbackOrdinal !== undefined
+              ? [
+                  {
+                    id: yield* allocateEventId(),
+                    type: "turn-item.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: {
+                      id: idAllocator.derive.runSignalTurnItem({
+                        runId: input.run.id,
+                        signal: "idle-compaction",
+                      }),
+                      type: "compaction" as const,
+                      idleTriggered: true,
+                      driver: input.providerThread.driver,
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      nodeId: input.rootNode.id,
+                      providerThreadId: input.providerThread.id,
+                      providerTurnId: input.terminal.providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: input.idleCompactionFallbackOrdinal,
+                      status: "completed" as const,
+                      title: "Context compacted",
+                      startedAt: input.run.startedAt ?? completedAt,
+                      completedAt,
+                      updatedAt: completedAt,
+                    },
+                  },
+                ]
+              : []),
             ...(finalizedAttempt === null
               ? []
               : [
@@ -933,6 +973,7 @@ export const layer: Layer.Layer<
           }
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
+          const idleCompactionItemSeen = yield* Ref.make(false);
           const latestProviderThread = yield* Ref.make(input.providerThread);
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
@@ -1014,6 +1055,10 @@ export const layer: Layer.Layer<
                 openRunOwnedSubagents: openSubagents,
                 terminal,
                 failureItemPersisted: terminal.status === "failed",
+                ...(input.run.idleCompactionOfRunId !== undefined &&
+                !(yield* Ref.get(idleCompactionItemSeen))
+                  ? { idleCompactionFallbackOrdinal: (yield* Ref.get(latestTurnItemOrdinal)) + 1 }
+                  : {}),
                 refreshAfterTurn,
               }).pipe(
                 Effect.mapError(
@@ -1256,7 +1301,16 @@ export const layer: Layer.Layer<
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
-                    event: deliveredEvent,
+                    event:
+                      deliveredEvent.type === "turn_item.updated" &&
+                      deliveredEvent.turnItem.type === "compaction" &&
+                      input.run.idleCompactionOfRunId !== undefined &&
+                      deliveredEvent.turnItem.runId === input.run.id
+                        ? {
+                            ...deliveredEvent,
+                            turnItem: { ...deliveredEvent.turnItem, idleTriggered: true },
+                          }
+                        : deliveredEvent,
                     ...(isRootProviderThreadUpdate
                       ? rootTerminalAlreadySeen
                         ? {
@@ -1277,6 +1331,14 @@ export const layer: Layer.Layer<
                       : {}),
                   });
                   storedEventCount = storedEvents.length;
+                  if (
+                    input.run.idleCompactionOfRunId !== undefined &&
+                    deliveredEvent.type === "turn_item.updated" &&
+                    deliveredEvent.turnItem.type === "compaction" &&
+                    // Some adapters (Pi) put native compaction on their own node.
+                    deliveredEvent.turnItem.runId === input.run.id
+                  )
+                    yield* Ref.set(idleCompactionItemSeen, true);
                   if (
                     isRootProviderThreadUpdate &&
                     rootTerminalAlreadySeen &&

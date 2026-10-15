@@ -5,6 +5,7 @@ import {
   NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
@@ -85,6 +86,70 @@ it("leaves commands that do not create durable authored content unchanged", () =
       creationSource: "web",
     }),
   ).toBe(command);
+});
+
+it.effect("an automatic agent send queues normally during idle compaction", () => {
+  const threadId = ThreadId.make("thread:thread-management:idle-compaction");
+  const projectId = ProjectId.make("project:thread-management:idle-compaction");
+  const messageId = MessageId.make("message:thread-management:idle-compaction");
+  const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
+  const run = {
+    id: RunId.make("run:thread-management:idle-compaction"),
+    ordinal: 2,
+    status: "running",
+    idleCompactionOfRunId: RunId.make("run:thread-management:source"),
+    activeAttemptId: "attempt:thread-management:idle-compaction",
+  } as unknown as OrchestrationV2Run;
+  const queued = {
+    ...run,
+    id: RunId.make("run:thread-management:queued"),
+    userMessageId: messageId,
+    ordinal: 3,
+    status: "queued",
+    idleCompactionOfRunId: undefined,
+  };
+  const projection = {
+    thread: { id: threadId, projectId, deletedAt: null, archivedAt: null, modelSelection },
+    runs: [run, queued],
+    providerTurns: [{ runAttemptId: run.activeAttemptId, status: "running" }],
+    messages: [{ id: messageId, runId: queued.id }],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const commands: OrchestrationV2ServerCommand[] = [];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => {
+          commands.push(command);
+          return Effect.succeed({ sequence: 1, storedEvents: [] } as never);
+        },
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* service.sendToThread({
+      projectId,
+      threadId,
+      messageId,
+      commandId: CommandId.make("command:thread-management:idle-compaction"),
+      createdBy: "agent",
+      creationSource: "mcp",
+      text: "Continue the task",
+      attachments: [],
+      mode: "auto",
+    });
+    expect(commands).toMatchObject([
+      { type: "message.dispatch", dispatchMode: { type: "start_immediately" } },
+    ]);
+    expect(result.delivery).toBe("queued");
+    expect(result.run.id).toBe(queued.id);
+  }).pipe(Effect.provide(layerTest));
 });
 
 it("identifies every existing thread that must be hydrated before dispatch", () => {

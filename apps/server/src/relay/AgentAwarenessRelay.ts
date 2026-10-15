@@ -527,6 +527,23 @@ export const make = Effect.gen(function* () {
     // domain event, so materializing the full shell here would make the cost
     // of one thread's activity proportional to how many threads exist.
     const threadShell = yield* threads.getThreadShell(threadId);
+    // Archiving still publishes, so the relay can clear the thread's card.
+    if (threadShell?.activityRunStatus != null && threadShell.archivedAt === null) {
+      const { runs } = yield* threads.getThreadRecords(
+        threadId,
+        ["runs"],
+        threadShell.activeRunId === null ? undefined : { runIds: [threadShell.activeRunId] },
+      );
+      const activityRun =
+        threadShell.activeRunId === null
+          ? runs
+              .filter((run) => run.status === threadShell.activityRunStatus)
+              .toSorted((left, right) => right.ordinal - left.ordinal)[0]
+          : runs[0];
+      // Idle maintenance must not publish a new working/completed cycle to
+      // mobile push. Its terminal shell returns to the previous run unchanged.
+      if (activityRun?.idleCompactionOfRunId !== undefined) return;
+    }
     if (
       threadShell?.lineage.relationshipToParent === "subagent" &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)

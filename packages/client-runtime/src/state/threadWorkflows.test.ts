@@ -5,6 +5,7 @@ import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  resolveActiveThreadRun,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -406,6 +407,23 @@ describe("thread workflows", () => {
     } as never;
 
     expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
+  });
+
+  it("ignores idle compaction when choosing active and merge-back runs", () => {
+    const projection = {
+      runs: [
+        { id: "completed", status: "completed", ordinal: 1 },
+        {
+          id: "idle-compaction",
+          status: "running",
+          ordinal: 2,
+          idleCompactionOfRunId: "completed",
+        },
+      ],
+    } as never;
+
+    expect(resolveActiveThreadRun(projection)).toBeNull();
+    expect(resolveLatestMergeBackRun(projection)?.id).toBe("completed");
   });
 
   it.each(["preparing", "starting", "running"] as const)(

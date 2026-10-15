@@ -5,7 +5,7 @@ import type {
   OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 
-type TimelineRun = Pick<OrchestrationV2Run, "id" | "status">;
+type TimelineRun = Pick<OrchestrationV2Run, "id" | "status" | "idleCompactionOfRunId">;
 type TimelineRunAttempt = Pick<OrchestrationV2RunAttempt, "runId" | "rootNodeId" | "status">;
 type TimelineTurnItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId"> & {
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
@@ -46,12 +46,10 @@ export function isOrchestrationV2TurnItemVisible(input: {
   readonly items: ReadonlyArray<TimelineTurnItem>;
 }): boolean {
   const { item } = input;
-  if (
-    item.runId !== null &&
-    input.runs.some((run) => run.id === item.runId && run.status === "rolled_back")
-  ) {
-    return false;
-  }
+  const run = item.runId === null ? undefined : input.runs.find((row) => row.id === item.runId);
+  // Idle compaction shows only its compaction row, never its prompt or errors.
+  if (item.type !== "compaction" && run?.idleCompactionOfRunId !== undefined) return false;
+  if (run?.status === "rolled_back") return false;
 
   // A queued message is composer state, not conversation history. When its run
   // is cancelled the input never reached the provider, so it must not surface
@@ -79,6 +77,9 @@ export function createOrchestrationV2TurnItemVisibility(input: {
   readonly items: ReadonlyArray<TimelineTurnItem>;
 }): (item: TimelineTurnItem) => boolean {
   const statuses = new Map(input.runs.map((run) => [run.id, run.status]));
+  const idleRuns = new Set(
+    input.runs.filter((run) => run.idleCompactionOfRunId !== undefined).map((run) => run.id),
+  );
   const supersededRoots = new Map<
     TimelineRunAttempt["runId"],
     Set<TimelineRunAttempt["rootNodeId"]>
@@ -93,6 +94,7 @@ export function createOrchestrationV2TurnItemVisibility(input: {
     input.items.filter((item) => item.type === "run_interrupt_request").map((item) => item.runId),
   );
   return (item) => {
+    if (item.type !== "compaction" && item.runId !== null && idleRuns.has(item.runId)) return false;
     const status = item.runId === null ? undefined : statuses.get(item.runId);
     if (status === "rolled_back") return false;
     if (

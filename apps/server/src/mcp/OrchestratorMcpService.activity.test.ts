@@ -39,6 +39,7 @@ const parentThreadId = ThreadId.make("thread-mcp-orchestrator-parent");
 const childThreadId = ThreadId.make("thread-mcp-orchestrator-child");
 const activeRunId = RunId.make("run-mcp-active");
 const cancelledRunId = RunId.make("run-mcp-cancelled");
+const maintenanceRunId = RunId.make("run-mcp-idle-compaction");
 const childRunId = RunId.make("run-mcp-child");
 const taskId = NodeId.make("node-mcp-task-1");
 const now = DateTime.makeUnsafe("2026-08-04T12:00:00.000Z");
@@ -125,6 +126,10 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     runs: [
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
+      {
+        ...makeRun({ id: maintenanceRunId, ordinal: 3, status: "running" }),
+        idleCompactionOfRunId: activeRunId,
+      },
     ],
     visibleTurnItems: [],
     runtimeRequests: [],
@@ -177,6 +182,13 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.runCount).toBe(2);
+    expect(result.recentRuns.map((run) => run.runId)).not.toContain(maintenanceRunId);
+    const limited = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      runLimit: 1,
+    });
+    expect(limited.recentRuns.map((run) => run.runId)).toEqual([cancelledRunId]);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

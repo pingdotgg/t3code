@@ -118,7 +118,9 @@ export function V2LifecycleRow(props: {
           ? "Context compaction stopped"
           : item.status === "pending" || item.status === "running" || item.status === "waiting"
             ? "Compacting context"
-            : "Context compacted";
+            : item.status === "completed" && item.idleTriggered
+              ? "Compacted while idle, before the prompt cache expired"
+              : "Context compacted";
     return (
       <TimelineSystemDivider label={label} detail={item.summary ?? tokenDetail} icon={MinusIcon} />
     );

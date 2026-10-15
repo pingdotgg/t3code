@@ -28,6 +28,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
+  isUserFacingRun,
   latestExecutedRun,
   latestRootProviderFailure,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -2252,8 +2253,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
     isServerThread &&
-    serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
-      true;
+    serverProjection?.runs.some(
+      (run) => isUserFacingRun(run) && run.status === "queued" && run.queueHeld === true,
+    ) === true;
   const resumableRunId = useMemo(() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
@@ -3672,7 +3674,12 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     activeLatestRun,
     latestUserMessageId:
-      serverProjection?.messages.findLast((message) => message.role === "user")?.id ?? null,
+      serverProjection?.messages.findLast((message) => {
+        if (message.role !== "user") return false;
+        if (message.runId === null) return true;
+        const run = serverProjection.runs.find((candidate) => candidate.id === message.runId);
+        return run === undefined || isUserFacingRun(run);
+      })?.id ?? null,
     phase,
     activePendingApproval: activePendingApproval?.requestId ?? null,
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
@@ -4644,7 +4651,10 @@ export default function ChatView(props: ChatViewProps) {
       return;
     const result = await interruptThreadTurn({
       environmentId,
-      input: { threadId: activeThread.id },
+      input: {
+        threadId: activeThread.id,
+        ...(activeActivityRun === null ? {} : { runId: activeActivityRun.runId }),
+      },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

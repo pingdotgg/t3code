@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
+import { isUserFacingRun } from "./orchestrationV2ThreadError.ts";
 import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -87,7 +88,10 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
   }
 }
 
-type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
+type PendingBackgroundWorkRun = Pick<
+  OrchestrationV2Run,
+  "id" | "ordinal" | "status" | "idleCompactionOfRunId"
+>;
 
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
@@ -237,7 +241,9 @@ export function derivePendingBackgroundWork(input: {
   const hasActiveRun =
     input.hasActiveRun ??
     input.runs?.some(
-      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+      (run) =>
+        isUserFacingRun(run) &&
+        (run.status === "preparing" || run.status === "starting" || run.status === "running"),
     ) ??
     false;
   if (hasActiveRun) {

@@ -1,4 +1,4 @@
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { isUserFacingRun, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -139,7 +139,9 @@ export function restartContinuationRun(
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
-      candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
+      isUserFacingRun(candidate) &&
+      candidate.status !== "queued" &&
+      (!latest || runRanAfter(candidate, latest))
         ? candidate
         : latest,
     undefined,
@@ -217,6 +219,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     // source can be cancelled too. It continues only for awaited work.
     if (
       !source ||
+      !isUserFacingRun(source) ||
       !isRestartContinuationSource(source, projection.providerTurns) ||
       restartContinuationBlocked(
         projection,
@@ -230,7 +233,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     // prompt. Queued runs never started and stay held behind this one.
     if (
       projection.runs.some(
-        (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
+        (run) =>
+          isUserFacingRun(run) &&
+          run.id !== source.id &&
+          run.status !== "queued" &&
+          runRanAfter(run, source),
       )
     )
       return;

@@ -1,4 +1,5 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
@@ -1077,6 +1078,7 @@ export const layer: Layer.Layer<
       };
       const missedRuns = projection.runs.filter(
         (source) =>
+          isUserFacingRun(source) &&
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&

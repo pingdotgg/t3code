@@ -18,7 +18,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { isUserFacingRun, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
@@ -230,7 +230,7 @@ export function delegatedTaskProgress(projection: {
       .map((message) => message.runId),
   );
   const workRuns = projection.runs.filter(
-    (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
+    (run) => isUserFacingRun(run) && !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
   // A held queue waits for the user to resume it (after Stop, a restart, or a
   // provider failure), so its runs are not work the task still owes.

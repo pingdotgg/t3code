@@ -503,6 +503,53 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("only an explicit Stop targets idle compaction from the open chat", () =>
+    Effect.gen(function* () {
+      const runId = RunId.make("idle-compaction");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          {
+            id: runId,
+            threadId: v2ThreadId,
+            ordinal: 2,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("idle-compaction-prompt"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "running",
+            idleCompactionOfRunId: RunId.make("completed-run"),
+            requestedAt: v2Now,
+            startedAt: v2Now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+      yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(commands).toEqual([]);
+      yield* interruptThreadTurn({ threadId: v2ThreadId, runId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          runId,
+          holdQueue: true,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("Stop with no run left ends the thread's pull request watches", () =>
     Effect.gen(function* () {
       const link = {

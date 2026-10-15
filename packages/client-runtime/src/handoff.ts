@@ -6,6 +6,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 
 /**
  * The subset of a projection run that handoff rows read. Kept minimal so the
@@ -26,7 +27,7 @@ export function resolvePendingHandoff(
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
   const from = projection?.runs.findLast(
-    (run) => run.startedAt !== null && run.status !== "rolled_back",
+    (run) => isUserFacingRun(run) && run.startedAt !== null && run.status !== "rolled_back",
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
   const source = providers.find((provider) => provider.instanceId === from.instanceId);

@@ -105,6 +105,12 @@ export const make = Effect.gen(function* () {
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+          -- Idle compaction's system "/compact" prompt is never a search match.
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs AS maintenance
+            WHERE maintenance.run_id = messages.run_id
+              AND json_extract(maintenance.payload_json, '$.idleCompactionOfRunId') IS NOT NULL
+          )
       ),
       ranked AS (
         SELECT

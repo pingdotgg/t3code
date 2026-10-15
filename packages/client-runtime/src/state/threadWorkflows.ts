@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = Projection["runs"][number];
@@ -37,7 +38,11 @@ export interface ThreadQueueWorkflowState {
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
-  return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
+  return (
+    projection.runs.findLast(
+      (run) => isUserFacingRun(run) && ACTIVE_RUN_STATUSES.has(run.status),
+    ) ?? null
+  );
 }
 
 /**
@@ -48,7 +53,9 @@ export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Ru
 export function resolveLatestMergeBackRun(projection: Projection): Run | null {
   const latestProviderFinishedRun = projection.runs.reduce<Run | null>(
     (latest, run) =>
-      MERGE_BACK_RUN_STATUSES.has(run.status) && (latest === null || run.ordinal > latest.ordinal)
+      isUserFacingRun(run) &&
+      MERGE_BACK_RUN_STATUSES.has(run.status) &&
+      (latest === null || run.ordinal > latest.ordinal)
         ? run
         : latest,
     null,
@@ -58,6 +65,7 @@ export function resolveLatestMergeBackRun(projection: Projection): Run | null {
   const hasNewerActiveRun = projection.runs.some(
     (run) =>
       run.ordinal > latestProviderFinishedRun.ordinal &&
+      isUserFacingRun(run) &&
       MERGE_BACK_BLOCKING_RUN_STATUSES.has(run.status),
   );
   return hasNewerActiveRun ? null : latestProviderFinishedRun;
@@ -120,7 +128,10 @@ export function getUserQueuedThreadRuns(
       .map((message) => message.id),
   );
   return projection.runs.filter(
-    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+    (run) =>
+      isUserFacingRun(run) &&
+      run.status === "queued" &&
+      !automaticCompletionMessageIds.has(run.userMessageId),
   );
 }
 
@@ -153,7 +164,9 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   return {
     activeRun,
     queuedRuns,
-    isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    isHeld: projection.runs.some(
+      (run) => isUserFacingRun(run) && run.status === "queued" && run.queueHeld === true,
+    ),
     canReorder: capabilities?.supportsQueuedMessages === true,
     canPromoteToSteer:
       hasSteerableProviderTurn &&

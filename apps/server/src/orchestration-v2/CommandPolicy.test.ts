@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -30,20 +31,33 @@ function capabilities(
 
 function dispatchProjection(
   sessionCapabilities?: OrchestrationV2ProviderCapabilities,
+  activeMessageText?: string,
 ): OrchestrationV2ThreadProjection {
   const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
   const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
+  const activeMessageId = MessageId.make("command-policy-active-message");
   return {
     runs:
       sessionCapabilities === undefined
         ? []
-        : [{ id: activeRunId, status: "running", providerThreadId }],
+        : [
+            {
+              id: activeRunId,
+              status: "running",
+              providerThreadId,
+              ...(activeMessageText === undefined ? {} : { userMessageId: activeMessageId }),
+            },
+          ],
     providerThreads:
       sessionCapabilities === undefined ? [] : [{ id: providerThreadId, providerSessionId }],
     providerSessions:
       sessionCapabilities === undefined
         ? []
         : [{ id: providerSessionId, capabilities: sessionCapabilities }],
+    messages:
+      activeMessageText === undefined
+        ? []
+        : [{ id: activeMessageId, role: "user", text: activeMessageText, attachments: [] }],
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
@@ -63,6 +77,14 @@ it("resolves automatic message delivery from authoritative provider capabilities
       "auto",
     ),
     { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(baseCapabilities, "/compact"),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "queue_after_active" },
   );
   assert.deepEqual(
     CommandPolicy.resolveMessageDispatchIntent(
@@ -138,6 +160,27 @@ it("targets the latest active run for explicit steer and restart intent", () => 
       "steer",
     ),
     { type: "start_immediately" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(baseCapabilities, "/compact"),
+      { type: "start_immediately" },
+      "steer",
+    ),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  const idleCompaction = dispatchProjection(baseCapabilities, "/compact");
+  const idleRuns = idleCompaction.runs.map((run) => ({
+    ...run,
+    idleCompactionOfRunId: RunId.make("command-policy-previous-run"),
+  }));
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      { ...idleCompaction, runs: idleRuns },
+      { type: "start_immediately" },
+      "steer",
+    ),
+    { type: "queue_after_active" },
   );
 });
 

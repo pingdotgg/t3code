@@ -3868,12 +3868,83 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect.each(["none", "root", "native-node"] as const)(
+  "records one idle compaction row with native item=%s",
+  (nativeItemNode) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const nativeItem = nativeItemNode !== "none";
+      const { written } = yield* captureRootRunTermination({
+        key: `idle-compaction-row:${nativeItemNode}`,
+        idleCompaction: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.fromIterable([
+            ...(nativeItem
+              ? [
+                  {
+                    type: "turn_item.updated" as const,
+                    driver,
+                    turnItem: {
+                      id: ids.itemId,
+                      type: "compaction" as const,
+                      driver,
+                      threadId: ids.threadId,
+                      runId: ids.runId,
+                      // Pi reports native compaction on its own node.
+                      nodeId:
+                        nativeItemNode === "root" ? ids.rootNodeId : NodeId.make("node:native"),
+                      providerThreadId: ids.providerThreadId,
+                      providerTurnId: ids.rootProviderTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 101,
+                      status: "completed" as const,
+                      title: "Context compacted",
+                      startedAt: now,
+                      completedAt: now,
+                      updatedAt: now,
+                      beforeTokenCount: 30_000,
+                    },
+                  },
+                ]
+              : []),
+            rootTerminalEvent(ids, "completed"),
+          ]),
+      });
+      const compactions = written.filter((item) => item.type === "compaction");
+      assert.equal(compactions.length, 1);
+      assert.isTrue(compactions[0]!.idleTriggered);
+      if (nativeItem) assert.equal(compactions[0]!.beforeTokenCount, 30_000);
+    }),
+);
+
+it.effect("keeps ordinary turns and unsuccessful idle compactions free of fallback rows", () =>
+  Effect.gen(function* () {
+    for (const [idleCompaction, status] of [
+      [false, "completed"],
+      [true, "interrupted"],
+      [true, "failed"],
+      [true, "cancelled"],
+    ] as const) {
+      const { written } = yield* captureRootRunTermination({
+        key: `idle-compaction-fallback:${idleCompaction}:${status}`,
+        idleCompaction,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => Stream.make(rootTerminalEvent(ids, status)),
+      });
+      assert.equal(written.filter((item) => item.type === "compaction").length, 0);
+    }
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
+  readonly idleCompaction?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3953,7 +4024,11 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: ({ event }) =>
+              (event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+                ? captureTurnItem(event.turnItem)
+                : Effect.void
+              ).pipe(Effect.as([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -4005,12 +4080,14 @@ function captureRootRunTermination(input: {
             close: Deferred.succeed(ingestionDone, undefined),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
+          compactThread: input.startTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
           threadId: ids.threadId,
           ordinal: 1,
           providerInstanceId,
+          ...(input.idleCompaction ? { idleCompactionOfRunId: RunId.make("previous") } : {}),
         } as OrchestrationV2Run,
         rootNode: {
           id: ids.rootNodeId,
@@ -4040,10 +4117,10 @@ function captureRootRunTermination(input: {
             }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
-          text: "interrupt projection",
+          text: input.idleCompaction ? "/compact" : "interrupt projection",
           attachments: [],
-          createdBy: "user",
-          creationSource: "web",
+          createdBy: input.idleCompaction ? "system" : "user",
+          creationSource: input.idleCompaction ? "server" : "web",
         },
         modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
         runtimePolicy: {

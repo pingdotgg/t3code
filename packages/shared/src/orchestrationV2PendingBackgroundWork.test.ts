@@ -444,6 +444,30 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("keeps background work visible during idle compaction", () => {
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        runs: [
+          { id: "run-1" as never, ordinal: 1, status: "completed" },
+          {
+            id: "idle" as never,
+            ordinal: 2,
+            status: "running",
+            idleCompactionOfRunId: "run-1" as never,
+          },
+        ],
+        providerThreads: [
+          {
+            id: "pt-1" as never,
+            pendingBackgroundTasks: [{ taskId: "review", kind: "monitor" }],
+          },
+        ],
+        turnItems: [],
+      }),
+    ).toEqual([{ taskId: "review", kind: "monitor" }]);
+  });
+
   it("includes items with a null run id even when runs list has rolled_back rows", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

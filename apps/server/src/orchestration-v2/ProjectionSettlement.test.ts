@@ -76,6 +76,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  idleCompactionOfRunId?: RunId,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -100,6 +101,7 @@ const createRun = Effect.fn(function* (
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
       checkpointId: null,
       contextHandoffId: null,
+      ...(idleCompactionOfRunId === undefined ? {} : { idleCompactionOfRunId }),
     },
   });
   return runId;
@@ -296,6 +298,26 @@ it.effect.each([
         "ProjectionStoreThreadNotFoundError",
       );
     }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: idle compaction does not block settlement", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("active-idle-compaction");
+    const sourceRunId = yield* createRun(threadId);
+    yield* createRun(threadId, "running", 2, sourceRunId);
+
+    const candidates = yield* store.getSettlementCandidates(threadId);
+    assert.deepEqual(
+      candidates.map((thread) => thread.id),
+      [threadId],
+    );
+    assert.equal(candidates[0]?.latestRunId, sourceRunId);
+    assert.equal(candidates[0]?.status, "completed");
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect.each([

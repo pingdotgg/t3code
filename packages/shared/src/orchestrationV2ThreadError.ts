@@ -5,6 +5,31 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+/** Idle compaction is maintenance, not a user-facing thread run. */
+export function isUserFacingRun(run: Pick<OrchestrationV2Run, "idleCompactionOfRunId">): boolean {
+  return run.idleCompactionOfRunId === undefined;
+}
+
+/**
+ * Whether the provider session's last error came from idle compaction: the
+ * newest executed run is maintenance. Queued runs and runs cancelled before
+ * starting cannot own a session error; one that failed during startup can.
+ * Shell SQL mirrors this.
+ */
+export function sessionErrorIsIdleMaintenance(
+  runs: ReadonlyArray<
+    Pick<OrchestrationV2Run, "idleCompactionOfRunId" | "ordinal" | "startedAt" | "status">
+  >,
+): boolean {
+  let latest: (typeof runs)[number] | null = null;
+  for (const run of runs) {
+    if (run.status === "queued") continue;
+    if (run.status === "cancelled" && run.startedAt === null) continue;
+    if (latest === null || run.ordinal > latest.ordinal) latest = run;
+  }
+  return latest !== null && !isUserFacingRun(latest);
+}
+
 /** Only a failed root turn of the current run owns the thread's failure state. */
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
@@ -53,6 +78,10 @@ export function latestExecutedRun(
 ): OrchestrationV2Run | null {
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
+    // A failed idle compaction is invisible maintenance: it neither presents as
+    // the outcome nor holds the queue. A queued message that then meets the same
+    // usage limit fails as an ordinary run with the normal recovery controls.
+    if (!isUserFacingRun(run)) continue;
     if (run.status === "queued") continue;
     if (run.status === "cancelled" && run.startedAt === null) continue;
     if (latest === null || runRanAfter(run, latest)) latest = run;
@@ -118,6 +147,9 @@ export function latestUnheldRun(
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued" && run.queueHeld === true) continue;
+    // Idle maintenance remains in history, but its outcome cannot produce an
+    // unread/completion alert or wake a snooze. SQL shell reads mirror this.
+    if (!isUserFacingRun(run)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;

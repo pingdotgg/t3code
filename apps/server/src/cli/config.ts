@@ -101,6 +101,13 @@ const EnvServerConfig = Config.all({
   traceMaxBytes: Config.Int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
   traceMaxFiles: traceMaxFilesConfig,
   traceBatchWindowMs: Config.Int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
+  idleCompactionDelayMs: Config.Int("T3CODE_IDLE_COMPACTION_DELAY_MS").pipe(
+    Config.option,
+    Config.map((value) => {
+      const delay = Option.getOrUndefined(value);
+      return delay === undefined ? undefined : Math.max(0, delay);
+    }),
+  ),
   otlpTracesUrl: Config.String("T3CODE_OTLP_TRACES_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -445,6 +452,7 @@ export const resolveServerConfig = (
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,
       traceBatchWindowMs: env.traceBatchWindowMs,
+      idleCompactionDelayMs: env.idleCompactionDelayMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl: traces?.url,

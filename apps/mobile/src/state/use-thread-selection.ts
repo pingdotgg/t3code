@@ -48,9 +48,12 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 function latestUserMessageAt(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell["latestUserMessageAt"] {
+  const idleRunIds = new Set(
+    projection.runs.filter((run) => run.idleCompactionOfRunId !== undefined).map((run) => run.id),
+  );
   for (let index = projection.messages.length - 1; index >= 0; index -= 1) {
     const message = projection.messages[index];
-    if (message?.role === "user") {
+    if (message?.role === "user" && (message.runId === null || !idleRunIds.has(message.runId))) {
       return message.createdAt;
     }
   }

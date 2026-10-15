@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ThreadProjection,
   RunId,
 } from "@t3tools/contracts";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
 export interface ThreadCheckpointSummary {
@@ -29,8 +30,13 @@ export interface ThreadCheckpointSummary {
 export function deriveThreadCheckpointSummaries(
   projection: OrchestrationV2ThreadProjection,
 ): ReadonlyArray<ThreadCheckpointSummary> {
+  // Idle compaction still captures a checkpoint, but it is never a review turn.
+  const idleRunIds = new Set(
+    projection.runs.filter((run) => !isUserFacingRun(run)).map((run) => run.id),
+  );
   return projection.checkpoints.flatMap((checkpoint) => {
     if (checkpoint.appRunOrdinal === null || checkpoint.runId === null) return [];
+    if (idleRunIds.has(checkpoint.runId)) return [];
     const assistantMessageId =
       projection.messages.findLast(
         (message) => message.runId === checkpoint.runId && message.role === "assistant",

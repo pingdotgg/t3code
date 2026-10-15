@@ -191,6 +191,28 @@ it("reports the run that ended last, not the highest ordinal", () => {
   assert.equal(progress.resultRun?.ordinal, 3);
 });
 
+it.each(["running", "completed", "failed"] as const)(
+  "ignores %s idle compaction when reporting task progress",
+  (status) => {
+    const { projection, run } = taskFixture();
+    const progress = delegatedTaskProgress({
+      ...projection,
+      runs: [
+        run,
+        {
+          ...run,
+          id: RunId.make("idle-compaction"),
+          ordinal: 2,
+          status,
+          idleCompactionOfRunId: run.id,
+        },
+      ],
+    });
+    assert.equal(progress.state, "result_available");
+    assert.equal(progress.resultRun?.id, run.id);
+  },
+);
+
 it("waits for nested work and retains the report across monitor acknowledgements", () => {
   const { projection, run } = taskFixture();
   assert.equal(

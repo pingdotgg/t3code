@@ -4,6 +4,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
+  isUserFacingRun,
   latestExecutedRun,
   latestRootProviderFailure,
   runRanAfter,
@@ -54,6 +55,7 @@ import {
   ProviderInstanceId,
   ProviderInteractionMode,
   resolveProviderInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   RunId,
   RuntimeMode,
@@ -136,6 +138,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { idleCompactionCandidate } from "./IdleCompaction.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -414,7 +417,9 @@ function wakeWorkStartedAt(
     return {};
   }
   const previous = runs
-    .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
+    .flatMap((run) =>
+      run.startedAt === null || !isUserFacingRun(run) ? [] : [{ run, startedAt: run.startedAt }],
+    )
     .toSorted(
       (left, right) =>
         DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
@@ -550,7 +555,9 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
  */
 function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): boolean {
   return projection.runs.some(
-    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+    (run) =>
+      isUserFacingRun(run) &&
+      (run.status === "preparing" || run.status === "starting" || run.status === "running"),
   );
 }
 
@@ -630,7 +637,9 @@ function latestStableRun(
 ): OrchestrationV2Run | null {
   return (
     projection.runs
-      .filter((run) => run.status === "completed" && run.checkpointId !== null)
+      .filter(
+        (run) => isUserFacingRun(run) && run.status === "completed" && run.checkpointId !== null,
+      )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null
   );
 }
@@ -645,15 +654,19 @@ function runForSourcePoint(
   switch (sourcePoint.type) {
     case "latest_stable":
       return latestStableRun(projection);
+    // Idle compaction is maintenance and never a fork or merge-back source.
     case "run":
-      return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
+      return (
+        projection.runs.find((run) => run.id === sourcePoint.runId && isUserFacingRun(run)) ?? null
+      );
     case "checkpoint": {
       const checkpoint = projection.checkpoints.find(
         (candidate) => candidate.id === sourcePoint.checkpointId,
       );
       return checkpoint?.runId === null || checkpoint === undefined
         ? null
-        : (projection.runs.find((run) => run.id === checkpoint.runId) ?? null);
+        : (projection.runs.find((run) => run.id === checkpoint.runId && isUserFacingRun(run)) ??
+            null);
     }
   }
 }
@@ -799,7 +812,10 @@ function rootProviderThreadsForProvider(
 // Failed and interrupted turns still contain conversation the next provider needs.
 // Queued, cancelled, and rolled-back runs must not be replayed as conversation.
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
+  return (
+    isUserFacingRun(run) &&
+    (run.status === "completed" || run.status === "failed" || run.status === "interrupted")
+  );
 }
 
 function lastDeliveredRunForProviderThread(
@@ -1483,7 +1499,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const latestCompletedRun = projection.runs.findLast(
+        (run) => isUserFacingRun(run) && run.status === "completed",
+      );
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const targetLastCompletedRun = lastDeliveredRunForProviderThread(
         projection,
@@ -2661,12 +2679,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const automaticQueuedRuns = projection.runs.filter(
         (run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId),
       );
-      const runningRunExists = projection.runs.some((run) =>
-        ["preparing", "starting", "running", "waiting"].includes(run.status),
+      // Idle compaction is hidden maintenance and may finish after the thread settles.
+      const runningRunExists = projection.runs.some(
+        (run) =>
+          run.idleCompactionOfRunId === undefined &&
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
       // Includes a queue held after a Stop, which otherwise shows no activity.
       const queuedMessageExists = projection.runs.some(
-        (run) => run.status === "queued" && !automaticQueuedRuns.includes(run),
+        (run) =>
+          isUserFacingRun(run) && run.status === "queued" && !automaticQueuedRuns.includes(run),
       );
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
@@ -2817,7 +2839,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
         });
       }
-      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedRuns = projection.runs.filter(
+        (run) => isUserFacingRun(run) && run.status === "queued",
+      );
       const queuedMessages =
         queuedRuns.length === 0
           ? []
@@ -2846,7 +2870,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
       const projection = yield* loadProjectionForCommand(command, ["runs"]);
-      const latestRunCompletedAt = projection.runs.at(-1)?.completedAt ?? null;
+      // Clients compare against the presented run, which never is idle maintenance.
+      const latestRunCompletedAt = projection.runs.findLast(isUserFacingRun)?.completedAt ?? null;
       if (latestRunCompletedAt === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4566,6 +4591,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.idleCompactionOfRunId !== undefined) {
+        // Normal command reads omit tool history. Recheck active background
+        // items here too, since work can start after the worker's snapshot.
+        const background = yield* projectionStore
+          .getThreadRecords(command.threadId, ["turnItems"], {
+            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          })
+          .pipe(mapDispatchError(command));
+        const settings = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
+        const candidate = idleCompactionCandidate(
+          { ...projection, turnItems: [...projection.turnItems, ...background.turnItems] },
+          settings.compactIdleThreads &&
+            resolveProjectProviderInstanceEnabled(
+              settings,
+              projection.thread.projectId,
+              projection.thread.providerInstanceId,
+            ),
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        if (
+          command.createdBy !== "system" ||
+          command.creationSource !== "server" ||
+          command.text !== "/compact" ||
+          command.attachments.length !== 0 ||
+          command.dispatchMode.type !== "start_immediately" ||
+          candidate?.runId !== command.idleCompactionOfRunId
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This thread is no longer eligible for idle compaction.",
+          });
+        }
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -4640,7 +4700,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
           projection.runs.some(
-            (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
+            (run) =>
+              isUserFacingRun(run) &&
+              run.id !== source.id &&
+              run.status !== "queued" &&
+              runRanAfter(run, source),
           ) ||
           (yield* stopReachedRun(command, command.threadId, source.id))
         ) {
@@ -4663,7 +4727,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (run) => run.id === command.restartContinuationOfRunId,
       )?.delegatedTaskId;
 
-      if (projection.thread.settledOverride !== null) {
+      if (
+        projection.thread.settledOverride !== null &&
+        command.idleCompactionOfRunId === undefined
+      ) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
@@ -4687,7 +4754,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (projection.thread.snoozedUntil != null) {
+      if (projection.thread.snoozedUntil != null && command.idleCompactionOfRunId === undefined) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
@@ -4836,7 +4903,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
         )
       ) {
-        const active = projection.runs.find((run) => run.status === "running");
+        const active = projection.runs.find(
+          (run) => isUserFacingRun(run) && run.status === "running",
+        );
         const providerThread = projection.providerThreads.find(
           (row) => row.id === active?.providerThreadId,
         );
@@ -4977,7 +5046,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Thread ${command.threadId} has a pending merge-back transfer; queued merge-back consumption is not implemented yet.`,
+            // Idle compaction is hidden and finishes within seconds; say so
+            // instead of exposing the queue limitation.
+            cause:
+              queueBehindRun.idleCompactionOfRunId !== undefined
+                ? "Context compaction is finishing. Try again in a few seconds."
+                : `Thread ${command.threadId} has a pending merge-back transfer; queued merge-back consumption is not implemented yet.`,
           });
         }
         const queueProviderThread =
@@ -5289,7 +5363,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
-      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const latestCompletedRun = projection.runs.findLast(
+        (run) => isUserFacingRun(run) && run.status === "completed",
+      );
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const legacyImportItems =
         projection.thread.historyOrigin === "v1_import"
@@ -5438,6 +5514,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: null,
           checkpointId: null,
           contextHandoffId: legacyImportHandoff?.id ?? null,
+          ...(command.idleCompactionOfRunId === undefined
+            ? {}
+            : { idleCompactionOfRunId: command.idleCompactionOfRunId }),
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
@@ -6054,7 +6133,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : yield* readHandoffItems(
               mergeBackSourceProjection.thread.id,
               mergeBackSourceProjection.runs
-                .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
+                .filter((run) => isUserFacingRun(run) && run.ordinal <= mergeBackSourceRun.ordinal)
                 .map((run) => run.id),
             );
       const mergeBackHandoff =
@@ -6139,6 +6218,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.idleCompactionOfRunId === undefined
+          ? {}
+          : { idleCompactionOfRunId: command.idleCompactionOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection.runs, command),
       };
@@ -6923,8 +7005,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Before first publication, follow-ups remain part of the original task.
     if (original === undefined || original.result === null) return;
     const owner =
-      parent.runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
-      latestExecutedRun(parent.runs);
+      parent.runs
+        .filter((run) => isUserFacingRun(run) && isBlockingRun(run))
+        .toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? latestExecutedRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
@@ -7522,7 +7605,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } = yield* projectionStore
           .getRunningTurnContext(command.threadId)
           .pipe(mapDispatchError(command));
-        if (activeRun && activeProviderTurn && activeProviderThread?.providerSessionId) {
+        if (
+          activeRun &&
+          isUserFacingRun(activeRun) &&
+          activeProviderTurn &&
+          activeProviderThread?.providerSessionId
+        ) {
           const activeSession = yield* providerSessions
             .get(activeProviderThread.providerSessionId)
             .pipe(
@@ -9225,7 +9313,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? undefined
           : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
       const hasBackgroundWork =
-        run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
+        run?.id ===
+          projection.runs.findLast(
+            (candidate) => isUserFacingRun(candidate) && candidate.status !== "queued",
+          )?.id &&
         derivePendingBackgroundWork({
           latestRun: run,
           providerThreads: projection.providerThreads,
@@ -9597,11 +9688,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       if (projection.thread.deletedAt !== null) return undefined;
       // Queued messages never started and cannot own background work.
-      const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+      const latestRun = projection.runs.findLast(
+        (run) => isUserFacingRun(run) && run.status !== "queued",
+      );
       const target =
         projection.runs.findLast(
           (run) =>
-            run.status === "preparing" || run.status === "starting" || run.status === "running",
+            isUserFacingRun(run) &&
+            (run.status === "preparing" || run.status === "starting" || run.status === "running"),
         ) ??
         (derivePendingBackgroundWork({
           latestRun,
@@ -9677,6 +9771,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: "No active provider thread exists for rollback.",
+        });
+      }
+      // Clients hide idle compaction, but the provider cannot roll back while
+      // its compaction turn runs. It finishes within seconds.
+      if (
+        projection.runs.some(
+          (run) =>
+            !isUserFacingRun(run) &&
+            ["preparing", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Context compaction is finishing. Try again in a few seconds.",
         });
       }
       if (providerThread.providerSessionId === null) {

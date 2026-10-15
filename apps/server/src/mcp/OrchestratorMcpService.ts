@@ -58,7 +58,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { isUserFacingRun, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -384,6 +384,7 @@ export function hasPendingChildRuns(
   // Held queued runs wait for the user to resume the child; task_cancel holds them.
   return childProjection.runs.some(
     (run) =>
+      isUserFacingRun(run) &&
       !ThreadManagementService.isTerminalRunStatus(run.status) &&
       !(run.status === "queued" && run.queueHeld === true) &&
       (delegatedRun === undefined || run.ordinal > delegatedRun.ordinal),
@@ -507,6 +508,7 @@ function latestTerminalResultRun(
     .filter(
       (run) =>
         ThreadManagementService.isTerminalRunStatus(run.status) &&
+        isUserFacingRun(run) &&
         !monitorRunIds.has(run.id) &&
         run.status !== "rolled_back" &&
         (run.id === delegatedRun?.id || run.startedAt !== null),
@@ -766,7 +768,7 @@ function threadDetail(
     worktreePath: projection.thread.worktreePath,
     parentThreadId: projection.thread.lineage.parentThreadId,
     relationshipToParent: projection.thread.lineage.relationshipToParent,
-    runCount: projection.runs.length,
+    runCount: projection.runs.filter(isUserFacingRun).length,
     itemCount,
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
@@ -1979,7 +1981,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
         const parentRun = parent.runs
-          .filter(ThreadManagementService.isActiveRun)
+          .filter((run) => isUserFacingRun(run) && ThreadManagementService.isActiveRun(run))
           .toSorted((left, right) => right.ordinal - left.ordinal)[0];
         if (
           parentRun === undefined ||
@@ -2412,7 +2414,7 @@ const make = Effect.gen(function* () {
                   );
               }
               const projection = yield* loadProjection(threadId);
-              const run = projection.runs.at(-1);
+              const run = ThreadManagementService.latestRun(projection);
               yield* threadManagement
                 .dispatch({
                   type: "thread.created.record",
@@ -2577,6 +2579,7 @@ const make = Effect.gen(function* () {
         return {
           thread: threadDetail(target, timeline.totalItems, shell, yield* Clock.currentTimeMillis),
           recentRuns: target.runs
+            .filter(isUserFacingRun)
             .toSorted((left, right) => right.ordinal - left.ordinal)
             .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
             .map(threadRun),

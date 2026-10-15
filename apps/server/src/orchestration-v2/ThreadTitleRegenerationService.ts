@@ -1,3 +1,4 @@
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -72,7 +73,7 @@ const make = Effect.gen(function* () {
       | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
-        ["messages"],
+        ["messages", "runs"],
         input.kind.type === "initial"
           ? { messageIds: [input.kind.messageId] }
           : { messageRoles: ["user", "assistant"] },
@@ -100,8 +101,15 @@ const make = Effect.gen(function* () {
             ? { message: "", attachments: [] }
             : { message: message.text, attachments: message.attachments };
       } else {
+        // Idle compaction's "/compact" prompt and output are not conversation.
+        const idleRunIds = new Set(
+          projection.runs.filter((run) => !isUserFacingRun(run)).map((run) => run.id),
+        );
         context = formatThreadTitleContext(
-          projection.messages.filter((message) => !message.streaming),
+          projection.messages.filter(
+            (message) =>
+              !message.streaming && (message.runId === null || !idleRunIds.has(message.runId)),
+          ),
         );
       }
       if (context.message.length === 0 && context.attachments.length === 0) {

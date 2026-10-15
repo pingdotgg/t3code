@@ -2686,6 +2686,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
                 return yield* protocolError("Pi native wake belongs to a different app thread");
               }
+              // Compaction never takes a held wake: its output belongs to the
+              // continuation, and a hidden idle compaction would lose it.
+              if (wake !== null && compactCommand !== null) {
+                return yield* protocolError(
+                  "Pi is delivering background work. Compact again in a moment.",
+                );
+              }
               pendingWake = null;
               state.providerThread = turnInput.providerThread;
               state.activeTurn = activeTurn;

@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -28,7 +29,9 @@ function queueEntry(
   runId: RunId,
   limit: number,
 ) {
-  const run = projection.runs.find((run) => run.id === runId && run.status === "queued");
+  const run = projection.runs.find(
+    (run) => isUserFacingRun(run) && run.id === runId && run.status === "queued",
+  );
   const message = projection.messages.find((message) => message.id === run?.userMessageId);
   if (run === undefined || message === undefined) return undefined;
   const characters = Array.from(message.text);
@@ -234,7 +237,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_queue_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
-      const runs = queuedRunsInDeliveryOrder(projection);
+      const runs = queuedRunsInDeliveryOrder(projection).filter(isUserFacingRun);
       const cursor = input.cursor ?? 0;
       const end = cursor + (input.limit ?? 20);
       return {

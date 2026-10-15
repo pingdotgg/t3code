@@ -52,14 +52,19 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
 export function contextCompactionLabel(
   item: Pick<
     Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
-    "status" | "beforeTokenCount" | "afterTokenCount"
+    "status" | "beforeTokenCount" | "afterTokenCount" | "idleTriggered"
   >,
 ): string {
   if (item.status === "running") return "Compacting context";
-  if (item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined) {
-    return `Context compacted ${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`;
+  const tokens =
+    item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined
+      ? `${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`
+      : null;
+  if (item.status === "completed" && item.idleTriggered) {
+    const idle = "Compacted while idle, before the prompt cache expired";
+    return tokens === null ? idle : `${idle} (${tokens})`;
   }
-  return "Context compacted";
+  return tokens === null ? "Context compacted" : `Context compacted ${tokens}`;
 }
 
 export interface WorkLogPresentationEntry {

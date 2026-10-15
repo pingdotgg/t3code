@@ -232,6 +232,12 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+Enable **Compact idle threads** in **Settings > General** to summarize long
+idle conversations before their prompt cache expires, reducing usage when you return.
+It is off by default because compaction itself uses tokens. Only supported providers
+and idle, active threads with a known large context are compacted; snoozed and settled
+threads are skipped. The timeline records when a thread was compacted while idle.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

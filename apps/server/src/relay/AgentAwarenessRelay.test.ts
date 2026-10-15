@@ -6,6 +6,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
@@ -143,6 +144,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     /** Serves shells from this source instead of `currentShell`. */
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
+    readonly readRuns?: (
+      threadId: ThreadId,
+      runIds?: ReadonlyArray<RunId>,
+    ) => ReadonlyArray<OrchestrationV2Run>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
 ) {
@@ -199,7 +204,13 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
     getTurnItem: () => Effect.die("unused turn item read"),
-    getThreadRecords: () => Effect.die("unused record read"),
+    getThreadRecords: (threadId, fields, filter) =>
+      fields.some((field) => field === "runs")
+        ? Effect.succeed({
+            thread: shell({ id: threadId }),
+            runs: options.readRuns?.(threadId, filter?.runIds) ?? [],
+          } as never)
+        : Effect.die("unused record read"),
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
@@ -290,6 +301,44 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("does not publish activity for an active idle compaction run", () =>
+    Effect.gen(function* () {
+      const previousRunId = RunId.make("relay-previous-run");
+      const idleRunId = RunId.make("relay-idle-run");
+      const previousRun = {
+        id: previousRunId,
+        ordinal: 1,
+        status: "completed",
+      } as unknown as OrchestrationV2Run;
+      const idleRun = {
+        id: idleRunId,
+        ordinal: 2,
+        status: "waiting",
+        idleCompactionOfRunId: previousRunId,
+      } as unknown as OrchestrationV2Run;
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        readRuns: (_threadId, runIds) =>
+          [previousRun, idleRun].filter((run) => runIds === undefined || runIds.includes(run.id)),
+      });
+      yield* Ref.set(
+        currentShell,
+        shell({
+          latestRunId: previousRunId,
+          activeRunId: idleRunId,
+          activityRunStatus: "running",
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.lengthOf(publications, 0);
+      yield* Ref.set(
+        currentShell,
+        shell({ latestRunId: previousRunId, activeRunId: null, activityRunStatus: "waiting" }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.lengthOf(publications, 0);
+    }),
+  );
+
   it("ignores transcript and tool updates but retains activity and metadata changes", () => {
     for (const type of [
       "message.updated",

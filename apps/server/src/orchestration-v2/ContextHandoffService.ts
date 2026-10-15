@@ -445,9 +445,14 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
+      // Idle compaction is maintenance; its "/compact" prompt is not conversation.
+      const idleRunIds = new Set(
+        input.runs?.filter((run) => run.idleCompactionOfRunId !== undefined).map((run) => run.id),
+      );
       const coverage = handoffCoverage(input);
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
+          if (item.runId !== null && idleRunIds.has(item.runId)) return [];
           const message = historicalMessage(item);
           return message === null
             ? []

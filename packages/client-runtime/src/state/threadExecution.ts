@@ -1,6 +1,8 @@
 import {
+  isUserFacingRun,
   latestRootProviderFailure,
   latestUnheldRun,
+  sessionErrorIsIdleMaintenance,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -39,9 +41,12 @@ function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,
   predicate: (run: OrchestrationV2ThreadProjection["runs"][number]) => boolean,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
+  // Idle compaction is invisible maintenance outside its timeline row.
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | null>(
     (latest, candidate) =>
-      predicate(candidate) && (latest === null || candidate.ordinal > latest.ordinal)
+      isUserFacingRun(candidate) &&
+      predicate(candidate) &&
+      (latest === null || candidate.ordinal > latest.ordinal)
         ? candidate
         : latest,
     null,
@@ -72,10 +77,11 @@ function presentedUsageLimitRun(
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
+  // Mirrors the server shell: idle compaction never stands for the outcome.
   return usageLimitRunPresentedAsLatest(
-    projection.runs,
+    projection.runs.filter(isUserFacingRun),
     projection.turnItems,
-    providerSession?.lastError ?? null,
+    sessionErrorIsIdleMaintenance(projection.runs) ? null : (providerSession?.lastError ?? null),
   );
 }
 
@@ -271,7 +277,9 @@ export function deriveThreadRuntime(
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
       latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
+      // An idle compaction's session error is never the thread's error, even in the open
+      // chat (a no-op compaction can leave one behind). The shell does the same.
+      sessionErrorIsIdleMaintenance(projection.runs) ? null : (providerSession?.lastError ?? null),
     ),
     updatedAt: DateTime.formatIso(projection.updatedAt),
   };

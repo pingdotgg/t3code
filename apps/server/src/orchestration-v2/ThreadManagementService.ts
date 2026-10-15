@@ -2,6 +2,7 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
+import { isUserFacingRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -504,7 +505,9 @@ export function isTerminalRunStatus(
 export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
-  return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  return projection.runs
+    .filter(isUserFacingRun)
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
 /** The newest run in `run`'s restart continuation chain, or `run` itself. */
@@ -525,7 +528,7 @@ export function latestActiveRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
   return projection.runs
-    .filter(isActiveRun)
+    .filter((run) => isUserFacingRun(run) && isActiveRun(run))
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
@@ -535,6 +538,7 @@ function latestSteerableRun(
   return projection.runs
     .filter(
       (run) =>
+        isUserFacingRun(run) &&
         run.status === "running" &&
         run.activeAttemptId !== null &&
         projection.providerTurns.some(
@@ -895,7 +899,9 @@ const make = Effect.gen(function* () {
       const selectedRun =
         input.runId === undefined
           ? latestRun(target)
-          : target.runs.find((candidate) => candidate.id === input.runId);
+          : target.runs.find(
+              (candidate) => candidate.id === input.runId && isUserFacingRun(candidate),
+            );
       if (input.runId !== undefined && selectedRun === undefined) {
         return yield* new ThreadManagementRunNotFoundError({
           threadId: input.threadId,
@@ -1016,7 +1022,9 @@ const make = Effect.gen(function* () {
       const explicitRun =
         input.runId === undefined
           ? undefined
-          : target.runs.find((candidate) => candidate.id === input.runId);
+          : target.runs.find(
+              (candidate) => candidate.id === input.runId && isUserFacingRun(candidate),
+            );
       if (input.runId !== undefined && explicitRun === undefined) {
         return yield* new ThreadManagementRunNotFoundError({
           threadId: input.threadId,

@@ -1935,6 +1935,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           turnInput.message.createdBy === "agent" &&
           turnInput.message.creationSource === "provider";
         const adopted = continuation ? wake : undefined;
+        let skipCompaction = false;
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
         const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
         const targetModel = continuation
@@ -1995,6 +1996,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
+          // Compaction never takes a held Muse turn: its report belongs to the
+          // continuation that delivers it, and a hidden idle compaction would lose it.
+          if (compact && wake) {
+            skipCompaction = true;
+            return yield* finish(turn, "failed", "Muse is delivering background work.");
+          }
           // A user turn takes a held Muse turn: Muse runs it first, so this run shows it
           // (and its approvals), and the continuation asked for it is no longer needed.
           const held = wake;
@@ -2004,7 +2011,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           for (const [method, data] of held?.events ?? [])
             yield* handleNotification(method, data).pipe(Effect.catch(failHost));
         }).pipe(eventPermit.withPermits(1));
-        if (continuation) return;
+        if (continuation || skipCompaction) return;
         yield* Effect.gen(function* () {
           if (compact) {
             const result = yield* request("session/compact", {}, true, nativeId).pipe(
