@@ -201,6 +201,7 @@ import {
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
+  findRevertCheckpoint,
   hasActionableProposedPlan,
   isLatestRunSettled,
 } from "../session-logic";
@@ -4113,6 +4114,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
+  // Older pages can hide earlier runs, so the thread start is only the first
+  // loaded run's rollback target once all history is loaded.
+  const threadStartCheckpointReady =
+    !serverThreadHistory.hasMoreHistory &&
+    findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
 
   /**
    * The latest settled item after which files on disk may have changed.
@@ -8566,10 +8572,20 @@ export default function ChatView(props: ChatViewProps) {
           );
         }
         const commandId = CommandId.make(randomUUID());
+        // The live projection holds checkpoints that a re-fetched history window can omit.
+        const checkpoint = findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount);
         await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
           const result = await revertThreadCheckpoint({
             environmentId,
-            input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
+            input: {
+              commandId,
+              threadId: activeThread.id,
+              turnCount,
+              restoreFiles,
+              ...(checkpoint === undefined
+                ? {}
+                : { checkpointId: checkpoint.id, scopeId: checkpoint.scopeId }),
+            },
           });
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         });
@@ -11625,6 +11641,7 @@ export default function ChatView(props: ChatViewProps) {
                 supportsConversationRollback={
                   !paintOnlyDisplayedTimeline && supportsConversationRollback
                 }
+                threadStartCheckpointReady={threadStartCheckpointReady}
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }

@@ -1319,6 +1319,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
       supportsConversationRollback: true,
+      threadStartCheckpointReady: true,
     });
 
     const userRow = rows.find(
@@ -1330,7 +1331,9 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "message" && row.message.role === "assistant",
     );
 
-    expect(userRow?.revertTurnCount).toBe(1);
+    // The first visible run rewinds to the thread start even when an earlier
+    // rolled-back run consumed ordinal 1.
+    expect(userRow?.revertTurnCount).toBe(0);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 

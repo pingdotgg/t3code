@@ -284,6 +284,7 @@ describe("V2 session presentation", () => {
 
     const targets = deriveRevertTurnCountByUserMessageId({
       timelineEntries,
+      threadStartCheckpointReady: true,
       checkpoints: [
         {
           runId,
@@ -299,6 +300,81 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  describe("revert targets after a rewind", () => {
+    const runId = (ordinal: number) => RunId.make(`run-${ordinal}`);
+    const turn = (ordinal: number): TimelineEntry[] =>
+      (["user", "assistant"] as const).map((role) => {
+        const id = MessageId.make(`${role}-${ordinal}`);
+        const createdAt = `2026-06-20T00:00:0${ordinal}.000Z`;
+        return {
+          id,
+          kind: "message",
+          createdAt,
+          message: {
+            id,
+            role,
+            text: role,
+            runId: runId(ordinal),
+            ...(role === "user" ? { inputIntent: "turn_start" as const } : {}),
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        };
+      });
+    const checkpoint = (ordinal: number, status: "ready" | "stale" = "ready") => ({
+      runId: runId(ordinal),
+      checkpointTurnCount: ordinal,
+      checkpointRef: `checkpoint-${ordinal}` as never,
+      status,
+      files: [],
+      assistantMessageId: MessageId.make(`assistant-${ordinal}`),
+      completedAt: "2026-06-20T00:00:09.000Z",
+    });
+    const targets = (
+      ordinals: ReadonlyArray<number>,
+      checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
+      options: { threadStartCheckpointReady?: boolean; unsettledRunId?: RunId } = {},
+    ) =>
+      Object.fromEntries(
+        deriveRevertTurnCountByUserMessageId({
+          timelineEntries: ordinals.flatMap(turn),
+          checkpoints,
+          threadStartCheckpointReady: options.threadStartCheckpointReady ?? true,
+          unsettledRunId: options.unsettledRunId ?? null,
+        }),
+      );
+
+    it("rewinds a resent message to the thread start after its predecessor was rolled back", () => {
+      // Run 1 was rolled back and is hidden; run 2 was stopped after its checkpoint.
+      expect(targets([2], [checkpoint(2)])).toEqual({ "user-2": 0 });
+    });
+
+    it("keeps a run stopped before its own checkpoint editable", () => {
+      // Run 2 was stopped before the provider started, so it never captured one.
+      expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
+      expect(targets([1, 2], [checkpoint(1)])).toEqual({ "user-1": 0, "user-2": 1 });
+    });
+
+    it("targets the previous visible run instead of the rolled-back ordinal before it", () => {
+      expect(targets([1, 3], [checkpoint(1), checkpoint(2, "stale"), checkpoint(3)])).toEqual({
+        "user-1": 0,
+        "user-3": 1,
+      });
+    });
+
+    it("hides the action when the previous run cannot be restored", () => {
+      expect(targets([1, 2], [checkpoint(2)])).toEqual({ "user-1": 0 });
+      // Earlier history is still paged out, so the first loaded run's predecessor is unknown.
+      expect(
+        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointReady: false }),
+      ).toEqual({ "user-5": 4 });
+      expect(targets([1, 2], [checkpoint(1)], { unsettledRunId: runId(2) })).toEqual({
+        "user-1": 0,
+      });
+    });
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

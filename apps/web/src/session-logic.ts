@@ -1,6 +1,7 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -1042,28 +1043,68 @@ export function inferCheckpointTurnCountByRunId(
   );
 }
 
+/**
+ * Maps each editable user message to the run ordinal "Edit from here" rolls
+ * back to: the checkpoint of the previous visible run, or 0 for the thread
+ * start. Run ordinals keep counting after a rewind, so the previous run is not
+ * necessarily `ordinal - 1`, and a run stopped before its own checkpoint was
+ * captured stays editable. A previous run without a ready checkpoint hides the
+ * action instead of silently rewinding past that run too.
+ */
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly threadStartCheckpointReady: boolean;
+  readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const readyTurnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+      readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
+  }
+  // Inherited fork history belongs to the source thread's checkpoints.
+  const localMessages = input.timelineEntries.flatMap((entry) =>
+    entry.kind === "message" && entry.projectedItem?.visibility !== "inherited"
+      ? [entry.message]
+      : [],
+  );
+  const previousRunIdByRunId = new Map<RunId, RunId | null>();
+  let lastRunId: RunId | null = null;
+  for (const message of localMessages) {
+    if (message.runId === null || previousRunIdByRunId.has(message.runId)) continue;
+    previousRunIdByRunId.set(message.runId, lastRunId);
+    lastRunId = message.runId;
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
-  for (const entry of input.timelineEntries) {
-    if (entry.kind !== "message" || entry.message.role !== "user") continue;
-    if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
-      continue;
-    }
-    if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+  for (const message of localMessages) {
+    if (message.role !== "user" || message.runId === null) continue;
+    if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
+    if (message.runId === input.unsettledRunId) continue;
+    const previousRunId = previousRunIdByRunId.get(message.runId) ?? null;
+    const target =
+      previousRunId === null
+        ? input.threadStartCheckpointReady
+          ? 0
+          : undefined
+        : readyTurnCountByRunId.get(previousRunId);
+    if (target !== undefined) byUserMessageId.set(message.id, target);
   }
   return byUserMessageId;
+}
+
+/** The ready checkpoint "Edit from here" restores for a target run ordinal; 0 is the thread start. */
+export function findRevertCheckpoint(
+  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  turnCount: number,
+): OrchestrationV2Checkpoint | undefined {
+  return checkpoints.findLast(
+    (checkpoint) =>
+      checkpoint.status === "ready" &&
+      (turnCount === 0
+        ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+        : checkpoint.appRunOrdinal === turnCount),
+  );
 }
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
