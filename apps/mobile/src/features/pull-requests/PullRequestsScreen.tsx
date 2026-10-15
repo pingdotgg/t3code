@@ -24,6 +24,7 @@ import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import { PullRequestListFilters } from "./PullRequestListFilters";
+import { PullRequestSavedViewsMenu } from "./PullRequestSavedViewsMenu";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -280,6 +281,28 @@ export function PullRequestsScreen(
         ListHeaderComponent={
           <>
             <PullRequestListFilters
+              savedViewsMenu={
+                <PullRequestSavedViewsMenu
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
+                    );
+                    workspace.dispatch({ type: "query", tab: "pullRequests", query: view.query });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
               environments={environments.map((item) => ({
                 id: String(item.environmentId),
                 label: item.environmentLabel,

@@ -1,5 +1,5 @@
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
@@ -66,6 +66,7 @@ export function PullRequestListFilters(props: {
   readonly authors: readonly string[];
   readonly labels: readonly string[];
   readonly projects: readonly { id: string; title: string; environmentId: string }[];
+  readonly savedViewsMenu: ReactNode;
 }) {
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
@@ -228,6 +229,7 @@ export function PullRequestListFilters(props: {
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 }}
     >
+      {props.savedViewsMenu}
       <ListFilterMenu
         label={count ? String(count) : "Filters"}
         icon

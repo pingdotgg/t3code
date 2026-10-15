@@ -53,6 +53,27 @@ describe("workspace root navigation", () => {
     expect(workspaceTabsReducer(state, { type: "cancel" }).tabs.threads.scrollOffset).toBe(500);
   });
 
+  it("applying an empty-query view resets the position that search cancellation restores", () => {
+    let state = initialWorkspaceTabsState();
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 640 });
+    state = workspaceTabsReducer(state, { type: "search", tab: "pullRequests" });
+    state = workspaceTabsReducer(state, { type: "query", tab: "pullRequests", query: "old query" });
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 80 });
+    state = workspaceTabsReducer(state, { type: "cancel", tab: "pullRequests", scrollToTop: true });
+    expect(state.tabs.pullRequests).toEqual({
+      query: "",
+      searchMode: "resting",
+      scrollOffset: 0,
+      searchEntryOffset: 0,
+    });
+    expect(state.tabs.threads).toEqual(initialWorkspaceTabsState().tabs.threads);
+    state = workspaceTabsReducer(state, { type: "search", tab: "pullRequests" });
+    expect(
+      workspaceTabsReducer(state, { type: "cancel", tab: "pullRequests" }).tabs.pullRequests
+        .scrollOffset,
+    ).toBe(0);
+  });
+
   it("reserves space for both Android toolbar rows when expanded", () => {
     expect(workspaceToolbarHeight("expanded")).toBeGreaterThan(
       workspaceToolbarHeight("resting") * 2,
