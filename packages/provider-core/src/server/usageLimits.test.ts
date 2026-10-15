@@ -62,6 +62,34 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("keeps a failed probe marked when a sparse update lands on it", () => {
+    const failed = {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" as const, message: "Codex did not answer." },
+    };
+    const next = applyUsageLimitsUpdate({
+      previous: failed,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [weekly] },
+    });
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [weekly],
+      unavailable: failed.unavailable,
+    });
+    // The same numbers again must not rebuild the snapshot and publish it.
+    expect(
+      applyUsageLimitsUpdate({ previous: next, checkedAt, update: { windows: [weekly] } }),
+    ).toBe(next);
+  });
+
+  it("marks a sparse update with nothing published as a failed read", () => {
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
+    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
