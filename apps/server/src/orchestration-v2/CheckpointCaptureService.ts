@@ -65,8 +65,14 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const {
+        run,
+        rootNode,
+        scope,
+        providerThread,
+        readyCheckpointOrdinals,
+        runCheckpointOrdinals,
+      } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // A stopped run is already terminal. Its checkpoint is the rollback point
       // for the message after it, so capture leaves its status alone.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
@@ -107,19 +113,26 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      // A runless baseline must not overwrite a checkpoint that already pins a
+      // run: without file snapshots that run link is the only way back to an
+      // earlier message, and the baseline carries no additional information.
+      const hasRunCheckpoint = (ordinalWithinScope: number) =>
+        runCheckpointOrdinals.includes(ordinalWithinScope);
       const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0) || hasRunCheckpoint(0)
           ? null
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: 0,
             });
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
-        ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-          });
+      const baselineCheckpoint =
+        hasReadyCheckpoint(baselineOrdinalWithinScope) ||
+        hasRunCheckpoint(baselineOrdinalWithinScope)
+          ? null
+          : yield* checkpoints.materializeBaselineCheckpoint({
+              scope,
+              ordinalWithinScope: baselineOrdinalWithinScope,
+            });
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,

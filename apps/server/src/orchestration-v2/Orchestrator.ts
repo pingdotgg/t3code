@@ -9724,7 +9724,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
-      if (targetCheckpoint.status !== "ready") {
+      // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
+      // so only a conversation-only rewind ("Revert and keep changes") may target them.
+      if (
+        targetCheckpoint.status !== "ready" &&
+        !(command.restoreFiles === false && targetCheckpoint.status === "missing")
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

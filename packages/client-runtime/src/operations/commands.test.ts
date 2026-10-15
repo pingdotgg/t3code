@@ -888,6 +888,60 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("accepts a missing checkpoint for conversation-only rollback on older servers", () =>
+    Effect.gen(function* () {
+      const checkpointId = CheckpointId.make("legacy-conversation-checkpoint");
+      const scopeId = CheckpointScopeId.make("legacy-conversation-checkpoint-scope");
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+        advertiseServerResolvedCommandContext: false,
+        projection: {
+          ...v2Projection,
+          checkpoints: [
+            {
+              id: checkpointId,
+              threadId: v2ThreadId,
+              scopeId,
+              runId: null,
+              nodeId: NodeId.make("legacy-conversation-checkpoint-node"),
+              parentCheckpointId: null,
+              ordinalWithinScope: 0,
+              appRunOrdinal: null,
+              ref: CheckpointRef.make("refs/t3/legacy-conversation-checkpoint"),
+              status: "missing",
+              files: [],
+              capturedAt: v2Now,
+            },
+          ],
+        },
+      });
+
+      yield* revertThreadCheckpoint({
+        commandId: CommandId.make("legacy-conversation-rollback"),
+        threadId: v2ThreadId,
+        checkpointId,
+        scopeId,
+        restoreFiles: false,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([v2ThreadId]);
+      expect(commands).toEqual([
+        {
+          type: "checkpoint.rollback",
+          commandId: "legacy-conversation-rollback",
+          threadId: v2ThreadId,
+          checkpointId,
+          scopeId,
+          restoreFiles: false,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("dispatches settle and unsettle commands without timestamps", () =>
     Effect.gen(function* () {
       const dispatched: OrchestrationV2Command[] = [];

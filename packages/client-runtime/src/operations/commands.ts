@@ -912,7 +912,13 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
           ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
           : candidate.appRunOrdinal === input.turnCount,
       );
-    if (checkpoint === undefined || checkpoint.status !== "ready") {
+    if (
+      checkpoint === undefined ||
+      // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
+      // so only a conversation-only rewind ("Revert and keep changes") may target them.
+      (checkpoint.status !== "ready" &&
+        !(input.restoreFiles === false && checkpoint.status === "missing"))
+    ) {
       const target =
         input.checkpointId === undefined
           ? `run ordinal ${input.turnCount ?? "unknown"}`

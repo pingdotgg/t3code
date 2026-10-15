@@ -737,4 +737,273 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
     }),
   );
+
+  // In workspaces without file snapshots every checkpoint is "missing", so a
+  // runless baseline re-materialized by a later run must not overwrite the
+  // checkpoint that pins the earlier run: that run link is the only way back
+  // to the earlier message.
+  it.effect("does not let a runless baseline overwrite a checkpoint that pins a run", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const preserveThreadId = ThreadId.make("thread:checkpoint-capture-baseline-preserve");
+      const preserveProjectId = ProjectId.make("project:checkpoint-capture-baseline-preserve");
+      const preserveScopeId = CheckpointScopeId.make("scope:checkpoint-capture-baseline-preserve");
+      const preserveRootNodeId = NodeId.make("node:checkpoint-capture-baseline-preserve-root");
+      const preserveProviderThreadId = ProviderThreadId.make(
+        "provider-thread:checkpoint-capture-baseline-preserve",
+      );
+      const firstRunId = RunId.make("run:checkpoint-capture-baseline-preserve-first");
+      const secondRunId = RunId.make("run:checkpoint-capture-baseline-preserve-second");
+      const now = yield* DateTime.now;
+      const firstCheckpoint = {
+        id: CheckpointId.make("checkpoint:baseline-preserve-first"),
+        threadId: preserveThreadId,
+        scopeId: preserveScopeId,
+        runId: firstRunId,
+        nodeId: preserveRootNodeId,
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        ref: CheckpointRef.make("checkpoint-ref:baseline-preserve-first"),
+        status: "missing" as const,
+        files: [],
+        capturedAt: now,
+      };
+      const applyThread = (id: string, payload: Record<string, unknown>, type: string) =>
+        projectionStore.apply({
+          id: EventId.make(id),
+          type: type as "thread.created",
+          threadId: preserveThreadId,
+          occurredAt: now,
+          payload,
+        } as never);
+      yield* applyThread(
+        "event:checkpoint-capture-baseline-preserve:thread",
+        {
+          createdBy: "user",
+          creationSource: "web",
+          id: preserveThreadId,
+          projectId: preserveProjectId,
+          title: "Baseline must preserve run checkpoints",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: preserveThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        "thread.created",
+      );
+      const seedRun = (eventId: string, run: OrchestrationV2Run) =>
+        projectionStore.apply({
+          id: EventId.make(eventId),
+          type: "run.updated",
+          threadId: preserveThreadId,
+          runId: run.id,
+          nodeId: preserveRootNodeId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: run,
+        });
+      const baseRun = {
+        threadId: preserveThreadId,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: preserveProviderThreadId,
+        userMessageId: MessageId.make("message:checkpoint-capture-baseline-preserve"),
+        rootNodeId: preserveRootNodeId,
+        activeAttemptId: null,
+        requestedAt: now,
+        startedAt: now,
+        contextHandoffId: null,
+      } as const;
+      yield* seedRun("event:checkpoint-capture-baseline-preserve:run-first", {
+        ...baseRun,
+        id: firstRunId,
+        ordinal: 1,
+        status: "completed",
+        completedAt: now,
+        checkpointId: firstCheckpoint.id,
+      });
+      yield* seedRun("event:checkpoint-capture-baseline-preserve:run-second", {
+        ...baseRun,
+        id: secondRunId,
+        ordinal: 2,
+        status: "waiting",
+        completedAt: null,
+        checkpointId: null,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-baseline-preserve:node"),
+        type: "node.updated",
+        threadId: preserveThreadId,
+        runId: secondRunId,
+        nodeId: preserveRootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: preserveRootNodeId,
+          threadId: preserveThreadId,
+          runId: secondRunId,
+          parentNodeId: null,
+          rootNodeId: preserveRootNodeId,
+          kind: "root_turn" as const,
+          status: "waiting" as const,
+          countsForRun: true,
+          providerThreadId: preserveProviderThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: preserveScopeId,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-baseline-preserve:provider-thread"),
+        type: "provider-thread.updated",
+        threadId: preserveThreadId,
+        nodeId: preserveRootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: preserveProviderThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: preserveThreadId,
+          ownerNodeId: preserveRootNodeId,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle" as const,
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 2,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-baseline-preserve:scope"),
+        type: "checkpoint-scope.created",
+        threadId: preserveThreadId,
+        runId: secondRunId,
+        nodeId: preserveRootNodeId,
+        occurredAt: now,
+        payload: {
+          id: preserveScopeId,
+          threadId: preserveThreadId,
+          runId: secondRunId,
+          nodeId: preserveRootNodeId,
+          parentScopeId: null,
+          providerThreadId: preserveProviderThreadId,
+          kind: "root_run" as const,
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/non-git-scratch",
+          createdAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-baseline-preserve:first-captured"),
+        type: "checkpoint.captured",
+        threadId: preserveThreadId,
+        runId: firstRunId,
+        nodeId: preserveRootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: firstCheckpoint,
+      });
+
+      const materializedOrdinals: Array<number> = [];
+      const secondCaptured = {
+        ...firstCheckpoint,
+        id: CheckpointId.make("checkpoint:baseline-preserve-second"),
+        runId: secondRunId,
+        ordinalWithinScope: 2,
+        appRunOrdinal: 2,
+        ref: CheckpointRef.make("checkpoint-ref:baseline-preserve-second"),
+      };
+      const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              materializeBaselineCheckpoint: (input) =>
+                Effect.sync(() => {
+                  materializedOrdinals.push(input.ordinalWithinScope);
+                  return {
+                    id: CheckpointId.make(
+                      `checkpoint:baseline-preserve-baseline-${input.ordinalWithinScope}`,
+                    ),
+                    ordinalWithinScope: input.ordinalWithinScope,
+                  } as never;
+                }),
+              capture: () => Effect.succeed(secondCaptured),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Ref.set(committed, input.events).pipe(
+                  Effect.as({
+                    commandId: input.commandId,
+                    committed: true,
+                    sequence: 1,
+                    events: input.events,
+                    effects: [],
+                  } as never),
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        yield* service.execute({
+          threadId: preserveThreadId,
+          runId: secondRunId,
+          scopeId: preserveScopeId,
+        });
+      }).pipe(Effect.provide(layerCapture));
+
+      // The thread-start baseline (ordinal 0) still materializes, but ordinal 1
+      // already pins the first run and must be left alone.
+      assert.deepEqual(materializedOrdinals, [0]);
+      const events = yield* Ref.get(committed);
+      const baselines = events.filter((event) => event.type === "checkpoint.captured");
+      assert.ok(
+        baselines.every(
+          (event) =>
+            event.type !== "checkpoint.captured" ||
+            event.payload.ordinalWithinScope !== 1 ||
+            event.payload.runId !== null,
+        ),
+        "no runless baseline may target ordinal 1",
+      );
+      assert.ok(
+        baselines.some(
+          (event) => event.type === "checkpoint.captured" && event.payload.id === secondCaptured.id,
+        ),
+        "the second run capture must still land",
+      );
+    }),
+  );
 });

@@ -136,13 +136,17 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === input.checkpointId,
       );
       const scope = projection.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
+      // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
+      // so only a conversation-only rewind ("Revert and keep changes") may target them.
+      const conversationOnlyRollback = input.restoreFiles === false;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        checkpoint.status !== "ready"
+        (checkpoint.status !== "ready" &&
+          !(conversationOnlyRollback && checkpoint.status === "missing"))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",

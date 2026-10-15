@@ -203,6 +203,8 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestRunSettled,
+  isRevertFilesDisabled,
+  resolvePendingRevertTarget,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
@@ -8490,6 +8492,11 @@ export default function ChatView(props: ChatViewProps) {
     setPendingRevert(null);
   }
 
+  // Rollback target for the pending revert dialog: turnCount is the target run ordinal
+  // (see deriveRevertTurnCountByUserMessageId: checkpointTurnCount - 1). Missing
+  // checkpoints hold no file snapshot so only conversation-only rewind may target them.
+  const pendingRevertTarget = pendingRevert === null ? undefined : resolvePendingRevertTarget(turnDiffSummaries, pendingRevert.turnCount);
+
   const onRevertToTurnCount = useCallback(
     async (turnCount: number, messageId: MessageId, restoreFiles?: boolean) => {
       const localApi = readLocalApi();
@@ -12223,6 +12230,8 @@ export default function ChatView(props: ChatViewProps) {
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={isRevertFilesDisabled(pendingRevertTarget)}
+              title={isRevertFilesDisabled(pendingRevertTarget) ? "No file snapshot for this checkpoint." : undefined}
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);

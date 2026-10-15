@@ -28,6 +28,8 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
+  isRevertFilesDisabled,
+  resolvePendingRevertTarget,
   derivePhase,
   findLatestProposedPlan,
   isLatestRunSettled,
@@ -299,6 +301,86 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  it("maps missing checkpoints to conversation-only revert targets", () => {
+    const missingRunId = RunId.make("run-missing");
+    const staleRunId = RunId.make("run-stale");
+    const errorRunId = RunId.make("run-error");
+    const missingMessageId = MessageId.make("message-missing");
+    const staleMessageId = MessageId.make("message-stale");
+    const errorMessageId = MessageId.make("message-error");
+    const userMessage = (id: MessageId, runId: RunId): ChatMessage => ({
+      id,
+      role: "user",
+      text: "Start",
+      runId,
+      inputIntent: "turn_start",
+      streaming: false,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    });
+    const timelineEntries: TimelineEntry[] = [
+      userMessage(missingMessageId, missingRunId),
+      userMessage(staleMessageId, staleRunId),
+      userMessage(errorMessageId, errorRunId),
+    ].map((message): TimelineEntry => ({
+      id: message.id,
+      kind: "message",
+      createdAt: message.createdAt,
+      message,
+    }));
+
+    const targets = deriveRevertTurnCountByUserMessageId({
+      timelineEntries,
+      checkpoints: [
+        {
+          runId: missingRunId,
+          checkpointTurnCount: 2,
+          checkpointRef: "checkpoint-run-missing" as never,
+          status: "missing",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+        {
+          runId: staleRunId,
+          checkpointTurnCount: 3,
+          checkpointRef: "checkpoint-run-stale" as never,
+          status: "stale",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+        {
+          runId: errorRunId,
+          checkpointTurnCount: 4,
+          checkpointRef: "checkpoint-run-error" as never,
+          status: "error",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+      ],
+    });
+
+    // "missing" pins a conversation position with no file snapshot, so the
+    // button shows for conversation-only rewind; stale/error stay excluded.
+    expect([...targets]).toEqual([[missingMessageId, 1]]);
+  });
+
+  it("disables Revert files too unless the rollback target is ready", () => {
+    const runId = RunId.make("run-revert-target");
+    const summaries = [
+      { runId, checkpointTurnCount: 0, checkpointRef: "c0" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:01.000Z" },
+      { runId, checkpointTurnCount: 1, checkpointRef: "c1" as never, status: "missing" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:02.000Z" },
+      { runId, checkpointTurnCount: 2, checkpointRef: "c2" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:03.000Z" },
+    ];
+    expect(resolvePendingRevertTarget(summaries, 1)?.status).toBe("missing");
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 1))).toBe(true);
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 2))).toBe(false);
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 99))).toBe(false);
+    expect(isRevertFilesDisabled(undefined)).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
