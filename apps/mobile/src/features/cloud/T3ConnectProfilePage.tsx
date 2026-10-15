@@ -1,4 +1,3 @@
-import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -7,14 +6,14 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { type ReactNode, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { alertDeregisterFailure, confirmDeregister } from "./deregisterRelayEnvironment";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
@@ -33,19 +32,6 @@ function endpointLabel(environment: RelayClientEnvironmentRecord): string {
   return environment.endpoint.providerKind === "cloudflare_tunnel"
     ? "Managed tunnel"
     : "Activity publishing only";
-}
-
-function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
-  const title = "Deregister server?";
-  const message = `“${environment.label}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
-  if (process.env.EXPO_OS === "ios") {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Deregister", style: "destructive", onPress: onConfirm },
-    ]);
-    return;
-  }
-  showConfirmDialog({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
 }
 
 /**
@@ -93,28 +79,7 @@ export function T3ConnectProfilePage() {
     }
     if (isAtomCommandInterrupted(result)) return;
 
-    const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
-    const traceId = findErrorTraceId(cause);
-    console.error("[t3-connect] Could not deregister environment", {
-      environmentId: environment.environmentId,
-      message,
-      traceId,
-      cause,
-    });
-    Alert.alert(
-      "Could not deregister server",
-      traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
-      traceId
-        ? [
-            {
-              text: "Copy trace ID",
-              onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
-            },
-            { text: "OK", style: "cancel" },
-          ]
-        : undefined,
-    );
+    alertDeregisterFailure(environment.environmentId, squashAtomCommandFailure(result));
   };
 
   const removedEnvironmentLinkedAt =
