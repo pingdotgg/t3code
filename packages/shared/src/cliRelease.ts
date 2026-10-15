@@ -102,6 +102,14 @@ export function cliReleaseIndexPageUrl(page: number): string {
 }
 
 /**
+ * github.com release pages, which the desktop updater also reads. Unlike the
+ * API they have no anonymous hourly quota shared by everything behind one IP.
+ * `/latest` answers JSON for the newest stable release; `.atom` lists the ten
+ * newest releases on every channel.
+ */
+export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+
+/**
  * Picks the newest version on a channel from the release index. Tags are
  * `v<version>`; the channel is decided by the same rule the runtime uses, so
  * a preview tag never satisfies a nightly lookup and vice versa. Drafts are
