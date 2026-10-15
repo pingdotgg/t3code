@@ -790,7 +790,7 @@ function normalizeToolKind(kind: unknown): string | undefined {
  * Map an ACP tool kind onto the canonical runtime item type used by the
  * thread activity model. Unknown kinds fall back to a generic tool call.
  */
-export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
+function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
   switch (kind) {
     case "read":
       return "dynamic_tool_call";
