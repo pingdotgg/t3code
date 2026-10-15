@@ -21,6 +21,7 @@ import {
   addProjectRemoteSourceProvider,
   buildAddProjectRemoteSourceReadiness,
   sortAddProjectProviderSources,
+  sourceControlRepositoryErrorMessage,
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
@@ -800,6 +801,12 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [cloneLookupError, setCloneLookupError] = useState<string | null>(null);
+  const invalidatePendingCloneLookup = useCallback(() => {
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
+    setCloneLookupError(null);
+  }, []);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1442,6 +1449,7 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
@@ -1458,6 +1466,7 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
+    invalidatePendingCloneLookup();
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
@@ -1482,6 +1491,7 @@ function OpenCommandPaletteDialog(props: {
             : Promise.resolve(),
         () => {
           setAddProjectEnvironmentId(environmentId);
+          invalidatePendingCloneLookup();
           setAddProjectCloneFlow(null);
           pushPaletteView(view);
         },
@@ -1493,12 +1503,14 @@ function OpenCommandPaletteDialog(props: {
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
       pushPaletteView,
+      invalidatePendingCloneLookup,
     ],
   );
 
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
       setAddProjectEnvironmentId(environmentId);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
@@ -1506,7 +1518,7 @@ function OpenCommandPaletteDialog(props: {
         initialQuery: "",
       });
     },
-    [pushPaletteView],
+    [invalidatePendingCloneLookup, pushPaletteView],
   );
 
   /** Folder that holds an environment's name-only projects, or null when it has none. */
@@ -1520,6 +1532,7 @@ function OpenCommandPaletteDialog(props: {
   const startNewProject = useCallback(
     (environmentId: EnvironmentId, sourcesEnvironmentId: EnvironmentId | null): void => {
       setAddProjectEnvironmentId(environmentId);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId });
       setNewProjectPublishes(false);
@@ -1529,7 +1542,7 @@ function OpenCommandPaletteDialog(props: {
         groups: [],
       });
     },
-    [pushPaletteView],
+    [invalidatePendingCloneLookup, pushPaletteView],
   );
 
   const openSourceControlSettings = useCallback(() => {
@@ -1667,6 +1680,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       setAddProjectEnvironmentId(environmentId);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow(null);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -1682,6 +1696,7 @@ function OpenCommandPaletteDialog(props: {
       browseEnvironmentId,
       buildAddProjectSourceGroups,
       environments,
+      invalidatePendingCloneLookup,
       pushPaletteView,
       sourceControlDiscovery.data,
     ],
@@ -1731,6 +1746,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = useCallback(() => {
+    invalidatePendingCloneLookup();
     // With no connected environment there is nothing to browse, so the only
     // useful next step is connecting one.
     if (addProjectEnvironmentOptions.length === 0) {
@@ -1752,6 +1768,7 @@ function OpenCommandPaletteDialog(props: {
     addProjectEnvironmentGroups,
     addProjectEnvironmentOptions.length,
     defaultAddProjectEnvironmentId,
+    invalidatePendingCloneLookup,
     navigate,
     pushPaletteView,
     setOpen,
@@ -1768,15 +1785,14 @@ function OpenCommandPaletteDialog(props: {
   useLayoutEffect(() => {
     if (openIntent?.kind !== "search") return;
     browseNavigation.invalidate();
-    cloneLookupGeneration.current += 1;
-    setIsRemoteProjectLookingUp(false);
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
     setLinkedThreadSearch(openIntent);
     setQuery(openIntent.query);
     clearOpenIntent();
-  }, [browseNavigation, clearOpenIntent, openIntent]);
+  }, [browseNavigation, clearOpenIntent, invalidatePendingCloneLookup, openIntent]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
@@ -1792,6 +1808,7 @@ function OpenCommandPaletteDialog(props: {
     }
     clearOpenIntent();
     browseNavigation.invalidate();
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
@@ -1801,7 +1818,14 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
-  }, [clearOpenIntent, browseNavigation, openIntent, projectThreadItems, pushPaletteView]);
+  }, [
+    clearOpenIntent,
+    browseNavigation,
+    invalidatePendingCloneLookup,
+    openIntent,
+    projectThreadItems,
+    pushPaletteView,
+  ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -2177,8 +2201,7 @@ function OpenCommandPaletteDialog(props: {
     if (openIntent?.kind !== "change-theme") return;
     clearOpenIntent();
     browseNavigation.invalidate();
-    cloneLookupGeneration.current += 1;
-    setIsRemoteProjectLookingUp(false);
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
@@ -2186,7 +2209,13 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "themes", label: "Change theme", items: [] }],
     });
-  }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
+  }, [
+    browseNavigation,
+    clearOpenIntent,
+    invalidatePendingCloneLookup,
+    openIntent,
+    pushPaletteView,
+  ]);
 
   actionItems.push({
     kind: "action",
@@ -2585,6 +2614,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      setCloneLookupError(null);
       setIsRemoteProjectLookingUp(true);
       const lookupGeneration = ++cloneLookupGeneration.current;
       const lookupResult = await lookupRepository({
@@ -2598,12 +2628,8 @@ function OpenCommandPaletteDialog(props: {
       setIsRemoteProjectLookingUp(false);
       if (lookupResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(lookupResult)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Repository lookup failed",
-              description: errorMessage(squashAtomCommandFailure(lookupResult)),
-            }),
+          setCloneLookupError(
+            sourceControlRepositoryErrorMessage(squashAtomCommandFailure(lookupResult)),
           );
         }
         return;
@@ -3613,10 +3639,15 @@ function OpenCommandPaletteDialog(props: {
         onExecuteItem={executeItem}
         {...(addProjectCloneFlow?.step === "repository"
           ? {
-              emptyStateMessage:
-                addProjectCloneFlow.source === "url"
-                  ? "Enter a Git clone URL and press Enter to continue."
-                  : "Enter a repository path and press Enter to look it up.",
+              emptyStateMessage: isRemoteProjectLookingUp
+                ? "Looking up repository…"
+                : (cloneLookupError ??
+                  (addProjectCloneFlow.source === "url"
+                    ? "Enter a Git clone URL and press Enter to continue."
+                    : "Enter a repository path and press Enter to look it up.")),
+              ...(cloneLookupError && !isRemoteProjectLookingUp
+                ? { emptyStateTone: "error" as const }
+                : {}),
             }
           : addProjectCloneFlow?.step === "confirm"
             ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }

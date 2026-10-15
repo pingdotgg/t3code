@@ -90,6 +90,33 @@ const CLONE_ENV = {
   LC_ALL: "C",
 } satisfies NodeJS.ProcessEnv;
 
+/**
+ * GitHub already writes these as user-facing copy. Raw provider `detail` still
+ * stays off the wire (#3336): only this exact allowlist, plus Bitbucket's locator
+ * constant, may become `SourceControlRepositoryError.detail`.
+ * Keep in lockstep with `GitHubSourceControlProvider` lookup/auth/rate-limit strings.
+ */
+const USER_SAFE_GITHUB_REPOSITORY_DETAILS = new Set([
+  "Repositories are named owner/name.",
+  "Repository not found. Check the owner and name and try again.",
+  "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
+  "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
+  "GitHub API rate limit exceeded. Requests resume when the limit resets.",
+]);
+
+function userSafeRepositoryDetail(cause: unknown): string | null {
+  if (!isSourceControlProviderError(cause)) {
+    return null;
+  }
+  if (cause.provider === "bitbucket" && isBitbucketRepositoryLocatorError(cause.cause)) {
+    return BitbucketApi.BitbucketRepositoryLocatorError.detail;
+  }
+  if (cause.provider === "github" && USER_SAFE_GITHUB_REPOSITORY_DETAILS.has(cause.detail)) {
+    return cause.detail;
+  }
+  return null;
+}
+
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
     isSourceControlRepositoryError(cause)
@@ -98,11 +125,8 @@ function mapRepositoryError(operation: string, provider: SourceControlProviderKi
           operation,
           provider,
           detail:
-            isSourceControlProviderError(cause) &&
-            cause.provider === "bitbucket" &&
-            isBitbucketRepositoryLocatorError(cause.cause)
-              ? BitbucketApi.BitbucketRepositoryLocatorError.detail
-              : "The source control operation could not be completed.",
+            userSafeRepositoryDetail(cause) ??
+            "The source control operation could not be completed.",
           cause,
         }),
   );

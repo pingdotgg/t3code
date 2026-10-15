@@ -8,11 +8,12 @@ import type {
   SourceControlDiscoveryResult,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, SourceControlRepositoryError } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 import {
   appendBrowsePathSegment,
@@ -90,6 +91,25 @@ export function addProjectRemoteSourceProvider(
   source: AddProjectRemoteSource,
 ): SourceControlProviderKind | null {
   return source === "url" ? null : source;
+}
+
+const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+
+/** The user-facing line from a lookup/clone repository error, if the RPC sent one. */
+export function sourceControlRepositoryErrorDetail(error: unknown): string | null {
+  if (!isSourceControlRepositoryError(error)) return null;
+  const detail = error.detail.trim();
+  return detail.length > 0 ? detail : null;
+}
+
+export function sourceControlRepositoryErrorMessage(
+  error: unknown,
+  fallback = "An error occurred.",
+): string {
+  return (
+    sourceControlRepositoryErrorDetail(error) ??
+    (error instanceof Error && error.message.trim().length > 0 ? error.message : fallback)
+  );
 }
 
 /** A clone source named in a route or link, or `url` for anything this client does not ship. */

@@ -161,6 +161,38 @@ it.effect("preserves provider failures without deriving the repository message f
   }).pipe(Effect.provide(layer({ provider })));
 });
 
+it.effect("surfaces allowlisted GitHub lookup details instead of the generic message", () => {
+  const providerCause = new SourceControlProviderError({
+    provider: SourceControlProviderKind.make("github"),
+    operation: "getRepositoryCloneUrls",
+    cwd: "/workspace",
+    repository: "octocat/missing",
+    detail: "Repository not found. Check the owner and name and try again.",
+  });
+  const provider = makeProvider({
+    getRepositoryCloneUrls: () => Effect.fail(providerCause),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.lookupRepository({
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/missing",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.strictEqual(error.provider, "github");
+    assert.strictEqual(error.operation, "lookupRepository");
+    assert.strictEqual(
+      error.detail,
+      "Repository not found. Check the owner and name and try again.",
+    );
+    assert.strictEqual(error.cause, providerCause);
+  }).pipe(Effect.provide(layer({ provider })));
+});
+
 it.effect(
   "reports the safe Bitbucket locator detail through repository lookup and publishing",
   () =>
