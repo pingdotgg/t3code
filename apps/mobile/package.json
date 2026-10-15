@@ -164,7 +164,7 @@
     },
     "autolinking": {
       "buildFromSource": [
-        "expo-ui",
+        "@expo/ui",
         "expo-notifications",
         "react-native-screens",
         "react-native-reanimated",

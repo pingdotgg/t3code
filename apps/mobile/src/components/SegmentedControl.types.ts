@@ -6,7 +6,7 @@ export interface SegmentedControlProps<Value extends number | string> {
   }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
-  /** Compact sizing applies to the non-Material control. */
+  /** Native controls determine their own sizing. Kept for existing callers. */
   readonly size?: "default" | "compact";
   /** "tab" for the view switcher; filters stay plain buttons. */
   readonly role?: "tab" | "button";

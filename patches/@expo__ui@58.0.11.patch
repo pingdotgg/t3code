@@ -128,6 +128,152 @@ index 3e785c1667bcba137c3369da15aa7b397aa0fb37..80dba6ac4dd6ac8caf53fb7839ff3ed3
                  onLayoutContent: onLayoutContent,
                  layoutDirection: layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight'),
                  ref: mergedRef
+diff --git a/build/swift-ui/Picker/index.d.ts b/build/swift-ui/Picker/index.d.ts
+index 5a973529c235050062aedcf749c8ff2d25fd7766..01e095bf179ed0d1642f1c50f2c0604f70f842d5 100644
+--- a/build/swift-ui/Picker/index.d.ts
++++ b/build/swift-ui/Picker/index.d.ts
+@@ -7,6 +7,15 @@ export type PickerProps<T extends SelectionValueType = any> = {
+      * For example: 'photo', 'heart.fill', 'star.circle'
+      */
+     systemImage?: SFSymbol;
++    /** Native options rendered by a scoped UISegmentedControl. */
++    segments?: { label: string; value: T }[];
++    /** Only used with segments. */
++    segmentColors?: {
++        background?: string;
++        selectedBackground?: string;
++        text?: string;
++        selectedText?: string;
++    };
+     /**
+      * A label displayed on the picker.
+      */
+diff --git a/ios/Picker/PickerView.swift b/ios/Picker/PickerView.swift
+index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10a34bce6e 100644
+--- a/ios/Picker/PickerView.swift
++++ b/ios/Picker/PickerView.swift
+@@ -1,12 +1,27 @@
+ // Copyright 2025-present 650 Industries. All rights reserved.
+ 
+ import SwiftUI
++import UIKit
+ import ExpoModulesCore
+ 
++internal struct PickerSegment: Record {
++  @Field var label: String = ""
++  @Field var value: Either<String, Double>?
++}
++
++internal struct PickerSegmentColors: Record {
++  @Field var background: Color?
++  @Field var selectedBackground: Color?
++  @Field var text: Color?
++  @Field var selectedText: Color?
++}
++
+ internal final class PickerProps: UIBaseViewProps {
+   @Field var label: String?
+   @Field var systemImage: String?
+   @Field var selection: Either<String, Double>?
++  @Field var segments: [PickerSegment]?
++  @Field var segmentColors: PickerSegmentColors?
+   var onSelectionChange = EventDispatcher()
+ }
+ 
+@@ -24,7 +39,18 @@ internal struct PickerView: ExpoSwiftUI.View {
+ 
+     let labelContent = props.children?.slot("label")
+ 
+-    if let systemImage = props.systemImage, let label = props.label {
++    if let segments = props.segments {
++      NativeSegmentedPicker(
++        segments: segments,
++        colors: props.segmentColors,
++        selection: Self.getHashableFromEither(props.selection),
++        onSelectionChange: { index in
++          guard segments.indices.contains(index),
++            let value = Self.getHashableFromEither(segments[index].value) else { return }
++          props.onSelectionChange(["selection": value.base])
++        }
++      )
++    } else if let systemImage = props.systemImage, let label = props.label {
+       Picker(label, systemImage: systemImage, selection: $selection) { content }
+     } else if let labelContent {
+       Picker(selection: $selection) { content } label: { labelContent }
+@@ -61,7 +87,7 @@ internal struct PickerView: ExpoSwiftUI.View {
+     }
+   }
+ 
+-  private static func getHashableFromEither(_ either: Either<String, Double>?) -> AnyHashable? {
++  fileprivate static func getHashableFromEither(_ either: Either<String, Double>?) -> AnyHashable? {
+     guard let either else { return nil }
+     if let stringValue: String = either.get() {
+       return stringValue
+@@ -72,3 +98,64 @@ internal struct PickerView: ExpoSwiftUI.View {
+     return nil
+   }
+ }
++
++
++/// Instance-scoped styling: never changes UISegmentedControl.appearance().
++private struct NativeSegmentedPicker: UIViewRepresentable {
++  let segments: [PickerSegment]
++  let colors: PickerSegmentColors?
++  let selection: AnyHashable?
++  let onSelectionChange: (Int) -> Void
++
++  func makeCoordinator() -> Coordinator {
++    Coordinator(onSelectionChange: onSelectionChange)
++  }
++
++  func makeUIView(context: Context) -> UISegmentedControl {
++    let control = UISegmentedControl()
++    control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
++    control.setContentHuggingPriority(.defaultLow, for: .horizontal)
++    return control
++  }
++
++  func updateUIView(_ control: UISegmentedControl, context: Context) {
++    context.coordinator.onSelectionChange = onSelectionChange
++    let labels = segments.map(\.label)
++    if context.coordinator.labels != labels {
++      control.removeAllSegments()
++      for (index, label) in labels.enumerated() {
++        control.insertSegment(withTitle: label, at: index, animated: false)
++      }
++      context.coordinator.labels = labels
++    }
++    control.selectedSegmentIndex = segments.firstIndex {
++      PickerView.getHashableFromEither($0.value) == selection
++    } ?? UISegmentedControl.noSegment
++    control.backgroundColor = colors?.background.map { UIColor($0) }
++    control.selectedSegmentTintColor = colors?.selectedBackground.map { UIColor($0) }
++    control.setTitleTextAttributes(
++      colors?.text.map { [.foregroundColor: UIColor($0)] }, for: .normal
++    )
++    control.setTitleTextAttributes(
++      colors?.selectedText.map { [.foregroundColor: UIColor($0)] }, for: .selected
++    )
++    control.isEnabled = context.environment.isEnabled
++  }
++
++  func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISegmentedControl, context: Context) -> CGSize? {
++    CGSize(width: proposal.width ?? uiView.intrinsicContentSize.width, height: uiView.intrinsicContentSize.height)
++  }
++
++  final class Coordinator: NSObject {
++    var labels: [String] = []
++    var onSelectionChange: (Int) -> Void
++
++    init(onSelectionChange: @escaping (Int) -> Void) {
++      self.onSelectionChange = onSelectionChange
++    }
++
++    @objc func changed(_ control: UISegmentedControl) {
++      onSelectionChange(control.selectedSegmentIndex)
++    }
++  }
++}
 diff --git a/src/jetpack-compose/Host/index.tsx b/src/jetpack-compose/Host/index.tsx
 index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332ac0d79760 100644
 --- a/src/jetpack-compose/Host/index.tsx
@@ -178,3 +324,23 @@ index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332a
            onLayoutContent={onLayoutContent}
            layoutDirection={
              layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight')
+diff --git a/src/swift-ui/Picker/index.tsx b/src/swift-ui/Picker/index.tsx
+index ab7d7ceee94cc5755cdb4b708e70600d12532205..ceac7bff6ca71ed7fbfc526d771123e9e8aabd6e 100644
+--- a/src/swift-ui/Picker/index.tsx
++++ b/src/swift-ui/Picker/index.tsx
+@@ -13,6 +13,15 @@ export type PickerProps<T extends SelectionValueType = any> = {
+    * For example: 'photo', 'heart.fill', 'star.circle'
+    */
+   systemImage?: SFSymbol;
++  /** Native segmented options. Uses a scoped UISegmentedControl instead of SwiftUI Picker. */
++  segments?: { label: string; value: T }[];
++  /** Colors for the native segmented control. Only used with segments. */
++  segmentColors?: {
++    background?: string;
++    selectedBackground?: string;
++    text?: string;
++    selectedText?: string;
++  };
+   /**
+    * A label displayed on the picker.
+    */
