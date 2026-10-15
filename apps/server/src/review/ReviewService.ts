@@ -26,8 +26,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 export class ReviewService extends Context.Service<
   ReviewService,
   {
+    /**
+     * `workspaceRoot` also allows a registered project's root, which the caller
+     * resolved from the project, never from client input.
+     */
     readonly getDiffPreview: (
       input: ReviewDiffPreviewInput,
+      workspaceRoot?: string,
     ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
     readonly getDiffFileContents: (
       input: ReviewDiffFileContentsInput,
@@ -72,6 +77,7 @@ export const make = Effect.gen(function* () {
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
+    authorizedRoot = config.cwd,
   ) {
     const worktreesDirectories = yield* settings.getSettings.pipe(
       Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),
@@ -79,7 +85,7 @@ export const make = Effect.gen(function* () {
     const home = yield* HostProcess.HomeDirectory;
     const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
-      canonicalizePath(config.cwd),
+      canonicalizePath(authorizedRoot),
       // A managed root that cannot be resolved, or resolves to a filesystem
       // root through a symlink, is skipped rather than failing every review.
       Effect.forEach(
@@ -124,8 +130,8 @@ export const make = Effect.gen(function* () {
 
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
-  )(function* (input) {
-    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
+  )(function* (input, workspaceRoot) {
+    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd, workspaceRoot);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) {
