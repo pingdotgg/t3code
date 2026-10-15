@@ -149,8 +149,9 @@ const authScopeResponseFields = {
   permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
 };
 
-// Only clients talking to an old server use these parent checks. Servers never
-// expand stored grants, and an explicitly empty permissions array grants nothing.
+// Clients talking to an old server use these parent checks, and servers use them
+// to read token requests from old clients. Servers never expand stored grants,
+// and an explicitly empty permissions array grants nothing.
 const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
   [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
   [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
@@ -189,6 +190,17 @@ export function sessionGrantsScope(
   if (session.auth?.serverUpdateScope !== undefined) return false;
   const parent = legacyParents[scope];
   return parent !== undefined && session.scopes?.includes(parent) === true;
+}
+
+/** A request in only the old vocabulary still asks for the permissions split out of it. */
+export function expandLegacyScopeRequest(
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): ReadonlyArray<AuthEnvironmentScope> {
+  if (!scopes.every((scope) => legacyScopes.has(scope))) return scopes;
+  const children = Object.entries(legacyParents)
+    .filter(([, parent]) => parent !== undefined && scopes.includes(parent))
+    .map(([child]) => child as AuthEnvironmentScope);
+  return [...scopes, ...children];
 }
 
 /** Old-only grants lost the child permissions formerly implied by their broad scopes. */
