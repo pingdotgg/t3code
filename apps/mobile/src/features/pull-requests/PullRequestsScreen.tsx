@@ -1,7 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ActivityIndicator,
@@ -29,6 +29,7 @@ import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
+  groupPullRequestListErrors,
   pullRequestListFacets,
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
@@ -51,6 +52,73 @@ function PullRequestScrollView(props: ScrollViewProps) {
         contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
       />
     </ScrollViewMarker>
+  );
+}
+
+/** Repository failures collapse to one line so the pull requests below stay in view. */
+function PullRequestListErrors(props: {
+  readonly errors: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
+    readonly projectTitle: string;
+    readonly message: string;
+    readonly host?: string;
+  }[];
+  readonly providers: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly host: string;
+    readonly detail: string | null;
+  }[];
+  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly environmentLabel: (environmentId: EnvironmentId) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { environments, providers, repositories } = groupPullRequestListErrors(
+    props.errors,
+    props.providers,
+    props.connectedEnvironmentIds,
+  );
+  const lines = environments.map(
+    (error) => `${props.environmentLabel(error.environmentId)}: ${error.message}`,
+  );
+  lines.push(
+    ...providers.map(
+      (provider) =>
+        `${props.environmentLabel(provider.environmentId)}: ${provider.host}: ${provider.detail}`,
+    ),
+  );
+  if (repositories.length === 1)
+    lines.push(`${repositories[0]!.projectTitle}: ${repositories[0]!.message}`);
+  return (
+    <View className="px-4 py-3">
+      {lines.length ? (
+        <Text className="text-sm text-foreground-muted">{lines.join("\n")}</Text>
+      ) : null}
+      {repositories.length > 1 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityLabel={
+            expanded
+              ? "Hide repositories that could not be read"
+              : `Show ${repositories.length} repositories that could not be read`
+          }
+          hitSlop={8}
+          onPress={() => setExpanded((value) => !value)}
+          className="min-h-11 flex-row items-center gap-2"
+        >
+          <Text className="shrink text-sm text-foreground-muted">
+            {repositories.length} repositories could not be read.
+          </Text>
+          <Text className="text-sm font-t3-medium text-link">{expanded ? "Hide" : "Show"}</Text>
+        </Pressable>
+      ) : null}
+      {expanded && repositories.length > 1 ? (
+        <Text className="pt-1 text-sm text-foreground-muted">
+          {repositories.map((error) => `${error.projectTitle}: ${error.message}`).join("\n")}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -149,6 +217,10 @@ export function PullRequestsScreen(
   const sidebar = props.sidebar === true || primaryColumn !== null;
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
   const connectedKey = connectedTargets.map((target) => target.environmentId).join("\n");
+  const connectedEnvironmentIds = useMemo(
+    () => new Set(connectedKey ? connectedKey.split("\n").map((id) => EnvironmentId.make(id)) : []),
+    [connectedKey],
+  );
   const entries = useMemo(
     () =>
       filterPullRequestList(
@@ -157,9 +229,9 @@ export function PullRequestsScreen(
         result.data?.viewers ?? {},
         query,
         result.data.localSearchHosts,
-        new Set(connectedKey.split("\n")),
+        connectedEnvironmentIds,
       ),
-    [result.entries, controls, query, result.data, connectedKey],
+    [result.entries, controls, query, result.data, connectedEnvironmentIds],
   );
   const facets = useMemo(() => pullRequestListFacets(result.entries), [result.entries]);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -302,15 +374,18 @@ export function PullRequestsScreen(
               }
               projects={projects}
             />
-            {result.data?.errors.length ? (
-              <Text className="px-4 py-3 text-sm text-foreground-muted">
-                {result.data.errors
-                  .map(
-                    (error) =>
-                      `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
-                  )
-                  .join("\n")}
-              </Text>
+            {result.data &&
+            (result.data.errors.length ||
+              result.data.providers.some((provider) => provider.detail !== null)) ? (
+              <PullRequestListErrors
+                errors={result.data.errors}
+                providers={result.data.providers}
+                connectedEnvironmentIds={connectedEnvironmentIds}
+                environmentLabel={(id) =>
+                  environments.find((environment) => environment.environmentId === id)
+                    ?.environmentLabel ?? "Environment"
+                }
+              />
             ) : null}
           </>
         }

@@ -10,6 +10,7 @@ import {
   appendPullRequestListPage,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
+  pullRequestListErrorMessage,
   pullRequestListHead,
   pullRequestListKey,
   scopedPullRequestListKey,
@@ -97,14 +98,21 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           );
           if (controller.signal.aborted || activeScope.current !== scopeKey) return;
           if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          if (response.value.errors.length)
-            throw new Error(response.value.errors.map((error) => error.message).join("\n"));
-          const next = appendPullRequestListPage(
-            registry.get(pagesAtom) ?? pages,
-            response.value,
-            input,
-          );
+          const previous = registry.get(pagesAtom) ?? pages;
+          const next = appendPullRequestListPage(previous, response.value, input);
           registry.set(pagesAtom, next);
+          // Keep failed repositories eligible for retry after appending the readable rows.
+          if (response.value.errors.length)
+            return {
+              errors: response.value.errors.map((error) => ({
+                ...error,
+                environmentId: target.environmentId,
+              })),
+              providers: response.value.providers.map((provider) => ({
+                ...provider,
+                environmentId: target.environmentId,
+              })),
+            };
           if (
             input.cursors &&
             Object.keys(next.nextCursors).length &&
@@ -115,8 +123,20 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
         }),
       );
       if (requests.current.page === controller) delete requests.current.page;
-      if (!controller.signal.aborted && activeScope.current === scopeKey)
-        setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
+      if (!controller.signal.aborted && activeScope.current === scopeKey) {
+        const partial = responses.flatMap((result) =>
+          result.status === "fulfilled" && result.value ? [result.value] : [],
+        );
+        const repositoryErrors = partial.flatMap((result) => result.errors);
+        const providers = partial.flatMap((result) => result.providers);
+        const error = [
+          requestErrors(responses),
+          repositoryErrors.length ? pullRequestListErrorMessage(repositoryErrors, providers) : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        setLoading({ key: scopeKey, page: false, refresh: false, error: error || null });
+      }
     },
     [targets, registry, scopeKey, state.error, activeScope],
   );

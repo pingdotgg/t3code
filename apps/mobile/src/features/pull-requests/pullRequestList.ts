@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   PullRequestListEntry,
   PullRequestListInput,
+  PullRequestProviderSummary,
   PullRequestListResult,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -37,6 +38,10 @@ export function pullRequestListKey(
 }
 
 export type EnvironmentPullRequestListEntry = PullRequestListEntry & {
+  readonly environmentId: EnvironmentId;
+};
+
+export type EnvironmentPullRequestProviderSummary = PullRequestProviderSummary & {
   readonly environmentId: EnvironmentId;
 };
 
@@ -84,22 +89,97 @@ export function mergeEnvironmentPullRequestPages(
   const viewers: Record<string, string> = {};
   const localSearchHosts = new Set<string>();
   const entries: EnvironmentPullRequestListEntry[] = [];
+  const providers: EnvironmentPullRequestProviderSummary[] = [];
   const errors = [];
   for (const { environmentId, pages } of sources) {
     entries.push(...pages.entries.map((entry) => ({ ...entry, environmentId })));
     for (const [host, viewer] of Object.entries(pages.head.viewers))
       viewers[`${environmentId} ${host}`] = viewer;
-    for (const provider of pages.head.providers)
+    for (const provider of pages.head.providers) {
       if (!provider.searchesOnHost) localSearchHosts.add(`${environmentId} ${provider.host}`);
+      providers.push({ ...provider, environmentId });
+    }
     errors.push(...pages.head.errors.map((error) => ({ ...error, environmentId })));
   }
   return {
     entries,
     viewers,
     localSearchHosts,
+    providers,
     errors,
     continued: sources.some(({ pages }) => pages.continued),
   };
+}
+
+/**
+ * Prefer the provider's actionable cause over the generic repository errors it produced.
+ */
+export function groupPullRequestListErrors<
+  ListError extends {
+    readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
+    readonly projectTitle: string;
+    readonly host?: string;
+  },
+  Provider extends {
+    readonly environmentId: EnvironmentId;
+    readonly host: string;
+    readonly detail: string | null;
+  },
+>(
+  errors: readonly ListError[],
+  providers: readonly Provider[] = [],
+  connectedEnvironmentIds?: ReadonlySet<EnvironmentId>,
+) {
+  const environments: ListError[] = [];
+  const failedEnvironments = new Set<EnvironmentId>();
+  for (const error of errors) {
+    if (connectedEnvironmentIds && !connectedEnvironmentIds.has(error.environmentId)) continue;
+    if (error.projectTitle) continue;
+    environments.push(error);
+    failedEnvironments.add(error.environmentId);
+  }
+  const hosts = new Map<string, Provider>();
+  for (const provider of providers) {
+    if (connectedEnvironmentIds && !connectedEnvironmentIds.has(provider.environmentId)) continue;
+    if (provider.detail === null || failedEnvironments.has(provider.environmentId)) continue;
+    hosts.set(`${provider.environmentId}:${provider.host}`, provider);
+  }
+  const repositories = new Map<string, ListError>();
+  for (const error of errors) {
+    if (connectedEnvironmentIds && !connectedEnvironmentIds.has(error.environmentId)) continue;
+    if (!error.projectTitle) continue;
+    if (failedEnvironments.has(error.environmentId)) continue;
+    if (error.host && hosts.has(`${error.environmentId}:${error.host}`)) continue;
+    repositories.set(`${error.environmentId}:${error.projectId ?? error.projectTitle}`, error);
+  }
+  return { environments, providers: [...hosts.values()], repositories: [...repositories.values()] };
+}
+
+/** Cause-aware messages for a failed continuation, short enough for the list footer. */
+export function pullRequestListErrorMessage<
+  ListError extends {
+    readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
+    readonly projectTitle: string;
+    readonly message: string;
+    readonly host?: string;
+  },
+  Provider extends {
+    readonly environmentId: EnvironmentId;
+    readonly host: string;
+    readonly detail: string | null;
+  },
+>(errors: readonly ListError[], providers: readonly Provider[] = []) {
+  const grouped = groupPullRequestListErrors(errors, providers);
+  const messages = grouped.providers.map((provider) => `${provider.host}: ${provider.detail}`);
+  if (grouped.repositories.length === 1) {
+    const error = grouped.repositories[0]!;
+    messages.push(`${error.projectTitle}: ${error.message}`);
+  }
+  if (grouped.repositories.length > 1)
+    messages.push(`${grouped.repositories.length} repositories could not be read.`);
+  return messages.join("\n");
 }
 
 export function mergePullRequestListEntries(
@@ -157,11 +237,27 @@ export function appendPullRequestListPage(
   page: PullRequestListResult,
   input: PullRequestListInput,
 ): PullRequestListPages {
+  if (
+    page.errors.some((error) => error.cursorKey === undefined) ||
+    (page.errors.length > 0 && input.cursors === undefined)
+  ) {
+    return {
+      ...previous,
+      entries: mergePullRequestListEntries(previous.entries, page.entries),
+      continued: true,
+    };
+  }
+  const nextCursors = { ...page.nextCursors };
+  for (const { cursorKey } of page.errors) {
+    if (cursorKey === undefined) continue;
+    const cursor = previous.nextCursors[cursorKey];
+    if (cursor !== undefined) nextCursors[cursorKey] = cursor;
+  }
   return {
     ...previous,
     entries: mergePullRequestListEntries(previous.entries, page.entries),
-    nextCursors: page.nextCursors,
-    truncated: page.truncated,
+    nextCursors,
+    truncated: page.truncated || Object.keys(nextCursors).length > 0,
     limit: input.limit ?? PR_LIST_PAGE_SIZE,
     continued: true,
   };

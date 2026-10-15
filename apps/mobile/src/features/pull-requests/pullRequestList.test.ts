@@ -3,16 +3,19 @@ import {
   EnvironmentId,
   SourceControlProviderKind,
   type PullRequestListEntry,
+  type PullRequestProviderSummary,
   type PullRequestListResult,
 } from "@t3tools/contracts";
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
   filterPullRequestList,
+  groupPullRequestListErrors,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   pullRequestListFacets,
+  pullRequestListErrorMessage,
   pullRequestListHead,
   pullRequestListReviewStatus,
   pullRequestLabelColor,
@@ -58,6 +61,19 @@ function page(
     viewers: { "github.com": "octocat" },
     providers: [],
     errors: [],
+  };
+}
+
+function provider(patch: Partial<PullRequestProviderSummary> = {}): PullRequestProviderSummary {
+  return {
+    host: "github.com",
+    kind: SourceControlProviderKind.make("github"),
+    searchesOnHost: true,
+    actions: [],
+    projectCount: 1,
+    configured: true,
+    detail: null,
+    ...patch,
   };
 }
 
@@ -162,6 +178,76 @@ describe("mobile PR list pagination", () => {
     expect(nextPullRequestListInput({ ...first, limit: 490 }, { state: "all" })?.limit).toBe(500);
     expect(nextPullRequestListInput({ ...first, limit: 500 }, { state: "all" })).toBeNull();
   });
+  it("advances readable repositories while retaining failed repository cursors", () => {
+    const first = pullRequestListHead(
+      null,
+      page([entry(3)], { readable: "readable-first", failed: "failed-first" }),
+    );
+    const partial = appendPullRequestListPage(
+      first,
+      {
+        ...page([entry(2)], { readable: "readable-second" }),
+        errors: [
+          {
+            projectId: entry(1).projectId,
+            projectTitle: "Failed",
+            message: "Failed could not be read.",
+            cursorKey: "failed",
+          },
+        ],
+      },
+      { state: "open", cursors: first.nextCursors },
+    );
+    expect(partial.nextCursors).toEqual({
+      readable: "readable-second",
+      failed: "failed-first",
+    });
+  });
+  it("keeps the whole continuation when an older server omits failed cursor keys", () => {
+    const first = pullRequestListHead(null, page([entry(2)], { repo: "first" }));
+    const partial = appendPullRequestListPage(
+      first,
+      {
+        ...page([entry(1)], { repo: "second" }),
+        errors: [
+          {
+            projectId: entry(1).projectId,
+            projectTitle: "Project",
+            message: "Project could not be read.",
+          },
+        ],
+      },
+      { state: "open", cursors: first.nextCursors },
+    );
+    expect(partial.entries.map((row) => row.number)).toEqual([2, 1]);
+    expect(partial.nextCursors).toEqual({ repo: "first" });
+  });
+  it("keeps a limit-based continuation retryable after a keyed repository failure", () => {
+    const first = pullRequestListHead(null, { ...page([entry(3)]), truncated: true });
+    const input = nextPullRequestListInput(first, { state: "open" })!;
+    const partial = appendPullRequestListPage(
+      first,
+      {
+        ...page([entry(2)]),
+        errors: [
+          {
+            projectId: entry(1).projectId,
+            projectTitle: "Failed",
+            message: "HTTP 404",
+            host: "github.com",
+            cursorKey: "github.com org/failed",
+          },
+        ],
+      },
+      input,
+    );
+
+    expect(partial.entries.map((row) => row.number)).toEqual([3, 2]);
+    expect(nextPullRequestListInput(partial, { state: "open" })).toEqual(input);
+    const retried = appendPullRequestListPage(partial, page([entry(1)]), input);
+    expect(retried.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect(nextPullRequestListInput(retried, { state: "open" })).toBeNull();
+  });
 });
 
 describe("all-environment PR list", () => {
@@ -250,6 +336,16 @@ describe("all-environment PR list", () => {
         merged.localSearchHosts,
       ).map((row) => row.environmentId),
     ).toEqual([mbp]);
+  });
+  it("keeps provider summaries with the environment that reported them", () => {
+    const result = { ...page([]), providers: [provider({ host: "github.acme.dev" })] };
+    const merged = mergeEnvironmentPullRequestPages([
+      { environmentId: cups, pages: pullRequestListHead(null, result) },
+    ]);
+
+    expect(merged.providers).toEqual([
+      expect.objectContaining({ environmentId: cups, host: "github.acme.dev" }),
+    ]);
   });
 });
 
@@ -372,6 +468,102 @@ describe("mobile PR scan and filters", () => {
     });
     expect(pullRequestLabelColor("ffab00")).toBe("#ffab00");
     expect(pullRequestLabelColor("not-a-color")).toBeNull();
+  });
+});
+
+describe("pull request list errors", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const repository = (index: number) => ({
+    environmentId,
+    projectId: `project-${index}`,
+    projectTitle: `repo-${index}`,
+    message: `org/repo-${index} could not be read.`,
+    host: "github.com",
+  });
+
+  it("keeps environment failures apart from repeated repository failures", () => {
+    const offline = {
+      environmentId: EnvironmentId.make("environment-2"),
+      projectTitle: "",
+      message: "Disconnected.",
+    };
+    const grouped = groupPullRequestListErrors([
+      repository(1),
+      offline,
+      repository(2),
+      repository(1),
+    ]);
+
+    expect(grouped.environments).toEqual([offline]);
+    expect(grouped.repositories.map((error) => error.projectTitle)).toEqual(["repo-1", "repo-2"]);
+  });
+
+  it("shows one actionable host failure instead of its repository errors", () => {
+    const failedProvider = {
+      ...provider({
+        configured: false,
+        detail: "Run gh auth login --hostname github.com.",
+      }),
+      environmentId,
+    };
+    const grouped = groupPullRequestListErrors(
+      [repository(1), repository(2), { ...repository(3), host: "gitlab.com" }],
+      [failedProvider],
+    );
+
+    expect(grouped.providers).toEqual([failedProvider]);
+    expect(grouped.repositories.map((error) => error.projectTitle)).toEqual(["repo-3"]);
+    expect(pullRequestListErrorMessage([repository(1), repository(2)], [failedProvider])).toBe(
+      "github.com: Run gh auth login --hostname github.com.",
+    );
+  });
+
+  it("keeps legacy repository errors whose host is absent", () => {
+    const legacy = { ...repository(1), host: undefined };
+    const failedProvider = {
+      ...provider({ detail: "GitHub could not be reached." }),
+      environmentId,
+    };
+
+    expect(groupPullRequestListErrors([legacy], [failedProvider]).repositories).toEqual([legacy]);
+  });
+
+  it("hides stale host and repository details when the environment request fails", () => {
+    const offline = { environmentId, projectTitle: "", message: "Disconnected." };
+    const failedProvider = {
+      ...provider({ detail: "GitHub could not be reached." }),
+      environmentId,
+    };
+
+    const grouped = groupPullRequestListErrors([repository(1), offline], [failedProvider]);
+    expect(grouped.environments).toEqual([offline]);
+    expect(grouped.providers).toEqual([]);
+    expect(grouped.repositories).toEqual([]);
+  });
+
+  it("hides cached errors from disconnected environments", () => {
+    const failedProvider = {
+      ...provider({ detail: "GitHub could not be reached." }),
+      environmentId,
+    };
+
+    const grouped = groupPullRequestListErrors(
+      [repository(1)],
+      [failedProvider],
+      new Set([EnvironmentId.make("environment-2")]),
+    );
+    expect(grouped.environments).toEqual([]);
+    expect(grouped.providers).toEqual([]);
+    expect(grouped.repositories).toEqual([]);
+  });
+
+  it("summarizes many repository failures in one line", () => {
+    expect(pullRequestListErrorMessage([repository(1)])).toBe(
+      "repo-1: org/repo-1 could not be read.",
+    );
+    expect(pullRequestListErrorMessage([1, 2, 3].map(repository))).toBe(
+      "3 repositories could not be read.",
+    );
   });
 });
 

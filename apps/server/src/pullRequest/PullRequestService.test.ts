@@ -2178,8 +2178,12 @@ it.effect("reports repositories on a host that could not be read", () =>
     // The healthy host still lists, and the unreadable one is named rather than dropped.
     assert.strictEqual(result.entries.length, 1);
     assert.deepStrictEqual(
-      result.errors.map((error) => error.projectId),
-      ["p2"],
+      result.errors.map((error) => ({ projectId: error.projectId, host: error.host })),
+      [{ projectId: "p2" as ProjectId, host: "github.acme.dev" }],
+    );
+    assert.match(
+      result.providers.find((provider) => provider.host === "github.acme.dev")?.detail ?? "",
+      /auth/i,
     );
   }),
 );
@@ -4699,7 +4703,9 @@ it.effect("asks on its own for a repository a search answered nothing for", () =
       {
         projectId: "p2" as ProjectId,
         projectTitle: "docs",
-        message: "acme/docs could not be read.",
+        message: "HTTP 404",
+        host: "github.com",
+        cursorKey: "github.com acme/docs",
       },
     ]);
     assert.deepStrictEqual(

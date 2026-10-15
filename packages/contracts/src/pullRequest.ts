@@ -653,6 +653,10 @@ export const PullRequestListProjectError = Schema.Struct({
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
   message: TrimmedNonEmptyString,
+  /** Host that produced the error. Absent when reading results from an older server. */
+  host: Schema.optional(TrimmedNonEmptyString),
+  /** Opaque repository key whose continuation can be retried after a partial page. */
+  cursorKey: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestListProjectError = typeof PullRequestListProjectError.Type;
 
