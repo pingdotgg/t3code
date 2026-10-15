@@ -1,9 +1,10 @@
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { useEffect, useState } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -30,10 +31,9 @@ type CrashLogState =
 function appIdentity() {
   return {
     version: Constants.expoConfig?.version ?? "0.0.0",
-    build:
-      (Platform.OS === "ios"
-        ? Constants.platform?.ios?.buildNumber
-        : Constants.platform?.android?.versionCode?.toString()) ?? "dev",
+    // EAS assigns build numbers remotely, so app.config never carries them and
+    // only the native binary knows which build is installed.
+    build: Application.nativeBuildVersion ?? "dev",
   };
 }
 
