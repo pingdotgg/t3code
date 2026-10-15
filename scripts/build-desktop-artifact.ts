@@ -1413,6 +1413,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2837,6 +2839,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             LSItemContentTypes: ["public.html", "public.xhtml"],
           },
         ],
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone when you start a voice conversation with an agent.",
       },
       protocols: [
         {
