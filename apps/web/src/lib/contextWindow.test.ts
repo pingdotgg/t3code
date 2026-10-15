@@ -77,6 +77,7 @@ describe("live provider-turn usage (#8144)", () => {
       maxTokens: 200_000,
       inputTokens: 40_000,
       outputTokens: 2_000,
+      autoCompactThreshold: 150_000,
       updatedAt: "2026-08-27T00:00:00.000Z",
     });
     expect(snapshot).not.toBeNull();
@@ -84,6 +85,7 @@ describe("live provider-turn usage (#8144)", () => {
     expect(snapshot?.maxTokens).toBe(200_000);
     expect(snapshot?.remainingTokens).toBe(158_000);
     expect(snapshot?.usedPercentage).toBe(21);
+    expect(snapshot?.autoCompactThreshold).toBe(150_000);
   });
 
   it("handles a report without a known context window", () => {

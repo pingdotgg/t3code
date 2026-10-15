@@ -135,7 +135,7 @@ describe("formatContextWindowCompactionMessage", () => {
 
   it("shows the configured auto-compaction threshold", () => {
     expect(formatContextWindowCompactionMessage("Claude Sonnet 5", 300_000)).toBe(
-      "Compacts automatically at 300,000 tokens.",
+      "Compacts automatically at about 300,000 tokens.",
     );
   });
 });
