@@ -107,7 +107,7 @@ class T3WorkspaceNavigationView(
         )
         setContent {
           MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-            val tabs = listOf("threads", "pullRequests")
+            val tabs = listOf("threads", "pullRequests", "issues")
             if (rail) {
               NavigationRail(
                 modifier = Modifier.fillMaxSize(),
@@ -121,7 +121,11 @@ class T3WorkspaceNavigationView(
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
                     icon = { tabIcon(tab) },
                     label = {
-                      val title = if (tab == "threads") "Chats" else "PRs"
+                      val title = when (tab) {
+                        "threads" -> "Chats"
+                        "issues" -> "Issues"
+                        else -> "PRs"
+                      }
                       Text(title, fontSize = (12 * textScale).sp)
                     },
                     colors = NavigationRailItemDefaults.colors(
@@ -148,7 +152,11 @@ class T3WorkspaceNavigationView(
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
                     icon = { tabIcon(tab) },
                     label = {
-                      val title = if (tab == "threads") "Chats" else "Pull requests"
+                      val title = when (tab) {
+                        "threads" -> "Chats"
+                        "issues" -> "Issues"
+                        else -> "Pull requests"
+                      }
                       Text(title, fontSize = (12 * textScale).sp)
                     },
                     colors = NavigationBarItemDefaults.colors(
@@ -171,14 +179,18 @@ class T3WorkspaceNavigationView(
 
   @Composable
   private fun tabIcon(tab: String) {
-    val drawable = if (tab == "threads") {
-      R.drawable.t3_chats
-    } else {
-      R.drawable.t3_pull_requests
+    val drawable = when (tab) {
+      "threads" -> R.drawable.t3_chats
+      "issues" -> R.drawable.t3_issues
+      else -> R.drawable.t3_pull_requests
     }
     Icon(
       painter = painterResource(drawable),
-      contentDescription = if (tab == "threads") "Chats" else "Pull requests",
+      contentDescription = when (tab) {
+        "threads" -> "Chats"
+        "issues" -> "Issues"
+        else -> "Pull requests"
+      },
     )
   }
 }

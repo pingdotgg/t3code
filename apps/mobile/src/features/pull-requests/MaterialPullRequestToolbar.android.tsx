@@ -7,60 +7,60 @@ import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { WORKSPACE_TAB_PRESENTATION } from "../workspace/workspace-tabs-state";
 
-/** PR search shares the thread list's native Android header placement. */
-export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility?: () => void }) {
+/** PR and issue search share the thread list's native Android header placement. */
+export function MaterialPullRequestToolbar(props: {
+  readonly tab: "pullRequests" | "issues";
+  readonly onRequestVisibility?: () => void;
+}) {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
-  const listFocused = homeFocused && workspace.state.selectedTab === "pullRequests";
-  const { onRequestVisibility } = props;
-  const tab = workspace.state.tabs.pullRequests;
+  const { onRequestVisibility, tab: tabId } = props;
+  const listFocused = homeFocused && workspace.state.selectedTab === tabId;
+  const tab = workspace.state.tabs[tabId];
+  const presentation = WORKSPACE_TAB_PRESENTATION[tabId];
   const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
   const openSearch = useCallback(() => {
     onRequestVisibility?.();
-    dispatch({
-      type: "scroll",
-      tab: "pullRequests",
-      offset: getScrollOffset("pullRequests"),
-    });
-    dispatch({ type: "search", tab: "pullRequests" });
+    dispatch({ type: "scroll", tab: tabId, offset: getScrollOffset(tabId) });
+    dispatch({ type: "search", tab: tabId });
     input.current?.focus();
     return true;
-  }, [dispatch, getScrollOffset, onRequestVisibility]);
+  }, [dispatch, getScrollOffset, onRequestVisibility, tabId]);
   useHardwareKeyboardCommand("focusSearch", openSearch);
   const closeSearch = useCallback(() => {
     Keyboard.dismiss();
-    recordScrollOffset("pullRequests", tab.searchEntryOffset);
-    dispatch({ type: "cancel", tab: "pullRequests" });
-  }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+    recordScrollOffset(tabId, tab.searchEntryOffset);
+    dispatch({ type: "cancel", tab: tabId });
+  }, [dispatch, recordScrollOffset, tab.searchEntryOffset, tabId]);
   useEffect(() => {
     if (!searching || !listFocused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       // Frozen Home screens can keep effects alive after a detail route opens.
       const state = navigation.getState();
-      if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive("pullRequests"))
-        return false;
+      if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive(tabId)) return false;
       if (Keyboard.isVisible()) Keyboard.dismiss();
       else closeSearch();
       return true;
     });
     return () => subscription.remove();
-  }, [searching, closeSearch, listFocused, navigation, isTabActive]);
+  }, [searching, closeSearch, listFocused, navigation, isTabActive, tabId]);
   return (
     <AndroidScreenHeader
-      title="Pull requests"
+      title={presentation.title}
       titleContent={
         searching ? (
           <MaterialSearchField
             inputRef={input}
-            accessibilityLabel="Search pull requests"
+            accessibilityLabel={presentation.search}
             clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
+            placeholder={presentation.search}
             value={tab.query}
-            onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
+            onChangeText={(query) => dispatch({ type: "query", tab: tabId, query })}
           />
         ) : (
           <View className="min-w-0 flex-1 pl-3">
@@ -69,7 +69,7 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
               brand={
                 <CompactBrandTitle
                   allowFontScaling={false}
-                  accessibilityLabel="T3 Code, Pull requests"
+                  accessibilityLabel={`T3 Code, ${presentation.title}`}
                 />
               }
               onPress={() =>
@@ -96,7 +96,7 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
           ? []
           : [
               {
-                accessibilityLabel: "Search pull requests",
+                accessibilityLabel: presentation.search,
                 icon: "magnifyingglass",
                 onPress: openSearch,
               },

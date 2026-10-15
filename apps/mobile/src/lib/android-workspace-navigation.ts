@@ -2,7 +2,8 @@ import type { NavigationState } from "@react-navigation/native";
 
 export type AndroidWorkspaceDestination =
   | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
-  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
+  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] }
+  | { readonly name: "Issue"; readonly params: ReactNavigation.RootParamList["Issue"] };
 
 /** Peer details share one slot above Home; nested routes retain ordinary back navigation. */
 export function androidWorkspaceNavigationState(
@@ -15,7 +16,9 @@ export function androidWorkspaceNavigationState(
   const identity =
     destination.name === "Thread"
       ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
+      : destination.name === "Issue"
+        ? ["environmentId", "projectId", "tracker", "host", "scope", "key"]
+        : ["environmentId", "projectId", "repository", "number", "host"];
   const params = destination.params as Readonly<Record<string, unknown>>;
   const existing = state.routes.findLast((route) => {
     if (route.name !== destination.name) return false;

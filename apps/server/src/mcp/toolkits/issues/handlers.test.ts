@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
@@ -25,7 +26,10 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as IssuesHandlers from "./handlers.ts";
-import { IssuesToolkit } from "./tools.ts";
+import { IssuesToolkit, ListIssuesResult, ReadIssueResult } from "./tools.ts";
+
+const decodeListIssues = Schema.decodeSync(ListIssuesResult);
+const decodeReadIssue = Schema.decodeSync(ReadIssueResult);
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -191,6 +195,31 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
 });
 
 describe("issue toolkit handlers", () => {
+  it.each([
+    [null, null],
+    [0, "open"],
+    [17, "merged"],
+  ] as const)("preserves unknown issue metadata and known values %s/%s", (commentCount, state) => {
+    const issue = { ...detail, author: null, assignees: [], labels: [], commentCount };
+    expect(
+      decodeListIssues({ issues: [issue], nextCursors: {}, errors: [] }).issues[0]?.commentCount,
+    ).toBe(commentCount);
+    const linked = {
+      url: "https://github.com/T3Tools/T3Code/pull/8",
+      title: "Eight",
+      state,
+      closesIssue: true,
+    };
+    expect(
+      decodeReadIssue({
+        ...issue,
+        comments: [],
+        commentsTruncated: false,
+        linkedPullRequests: [linked],
+      }).linkedPullRequests[0]?.state,
+    ).toBe(state);
+  });
+
   it.effect("refuses a credential without the issues capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

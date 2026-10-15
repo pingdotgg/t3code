@@ -8,12 +8,10 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 
-/** Use the thread's environment; the shared router resolves the repository's project there. */
-export function useOpenPullRequest(options?: {
-  readonly replace?: boolean;
-  readonly context?: { readonly environmentId: string; readonly projectId: string };
+export function useNativeLinkContext(context?: {
+  readonly environmentId: string;
+  readonly projectId: string;
 }) {
-  const navigation = useNavigation();
   const route = useRoute();
   const routeContext = route.params as
     | {
@@ -26,15 +24,24 @@ export function useOpenPullRequest(options?: {
     const text = Array.isArray(value) ? value[0] : value;
     return text?.trim() ? text : undefined;
   };
-  const environmentId = options?.context?.environmentId ?? first(routeContext?.environmentId);
+  const environmentId = context?.environmentId ?? first(routeContext?.environmentId);
   const threadId = first(routeContext?.threadId);
   const thread = useThreadShell(
     environmentId && threadId
       ? { environmentId: EnvironmentId.make(environmentId), threadId: ThreadId.make(threadId) }
       : null,
   );
-  const projectId =
-    options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
+  const projectId = context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
+  return { environmentId, projectId };
+}
+
+/** Use the thread's environment; the shared router resolves the repository's project there. */
+export function useOpenPullRequest(options?: {
+  readonly replace?: boolean;
+  readonly context?: { readonly environmentId: string; readonly projectId: string };
+}) {
+  const navigation = useNavigation();
+  const { environmentId, projectId } = useNativeLinkContext(options?.context);
   const replace = options?.replace;
   return useCallback(
     async (url: string) => {

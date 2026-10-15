@@ -52,6 +52,11 @@ import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { selectedPullRequestKey } from "./features/pull-requests/pullRequestSelection";
+import { selectedIssueKey } from "./features/issues/issueSelection";
+import { IssueRouteScreen } from "./features/issues/IssueRouteScreen";
+import { IssueComposeSheet } from "./features/issues/IssueComposeSheet";
+import { IssueCreateSheet } from "./features/issues/IssueCreateSheet";
+import { IssueCandidatesScreen } from "./features/issues/IssueCandidatesScreen";
 import {
   HardwareKeyboardCommandOverlay,
   HardwareKeyboardCommandProvider,
@@ -570,6 +575,9 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
+  "IssueCandidates",
+  "IssueCompose",
+  "IssueCreate",
   "PullRequestReview",
   "PullRequestInlineComment",
   "ConnectOnboarding",
@@ -660,6 +668,7 @@ function RootStackLayout(props: {
             pathname={workspaceLocation.pathname}
             workspaceRouteKey={workspaceLocation.routeKey}
             selectedPullRequestKey={selectedPullRequestKey(props.state)}
+            selectedIssueKey={selectedIssueKey(props.state)}
           >
             {props.children}
             <HardwareKeyboardCommandOverlay />
@@ -733,6 +742,39 @@ const RootStackConfig = createWorkspaceStackNavigator({
         parse: { number: Number },
       },
       options: PULL_REQUEST_HEADER_OPTIONS,
+    }),
+    Issue: createNativeStackScreen({
+      screen: IssueRouteScreen,
+      linking: "issues/:environmentId/:projectId/:tracker/:host/:scope/:key",
+      options: PULL_REQUEST_HEADER_OPTIONS,
+    }),
+    IssueCompose: createNativeStackScreen({
+      screen: IssueComposeSheet,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.75, 0.92],
+        sheetGrabberVisible: true,
+        headerShown: false,
+      },
+    }),
+    IssueCreate: createNativeStackScreen({
+      screen: IssueCreateSheet,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.92],
+        sheetGrabberVisible: true,
+        headerShown: false,
+      },
+    }),
+    IssueCandidates: createNativeStackScreen({
+      screen: IssueCandidatesScreen,
+      options: {
+        ...PULL_REQUEST_HEADER_OPTIONS,
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.75, 0.92],
+        sheetGrabberVisible: true,
+        headerBackVisible: false,
+      },
     }),
     PullRequestGuideStop: createNativeStackScreen({
       screen: PullRequestGuideStopScreen,

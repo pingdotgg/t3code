@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -25,6 +26,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesResolveUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.issuesCreate]: AuthSourceControlWriteScope,
   [WS_METHODS.issuesComment]: AuthSourceControlWriteScope,
   [WS_METHODS.issuesUpdate]: AuthSourceControlWriteScope,

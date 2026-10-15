@@ -31,6 +31,7 @@ export function WorkspaceSidebarTabs() {
         >
           <Text modifiers={[tag("threads")]}>Threads</Text>
           <Text modifiers={[tag("pullRequests")]}>Pull requests</Text>
+          <Text modifiers={[tag("issues")]}>Issues</Text>
         </Picker>
       </Host>
     </View>

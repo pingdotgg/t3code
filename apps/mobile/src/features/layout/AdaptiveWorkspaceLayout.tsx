@@ -221,6 +221,7 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
   readonly selectedPullRequestKey?: string | null;
+  readonly selectedIssueKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -247,6 +248,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
     readonly selectedPullRequestKey?: string | null;
+    readonly selectedIssueKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
     readonly savedThreadListFilters?: ThreadListFilters | undefined;
@@ -744,6 +746,7 @@ function AdaptiveWorkspaceLayoutContent(
                   <AndroidWorkspaceSidebar
                     onRequestVisibility={revealPrimarySidebar}
                     selectedPullRequestKey={props.selectedPullRequestKey ?? null}
+                    selectedIssueKey={props.selectedIssueKey ?? null}
                   >
                     <AndroidHomeFabLayout sidebar onStartNewTask={handleStartNewTask}>
                       <ThreadNavigationSidebar

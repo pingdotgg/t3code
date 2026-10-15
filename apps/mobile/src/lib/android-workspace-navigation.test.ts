@@ -28,6 +28,8 @@ const options = {
     "PullRequest",
     "PullRequestFile",
     "PullRequestReviewers",
+    "Issue",
+    "IssueCompose",
     "SettingsSheet",
   ],
   routeParamList: {},
@@ -45,6 +47,18 @@ const pullRequest = {
     repository: "owner/repository",
     number: 42,
     host: "github.com",
+  },
+} as const;
+
+const issue = {
+  name: "Issue",
+  params: {
+    environmentId: "environment-a",
+    projectId: "project-a",
+    tracker: "linear",
+    host: "linear.app",
+    scope: "ENG",
+    key: "ENG-7",
   },
 } as const;
 
@@ -182,5 +196,17 @@ describe("Android workspace navigation", () => {
     expect(names(state)).toEqual(["Home"]);
     expect(state.routes[0]?.key).toBe(previous.routes[0]?.key);
     expect(state.index).toBe(0);
+  });
+
+  it("keeps an issue in the shared detail slot and drops its sheets when a peer is selected", () => {
+    let state = select(legacyHistory(), issue);
+    expect(names(state)).toEqual(["Home", "Issue"]);
+    state = apply(state, StackActions.push("IssueCompose", { ...issue.params, mode: "comment" }));
+    const same = select(state, issue);
+    expect(names(same)).toEqual(["Home", "Issue"]);
+    expect(same.routes[1]?.key).toBe(state.routes[1]?.key);
+    const other = select(state, { name: "Issue", params: { ...issue.params, key: "ENG-8" } });
+    expect(other.routes[1]?.key).not.toBe(state.routes[1]?.key);
+    expect(names(select(other, pullRequest))).toEqual(["Home", "PullRequest"]);
   });
 });

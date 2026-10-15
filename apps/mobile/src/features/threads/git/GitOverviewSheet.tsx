@@ -1,4 +1,5 @@
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
+import { useOpenIssue } from "../../issues/useOpenIssue";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -9,7 +10,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, threadIssueKeyOf } from "@t3tools/contracts";
 import {
   CommonActions,
   StackActions,
@@ -73,6 +74,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const openPullRequest = useOpenPullRequest({ replace: presentation === "sheet" });
+  const openIssue = useOpenIssue({ replace: presentation === "sheet" });
   const isInspector = presentation === "inspector";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
@@ -397,6 +399,42 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               ))}
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {selectedThread?.issues?.length ? (
+        <View className="gap-2">
+          <Text className="px-1 text-xs font-t3-bold text-foreground-muted">Linked issues</Text>
+          <View className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border ios:px-3 ios:py-1">
+            {selectedThread.issues.map((link, index) => (
+              <View key={threadIssueKeyOf(link)}>
+                {index > 0 && Platform.OS !== "android" ? (
+                  <View className="ml-12 h-px bg-border" />
+                ) : null}
+                <SheetListRow
+                  icon={
+                    link.snapshot?.state.category === "closed"
+                      ? "checkmark.circle"
+                      : "circle.inset.filled"
+                  }
+                  title={`${link.snapshot?.displayKey ?? link.key} ${link.snapshot?.title ?? "Issue"}`}
+                  subtitle={`${link.scope} · ${link.snapshot?.state.name ?? "Status pending"}`}
+                  onPress={() =>
+                    openIssue({
+                      environmentId,
+                      projectId: link.projectId,
+                      tracker: link.tracker,
+                      host: link.host,
+                      scope: link.scope,
+                      key: link.key,
+                      originalURL: link.url,
+                      ...(link.snapshot ? { displayKey: link.snapshot.displayKey } : {}),
+                    })
+                  }
+                />
+              </View>
+            ))}
+          </View>
         </View>
       ) : null}
 

@@ -22,7 +22,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useOpenIssueLink } from "../../native/useOpenIssueLink";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import {
   isPendingUserInputOptionSelected,
@@ -97,7 +97,7 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 /** Renders question text as markdown so agent-provided links open on tap. */
 function QuestionText(props: { readonly markdown: string }) {
   const styles = useMarkdownPreviewStyles();
-  const openLink = useOpenPullRequest();
+  const openLink = useOpenIssueLink();
   return (
     <SelectableMarkdownText
       markdown={props.markdown}

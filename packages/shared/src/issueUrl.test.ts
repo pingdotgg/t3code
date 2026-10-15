@@ -3,6 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseIssueUrl } from "./issueUrl.ts";
 
 describe("parseIssueUrl", () => {
+  it("uses the configured tracker before a hostname that resembles another provider", () => {
+    const url = "https://github.company.net/team/repo/issues/7";
+    expect(parseIssueUrl(url)?.tracker).toBe("github");
+    expect(parseIssueUrl(url, { tracker: "forgejo", host: "github.company.net" })?.tracker).toBe(
+      "forgejo",
+    );
+    expect(parseIssueUrl(url, { tracker: "forgejo", host: "other.company.net" })?.tracker).toBe(
+      "github",
+    );
+  });
   it.each([
     [
       "https://github.com/T3Tools/T3Code/issues/123",
@@ -28,6 +38,34 @@ describe("parseIssueUrl", () => {
       "https://codeberg.org/forgejo/forgejo/issues/3",
       { tracker: "forgejo", host: "codeberg.org", scope: "forgejo/forgejo", key: "3" },
     ],
+    [
+      "https://linear.app/acme/issue/ENG-123/fix-the-bug?view=all#comment",
+      {
+        tracker: "linear",
+        host: "linear.app",
+        scope: "acme/eng",
+        key: "ENG-123",
+        workspace: "acme",
+      },
+    ],
+    [
+      "https://linear.app/Other-Workspace/issue/eng-123",
+      {
+        tracker: "linear",
+        host: "linear.app",
+        scope: "other-workspace/eng",
+        key: "ENG-123",
+        workspace: "other-workspace",
+      },
+    ],
+    [
+      "https://tenant.atlassian.net/browse/ENG-123?focusedCommentId=42",
+      { tracker: "jira", host: "tenant.atlassian.net", scope: "eng", key: "ENG-123" },
+    ],
+    [
+      "https://tenant.atlassian.net/browse/eng_ops-123/",
+      { tracker: "jira", host: "tenant.atlassian.net", scope: "eng_ops", key: "ENG_OPS-123" },
+    ],
   ])("reads %s", (url, expected) => {
     expect(parseIssueUrl(url)).toEqual(expected);
   });
@@ -36,10 +74,109 @@ describe("parseIssueUrl", () => {
     "https://github.com/T3Tools/T3Code/pull/123",
     "https://github.com/T3Tools/T3Code/issues",
     "https://example.com/owner/repo/issues/1",
-    "https://linear.app/acme/issue/ENG-123",
+    "https://linear.app/acme/issue/ENG-0",
+    "https://linear.app/acme/issue/ENG-123/title/another-path",
+    "https://linear.app.evil.test/acme/issue/ENG-123",
+    "http://linear.app/acme/issue/ENG-123",
+    "https://linear.app:8443/acme/issue/ENG-123",
+    "https://tenant.atlassian.net/browse/ENG-0",
+    "https://tenant.atlassian.net/browse/ENG-123/another-path",
+    "https://tenant.atlassian.net.evil.test/browse/ENG-123",
+    "https://example.com/browse/ENG-123",
+    "https://linear.app/acme/issue/ENG-123abc",
+    "https://linear.app/acme/issue/123-1",
+    "https://linear.app/acme/team/ENG/all",
+    "https://tenant.atlassian.net/browse/ENG-123abc",
+    "https://tenant.atlassian.net/browse/123-1",
+    "https://tenant.atlassian.net/issues/ENG-123",
+    "http://tenant.atlassian.net/browse/ENG-123",
+    "https://tenant.atlassian.net:8443/browse/ENG-123",
+    "ftp://linear.app/acme/issue/ENG-123",
+    "ftp://tenant.atlassian.net/browse/ENG-123",
     "javascript:alert(1)",
     "not a url",
   ])("leaves %s alone", (url) => {
+    expect(parseIssueUrl(url)).toBeNull();
+  });
+
+  it.each(["github", "forgejo"])(
+    "reads a configured %s host without guessing its name",
+    (tracker) => {
+      const url = "https://git.acme.test/team/repo/issues/7";
+      expect(parseIssueUrl(url)).toBeNull();
+      expect(parseIssueUrl(url, { tracker, host: "git.acme.test" })).toEqual({
+        tracker,
+        host: "git.acme.test",
+        scope: "team/repo",
+        key: "7",
+      });
+      expect(parseIssueUrl(url, { tracker, host: "other.acme.test" })).toBeNull();
+    },
+  );
+
+  it.each([
+    [
+      "https://acme.visualstudio.com/platform/_workitems/edit/55",
+      "acme.visualstudio.com",
+      "acme/platform",
+    ],
+    [
+      "https://dev.azure.com/acme/My Project/_workitems/edit/55",
+      "dev.azure.com",
+      "acme/my project",
+    ],
+    [
+      "https://dev.azure.com/acme/My%20Project/_workitems/edit/55",
+      "dev.azure.com",
+      "acme/my project",
+    ],
+    [
+      "https://dev.azure.com/acme/My%2520Project/_workitems/edit/55",
+      "dev.azure.com",
+      "acme/my%20project",
+    ],
+    [
+      "https://acme.visualstudio.com/My%20Project/_workitems/edit/55",
+      "acme.visualstudio.com",
+      "acme/my project",
+    ],
+    [
+      "https://acme.visualstudio.com/DefaultCollection/My%20Project/_workitems/edit/55",
+      "acme.visualstudio.com",
+      "acme/my project",
+    ],
+    [
+      "https://acme.visualstudio.com/defaultcollection/My%2520Project/_workitems/edit/55",
+      "acme.visualstudio.com",
+      "acme/my%20project",
+    ],
+    [
+      "https://dev.azure.com/My%20Org/Project/_workitems/edit/55",
+      "dev.azure.com",
+      "my org/project",
+    ],
+    [
+      "https://dev.azure.com/My%2520Org/Project/_workitems/edit/55",
+      "dev.azure.com",
+      "my%20org/project",
+    ],
+  ])("decodes Azure project paths once for %s", (url, host, scope) => {
+    expect(parseIssueUrl(url)).toEqual({ tracker: "azure-devops", host, scope, key: "55" });
+  });
+
+  it.each([
+    "https://dev.azure.com/acme/My%2FProject/_workitems/edit/55",
+    "https://dev.azure.com/acme/My%5CProject/_workitems/edit/55",
+    "https://dev.azure.com/acme/My%ZZProject/_workitems/edit/55",
+    "https://dev.azure.com/acme/%20/_workitems/edit/55",
+    "https://dev.azure.com/My%2FOrg/Project/_workitems/edit/55",
+    "https://dev.azure.com/My%5COrg/Project/_workitems/edit/55",
+    "https://dev.azure.com/My%ZZOrg/Project/_workitems/edit/55",
+    "https://acme.visualstudio.com/My%2FProject/_workitems/edit/55",
+    "https://acme.visualstudio.com/My%5CProject/_workitems/edit/55",
+    "https://acme.visualstudio.com/DefaultCollection/My%ZZProject/_workitems/edit/55",
+    "https://acme.visualstudio.com/%20/_workitems/edit/55",
+  ])("rejects invalid Azure project paths in %s", (url) => {
     expect(parseIssueUrl(url)).toBeNull();
   });
 });

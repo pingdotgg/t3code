@@ -1,4 +1,4 @@
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useOpenIssueLink } from "../../native/useOpenIssueLink";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
@@ -1698,7 +1698,7 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
-  const openPullRequest = useOpenPullRequest();
+  const openLink = useOpenIssueLink();
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1885,10 +1885,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           );
           return;
         }
-        void openPullRequest(presentation.href);
+        void openLink(presentation.href);
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openPullRequest],
+    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openLink],
   );
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,

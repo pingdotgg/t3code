@@ -3,7 +3,7 @@ import { Keyboard, Pressable, View } from "react-native";
 import { SymbolView } from "../../components/AppSymbol";
 import { GlassSurface } from "../../components/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import { WORKSPACE_DOCK } from "./workspace-tabs-state";
+import { WORKSPACE_DOCK, WORKSPACE_TAB_PRESENTATION } from "./workspace-tabs-state";
 
 /** Equal-sized glass controls share a baseline without resizing the native tab controller. */
 export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
@@ -21,13 +21,13 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
         }}
       >
         <View className="flex-1 flex-row p-1" accessibilityRole="tablist">
-          {(["threads", "pullRequests"] as const).map((tab) => {
+          {(["threads", "pullRequests", "issues"] as const).map((tab) => {
             const selected = workspace.state.selectedTab === tab;
             return (
               <Pressable
                 key={tab}
                 accessibilityRole="tab"
-                accessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
+                accessibilityLabel={WORKSPACE_TAB_PRESENTATION[tab].title}
                 accessibilityState={{ selected }}
                 onPress={() => {
                   if (selected) return;
@@ -41,7 +41,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
                 }
               >
                 <SymbolView
-                  name={tab === "threads" ? "text.bubble" : "arrow.triangle.pull"}
+                  name={WORKSPACE_TAB_PRESENTATION[tab].icon}
                   size={23}
                   tintColorClassName={selected ? "accent-focus" : "accent-icon"}
                 />

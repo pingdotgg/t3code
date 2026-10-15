@@ -10,6 +10,7 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { WORKSPACE_TAB_PRESENTATION } from "./workspace-tabs-state";
 
 /** Root actions stay in the header; UIKit owns the bottom compose button. */
 export function WorkspaceToolbar(props: {
@@ -77,8 +78,7 @@ export function WorkspaceToolbar(props: {
                   obscureBackground: false,
                   placement: NATIVE_LIQUID_GLASS_SUPPORTED ? "integratedButton" : "stacked",
                   allowToolbarIntegration: NATIVE_LIQUID_GLASS_SUPPORTED,
-                  placeholder:
-                    selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
+                  placeholder: WORKSPACE_TAB_PRESENTATION[selectedTab].search,
                   cancelButtonText: "✕",
                   onFocus: () =>
                     tab.searchMode === "resting"
@@ -114,9 +114,7 @@ export function WorkspaceToolbar(props: {
         />
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
           <NativeHeaderToolbar.Button
-            accessibilityLabel={
-              selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
-            }
+            accessibilityLabel={WORKSPACE_TAB_PRESENTATION[selectedTab].search}
             icon="magnifyingglass"
             onPress={focusSearch}
           />
