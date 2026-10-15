@@ -13,13 +13,13 @@ import {
 import { defaultMinSize, fillMaxWidth, size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useControlTheme } from "./useControlTheme";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import type { ButtonProps } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function Button(props: ButtonProps) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { colorScheme, colors } = useControlTheme();
   const typography = useScaledTextRole("footnote");
   const { scale, mediumIconSize } = useAndroidControlSizing();
   const tone = props.tone ?? "secondary";
@@ -64,7 +64,7 @@ export function Button(props: ButtonProps) {
       <View importantForAccessibility="no-hide-descendants">
         <Host
           matchContents={props.fullWidth ? { vertical: true } : true}
-          colorScheme={themeAppearance}
+          colorScheme={colorScheme}
           ignoreSafeAreaKeyboardInsets
           style={props.fullWidth ? { width: "100%" } : { alignSelf: "flex-start" }}
         >

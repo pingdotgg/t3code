@@ -269,7 +269,7 @@ describe("mobile dependency graph", () => {
       ["lib", "features", 7, "lib must not add imports from features"],
       // components -> features: mostly the appearance preferences provider
       // and the layout toolbar bridges.
-      ["components", "features", 33, "components must not add imports from features"],
+      ["components", "features", 31, "components must not add imports from features"],
       // native -> features: native glue reading appearance/keyboard/review features.
       ["native", "features", 8, "native must not add imports from features"],
       // lib -> state: attachment/session plumbing that predates the cycle

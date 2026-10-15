@@ -6,12 +6,14 @@ import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function MaterialSearchField({
   inputRef,
+  autoFocus = true,
   accessibilityLabel,
   clearAccessibilityLabel,
   placeholder,
   value,
   onChangeText,
 }: {
+  readonly autoFocus?: boolean;
   readonly inputRef: RefObject<TextInputInstance | null>;
   readonly accessibilityLabel: string;
   readonly clearAccessibilityLabel: string;
@@ -37,7 +39,7 @@ export function MaterialSearchField({
       <TextInput
         ref={inputRef}
         accessibilityLabel={accessibilityLabel}
-        autoFocus
+        autoFocus={autoFocus}
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"

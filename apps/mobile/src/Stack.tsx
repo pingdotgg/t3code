@@ -1,3 +1,4 @@
+import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
 import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
@@ -716,6 +717,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
     headerShown: false,
   },
   screens: {
+    ...(__DEV__
+      ? {
+          ComponentCatalog: createNativeStackScreen({
+            screen: ComponentCatalogScreen,
+            linking: "dev/components",
+            options: { title: "UI components" },
+          }),
+        }
+      : {}),
     Home: createNativeStackScreen({
       screen: WorkspaceRootScreen,
       linking: "",

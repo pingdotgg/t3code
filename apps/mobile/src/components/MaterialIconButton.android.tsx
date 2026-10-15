@@ -7,7 +7,7 @@ import {
 import { size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useControlTheme } from "./useControlTheme";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
@@ -20,7 +20,7 @@ export function MaterialIconButton(props: {
   readonly variant?: "standard" | "primary" | "tonal" | "danger";
   readonly tintColorClassName?: string;
 }) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { colorScheme, colors } = useControlTheme();
   const { iconSize, buttonSize } = useAndroidControlSizing();
   const variant = props.variant ?? "standard";
   const Component =
@@ -58,7 +58,7 @@ export function MaterialIconButton(props: {
     >
       <View importantForAccessibility="no-hide-descendants">
         <Host
-          colorScheme={themeAppearance}
+          colorScheme={colorScheme}
           ignoreSafeAreaKeyboardInsets
           style={{ width: buttonSize, height: buttonSize }}
         >

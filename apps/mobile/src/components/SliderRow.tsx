@@ -1,5 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView } from "../../../../components/AppSymbol";
+import { SymbolView } from "./AppSymbol";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -11,7 +11,7 @@ import Animated, {
 } from "react-native-reanimated";
 import type { ComponentProps } from "react";
 
-import { AppText as Text } from "../../../../components/AppText";
+import { AppText as Text } from "./AppText";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -24,9 +24,11 @@ function clampFraction(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-export function FontSizeSliderRow(props: {
+export function SliderRow(props: {
   readonly disabled?: boolean;
   readonly icon: SymbolName;
+  readonly minimumIcon?: SymbolName;
+  readonly maximumIcon?: SymbolName;
   readonly label: string;
   readonly valueLabel: string;
   readonly min: number;
@@ -146,13 +148,15 @@ export function FontSizeSliderRow(props: {
         <Text className="text-base font-t3-medium text-foreground-muted">{props.valueLabel}</Text>
       </View>
       <View className="flex-row items-center gap-3">
-        <SymbolView
-          name="textformat.size.smaller"
-          size={15}
-          tintColorClassName={"accent-icon-muted"}
-          type="monochrome"
-          weight="regular"
-        />
+        {props.minimumIcon ? (
+          <SymbolView
+            name={props.minimumIcon}
+            size={15}
+            tintColorClassName={"accent-icon-muted"}
+            type="monochrome"
+            weight="regular"
+          />
+        ) : null}
         <GestureDetector gesture={gesture}>
           <View
             accessible
@@ -180,7 +184,7 @@ export function FontSizeSliderRow(props: {
               />
             </View>
             <Animated.View
-              className="absolute left-0 rounded-full border-border bg-primary-foreground"
+              className="absolute left-0 rounded-full border-border bg-primary"
               style={[
                 {
                   borderWidth: 1,
@@ -198,13 +202,15 @@ export function FontSizeSliderRow(props: {
             />
           </View>
         </GestureDetector>
-        <SymbolView
-          name="textformat.size.larger"
-          size={22}
-          tintColorClassName={"accent-icon-muted"}
-          type="monochrome"
-          weight="regular"
-        />
+        {props.maximumIcon ? (
+          <SymbolView
+            name={props.maximumIcon}
+            size={22}
+            tintColorClassName={"accent-icon-muted"}
+            type="monochrome"
+            weight="regular"
+          />
+        ) : null}
       </View>
     </View>
   );

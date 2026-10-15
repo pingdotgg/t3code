@@ -1,0 +1,44 @@
+import { View } from "react-native";
+
+import { AppText } from "./AppText";
+import { MaterialIconButton } from "./MaterialIconButton";
+import type { NumberFieldProps } from "./NumberField";
+
+export function NumberField(props: NumberFieldProps) {
+  const adjust = (amount: number) => {
+    if (props.disabled) return;
+    const next = Math.max(props.min, Math.min(props.max, props.value + amount));
+    if (next !== props.value) props.onValueChange(next);
+  };
+
+  return (
+    <View className="shrink-0 flex-row items-center">
+      {/* Match the 32dp switch track while retaining 48dp button touch targets. */}
+      <View
+        pointerEvents="none"
+        className="absolute inset-x-0 rounded-full bg-subtle"
+        style={{ height: 32 }}
+      />
+      <MaterialIconButton
+        icon="minus"
+        accessibilityLabel={`Decrease ${props.label}`}
+        disabled={props.disabled || props.value <= props.min}
+        onPress={() => adjust(-1)}
+      />
+      <AppText
+        className="min-w-8 text-center text-base"
+        style={{ fontVariant: ["tabular-nums"] }}
+        accessibilityLabel={`${props.label}: ${props.formatValue?.(props.value) ?? props.value}`}
+        accessibilityLiveRegion="polite"
+      >
+        {props.value}
+      </AppText>
+      <MaterialIconButton
+        icon="plus"
+        accessibilityLabel={`Increase ${props.label}`}
+        disabled={props.disabled || props.value >= props.max}
+        onPress={() => adjust(1)}
+      />
+    </View>
+  );
+}

@@ -11,26 +11,18 @@ import {
   presentationBackground,
   tag,
 } from "@expo/ui/swift-ui/modifiers";
-import {
-  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-} from "@t3tools/contracts";
 import { useState } from "react";
 
-import { useAppearancePreferences } from "../appearance/AppearancePreferencesProvider";
-import type { AutoSettleDaysFieldProps } from "./AutoSettleDaysField";
+import { useControlTheme } from "./useControlTheme";
+import type { NumberFieldProps } from "./NumberField";
 
-const days = Array.from(
-  { length: MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS - MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS + 1 },
-  (_, index) => MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS + index,
-);
-
-export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
-  const { themeAppearance, themeVariables: colors, appearance } = useAppearancePreferences();
+export function NumberField(props: NumberFieldProps) {
+  const { colorScheme, colors, fontSize } = useControlTheme();
+  const values = Array.from({ length: props.max - props.min + 1 }, (_, index) => props.min + index);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.value);
   return (
-    <Host matchContents colorScheme={themeAppearance} seedColor={colors["--color-primary"]}>
+    <Host matchContents colorScheme={colorScheme} seedColor={colors["--color-primary"]}>
       <Popover isPresented={open} onIsPresentedChange={setOpen}>
         <Popover.Trigger>
           <Button
@@ -42,10 +34,12 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
             modifiers={[
               buttonStyle("bordered"),
               disabled(props.disabled),
-              accessibilityLabel(`Days before auto-settle: ${props.value}`),
+              accessibilityLabel(
+                `${props.label}: ${props.formatValue?.(props.value) ?? props.value}`,
+              ),
               frame({ minWidth: 64, minHeight: 44 }),
               foregroundStyle(colors["--color-primary-text"]),
-              font({ size: appearance.baseFontSize }),
+              font({ size: fontSize }),
             ]}
           >
             <Text>{String(props.value)}</Text>
@@ -60,17 +54,17 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
             ]}
           >
             <Picker
-              label="Days before auto-settle"
+              label={props.label}
               selection={draft}
               onSelectionChange={setDraft}
               modifiers={[pickerStyle("wheel"), frame({ height: 180 })]}
             >
-              {days.map((value) => (
+              {values.map((value) => (
                 <Text
                   key={value}
                   modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
                 >
-                  {`${value} ${value === 1 ? "day" : "days"}`}
+                  {props.formatValue?.(value) ?? String(value)}
                 </Text>
               ))}
             </Picker>

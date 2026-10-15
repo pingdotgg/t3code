@@ -4,17 +4,13 @@ import * as Haptics from "expo-haptics";
 import { useRef, type ComponentProps } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../../../components/AppText";
-import { SymbolView } from "../../../../components/AppSymbol";
-import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-import type { FontSizeSliderRow as SharedFontSizeSliderRow } from "./FontSizeSliderRow.shared";
+import { AppText as Text } from "./AppText";
+import { SymbolView } from "./AppSymbol";
+import { useControlTheme } from "./useControlTheme";
+import type { SliderRow as SharedSliderRow } from "./SliderRow";
 
-export function FontSizeSliderRow(props: ComponentProps<typeof SharedFontSizeSliderRow>) {
-  const {
-    themeAppearance,
-    systemColorsActive,
-    themeVariables: colors,
-  } = useAppearancePreferences();
+export function SliderRow(props: ComponentProps<typeof SharedSliderRow>) {
+  const { colorScheme, systemColorsActive, colors } = useControlTheme();
   const draft = useRef(props.value);
   const commit = (value: number) => {
     if (props.disabled) return;
@@ -52,7 +48,7 @@ export function FontSizeSliderRow(props: ComponentProps<typeof SharedFontSizeSli
       >
         <View importantForAccessibility="no-hide-descendants">
           <Host
-            colorScheme={themeAppearance}
+            colorScheme={colorScheme}
             seedColor={systemColorsActive ? undefined : colors["--color-primary"]}
             style={{ height: 48, width: "100%" }}
           >
