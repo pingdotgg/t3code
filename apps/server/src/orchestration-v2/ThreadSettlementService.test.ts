@@ -251,6 +251,38 @@ describe("threadHasQueuedTurnStart", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
+  it("keeps threads with a PR from inactivity settlement only when asked", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        linkedPullRequest: {
+          projectId: ProjectId.make("project-1"),
+          repository: "owner/repo",
+          number: 1,
+          url: "https://example.test/owner/repo/pull/1",
+        },
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleKeepPullRequests: false,
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+  });
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),

@@ -1,5 +1,5 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useSyncExternalStore } from "react";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { type RefObject, useEffect, useEffectEvent, useSyncExternalStore } from "react";
 
 /**
  * Dragging a sidebar thread past the list edge turns the sort gesture into a context drop.
@@ -10,6 +10,28 @@ import { useSyncExternalStore } from "react";
  */
 
 export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
+
+export function useThreadContextDrop(
+  targetRef: RefObject<EventTarget | null>,
+  environmentId: EnvironmentId,
+  targetKey: string,
+  onDrop: (refs: ReadonlyArray<ScopedThreadRef>, isActive: () => boolean) => void,
+) {
+  const handleDrop = useEffectEvent(onDrop);
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+    let active = true;
+    const listener = (event: Event) =>
+      handleDrop((event as CustomEvent<ReadonlyArray<ScopedThreadRef>>).detail, () => active);
+    target.addEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+    return () => {
+      active = false;
+      target.removeEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+    };
+  }, [environmentId, targetKey, targetRef]);
+}
+
 const DROP_TARGET_ATTRIBUTE = "data-thread-context-drop";
 const DROP_OVER_ATTRIBUTE = "data-thread-context-over";
 

@@ -580,7 +580,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("persists custom usage prices and removes them from the settings file", () =>
+  it.effect("preserves saved usage settings during cleanup edits and removes custom prices", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const serverConfig = yield* ServerConfig.ServerConfig;
@@ -596,8 +596,30 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))));
 
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": prices } });
+        const usageModelAliases = { "example-preview": "example-model" };
+        const sourceId = UsageLimitSourceId.make("hub");
+        const usageLimitSources = {
+          [sourceId]: {
+            kind: "cliproxy" as const,
+            url: "https://hub.example.test",
+            managementKey: "",
+            enabled: true,
+          },
+        };
+        const saved = yield* serverSettings.updateSettings({
+          usageModelAliases,
+          usageLimitSources,
+        });
+        const updated = yield* serverSettings.updateSettings({
+          storageCleanup: { worktreeSettledAfterDays: 0, worktreeKeepWhen: "any-local-files" },
+        });
+        assert.deepStrictEqual(updated.usageLimitSources, saved.usageLimitSources);
         const persisted = yield* readPersisted;
         assert.deepStrictEqual(persisted.usagePriceOverrides, { "example-model": prices });
+        assert.deepStrictEqual(persisted.usageModelAliases, usageModelAliases);
+        assert.deepStrictEqual(persisted.usageLimitSources, usageLimitSources);
+        assert.equal(persisted.storageCleanup.worktreeSettledAfterDays, 0);
+        assert.equal(persisted.storageCleanup.worktreeKeepWhen, "any-local-files");
 
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
         const restored = yield* readPersisted;
@@ -810,6 +832,44 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(next.textGenerationModelSelection.instanceId, "claudeAgent");
       assert.equal(next.textGenerationModelSelection.model, "claude-haiku-5-5");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  // A backend behind a custom model may refuse the built-in default (#12651).
+  it.effect("falls back to the thread default when it is a custom model on that instance", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const claude = ProviderInstanceId.make("claudeAgent");
+      const providerInstances = {
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+        [claude]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: ["z-ai/glm-5.3-flash"] },
+        },
+      };
+
+      const custom = yield* serverSettings.updateSettings({
+        providerInstances,
+        defaultModelSelection: {
+          instanceId: claude,
+          model: "z-ai/glm-5.3-flash",
+          options: [{ id: "thinking", value: false }],
+        },
+      });
+      assert.deepEqual(custom.textGenerationModelSelection, {
+        instanceId: claude,
+        model: "z-ai/glm-5.3-flash",
+        options: [{ id: "thinking", value: false }],
+      });
+
+      const builtIn = yield* serverSettings.updateSettings({
+        defaultModelSelection: { instanceId: claude, model: "claude-fable-5-1" },
+      });
+      assert.equal(builtIn.textGenerationModelSelection.model, "claude-haiku-5-5");
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

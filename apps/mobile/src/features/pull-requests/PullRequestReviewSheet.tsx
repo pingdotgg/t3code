@@ -154,7 +154,7 @@ export function PullRequestReviewSheet({
         />
       }
     >
-      {reviewing && offered.length ? (
+      {reviewing && offered.length > 1 ? (
         <SegmentedControl
           options={offered.map((option) => ({ value: option.value, label: option.title }))}
           selected={verdict?.value ?? "comment"}

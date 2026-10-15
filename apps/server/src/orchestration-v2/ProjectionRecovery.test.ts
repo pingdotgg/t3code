@@ -209,6 +209,58 @@ it.effect.each(["startup", "shutdown"] as const)(
     }).pipe(Effect.provide(layerRecoveryTest)),
 );
 
+it.effect("stops a session its thread detached, which kept its live status", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("detached-session");
+    const providerSessionId = ProviderSessionId.make("session:recovery:detached");
+    yield* projections.apply({
+      id: EventId.make("event:recovery:detached-session:attached"),
+      type: "provider-session.attached",
+      threadId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    // The server died before the release that should follow the detach.
+    yield* projections.apply({
+      id: EventId.make("event:recovery:detached-session:detached"),
+      type: "provider-session.detached",
+      threadId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: { providerSessionId, detachedAt: now, reason: "Thread settled." },
+    });
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), [threadId]);
+
+    const summary = yield* recovery.reconcile("startup");
+
+    assert.equal(summary.stoppedSessions, 1);
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly status: string }>`
+      SELECT status FROM orchestration_v2_projection_provider_sessions
+      WHERE provider_session_id = ${providerSessionId}
+    `;
+    assert.deepEqual(rows, [{ status: "stopped" }]);
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+  }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
 it.effect("selects unfinished recovery work without reading settled thread histories", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

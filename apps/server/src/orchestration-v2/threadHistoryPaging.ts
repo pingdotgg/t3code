@@ -53,6 +53,7 @@ type HistoryRow = Pick<
     readonly messageId?: string;
     readonly inputIntent?: string;
     readonly createdBy?: string;
+    readonly runId?: string | null;
   };
 };
 export type SelectTimelinePageResult<Row extends HistoryRow = OrchestrationV2ProjectedTurnItem> = {
@@ -162,11 +163,30 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
   return parsed as ThreadHistoryCursorPayload;
 }
 
-export function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
+function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   return (
     item.type === "user_message" &&
     (item.inputIntent === "turn_start" || item.inputIntent === "queued_turn")
   );
+}
+
+/**
+ * Marks the turn starts of a chronological timeline. A wake (PR watch, task
+ * completion) starts its run with a notification instead of a user message, so
+ * a notification starts a turn when it is its run's first input. One steered
+ * into a running turn comes later. ProjectionStore's `run_starts` window query
+ * applies the same rule.
+ */
+export function threadHistoryTurnStarts(
+  items: ReadonlyArray<HistoryRow["item"]>,
+): ReadonlyArray<boolean> {
+  const startedRuns = new Set<string>();
+  return items.map((item) => {
+    if (item.type !== "user_message" && item.type !== "notification") return false;
+    const firstInput = item.runId != null && !startedRuns.has(item.runId);
+    if (item.runId != null) startedRuns.add(item.runId);
+    return item.type === "notification" ? firstInput : isThreadHistoryTurnStart(item);
+  });
 }
 
 /** Steering belongs to its existing turn and must not consume another page slot. */
@@ -199,7 +219,9 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   let encodedBytes = 0;
   let userTurns = 0;
   let rawTurns = 0;
-  const turnLimit = input.items.slice(0, end).some((row) => isThreadHistoryUserTurn(row.item))
+  const candidates = input.items.slice(0, end);
+  const turnStarts = threadHistoryTurnStarts(candidates.map((row) => row.item));
+  const turnLimit = candidates.some((row) => isThreadHistoryUserTurn(row.item))
     ? policy.maxUserTurns
     : undefined;
   for (let index = end - 1; index >= 0; index -= 1) {
@@ -216,7 +238,7 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
     selected.push(row);
     encodedBytes += rowBytes;
     if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
-    if (isThreadHistoryTurnStart(row.item)) rawTurns += 1;
+    if (turnStarts[index]) rawTurns += 1;
   }
   selected.reverse();
 

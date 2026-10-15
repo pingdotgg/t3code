@@ -7,6 +7,7 @@ import {
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  isOrchestrationV2WorkActive,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -444,6 +445,31 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+      }
+      // A blocking delegate_task wait dies with the turn that made it, and its
+      // continuation never got the tool result. Let the child's result wake
+      // the parent like an async task, so it reaches the continued turn.
+      const cutRunIds = new Set(runs.map((run) => run.id));
+      for (const task of projection.subagents ?? []) {
+        if (
+          task.origin !== "app_owned" ||
+          task.runId === null ||
+          !cutRunIds.has(task.runId) ||
+          task.completionWake !== "settled_only" ||
+          !isOrchestrationV2WorkActive(task.status)
+        )
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "subagent.updated",
+          threadId: projection.thread.id,
+          runId: task.runId,
+          nodeId: task.id,
+          driver: task.driver,
+          providerInstanceId: task.providerInstanceId,
+          occurredAt: now,
+          payload: { ...task, completionWake: "always", updatedAt: now },
+        });
       }
       // Process loss also orphans background-capable turn items on already-
       // settled runs (e.g. post-settle Waiting work). Skip items already

@@ -25,6 +25,10 @@ const layerSetup = Layer.effectDiscard(
     // cannot corrupt the database and an app crash loses nothing; an OS crash
     // or power loss can roll back commits since the last checkpoint.
     yield* sql`PRAGMA synchronous = NORMAL;`;
+    // Checkpoints are now the only sync, and macOS fsync() does not flush the
+    // drive cache. F_FULLFSYNC makes them reach disk; other platforms ignore it.
+    // Per-commit fullfsync stays off.
+    yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
@@ -45,6 +49,10 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     layerSetup,
     NodeSqliteClient.layer({
       filename: dbPath,
+      readerWorker: true,
+      // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
+      // the event loop so a slow flush cannot stall clients.
+      checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

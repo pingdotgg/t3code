@@ -852,7 +852,7 @@ export const make = Effect.gen(function* () {
       }
     });
   const randomUUIDv4 = (cwd: string) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({

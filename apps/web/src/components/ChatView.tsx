@@ -95,6 +95,7 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
@@ -242,6 +243,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -310,6 +312,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
+  ShieldQuestionIcon,
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -5171,7 +5174,6 @@ export default function ChatView(props: ChatViewProps) {
         (script) => commandForProjectScript(script.id) === input.keybindingCommand,
       );
       const changesKeybinding =
-        isElectron &&
         input.keybinding !== undefined &&
         (input.keybinding?.trim() || null) !== previousKeybinding &&
         (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
@@ -5232,8 +5234,6 @@ export default function ChatView(props: ChatViewProps) {
           ),
         );
       }
-
-      if (!isElectron) return updateResult;
 
       const scriptId = input.keybindingCommand
         ? projectScriptIdFromCommand(input.keybindingCommand)
@@ -7467,22 +7467,22 @@ export default function ChatView(props: ChatViewProps) {
       id: `child-input:${first.id}`,
       variant: "info",
       priority: "activity",
-      icon: <MessageCircleIcon />,
-      title:
-        childThreadInputs.length === 1
-          ? "Subagent needs input"
-          : `${childThreadInputs.length} subagents need input`,
+      icon: first.hasPendingApprovals ? <ShieldQuestionIcon /> : <MessageCircleIcon />,
+      title: childThreadInputsTitle(childThreadInputs),
       description: childThreadInputs.map((child, index) => (
         <Fragment key={child.id}>
-          {index > 0 ? ", " : null}
-          <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
-            {child.title}
-          </InlineButton>
+          {index > 0 ? " " : null}
+          <span className="whitespace-nowrap">
+            <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
+              {child.title}
+            </InlineButton>
+            {index < childThreadInputs.length - 1 ? "," : null}
+          </span>
         </Fragment>
       )),
       actions: (
         <Button size="xs" variant="ghost" onClick={() => onOpenRelatedThread(first.id)}>
-          Open question
+          {first.hasPendingApprovals ? "Open approval" : "Open question"}
         </Button>
       ),
     };
@@ -7645,19 +7645,26 @@ export default function ChatView(props: ChatViewProps) {
           ? undefined
           : presentation.items.map((item, index) => {
               const childThreadId = item.childThreadId;
+              const separator = index < presentation.items.length - 1 ? "," : null;
               return (
                 <Fragment key={item.taskId}>
-                  {index > 0 ? ", " : null}
+                  {index > 0 ? " " : null}
                   {childThreadId === undefined ? (
-                    item.label
-                  ) : (
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`Open subagent ${item.label}`}
-                      onClick={() => onOpenRelatedThread(childThreadId)}
-                    >
+                    <>
                       {item.label}
-                    </InlineButton>
+                      {separator}
+                    </>
+                  ) : (
+                    <span className="whitespace-nowrap">
+                      <InlineButton
+                        tone="muted"
+                        aria-label={`Open subagent ${item.label}`}
+                        onClick={() => onOpenRelatedThread(childThreadId)}
+                      >
+                        {item.label}
+                      </InlineButton>
+                      {separator}
+                    </span>
                   )}
                 </Fragment>
               );
@@ -8109,6 +8116,8 @@ export default function ChatView(props: ChatViewProps) {
           void handleUnsettleActiveThread();
           return;
         }
+        // Same as the sidebar Settle button: settle, then open the next thread.
+        if (settleAndAdvance(activeThreadRef)) return;
 
         void settleThread(activeThreadRef).then((result) => {
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -11873,6 +11882,7 @@ export default function ChatView(props: ChatViewProps) {
                               pullRequestRepository={
                                 supportsPullRequests ? activeProjectRepository : null
                               }
+                              threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
                               restingControlsHost={restingComposerControlsHost}
                               restingControlsHaveLeadingContext={
                                 mountComposerContextStrip &&

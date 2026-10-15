@@ -579,16 +579,22 @@ function fetchFailureDetail(stderr: string): string | undefined {
   ) {
     return "Git could not access the remote repository. Check the remote URL and repository permissions on the server.";
   }
-  if (
-    lines.some((line) =>
-      /^(?:(?:error|fatal): cannot lock ref\b|fatal: Unable to create ['"].+\.lock['"]:)/i.test(
-        line,
-      ),
-    )
-  ) {
+  if (isRefLockFailure(stderr)) {
     return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
   }
   return undefined;
+}
+
+// Matches a fetch that lost a ref update to another Git process. Git 2.53+
+// reports it as "fetching ref <ref> failed: ..."; older Git says "cannot lock ref".
+function isRefLockFailure(stderr: string): boolean {
+  return stderr
+    .split(/\r?\n/)
+    .some((line) =>
+      /^(?:(?:error|fatal): cannot lock ref\b|fatal: Unable to create ['"].+\.lock['"]:|error: fetching ref \S+ failed: (?:incorrect old value provided|reference already exists)$)/i.test(
+        line.trim(),
+      ),
+    );
 }
 
 interface Trace2Monitor {
@@ -1180,6 +1186,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     executeGit(operation, cwd, args, { allowNonZeroExit }).pipe(
       Effect.map((result) => result.stdout),
     );
+
+  /**
+   * Runs `git worktree list --porcelain -z`. Git before 2.36 rejects `-z`, so a failed run
+   * retries the line form and returns it NUL-delimited, the same shape as `-z` output.
+   * The line form cannot carry paths that contain newlines.
+   */
+  const executeWorktreeList = Effect.fn("executeWorktreeList")(function* (
+    operation: string,
+    cwd: string,
+    gitArgs: readonly string[],
+    options: ExecuteGitOptions = {},
+  ) {
+    const args = [...gitArgs, "worktree", "list", "--porcelain"];
+    const result = yield* executeGit(operation, cwd, [...args, "-z"], {
+      ...options,
+      allowNonZeroExit: true,
+    });
+    if (result.exitCode === 0) return result;
+    const lineResult = yield* executeGit(operation, cwd, args, options);
+    return { ...lineResult, stdout: lineResult.stdout.replaceAll("\n", "\0") };
+  });
 
   const runGitStdoutWithOptions = (
     operation: string,
@@ -3163,16 +3190,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             allowNonZeroExit: true,
           },
         ),
-        executeGit(
-          "GitVcsDriver.listRefs.worktreeList",
-          fetchCwd,
-          [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
-          {
-            timeoutMs: 30_000,
-            allowNonZeroExit: true,
-            maxOutputBytes: 16 * 1024 * 1024,
-          },
-        ),
+        executeWorktreeList("GitVcsDriver.listRefs.worktreeList", fetchCwd, gitDirArgs, {
+          timeoutMs: 30_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: 16 * 1024 * 1024,
+        }),
         executeGit("GitVcsDriver.listRefs.remoteNames", fetchCwd, [...gitDirArgs, "remote"], {
           timeoutMs: 5_000,
           allowNonZeroExit: true,
@@ -3697,15 +3719,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
       };
-      const fetchAll = executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        args,
-        {
-          ...options,
-          allowNonZeroExit: true,
-        },
-      ).pipe(
+      // Another fetch in the same repository, such as the background status
+      // poll, can win the race for a remote-tracking ref. The loser fails, but
+      // the ref is free again by the time a rerun needs it, so retry once.
+      const runFetch = (fetchArgs: readonly string[]) => {
+        const run = executeGitWithStableDiagnostics(
+          "GitVcsDriver.fetchRemote",
+          input.cwd,
+          fetchArgs,
+          {
+            ...options,
+            allowNonZeroExit: true,
+          },
+        );
+        return run.pipe(
+          Effect.flatMap((result) =>
+            result.exitCode !== 0 && isRefLockFailure(result.stderr) ? run : Effect.succeed(result),
+          ),
+        );
+      };
+      const fetchAll = runFetch(args).pipe(
         Effect.flatMap((result) =>
           result.exitCode === 0
             ? Effect.void
@@ -3734,12 +3767,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...args,
         `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
       ];
-      const result = yield* executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        scopedArgs,
-        { ...options, allowNonZeroExit: true },
-      );
+      const result = yield* runFetch(scopedArgs);
       if (result.exitCode === 0) return;
       if (
         result.stderr
@@ -4043,15 +4071,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
-    runGitStdout("GitVcsDriver.listWorktreePaths", cwd, [
-      "worktree",
-      "list",
-      "--porcelain",
-      "-z",
-    ]).pipe(
+    executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
       // One record per worktree, each ended by an empty field. A `prunable`
       // record's directory is gone, and another checkout may now sit there.
-      Effect.map((stdout) =>
+      Effect.map(({ stdout }) =>
         stdout.split("\0\0").flatMap((record) => {
           const fields = record.split("\0");
           const worktree = fields.find((field) => field.startsWith("worktree "));

@@ -5,12 +5,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
+  // Schema version of this file, not the server build. See `serverVersion`.
   version: Schema.Literal(1),
   pid: Schema.Int,
+  ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
@@ -24,6 +27,12 @@ export const PersistedServerRuntimeState = Schema.Struct({
    * the difference between "restart the service" and "stop your terminal".
    */
   serviceManaged: Schema.optional(Schema.Boolean),
+  /**
+   * The server build that wrote this record. `t3 triage` reports it because
+   * the CLI that runs triage can be a different build. Missing on records
+   * written by older servers.
+   */
+  serverVersion: Schema.optional(Schema.String),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
@@ -67,6 +76,7 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
+    serverVersion: packageJson.version,
   }));
 
 export const persistServerRuntimeState = (input: {
@@ -119,6 +129,7 @@ export const clearPersistedServerRuntimeState = (path: string) =>
  * alive.
  */
 export const isProcessAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;

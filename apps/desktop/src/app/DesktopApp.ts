@@ -42,7 +42,7 @@ const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 
 const makeDesktopRunId = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 

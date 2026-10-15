@@ -124,7 +124,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;

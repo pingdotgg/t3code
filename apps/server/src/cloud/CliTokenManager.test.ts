@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -15,6 +16,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
@@ -163,6 +166,57 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
 
 const tokenRequests = (requests: ReadonlyArray<RecordedTokenRequest>) =>
   requests.filter((request) => request.url.endsWith("/oauth/token"));
+
+// The endpoint sends 200 headers, then the JSON body never finishes.
+const layerStalledBody = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new ReadableStream({
+            start: (controller) => controller.enqueue(new TextEncoder().encode("{")),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    ),
+  ),
+);
+
+const expiredStoredToken = new TextEncoder().encode(
+  JSON.stringify({ accessToken: "expired", refreshToken: "refresh-token-1", expiresAtEpochMs: 0 }),
+);
+
+it.effect("a stalled token refresh fails and releases the credential lock", () =>
+  Effect.gen(function* () {
+    const manager = yield* CliTokenManager.CloudCliTokenManager;
+    const refresh = yield* manager.getExisting.pipe(Effect.flip, Effect.forkChild);
+    const hasCredential = yield* manager.hasCredential.pipe(Effect.forkChild);
+
+    yield* TestClock.adjust(Duration.seconds(10));
+
+    assert.instanceOf(yield* Fiber.join(refresh), CliTokenManager.CloudCliCredentialRefreshError);
+    assert.isTrue(yield* Fiber.join(hasCredential));
+  }).pipe(
+    Effect.provide(
+      CliTokenManager.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerStalledBody,
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeedSome(expiredStoredToken),
+            }),
+            Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+            NodeServices.layer,
+          ),
+        ),
+      ),
+    ),
+    provideTestEnv,
+  ),
+);
 
 it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) => {
   it.effect("requests a device code, shows it, and polls until Clerk grants the token", () =>
@@ -320,6 +374,20 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       const result = yield* Fiber.join(fiber);
 
       assert.isTrue(isAuthorizationError(result));
+    }),
+  );
+
+  it.effect("fails instead of hanging when the device authorization response stalls", () =>
+    Effect.gen(function* () {
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(layerStalledBody),
+        provideTestEnv,
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(10));
+
+      assert.isTrue(Cause.isTimeoutError(yield* Fiber.join(fiber)));
     }),
   );
 });

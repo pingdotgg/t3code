@@ -27,6 +27,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
+  type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -58,7 +59,11 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  ACP_EMPTY_OPTION_VALUE,
+  ACP_SESSION_MODE_OPTION_ID,
+  acpProviderOptionDescriptors,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -3641,6 +3646,105 @@ describe("AcpAdapterV2", () => {
           rawProtocolRequestParam(event, "configId") === "model",
       );
       assert.lengthOf(modelConfigurationRequests, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps an agent's empty-valued default choice selectable", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test");
+      let agentDescriptor: ProviderOptionDescriptor | undefined;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
+            protocolEvents,
+          }),
+          onSessionConfigurationUpdate: (configOptions, modeState) =>
+            Effect.sync(() => {
+              agentDescriptor = acpProviderOptionDescriptors({ configOptions, modeState }).find(
+                (descriptor) => descriptor.id === "agent",
+              );
+            }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-empty-default-agent");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const customAgentSelection = {
+        instanceId,
+        model: "default",
+        options: [{ id: "agent", value: "example" }],
+      } satisfies ModelSelection;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-empty-default-agent"),
+        modelSelection: customAgentSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: customAgentSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(agentDescriptor, {
+        id: "agent",
+        label: "Agent",
+        type: "select",
+        options: [
+          { id: ACP_EMPTY_OPTION_VALUE, label: "Copilot" },
+          { id: "example", label: "example" },
+        ],
+        currentValue: "example",
+      });
+
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: {
+            instanceId,
+            model: "default",
+            options: [{ id: "agent", value: ACP_EMPTY_OPTION_VALUE }],
+          },
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      assert.equal(
+        agentDescriptor?.type === "select" ? agentDescriptor.currentValue : undefined,
+        ACP_EMPTY_OPTION_VALUE,
+      );
+      const sentAgentValues = Array.from(yield* Queue.takeAll(protocolEvents))
+        .filter(
+          (event) =>
+            event.direction === "outgoing" &&
+            rawProtocolMethod(event) === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "agent",
+        )
+        .map((event) => rawProtocolRequestParam(event, "value"));
+      assert.deepEqual(sentAgentValues, ["example", ""]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

@@ -2501,7 +2501,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
       ),
     ]);
-    const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.png`);
     const data = image.toPNG();

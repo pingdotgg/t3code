@@ -779,6 +779,57 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("reads worktrees from git that rejects worktree list -z", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Git before 2.36 has no `worktree list -z` and exits with a usage error.
+      const oldGitSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("worktree") && command.args.includes("-z")) {
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(129)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.encodeText(Stream.make("error: unknown switch `z'")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, oldGitSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      const worktreePath = NodeFS.realpathSync.native(yield* makeTmpDir());
+      yield* git(cwd, ["worktree", "add", "-b", "feature/old-git", worktreePath]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const listedPath = refs.refs.find((ref) => ref.name === "feature/old-git")?.worktreePath;
+      assert.equal(listedPath && NodeFS.realpathSync.native(listedPath), worktreePath);
+
+      const paths = yield* driver.listWorktreePaths(cwd);
+      assert.include(
+        paths.map((listed) => NodeFS.realpathSync.native(listed)),
+        worktreePath,
+      );
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("refreshes the current branch after an external checkout", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -947,11 +998,25 @@ it.effect.each([
     name: "reference lock",
     stderr: "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
     expected: "could not update a local reference",
+    attempts: 2,
   },
   {
     name: "lock file",
     stderr: "fatal: Unable to create '/repo/.git/FETCH_HEAD.lock': File exists.",
     expected: "could not update a local reference",
+    attempts: 2,
+  },
+  {
+    name: "reference race on Git 2.53",
+    stderr: "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided",
+    expected: "could not update a local reference",
+    attempts: 2,
+  },
+  {
+    name: "held reference lock on Git 2.53",
+    stderr: "error: fetching ref refs/remotes/origin/main failed: reference already exists",
+    expected: "could not update a local reference",
+    attempts: 2,
   },
   {
     name: "unrelated remote chatter",
@@ -1012,7 +1077,37 @@ it.effect.each([
     assert.notInclude(yield* encodeGitCommandError(error), secret);
     assert.notProperty(error, "stderr");
     assert.notProperty(error, "args");
-    assert.equal(yield* Ref.get(attempts), 1);
+    assert.equal(yield* Ref.get(attempts), "attempts" in scenario ? scenario.attempts : 1);
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("retries a fetch that lost a ref update to another Git process", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command))
+          return yield* Effect.die("expected Git command");
+        if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
+        const attempt = yield* Ref.updateAndGet(attempts, (count) => count + 1);
+        if (attempt > 1) return makeSuccessfulHandle("");
+        return ChildProcessSpawner.makeHandle({
+          ...makeNonRepositoryHandle(),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+          stderr: Stream.encodeText(
+            Stream.make(
+              "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided",
+            ),
+          ),
+        });
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "main" });
+    assert.equal(yield* Ref.get(attempts), 2);
   }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 

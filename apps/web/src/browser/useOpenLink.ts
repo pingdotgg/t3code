@@ -34,7 +34,11 @@ const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   url: string,
   options?: {
-    readonly event?: { readonly metaKey: boolean; readonly ctrlKey: boolean };
+    readonly event?: {
+      readonly metaKey: boolean;
+      readonly ctrlKey: boolean;
+      readonly button?: number | undefined;
+    };
     /** Thread to open beside when it is not the hook's own, e.g. a sidebar row's. */
     readonly threadRef?: ScopedThreadRef | undefined;
   },

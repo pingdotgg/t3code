@@ -115,7 +115,7 @@ function createPullRequestRefreshAtomFamily<R, E>(
   });
 }
 
-/** Refresh only the live fields a linked thread renders. */
+/** Refresh only the live fields a linked thread renders. A merged pull request is not re-read. */
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
@@ -129,6 +129,7 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     refreshIntervalMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    isFinal: (summary) => summary.state === "merged",
   });
 }
 

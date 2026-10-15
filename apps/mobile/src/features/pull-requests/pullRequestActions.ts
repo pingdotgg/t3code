@@ -13,7 +13,7 @@ type ActionDetail = Pick<
 > & {
   readonly capabilities: Pick<
     PullRequestDetail["capabilities"],
-    "actions" | "mergeMethods" | "updateMethods"
+    "actions" | "mergeMethods" | "updateMethods" | "deleteBranch"
   >;
   readonly viewerPermissions: Pick<
     PullRequestDetail["viewerPermissions"],
@@ -41,6 +41,7 @@ export const PR_ACTION_LABELS = {
   "enable-auto-merge": "Enable auto-merge",
   "disable-auto-merge": "Disable auto-merge",
   revert: "Create revert pull request",
+  "delete-branch": "Delete branch",
   "approve-workflows": "Approve workflows",
 } as const satisfies Record<PullRequestAction, string>;
 
@@ -54,6 +55,7 @@ export const PR_ACTION_ICONS = {
   "enable-auto-merge": "clock",
   "disable-auto-merge": "xmark",
   revert: "arrow.uturn.backward",
+  "delete-branch": "trash",
   "approve-workflows": "checkmark",
 } as const satisfies Record<PullRequestAction, AppSymbolName>;
 
@@ -68,6 +70,7 @@ export const ALL_PR_ACTIONS: readonly PullRequestAction[] = [
   "close",
   "reopen",
   "revert",
+  "delete-branch",
 ];
 
 export function allowedMergeMethods(pr: ActionDetail) {
@@ -86,6 +89,8 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
     return false;
   if (action === "reopen") return pr.state === "closed";
   if (action === "revert") return pr.state === "merged";
+  if (action === "delete-branch")
+    return pr.state !== "open" && pr.capabilities.deleteBranch === true;
   if (pr.state !== "open") return false;
   switch (action) {
     case "update-branch":

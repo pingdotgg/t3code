@@ -293,11 +293,15 @@ describe("toOpenCodeFileParts", () => {
     const parts = OpenCodeRuntime.toOpenCodeFileParts({
       attachments: [
         attachment("application/pdf"),
-        attachment("text/markdown"),
+        attachment("text/plain"),
         attachment("image/png"),
         // A ZIP file part makes OpenCode's Anthropic path throw before the
         // turn starts; it must ride only as the prompt's file path line.
         attachment("application/zip"),
+        // OpenCode inlines only text/plain itself. Other text types reach the
+        // model API as raw file parts, which Anthropic and OpenAI reject.
+        attachment("text/html"),
+        attachment("text/markdown"),
         attachment("application/octet-stream"),
         // Image formats the model APIs reject stay on the fallback path too.
         attachment("image/bmp"),
@@ -310,7 +314,7 @@ describe("toOpenCodeFileParts", () => {
 
     NodeAssert.deepEqual(
       parts.map((part) => part.mime),
-      ["application/pdf", "text/markdown", "image/png"],
+      ["application/pdf", "text/plain", "image/png"],
     );
   });
 

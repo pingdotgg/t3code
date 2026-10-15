@@ -1,6 +1,11 @@
+import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
+import { useMemo } from "react";
 import { ScrollView } from "react-native";
 import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { useProjects, useThreadShells } from "../../state/entities";
+import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
 
 const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
@@ -28,6 +33,30 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
   }));
 }
 
+/** The project list's own order, which is the order its sidebar and new-task picker show. */
+function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
+  projects: readonly Project[],
+) {
+  const allProjects = useProjects();
+  const threads = useThreadShells();
+  const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
+  const scopes = useMemo(
+    () =>
+      sortHomeProjectScopes({
+        scopes: buildHomeProjectScopes({
+          projects: allProjects,
+          environmentId: null,
+          projectGroupingMode: sidebarProjectGroupingMode,
+        }),
+        threads,
+        pendingTasks: [],
+        projectSortOrder: "updated_at",
+      }).map((scope) => ({ memberProjectRefs: scope.projectRefs })),
+    [allProjects, sidebarProjectGroupingMode, threads],
+  );
+  return useMemo(() => sortProjectsByGroupOrder(projects, scopes), [projects, scopes]);
+}
+
 export function PullRequestListFilters(props: {
   readonly environments: readonly { id: string; label: string }[];
   readonly environmentId: string | null;
@@ -39,6 +68,7 @@ export function PullRequestListFilters(props: {
   readonly projects: readonly { id: string; title: string; environmentId: string }[];
 }) {
   const { value } = props;
+  const projects = useProjectsInSidebarOrder(props.projects);
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
@@ -76,7 +106,7 @@ export function PullRequestListFilters(props: {
         props.onChange({ ...value, sort: next as PullRequestListControls["sort"] });
         break;
       case "project": {
-        const project = props.projects.find(
+        const project = projects.find(
           (project) => JSON.stringify([project.environmentId, project.id]) === next,
         );
         props.onChange({
@@ -165,7 +195,7 @@ export function PullRequestListFilters(props: {
     {
       id: "projects",
       title:
-        props.projects.find(
+        projects.find(
           (project) =>
             project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
         )?.title ?? "Project",
@@ -173,7 +203,7 @@ export function PullRequestListFilters(props: {
         "project",
         Object.fromEntries([
           ["", "All projects"],
-          ...props.projects.map((project) => [
+          ...projects.map((project) => [
             JSON.stringify([project.environmentId, project.id]),
             project.title,
           ]),

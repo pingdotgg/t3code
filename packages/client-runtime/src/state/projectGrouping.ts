@@ -376,3 +376,25 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     };
   });
 }
+
+/**
+ * Orders projects the way a sorted group list shows them: by the first group holding each
+ * project. Projects in no group follow, and ties keep their incoming order.
+ */
+export function sortProjectsByGroupOrder<
+  TProject extends { readonly id: string; readonly environmentId: string },
+>(
+  projects: ReadonlyArray<TProject>,
+  groups: ReadonlyArray<{ readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef> }>,
+): TProject[] {
+  const rankByProject = new Map<string, number>();
+  groups.forEach((group, rank) => {
+    for (const ref of group.memberProjectRefs) {
+      const key = `${ref.environmentId}\0${ref.projectId}`;
+      if (!rankByProject.has(key)) rankByProject.set(key, rank);
+    }
+  });
+  const rankOf = (project: TProject) =>
+    rankByProject.get(`${project.environmentId}\0${project.id}`) ?? groups.length;
+  return [...projects].sort((left, right) => rankOf(left) - rankOf(right));
+}

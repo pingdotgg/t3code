@@ -8,15 +8,24 @@
  *   `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` wire cap and shrinks them to fit
  *   via `compressImageToByteLimit` instead of rejecting the paste.
  *
- * Supported images already within budget pass through untouched. HEIC/HEIF
- * photos are decoded to JPEG first because providers cannot consume them.
+ * Supported images already within budget pass through untouched, except that
+ * a PNG or JPEG longer than `IMAGE_ATTACHMENT_MAX_EDGE` on a side is scaled down
+ * to it in its own format before upload. HEIC/HEIF photos are decoded to JPEG
+ * first because providers cannot consume them.
  */
 
-/**
- * Longest edge kept when an image has to be re-encoded. Sized so a typical
- * retina screenshot (3024px wide) stays legible rather than being halved.
- */
-const MAX_DIMENSION = 2048;
+import {
+  downscalableImageMimeType,
+  fitImageAttachmentSize,
+  IMAGE_ATTACHMENT_MAX_EDGE,
+} from "@t3tools/client-runtime/image-attachment-size";
+import {
+  IMAGE_DIMENSIONS_HEADER_BYTES,
+  readImageDimensions,
+} from "@t3tools/shared/imageDimensions";
+
+/** Longest edge kept when an image has to be re-encoded. */
+const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 /** Base64 budget for a single stashed image (~975KB of binary). */
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 /**
@@ -424,9 +433,46 @@ export async function compressImageForStash(
 }
 
 /**
+ * Scales a PNG or JPEG whose long edge is over `IMAGE_ATTACHMENT_MAX_EDGE`
+ * down to that edge in its own format, so a PNG keeps its transparency.
+ * Returns null when the image already fits, is another format (GIF, WebP,
+ * SVG), or cannot be decoded or encoded here; the caller keeps the original.
+ */
+async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: ImageSize } | null> {
+  const mimeType = downscalableImageMimeType(file.type);
+  if (!mimeType || !canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    // The header answers "does it fit?" without decoding every attachment.
+    const header = readImageDimensions(
+      new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer()),
+    );
+    if (!header || !fitImageAttachmentSize(header)) return null;
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const imageSize = fitImageAttachmentSize(bitmap);
+    if (!imageSize) return null;
+    const target = createCanvas(imageSize.width, imageSize.height);
+    if (!target) return null;
+    target.context.imageSmoothingQuality = "high";
+    target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
+    const blob = await encodeCanvas(target.canvas, QUALITY_STEPS[0], mimeType);
+    if (!blob) return null;
+    return {
+      file: new File([blob], file.name, { type: mimeType, lastModified: file.lastModified }),
+      imageSize,
+    };
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
+}
+
+/**
  * Shrinks `file` until its binary size fits `maxBytes`, returning a new
- * `File` (WebP or JPEG). Files already within the limit pass through
- * untouched, preserving their exact bytes and format. Sources above
+ * `File` (WebP or JPEG). A PNG or JPEG over `IMAGE_ATTACHMENT_MAX_EDGE` is
+ * first scaled to that edge in its own format. Other files already within the
+ * limit pass through untouched, preserving their exact bytes and format. Sources above
  * `MAX_COMPRESSIBLE_SOURCE_BYTES` are refused outright — decoding them is
  * the risk, so no amount of output budget makes them safe. An internally
  * converted image can provide its original source size when the intermediate
@@ -437,7 +483,11 @@ export async function compressImageToByteLimit(
   maxBytes: number,
   options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
-  if (file.size <= maxBytes) {
+  const fitted = await fitImageToMaxEdge(file);
+  if (fitted && fitted.file.size <= maxBytes) {
+    return { ok: true, file: fitted.file, recompressed: true, imageSize: fitted.imageSize };
+  }
+  if (!fitted && file.size <= maxBytes) {
     return { ok: true, file, recompressed: false };
   }
   if ((options?.sourceSizeBytes ?? file.size) > MAX_COMPRESSIBLE_SOURCE_BYTES) {
@@ -447,7 +497,11 @@ export async function compressImageToByteLimit(
   // into 4 chars; flooring keeps the budget a hair conservative instead of
   // admitting an encoding right at the byte cap.
   const budgetChars = Math.floor(maxBytes / 3) * 4;
-  const reencoded = await reencodeWithinBudget(file, budgetChars, options?.preferredMimeType);
+  const reencoded = await reencodeWithinBudget(
+    fitted?.file ?? file,
+    budgetChars,
+    options?.preferredMimeType,
+  );
   if (!reencoded.ok) {
     return reencoded;
   }

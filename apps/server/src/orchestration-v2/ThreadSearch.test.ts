@@ -7,9 +7,14 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -199,3 +204,54 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 });
+
+it.effect("searches on the reader worker while the writer is busy", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-search-" });
+    const layerFile = Layer.mergeAll(
+      ThreadSearch.layer,
+      ProjectionStore.layer,
+      ProjectStore.layer,
+    ).pipe(
+      Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:search-reader");
+      const threadId = ThreadId.make("thread:reader");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [thread(threadId, project), message(threadId, "reader", "user", "needle on the reader")],
+        projections.apply,
+        { discard: true },
+      );
+
+      // A write transaction holds the writer connection. A search on the writer would queue
+      // behind it and never finish; one on the reader worker does not wait.
+      const writerHeld = yield* Deferred.make<void>();
+      const releaseWriter = yield* Deferred.make<void>();
+      const writer = yield* Effect.forkChild(
+        sql.withTransaction(
+          Deferred.succeed(writerHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseWriter)),
+          ),
+        ),
+      );
+      yield* Deferred.await(writerHeld);
+      const result = yield* search.search({ query: "needle" });
+      yield* Deferred.succeed(releaseWriter, undefined);
+      yield* Fiber.join(writer);
+
+      assert.deepEqual(
+        result.matches.map((match) => match.threadId),
+        [threadId],
+      );
+    }).pipe(Effect.provide(layerFile));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

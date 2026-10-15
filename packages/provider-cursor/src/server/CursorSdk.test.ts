@@ -25,7 +25,7 @@ writeFileSync(
 );
 registerHooks({
   resolve(specifier, context, next) {
-    if (specifier === "@cursor/sdk") {
+    if (specifier === "@cursor/sdk" || specifier === "@cursor/sdk/sqlite") {
       return { url: pathToFileURL(stub).href, shortCircuit: true };
     }
     return next(specifier, context);

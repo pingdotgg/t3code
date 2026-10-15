@@ -247,7 +247,7 @@ export const make = Effect.gen(function* () {
         }
         const url = siblingPullRequestUrl(link.url, layer.number);
         if (url === null) continue;
-        const uuid = yield* crypto.randomUUIDv4;
+        const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({
           type: "thread.pull-request.link",
           commandId: CommandId.make(`server:pr-stack-link:${thread.id}:${uuid}`),
@@ -259,7 +259,7 @@ export const make = Effect.gen(function* () {
         linkedThisSweep.add(dedupeKey);
       }
       if (changed) {
-        const uuid = yield* crypto.randomUUIDv4;
+        const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
@@ -440,6 +440,8 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         switch (event.type) {
+          case "thread.pull-request-link-updated":
+            return event.payload.snapshot === null ? requestSync(event.payload) : Effect.void;
           case "thread.pull-request-synced":
             return Effect.forEach(
               visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(

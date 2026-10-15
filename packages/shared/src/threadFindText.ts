@@ -5,7 +5,7 @@ import {
 } from "./inlineSkills.ts";
 import {
   artifactTemplateFromHastProperties,
-  renderCodexFileCitationsAsMarkdown,
+  renderCodexInlineDirectivesAsMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
 import {
@@ -117,7 +117,7 @@ function markdownThreadFindText(
       : assistantProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
     const target = resolveMarkdownFileLinkTarget(href, cwd);

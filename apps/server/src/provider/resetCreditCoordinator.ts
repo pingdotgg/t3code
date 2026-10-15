@@ -69,7 +69,7 @@ export const make = Effect.gen(function* () {
       return yield* state.lock.withPermits(1)(
         Effect.gen(function* () {
           const existing = yield* Ref.get(state.pendingKey);
-          const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4);
+          const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4());
           yield* Ref.set(state.pendingKey, idempotencyKey);
           const outcome = yield* consume(idempotencyKey).pipe(
             Effect.tapError((error) =>

@@ -209,6 +209,57 @@ describe("threadHistoryPaging", () => {
     );
   });
 
+  it("counts runs that a notification started toward the 150-turn ceiling", () => {
+    // A wake (PR watch, task completion) starts its run with a notification. A
+    // row of the run (a handoff) can come before it, and a wake steered into the
+    // running turn comes after it and starts no turn.
+    const inRun = (index: number, run: number, item: object = {}) => {
+      const row = makeRow(index);
+      return {
+        ...row,
+        item: { ...row.item, runId: RunId.make(`run-${run}`), ...item },
+      } as OrchestrationV2ProjectedTurnItem;
+    };
+    const notification = (summary: string) => ({
+      type: "notification",
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary,
+    });
+    const items = Array.from({ length: 161 }, (_, run) => [
+      inRun(run * 4, run),
+      inRun(
+        run * 4 + 1,
+        run,
+        run === 0
+          ? {
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              messageId: MessageId.make("prompt-0"),
+              text: "Prompt 0",
+              attachments: [],
+            }
+          : notification(`Wake ${run}`),
+      ),
+      inRun(run * 4 + 2, run, notification(`Steer ${run}`)),
+      inRun(run * 4 + 3, run),
+    ]).flat();
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    // 150 runs from the start of run 11. Its earlier row goes to the older page.
+    expect(first.items).toHaveLength(150 * 4 - 1);
+    expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
+    const older = selectHistoryPageFromCursor({
+      items,
+      cursor: first.nextCursor!,
+      snapshotSequence: 1,
+    });
+    expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
+      items.map((row) => row.sourceItemId),
+    );
+  });
+
   it("pages agent-only child transcripts instead of dropping their earlier activity", () => {
     const commandRows = Array.from({ length: 90 }, (_, index) => makeRow(index + 1));
     const first = makeRow(0);

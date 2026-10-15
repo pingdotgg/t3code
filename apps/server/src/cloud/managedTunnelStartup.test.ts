@@ -34,7 +34,7 @@ describe("managedTunnelStartupAction", () => {
     ).toEqual({ action: "reconcile_link" });
   });
 
-  it.each(["ready", "unavailable"] as const)(
+  it.each(["ready", "unavailable", "revoked"] as const)(
     "does not provision after a %s registration result",
     (status) => {
       expect(

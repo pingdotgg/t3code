@@ -209,7 +209,7 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
       joinPath: path.join,
     }).address;
   const crypto = yield* Crypto.Crypto;
-  const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const request: DesktopAppActivationRequest = {
     version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
     requestId,

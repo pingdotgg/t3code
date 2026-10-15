@@ -15,6 +15,21 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   sort: "updated",
 };
 
+/** A scope saved on the Scratch folder is no longer offered, so it reads as "All projects". */
+export function withoutScratchProjectScope(
+  controls: PullRequestListControls,
+  projects: readonly { id: string; environmentId: string; isScratch?: true }[],
+): PullRequestListControls {
+  return projects.some(
+    (project) =>
+      project.isScratch &&
+      project.id === controls.projectId &&
+      project.environmentId === controls.projectEnvironmentId,
+  )
+    ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
+    : controls;
+}
+
 export function pullRequestListKey(
   item: Pick<PullRequestListEntry, "host" | "repository" | "number">,
 ) {

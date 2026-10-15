@@ -1767,6 +1767,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.pull-request-link-updated"),
+    payload: ThreadPullRequestLink,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2Run,
   }),
@@ -1900,6 +1905,14 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+
+export const OrchestrationV2ThreadTranscript = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  updatedAt: Schema.DateTimeUtc,
+  items: Schema.Array(OrchestrationV2ProjectedTurnItem),
+});
+export type OrchestrationV2ThreadTranscript = typeof OrchestrationV2ThreadTranscript.Type;
 
 export const OrchestrationV2ShellThreadStatus = Schema.Union([
   Schema.Literal("idle"),
@@ -2584,6 +2597,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.provider-switched",
     ]),
     payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.pull-request-link-updated"),
+    payload: ThreadPullRequestLink,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

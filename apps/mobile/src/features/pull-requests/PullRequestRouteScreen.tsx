@@ -17,7 +17,12 @@ import {
   PR_ROW_EXIT,
   PR_POSITION_LAYOUT,
 } from "./pullRequestAnimations";
-import { openOnProviderLabel } from "./pullRequestActions";
+import {
+  canPerformPullRequestAction,
+  openOnProviderLabel,
+  PR_ACTION_ICONS,
+  PR_ACTION_LABELS,
+} from "./pullRequestActions";
 import * as Clipboard from "expo-clipboard";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
@@ -25,6 +30,7 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { isPullRequestTestFile } from "./pullRequestFileFilters";
@@ -341,6 +347,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const summary = params.initialSummary;
   const identity = pr ?? summary;
   const permissions = usePullRequestPermissions(params, pr);
+  const action = usePullRequestAction(params, pr);
+  const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
+  const confirmDeleteBranch = () =>
+    pr &&
+    action.confirm(
+      "delete-branch",
+      PR_ACTION_LABELS["delete-branch"],
+      `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
+    );
   const stack = usePullRequestStack(params, pr);
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
   const refreshGuide = useAtomRefresh(composerPullRequests.reviewGuide(requestTarget(params)));
@@ -417,6 +432,18 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
+              ...(showsDeleteBranch
+                ? [
+                    {
+                      accessibilityLabel: PR_ACTION_LABELS["delete-branch"],
+                      icon: PR_ACTION_ICONS["delete-branch"],
+                      disabled: !action.available("delete-branch"),
+                      destructive: true,
+                      overflowOnly: true,
+                      onPress: confirmDeleteBranch,
+                    },
+                  ]
+                : []),
             ]}
           />
         ) : null}
@@ -453,6 +480,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               >
                 <NativeHeaderToolbar.Label>
                   {openOnProviderLabel(pr.provider)}
+                </NativeHeaderToolbar.Label>
+              </NativeHeaderToolbar.MenuAction>
+            ) : null}
+            {showsDeleteBranch ? (
+              <NativeHeaderToolbar.MenuAction
+                icon={PR_ACTION_ICONS["delete-branch"]}
+                destructive
+                disabled={!action.available("delete-branch")}
+                subtitle={
+                  action.busy
+                    ? "Deleting…"
+                    : connected
+                      ? pr.headBranch
+                      : "Reconnect to delete this branch."
+                }
+                onPress={confirmDeleteBranch}
+              >
+                <NativeHeaderToolbar.Label>
+                  {PR_ACTION_LABELS["delete-branch"]}
                 </NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
             ) : null}

@@ -48,7 +48,7 @@ describe("available cloud environment presentation", () => {
       }),
     ).toMatchObject({
       connectionState: "unsupported",
-      statusText: "Client not supported",
+      statusText: expect.stringContaining("Update your app"),
     });
   });
 

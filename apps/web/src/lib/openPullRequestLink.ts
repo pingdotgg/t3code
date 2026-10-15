@@ -8,6 +8,7 @@ import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/c
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { useOpenLink } from "../browser/useOpenLink";
+import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -122,11 +123,15 @@ export function findProjectOnChangeRequestHost(
  * the pull requests page: a reader following a link the agent wrote is reading the thread, and
  * should still be reading it afterwards. Any change request opens there, not only the thread's
  * own, since the panel is told which one to show.
+ *
+ * With "Open pull requests in T3 Code" turned off, every link is left alone.
  */
+/** Cmd/Ctrl-click and middle-click send a pull request to the browser instead of the panel. */
 export function shouldOpenPullRequestExternally(
-  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey"> &
+    Partial<Pick<MouseEvent<HTMLElement>, "button">>,
 ): boolean {
-  return event.metaKey || event.ctrlKey;
+  return event.metaKey || event.ctrlKey || event.button === 1;
 }
 
 export function useOpenChangeRequestLink(
@@ -145,9 +150,10 @@ export function useOpenChangeRequestLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   return useCallback(
     (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
+      if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -243,7 +249,7 @@ export function useOpenChangeRequestLink(
       });
       return true;
     },
-    [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
+    [allProjects, navigate, openInApp, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
   );
 }
 
@@ -252,11 +258,13 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openLink = useOpenLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
+      // Buttons also pass this to onAuxClick for middle-click; a right-click is not an open.
+      if (event.button > 1) return false;
       event.stopPropagation();
       const openInBrowser = shouldOpenPullRequestExternally(event);
       const isAnchor =
         event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-      // A real link already knows how to cmd/ctrl+click. Leave its default
+      // A real link already knows how to cmd/ctrl/middle-click. Leave its default
       // action alone so the browser (or Electron's window-open handler) opens
       // the host. Buttons have no href, so they still go through openExternal.
       if (openInBrowser && isAnchor) return false;

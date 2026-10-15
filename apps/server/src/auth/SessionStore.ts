@@ -660,9 +660,9 @@ export const make = Effect.gen(function* () {
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
-        yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => new SessionCredentialIssueError({ cause })),
-        ),
+        yield* crypto
+          .randomUUIDv4()
+          .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause }))),
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {

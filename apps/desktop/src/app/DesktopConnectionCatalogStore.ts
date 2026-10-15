@@ -411,7 +411,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-    const suffix = (yield* crypto.randomUUIDv4.pipe(
+    const suffix = (yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({

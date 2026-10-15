@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
-import { createModelSelection } from "./model.ts";
+import { createModelSelection, readCustomModelEntries } from "./model.ts";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -95,6 +95,11 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
  * `includeConfiguredInstances` is set, configured instances of those
  * drivers. `null` when none is.
  *
+ * The model is the driver's cheap default, unless `defaultModelSelection`
+ * (the thread default) is one of that instance's custom models. A custom
+ * model usually means a backend that may refuse the built-in default, and
+ * the thread default, with its options, is known to work there.
+ *
  * `includeConfiguredInstances` is for the project-scoped caller only: a
  * project that disabled every built-in instance should still be able to
  * fall back to one it configured itself. The machine-level caller leaves it
@@ -104,7 +109,10 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
-  options?: { readonly includeConfiguredInstances?: boolean },
+  options?: {
+    readonly includeConfiguredInstances?: boolean;
+    readonly defaultModelSelection?: ModelSelection | null;
+  },
 ): ModelSelection | null {
   const candidates = [
     ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
@@ -121,6 +129,14 @@ export function fallbackTextGenerationModelSelection(
   const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;
   const [instanceId, driver] = match;
+  const threadDefault = options?.defaultModelSelection;
+  const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
+  if (
+    threadDefault?.instanceId === instanceId &&
+    readCustomModelEntries(config?.customModels).some((entry) => entry.slug === threadDefault.model)
+  ) {
+    return threadDefault;
+  }
   return {
     instanceId,
     model:
@@ -507,6 +523,7 @@ export function applyServerSettingsPatch(
                   rules: {
                     worktreeKeepWhen: next.storageCleanup.worktreeKeepWhen,
                     worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
+                    worktreeSettledAfterDays: next.storageCleanup.worktreeSettledAfterDays,
                     worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
                     worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
                     worktreeUnchanged: next.storageCleanup.worktreeUnchanged,

@@ -688,7 +688,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
           );
         }
-        const operationId = yield* crypto.randomUUIDv4;
+        const operationId = yield* crypto.randomUUIDv4();
         const next: ProviderInstallState = {
           driver: DRIVER,
           operationId,
