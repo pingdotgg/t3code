@@ -5,7 +5,9 @@
  * registered driver factories against `ServerSettings.providerInstances`.
  * The registry watches settings; when an instance's config changes (or
  * the entry disappears), the registry tears down the affected instance's
- * scope and rebuilds — that's the entire hot-reload story.
+ * scope and rebuilds. Provider sessions live outside that scope, so
+ * `ProviderSessionManagerV2` releases the ones opened from a replaced
+ * instance once their turns finish.
  *
  * What rest-of-server reads from here:
  *   - `getInstance(instanceId)` — for routing turn/session calls.
