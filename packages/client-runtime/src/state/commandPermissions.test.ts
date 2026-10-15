@@ -59,6 +59,40 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "requires source-control write access for review commits, reverts, and draft comments",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          for (const method of [
+            WS_METHODS.reviewCommit,
+            WS_METHODS.reviewRevert,
+            WS_METHODS.reviewGenerateCommitMessage,
+            WS_METHODS.pullRequestsSaveDraftComment,
+            WS_METHODS.pullRequestsDiscardDraftComment,
+          ]) {
+            const command = createCommandPermissions(runtime, method);
+            registry.set(sessions(env), AsyncResult.success(grant(true)));
+            expect(registry.get(command.permissionAtom(env))).toBe(false);
+            expect(
+              (yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+            ).toBe(AuthSourceControlWriteScope);
+            registry.set(
+              sessions(env),
+              AsyncResult.success({
+                ...grant(false),
+                scopes: [AuthSourceControlWriteScope],
+                permissions: [AuthSourceControlWriteScope],
+              }),
+            );
+            expect(registry.get(command.permissionAtom(env))).toBe(true);
+            yield* command.authorize(registry, env);
+          }
+        }),
+      ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

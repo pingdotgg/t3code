@@ -16,6 +16,8 @@ const inputGroupVariants = cva(
     variants: {
       size: {
         default: null,
+        compact:
+          "has-[textarea]:**:[textarea]:min-h-7 has-[textarea]:**:[textarea]:py-1 has-[textarea]:**:[textarea]:px-2.5 text-xs sm:text-xs",
         lg: "h-9",
       },
       variant: {

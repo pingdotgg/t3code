@@ -33,6 +33,18 @@ public class T3ReviewDiffModule: Module {
         view.setSelectedRowIdsJson(selectedRowIdsJson)
       }
 
+      Prop("enableLineRangeSelection") { (view: T3ReviewDiffView, enabled: Bool) in
+        view.setEnableLineRangeSelection(enabled)
+      }
+
+      Prop("showViewedCheckbox") { (view: T3ReviewDiffView, shown: Bool) in
+        view.setShowViewedCheckbox(shown)
+      }
+
+      Prop("viewedCheckboxEnabled") { (view: T3ReviewDiffView, enabled: Bool) in
+        view.setViewedCheckboxEnabled(enabled)
+      }
+
       Prop("collapsedCommentIdsJson") { (view: T3ReviewDiffView, collapsedCommentIdsJson: String) in
         view.setCollapsedCommentIdsJson(collapsedCommentIdsJson)
       }
@@ -83,6 +95,9 @@ public class T3ReviewDiffModule: Module {
         "onToggleFile",
         "onToggleViewedFile",
         "onPressLine",
+        "onSelectLineRange",
+        "onPressHunk",
+        "onPressFileAction",
         "onToggleComment",
         "onPullToRefresh"
       )

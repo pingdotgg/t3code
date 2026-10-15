@@ -7,7 +7,7 @@ import {
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
-} from "./pullRequestReactions.logic";
+} from "./reviewReactions.ts";
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
   return {

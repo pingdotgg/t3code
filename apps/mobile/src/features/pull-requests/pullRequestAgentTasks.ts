@@ -1,6 +1,6 @@
 import type { PullRequestDetail, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
 
-export type PullRequestAgentTask = "ask" | "explain" | "feedback" | "conflicts" | "watch";
+export type PullRequestAgentTask = "ask" | "feedback" | "conflicts" | "watch";
 
 /** An explicit new-thread choice must never fall back to the single linked thread. */
 export function pullRequestAgentThread(
@@ -16,8 +16,6 @@ export function pullRequestAgentPrompt(task: PullRequestAgentTask): string {
   switch (task) {
     case "ask":
       return "";
-    case "explain":
-      return "Explain this pull request. Read the diff and walk through its purpose, the changes, the risks, and what I should read closely before approving. Do not change any code.";
     case "feedback":
       return "Address the actionable feedback and failing checks on this pull request. Fetch the latest review threads and check results, skip resolved feedback, and verify each finding before changing code. First confirm this thread is on the PR's branch; if it isn't, prepare the PR in its own worktree. Keep the fixes focused and run the relevant checks.";
     case "conflicts":
@@ -35,7 +33,6 @@ export function pullRequestAgentActions(pr: PullRequestDetail, canWatch: boolean
       icon: "bubble.left.and.text.bubble.right",
       disabled: false,
     },
-    { task: "explain", title: "Explain this PR", icon: "book", disabled: false },
     {
       task: "feedback",
       title: "Address feedback",

@@ -315,6 +315,32 @@ describe("pull request detail decoding", () => {
       commits: page.commits ?? [],
     }));
 
+  it.each([
+    ["CLEAN", true],
+    ["HAS_HOOKS", true],
+    ["BLOCKED", false],
+    ["BEHIND", false],
+    ["UNSTABLE", false],
+    ["UNKNOWN", undefined],
+    ["SOMETHING_NEW", undefined],
+    [null, undefined],
+  ])(
+    "preserves GitHub merge requirements for %s independently of CI",
+    (mergeStateStatus, expected) => {
+      const raw = JSON.parse(detailJson) as Record<string, unknown>;
+      const detail = expectSuccess(
+        decodePullRequestDetailJson(
+          JSON.stringify({
+            ...raw,
+            mergeStateStatus,
+            statusCheckRollup: [{ name: "build", status: "COMPLETED", conclusion: "SUCCESS" }],
+          }),
+        ),
+      );
+      expect(detail.mergeRequirementsSatisfied).toBe(expected);
+    },
+  );
+
   it("maps check-run status and commit-status state onto one vocabulary", () => {
     const detail = expectSuccess(decodePullRequestDetailJson(detailJson));
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
@@ -1262,6 +1288,29 @@ describe("review thread decoding", () => {
     ).toBe("2026-07-02T00:00:00Z");
   });
 
+  it("retains both sides and endpoints of a multiline conversation", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_range",
+            path: "src/a.ts",
+            line: 53,
+            diffSide: "RIGHT",
+            startLine: 48,
+            startDiffSide: "LEFT",
+            comments: { totalCount: 1, nodes: [comment("range", "Review these lines")] },
+          },
+        ]),
+      ),
+    );
+    expect(decoded.threads[0]?.thread).toMatchObject({
+      line: 53,
+      side: "right",
+      startLine: 48,
+      startSide: "left",
+    });
+  });
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
     const reviewThreads = expectSuccess(
       decodeReviewThreadsJson(
@@ -1584,6 +1633,44 @@ describe("review submission payload", () => {
         { path: "src/b.ts", line: 3, side: "LEFT", body: "why remove?" },
       ],
     });
+  });
+
+  it("keeps both ends and sides of multiline comments in the GitHub review payload", () => {
+    expect(
+      buildReviewSubmission({
+        verdict: "comment",
+        body: "",
+        comments: [
+          {
+            path: "src/a.ts",
+            body: "Range",
+            position: { kind: "added", newLine: 12, startLine: 8, startSide: "right" },
+          },
+          {
+            path: "src/b.ts",
+            body: "Removed range",
+            position: { kind: "deleted", oldLine: 7, startLine: 3, startSide: "left" },
+          },
+        ],
+      }).comments,
+    ).toEqual([
+      {
+        path: "src/a.ts",
+        body: "Range",
+        line: 12,
+        side: "RIGHT",
+        start_line: 8,
+        start_side: "RIGHT",
+      },
+      {
+        path: "src/b.ts",
+        body: "Removed range",
+        line: 7,
+        side: "LEFT",
+        start_line: 3,
+        start_side: "LEFT",
+      },
+    ]);
   });
 
   it("sends an approval with no words and no comments", () => {
@@ -2177,12 +2264,16 @@ describe("pull request watch fingerprints", () => {
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
+    const requirementsMet = decode({ ...pullRequest(base), mergeStateStatus: "CLEAN" }).get(0)!;
+    const reviewRequired = decode({ ...pullRequest(base), mergeStateStatus: "BLOCKED" }).get(0)!;
 
     expect(checkFinished.status).not.toBe(before.status);
     expect(checkFinished.remarks).toBe(before.remarks);
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    expect(requirementsMet.status).not.toBe(reviewRequired.status);
+    expect(requirementsMet.remarks).toBe(reviewRequired.remarks);
     // A pull request GitHub had no answer for is left for a full read.
     expect(decode(null, pullRequest(base)).has(0)).toBe(false);
   });

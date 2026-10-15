@@ -4,7 +4,7 @@ import {
   ProviderInstanceId,
   type PullRequestReviewGuideResult,
 } from "@t3tools/contracts";
-import { guideNoticeState, reviewGuideState } from "./reviewGuideState";
+import { guideNoticeState, reviewGuideState, shouldAutoGenerateGuide } from "./reviewGuideState";
 
 const guide: NonNullable<PullRequestReviewGuideResult["guide"]> = {
   headSha: "old-head",
@@ -53,13 +53,24 @@ const view = {
   running: false,
   startError: null,
   error: null,
+  canWrite: true,
 };
 
 describe("guide notice transitions", () => {
-  it("does not flash an empty guide before the first response", () => {
+  it("moves from loading into automatic generation without a manual action", () => {
     expect(guideNoticeState({ ...view, isPending: true }).kind).toBe("loading");
     expect(
       guideNoticeState({ ...view, data: { guide: null, run: null, currentHeadSha: "head" } }).kind,
+    ).toBe("writing");
+  });
+
+  it("waits for write access without claiming generation has started", () => {
+    expect(
+      guideNoticeState({
+        ...view,
+        canWrite: false,
+        data: { guide: null, run: null, currentHeadSha: "head" },
+      }).kind,
     ).toBe("empty");
   });
 
@@ -86,6 +97,32 @@ describe("guide notice transitions", () => {
     };
     expect(guideNoticeState({ ...view, data }).kind).toBe("failed");
     expect(guideNoticeState({ ...view, data, running: true }).kind).toBe("writing");
+  });
+
+  it("automatically writes for a new head after a previous head failed", () => {
+    const data: PullRequestReviewGuideResult = {
+      guide: null,
+      currentHeadSha: "new-head",
+      run: {
+        _tag: "Failed",
+        headSha: "old-head",
+        failedAt: guide.generatedAt,
+        detail: "Writer disconnected",
+      },
+    };
+    expect(shouldAutoGenerateGuide({ ...view, data })).toBe(true);
+    expect(guideNoticeState({ ...view, data }).kind).toBe("writing");
+    const failedHead = { ...data, currentHeadSha: "old-head" };
+    expect(shouldAutoGenerateGuide({ ...view, data: failedHead })).toBe(false);
+    expect(guideNoticeState({ ...view, data: failedHead }).kind).toBe("failed");
+  });
+
+  it("does not auto-start without data or permission, during a run, or over a saved guide", () => {
+    expect(shouldAutoGenerateGuide(view)).toBe(false);
+    const data = { guide: null, run: null, currentHeadSha: "head" };
+    expect(shouldAutoGenerateGuide({ ...view, data, canWrite: false })).toBe(false);
+    expect(shouldAutoGenerateGuide({ ...view, data, running: true })).toBe(false);
+    expect(shouldAutoGenerateGuide({ ...view, data: { ...data, guide } })).toBe(false);
   });
 
   it("keeps a stale guide readable through rewriting and completion", () => {

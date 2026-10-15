@@ -1,9 +1,10 @@
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { pullRequestMergeRequirementsUnmet } from "@t3tools/client-runtime/review-workspace";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Platform, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
@@ -40,6 +41,7 @@ export function PullRequestMergeControls(props: {
   const [selectedMethod, setSelectedMethod] = useState<PullRequestMergeMethod | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  const [confirmation, setConfirmation] = useState<{ key: string; bypass: boolean } | null>(null);
   const methods = allowedMergeMethods(pr);
   const preferred =
     selectedMethod ??
@@ -86,13 +88,36 @@ export function PullRequestMergeControls(props: {
     permissions.canWrite &&
     canPerformPullRequestAction(pr, autoAction);
 
-  const perform = async (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+  const canAdminMerge =
+    permissions.connected &&
+    permissions.canWrite &&
+    pr.viewerPermissions.adminMerge === true &&
+    canPerformPullRequestAction(pr, "merge") &&
+    !stack.stack &&
+    canMergeSingle &&
+    method !== undefined;
+  const requirementsUnmet = pullRequestMergeRequirementsUnmet({
+    mergeRequirementsSatisfied: pr.mergeRequirementsSatisfied,
+    checks: pr.checks,
+    baseBehind: pr.baseComparison === "behind" && pr.mergeability === "mergeable",
+  });
+  const canBypassRequirements = canAdminMerge && requirementsUnmet;
+  const confirmationKey = `${target.environmentId}:${pr.projectId}:${pr.repository}:${pr.number}:${pr.headSha ?? ""}:${method ?? ""}`;
+  const bypass = confirmation?.key === confirmationKey && confirmation.bypass;
+  const confirmationOpen = confirmation?.key === confirmationKey && canBypassRequirements;
+  const canConfirmAutoMerge = canAutoMerge && autoAction === "enable-auto-merge";
+  if (confirmation !== null && (!canBypassRequirements || confirmation.key !== confirmationKey))
+    setConfirmation(null);
+  const perform = async (
+    action: "merge" | "enable-auto-merge" | "disable-auto-merge",
+    adminOverride = false,
+  ) => {
     if (
       pending.current ||
       (action !== "disable-auto-merge" && !method) ||
-      (action === "merge" ? !canMerge : !canAutoMerge)
+      (action === "merge" ? (adminOverride ? !canBypassRequirements : !canMerge) : !canAutoMerge)
     )
-      return;
+      return false;
     pending.current = true;
     setBusy(true);
     try {
@@ -101,13 +126,14 @@ export function PullRequestMergeControls(props: {
         input: {
           ...target.input,
           action,
+          ...(adminOverride ? { adminOverride: true, mergeMethod: method } : {}),
           ...(action === "merge" && method && stack.stack && scope
             ? {
                 stackNumber: stack.stack.number,
                 expectedStackHeads: scope.heads,
                 mergeMethod: method,
               }
-            : action === "merge" && method
+            : action === "merge" && method && !adminOverride
               ? {
                   resolveMergeMethod: (fresh) => {
                     if (
@@ -124,11 +150,13 @@ export function PullRequestMergeControls(props: {
         },
       });
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      return true;
     } catch (cause) {
       Alert.alert(
         "Couldn't complete the merge action",
         cause instanceof Error ? cause.message : "Try again.",
       );
+      return false;
     } finally {
       // A stack can partly merge before the provider reports a failure.
       refreshDetail();
@@ -139,6 +167,10 @@ export function PullRequestMergeControls(props: {
     }
   };
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+    if (action === "merge" && canBypassRequirements) {
+      setConfirmation({ key: confirmationKey, bypass: false });
+      return;
+    }
     const title =
       action === "merge"
         ? scope && scope.layers.length > 1
@@ -273,6 +305,81 @@ export function PullRequestMergeControls(props: {
       !(checkingStack && reason === "Refresh the stack before merging.") ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
       ) : null}
+      <Modal
+        visible={confirmationOpen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => {
+          if (!pending.current) setConfirmation(null);
+        }}
+      >
+        <View className="flex-1 items-center justify-center bg-backdrop px-6">
+          <View className="w-full max-w-lg gap-4 rounded-[24px] bg-card px-5 py-5">
+            <View className="gap-1">
+              <Text className="text-lg font-t3-semibold">
+                {method ? MERGE_METHODS[method].title : "Merge pull request"}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {bypass
+                  ? `Merge #${pr.number} into ${pr.baseBranch} before its requirements are met.`
+                  : canConfirmAutoMerge || pr.autoMergeEnabled
+                    ? "Merge requirements have not passed. Auto-merge waits for them to be met."
+                    : "Merge requirements have not passed."}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel="Merge without waiting for requirements to be met (bypass rules)"
+              accessibilityState={{ checked: bypass, disabled: busy }}
+              disabled={busy}
+              className="min-h-11 flex-row items-start gap-2 py-2"
+              onPress={() => setConfirmation({ key: confirmationKey, bypass: !bypass })}
+            >
+              <View
+                className={`mt-0.5 size-5 shrink-0 items-center justify-center rounded border ${bypass ? "border-primary bg-primary" : "border-border"}`}
+              >
+                {bypass ? (
+                  <SymbolView
+                    name="checkmark"
+                    size={12}
+                    tintColorClassName="accent-primary-foreground"
+                  />
+                ) : null}
+              </View>
+              <Text className="min-w-0 flex-1 text-sm text-danger-foreground">
+                Merge without waiting for requirements to be met (bypass rules)
+              </Text>
+            </Pressable>
+            <View className="flex-row flex-wrap justify-end gap-2">
+              <MaterialButton
+                label="Cancel"
+                disabled={busy}
+                onPress={() => setConfirmation(null)}
+              />
+              <MaterialButton
+                label={
+                  busy
+                    ? "Working…"
+                    : bypass
+                      ? "Bypass rules and merge"
+                      : canConfirmAutoMerge
+                        ? "Enable auto-merge"
+                        : "Confirm merge"
+                }
+                tone={bypass ? "danger" : "primary"}
+                disabled={busy || (!bypass && !canConfirmAutoMerge)}
+                loading={busy}
+                onPress={async () => {
+                  const completed = await perform(bypass ? "merge" : "enable-auto-merge", bypass);
+                  if (completed) setConfirmation(null);
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
       {pr.autoMergeEnabled ? (
         <Text className="px-1 text-xs text-foreground-muted">
           Auto-merge is enabled{pr.autoMergeMethod ? ` · ${pr.autoMergeMethod}` : ""}

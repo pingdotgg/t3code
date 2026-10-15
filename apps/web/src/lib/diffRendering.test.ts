@@ -36,6 +36,58 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it("shows reindented service arguments as context around a new wrapper", () => {
+    const patch = [
+      "diff --git a/services.ts b/services.ts",
+      "--- a/services.ts",
+      "+++ b/services.ts",
+      "@@ -59,5 +71,8 @@",
+      "+const services = {",
+      "+  env,",
+      "-const paymentServices = createPaymentServices({",
+      "-  braintreeClient:",
+      '-    unavailableProvider as PaymentServicesClients["braintreeClient"],',
+      '-  stripeClient: unavailableProvider as PaymentServicesClients["stripeClient"],',
+      "-});",
+      "+  paymentServices: createPaymentServices({",
+      "+    braintreeClient:",
+      '+      unavailableProvider as PaymentServicesClients["braintreeClient"],',
+      '+    stripeClient: unavailableProvider as PaymentServicesClients["stripeClient"],',
+      "+  }),",
+      "+};",
+    ].join("\n");
+    const shown = getRenderablePatch(patch);
+    const hidden = getRenderablePatch(patch, "working", {
+      compactPartialHunkOffsets: true,
+      ignoreWhitespace: true,
+    });
+    expect(shown?.kind).toBe("files");
+    expect(hidden?.kind).toBe("files");
+    if (shown?.kind !== "files" || hidden?.kind !== "files") return;
+
+    expect(getDiffLineStat(hidden.files)).toEqual({ additions: 5, deletions: 2 });
+    expect(getDiffLineStat(hidden.sourceFiles)).toEqual({ additions: 8, deletions: 5 });
+    const file = hidden.files[0]!;
+    expect(file.additionLines).toEqual(shown.files[0]!.additionLines);
+    expect(file.deletionLines).toEqual(shown.files[0]!.deletionLines);
+    expect(file.hunks[0]?.hunkContent).toContainEqual({
+      type: "context",
+      lines: 3,
+      additionLineIndex: 3,
+      deletionLineIndex: 1,
+    });
+    expect(resolveDiffReviewPosition(file, 75, "additions")).toEqual({
+      kind: "context",
+      oldLine: 61,
+      newLine: 75,
+      side: "right",
+    });
+    expect(resolveDiffReviewPosition(hidden.sourceFiles[0]!, 75, "additions")).toEqual({
+      kind: "added",
+      newLine: 75,
+    });
+  });
+
   it("hides indentation changes around inserted JSX without moving review lines", () => {
     const patch = [
       "diff --git a/item.tsx b/item.tsx",

@@ -24,6 +24,7 @@ import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
+  attachments: true,
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
@@ -34,6 +35,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "host",
   review: {
     inlineComment: true,
+    multilineComment: true,
+    draftComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
@@ -65,6 +68,7 @@ const CAPABILITIES: PullRequestCapabilities = {
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
+    ...(access.canAdmin ? { adminMerge: true } : {}),
     actions: [
       ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
@@ -83,6 +87,7 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
       // comparison; without it the action is offered to nobody rather than to everybody.
       ...(access.canUpdateBranch === true ? (["update-branch"] as const) : []),
     ],
+    attachments: access.canWrite,
     comment: true,
     resolve: access.canWrite || access.didAuthor,
     // Anyone may review a pull request they can see, except their own: GitHub refuses an author's
@@ -597,6 +602,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.adminOverride === true ? { adminOverride: true } : {}),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
@@ -613,6 +619,8 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
 
+    uploadAttachment: (input) =>
+      cli.uploadAttachment(input).pipe(Effect.mapError(fail("uploadAttachment"))),
     comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
 
     updateComment: (input) =>
@@ -628,6 +636,10 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("updateComment"))),
 
+    saveDraftComment: (input) =>
+      cli.saveDraftComment(input).pipe(Effect.mapError(fail("saveDraftComment"))),
+    discardDraftComment: (input) =>
+      cli.discardDraftComment(input).pipe(Effect.mapError(fail("discardDraftComment"))),
     submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
 
     replyToThread: (input) =>

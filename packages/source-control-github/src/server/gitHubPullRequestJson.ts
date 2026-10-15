@@ -396,8 +396,22 @@ function toReactions(
   return reactions;
 }
 
+/** GitHub's current changes view uses this anchor for the same saved comment ID. */
+export function gitHubPendingReviewCommentUrl(value: string) {
+  const url = new URL(value);
+  const comment = /^#discussion_r(\d+)$/.exec(url.hash);
+  if (url.hostname === "github.com" && comment && /\/pull\/\d+\/?$/.test(url.pathname)) {
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/changes`;
+    url.hash = `r${comment[1]}`;
+  }
+  return url.href;
+}
+
 const RawCommentSchema = Schema.Struct({
   id: Schema.String,
+  pullRequestReview: Schema.optional(
+    Schema.NullOr(Schema.Struct({ id: Schema.String, state: Schema.String })),
+  ),
   lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   body: Schema.optional(Schema.String),
@@ -408,6 +422,7 @@ const RawCommentSchema = Schema.Struct({
 });
 
 const RawReviewSchema = Schema.Struct({
+  commit: Schema.optional(Schema.NullOr(Schema.Struct({ oid: Schema.String }))),
   id: Schema.String,
   lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
@@ -435,6 +450,7 @@ const RawCommitSchema = Schema.Struct({
 
 const RawDetailSchema = Schema.Struct({
   ...RawListItemSchema.fields,
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
   /** GitHub's explicit distinction between a fork head and a branch in the base repository. */
   isCrossRepository: Schema.optional(Schema.Boolean),
   /** Names the fork a pull request came from, which is what qualifies its head ref. */
@@ -598,6 +614,8 @@ const RawReviewThreadsSchema = Schema.Struct({
               /** Null once the thread's line has left the diff, which `isOutdated` reports. */
               line: Schema.optional(Schema.NullOr(Schema.Int)),
               diffSide: Schema.optional(Schema.NullOr(Schema.String)),
+              startLine: Schema.optional(Schema.NullOr(Schema.Int)),
+              startDiffSide: Schema.optional(Schema.NullOr(Schema.String)),
               comments: RawThreadCommentsSchema,
             }),
           ),
@@ -851,7 +869,7 @@ export const pullRequestCoreGraphQlQuery = (host: string) => {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
-      number title url body state isDraft mergeable reviewDecision
+      number title url body state isDraft mergeable mergeStateStatus reviewDecision
       additions deletions changedFiles createdAt updatedAt mergedAt closedAt
       headRefName baseRefName headRefOid isCrossRepository
       headRepositoryOwner { login }
@@ -931,7 +949,7 @@ export const PULL_REQUEST_ACTIVITY_GRAPHQL_QUERY = `query($owner: String!, $name
       }
       reviews(first: 100, after: $reviewsAfter) @include(if: $withReviews) {
         pageInfo { hasNextPage endCursor }
-        nodes { id body state submittedAt lastEditedAt url author { __typename login avatarUrl ... on User { name } } }
+        nodes { id body state submittedAt lastEditedAt url commit { oid } author { __typename login avatarUrl ... on User { name } } }
       }
     }
   }
@@ -1059,10 +1077,12 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           path
           line
           diffSide
+          startLine
+          startDiffSide
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url pullRequestReview { id state } ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
@@ -1120,7 +1140,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url pullRequestReview { id state } ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -1277,6 +1297,8 @@ const ReviewSubmissionSchema = Schema.Struct({
       path: Schema.String,
       line: Schema.Int,
       side: Schema.Literals(["LEFT", "RIGHT"]),
+      start_line: Schema.optional(Schema.Int),
+      start_side: Schema.optional(Schema.Literals(["LEFT", "RIGHT"])),
       body: Schema.String,
     }),
   ),
@@ -1331,6 +1353,17 @@ export function buildReviewSubmission(input: {
     comments: input.comments.map((comment) => ({
       path: comment.path,
       ...gitHubReviewPosition(comment.position),
+      ...(comment.position.startLine === undefined
+        ? {}
+        : {
+            start_line: comment.position.startLine,
+            start_side:
+              (comment.position.startSide ??
+                (gitHubReviewPosition(comment.position).side === "LEFT" ? "left" : "right")) ===
+              "left"
+                ? ("LEFT" as const)
+                : ("RIGHT" as const),
+          }),
       body: comment.body,
     })),
   };
@@ -1364,6 +1397,7 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
+  readonly mergeRequirementsSatisfied?: boolean;
   /** True only when GitHub says the head belongs to another repository. */
   readonly isCrossRepository?: boolean;
   /** The owner of the head branch's repository; null where `gh` did not say. */
@@ -1739,7 +1773,9 @@ function toComments(raw: {
     const reviewState = trimmed(review.state);
     if (
       submittedAt === null ||
-      ((review.body ?? "").trim().length === 0 && !isReviewVerdict(reviewState))
+      ((review.body ?? "").trim().length === 0 &&
+        !isReviewVerdict(reviewState) &&
+        !review.commit?.oid)
     ) {
       return [];
     }
@@ -1754,6 +1790,7 @@ function toComments(raw: {
         url: trimmed(review.url),
         path: null,
         reviewState,
+        ...(review.commit?.oid ? { reviewCommitSha: review.commit.oid } : {}),
       },
     ];
   });
@@ -1802,8 +1839,16 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
   const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  const mergeState = raw.mergeStateStatus?.toUpperCase();
+  const mergeRequirementsSatisfied =
+    mergeState === "CLEAN" || mergeState === "HAS_HOOKS"
+      ? true
+      : mergeState && ["BEHIND", "BLOCKED", "DIRTY", "DRAFT", "UNSTABLE"].includes(mergeState)
+        ? false
+        : undefined;
   return {
     ...toListItem(raw),
+    ...(mergeRequirementsSatisfied === undefined ? {} : { mergeRequirementsSatisfied }),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
@@ -2234,7 +2279,7 @@ const WATCH_FINGERPRINT_CHECK_COUNTS =
  * to comments inside review threads, which cost a point per pull request to ask for.
  */
 const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
-  "state mergeable headRefOid " +
+  "state mergeable mergeStateStatus headRefOid " +
   `comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { ${WATCH_FINGERPRINT_EDITS} } ` +
   `reviews(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
   "reviewThreads { totalCount } " +
@@ -2272,6 +2317,7 @@ const decodeWatchFingerprintEntry = Schema.decodeUnknownExit(
   Schema.Struct({
     state: Schema.String,
     mergeable: Schema.NullOr(Schema.String),
+    mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
     headRefOid: Schema.String,
     comments: RawEditedSchema,
     reviews: RawEditedSchema,
@@ -2330,6 +2376,7 @@ export function decodePullRequestWatchFingerprintsJson(
       status: [
         pr.state,
         pr.mergeable ?? "",
+        pr.mergeStateStatus ?? "",
         pr.headRefOid,
         stateCounts(contexts?.checkRunCountsByState ?? null),
         stateCounts(contexts?.statusContextCountsByState ?? null),
@@ -2376,6 +2423,7 @@ export function decodePullRequestCoreJson(
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     viewerAccess: {
+      ...(repository.viewerPermission === "ADMIN" ? { canAdmin: true } : {}),
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
       canTriage: toCanTriage(repository.viewerPermission),
@@ -2696,7 +2744,8 @@ export function reviewThreadConversation(
       editedAt: comment.editedAt ?? null,
       url: comment.url,
       path: thread.path,
-      reviewState: null,
+      reviewState: comment.pendingReviewId ? "PENDING" : null,
+      ...(comment.pendingReviewId ? { pendingReviewId: comment.pendingReviewId } : {}),
       reactions: comment.reactions ?? [],
     })),
   );
@@ -2786,6 +2835,15 @@ export function decodeReviewThreadsJson(
               ? thread.line
               : null,
           side: thread.diffSide?.toUpperCase() === "LEFT" ? "left" : "right",
+          ...(thread.line && thread.startLine && thread.startLine > 0
+            ? {
+                startLine: thread.startLine,
+                startSide:
+                  thread.startDiffSide?.toUpperCase() === "LEFT"
+                    ? ("left" as const)
+                    : ("right" as const),
+              }
+            : {}),
           isResolved: thread.isResolved === true,
           isOutdated: thread.isOutdated === true,
           comments: thread.comments.nodes.map((comment) => ({
@@ -2794,7 +2852,13 @@ export function decodeReviewThreadsJson(
             body: comment.body ?? "",
             createdAt: comment.createdAt,
             editedAt: comment.lastEditedAt ?? null,
-            url: trimmed(comment.url),
+            url:
+              comment.url && comment.pullRequestReview?.state === "PENDING"
+                ? gitHubPendingReviewCommentUrl(comment.url)
+                : trimmed(comment.url),
+            ...(comment.pullRequestReview?.state === "PENDING"
+              ? { pendingReviewId: comment.pullRequestReview.id }
+              : {}),
             reactions: toReactions(comment.reactionGroups, viewer),
           })),
         },
@@ -2915,7 +2979,13 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
       body: comment.body ?? "",
       createdAt: comment.createdAt,
       editedAt: comment.lastEditedAt ?? null,
-      url: trimmed(comment.url),
+      url:
+        comment.url && comment.pullRequestReview?.state === "PENDING"
+          ? gitHubPendingReviewCommentUrl(comment.url)
+          : trimmed(comment.url),
+      ...(comment.pullRequestReview?.state === "PENDING"
+        ? { pendingReviewId: comment.pullRequestReview.id }
+        : {}),
       reactions: toReactions(comment.reactionGroups, viewer),
     })),
     nextCursor: nextCursorOf(comments?.pageInfo),
@@ -3198,6 +3268,7 @@ export function buildLabelRequest(labels: ReadonlyArray<string>): {
  * only read access can still be told apart from a passer-by.
  */
 export interface GitHubViewerAccess {
+  readonly canAdmin?: boolean;
   readonly canWrite: boolean;
   readonly canDeleteBranch?: boolean;
   /**
@@ -3255,6 +3326,7 @@ export function decodeViewerPermissionsJson(
       squash: repository.squashMergeAllowed,
       rebase: repository.rebaseMergeAllowed,
     },
+    ...(repository.viewerPermission === "ADMIN" ? { canAdmin: true } : {}),
     canWrite: toCanWrite(repository.viewerPermission),
     canDeleteBranch: toCanWrite(repository.pullRequest?.headRepository?.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),

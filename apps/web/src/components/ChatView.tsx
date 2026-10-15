@@ -2411,16 +2411,6 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
-  const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
-  useLayoutEffect(() => {
-    const explicitThreadRef = explicitDiffOpenRef.current;
-    explicitDiffOpenRef.current = null;
-    // Generic openings always show Changes, including tab fallbacks and thread changes.
-    // A timeline click instead opens the specific turn/file the user requested.
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
-      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
-    }
-  }, [activeThreadRef, diffOpen]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -5373,7 +5363,6 @@ export default function ChatView(props: ChatViewProps) {
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
@@ -5653,9 +5642,9 @@ export default function ChatView(props: ChatViewProps) {
       )
     : linkedThreadPullRequestKey;
   const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
-  const proactivePanelObservationRef = useRef<ReturnType<
-    typeof observeProactivePanelUserChoice
-  > | null>(null);
+  const proactivePanelObservationsRef = useRef(
+    new Map<string, ReturnType<typeof observeProactivePanelUserChoice>>(),
+  );
   const observedThreadPullRequestRef = useRef<{
     readonly threadKey: string;
     readonly reference: ThreadLinkedPullRequest | null;
@@ -5663,17 +5652,19 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!isServerThread || activeThreadKey === null || activeThreadRef === null) {
-      proactivePanelObservationRef.current = null;
       observedThreadPullRequestRef.current = null;
       return;
     }
     const panels = useRightPanelStore.getState();
-    const observation = observeProactivePanelUserChoice(proactivePanelObservationRef.current, {
-      threadKey: activeThreadKey,
-      runningTurnId: activeRunningTurnId,
-      userActionRevision: panels.getUserActionRevision(activeThreadRef),
-    });
-    proactivePanelObservationRef.current = observation;
+    const observation = observeProactivePanelUserChoice(
+      proactivePanelObservationsRef.current.get(activeThreadKey) ?? null,
+      {
+        threadKey: activeThreadKey,
+        runningTurnId: activeRunningTurnId,
+        userActionRevision: panels.getUserActionRevision(activeThreadRef),
+      },
+    );
+    proactivePanelObservationsRef.current.set(activeThreadKey, observation);
     const {
       runningTurnId: previousRunningTurnId,
       targetKey: previousTargetKey,
@@ -5708,10 +5699,10 @@ export default function ChatView(props: ChatViewProps) {
       proactivePanelsEnabled &&
       shouldOpenProactivePullRequest(previousTargetKey, proactivePullRequestsKey);
     const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
-    proactivePanelObservationRef.current = {
+    proactivePanelObservationsRef.current.set(activeThreadKey, {
       ...observation,
       targetKey: shouldDeferLink ? (previousTargetKey ?? null) : proactivePullRequestsKey,
-    };
+    });
     if (eligibleLink && pullRequestsCapabilityKnown) {
       if (
         pullRequestsSurfaceAvailable &&
@@ -5762,17 +5753,16 @@ export default function ChatView(props: ChatViewProps) {
           activeSurfaceKind: openSurface?.kind ?? null,
         })
       : "ignore";
-    proactivePanelObservationRef.current = {
-      ...proactivePanelObservationRef.current,
+    proactivePanelObservationsRef.current.set(activeThreadKey, {
+      ...proactivePanelObservationsRef.current.get(activeThreadKey)!,
       // Preserve first-entry eligibility while capabilities, checkpoint or repository load.
       runningTurnId:
         diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
-    };
+    });
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
     if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     onDiffPanelOpen?.();
   }, [
     turnDiffSummaries,
@@ -10770,9 +10760,6 @@ export default function ChatView(props: ChatViewProps) {
   const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!isServerThread || !activeThreadRef) return;
-    const diffOpen =
-      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
-    explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
     useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();

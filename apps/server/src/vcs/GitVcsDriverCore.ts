@@ -212,12 +212,33 @@ function parseNumstatEntries(
   return entries;
 }
 
-// -z preserves tabs/newlines in paths and gives renames two separate path fields.
+// --raw --numstat -z carries statuses and counts in one read, preserving unusual paths.
+// This also accepts plain numstat for callers that need only totals.
 function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const fields = stdout.split("\0");
   const files: ReviewDiffFileStat[] = [];
+  const statuses = new Map<string, NonNullable<ReviewDiffFileStat["status"]>>();
   for (let index = 0; index < fields.length; index++) {
     const field = fields[index]!;
+    const raw = /^:[0-7]{6} [0-7]{6} [\da-f]+ [\da-f]+ ([A-Z])\d*$/.exec(field);
+    if (raw) {
+      const kind = raw[1];
+      const firstPath = fields[++index];
+      const path = kind === "R" || kind === "C" ? fields[++index] : firstPath;
+      if (path !== undefined) {
+        statuses.set(
+          path,
+          kind === "A" || kind === "C"
+            ? "added"
+            : kind === "D"
+              ? "deleted"
+              : kind === "R"
+                ? "renamed"
+                : "modified",
+        );
+      }
+      continue;
+    }
     const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(field);
     if (!match) continue;
     const previousPath = match[3] === "" ? fields[++index]! : null;
@@ -229,7 +250,10 @@ function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
       deletions: match[2] === "-" ? 0 : Number(match[2]),
     });
   }
-  return files;
+  return files.map((file) => {
+    const status = statuses.get(file.path);
+    return status === undefined ? file : { ...file, status };
+  });
 }
 
 function parsePorcelainPath(line: string): string | null {
@@ -485,7 +509,7 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
       (line) =>
         GIT_DIAGNOSTIC_LINE_PATTERN.test(line) ||
         // A remote hook can echo ssh's wording; only the local ssh's line counts.
-        (!/^remote:/.test(line) && SSH_TRANSPORT_REFUSAL_PATTERN.test(line)),
+        (!line.startsWith("remote:") && SSH_TRANSPORT_REFUSAL_PATTERN.test(line)),
     )
     .join("\n");
   if (diagnostics.length === 0) return null;
@@ -675,16 +699,17 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
       return;
     }
 
-    if (traceRecord.success.child_class !== "hook") {
-      return;
-    }
-
     const event = traceRecord.success.event;
     const childKey = trace2ChildKey(traceRecord.success);
     if (childKey === null) {
       return;
     }
     const started = hookStartByChildKey.get(childKey);
+    // Git child_exit records omit child_class and hook_name; their start record
+    // identifies whether the exiting process was a hook.
+    if (traceRecord.success.child_class !== "hook" && !(event === "child_exit" && started)) {
+      return;
+    }
     const hookNameFromEvent =
       typeof traceRecord.success.hook_name === "string" ? traceRecord.success.hook_name.trim() : "";
     const hookName = hookNameFromEvent.length > 0 ? hookNameFromEvent : (started?.hookName ?? "");
@@ -706,7 +731,7 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
 
     if (event === "child_exit") {
       hookStartByChildKey.delete(childKey);
-      const code = traceRecord.success.exitCode;
+      const code = traceRecord.success.code ?? traceRecord.success.exitCode;
       const exitCode = typeof code === "number" && Number.isInteger(code) ? code : null;
       const now = yield* DateTime.now;
       const durationMs = started
@@ -2221,7 +2246,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
-    Effect.fn("prepareCommitContext")(function* (cwd, filePaths) {
+    Effect.fn("prepareCommitContext")(function* (cwd, filePaths, options) {
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const indexValue = yield* runGitStdout(
@@ -2262,7 +2287,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               { env },
             );
           }
-          yield* stageCommitChanges(cwd, filePaths, env);
+          if (!options?.stagedOnly) yield* stageCommitChanges(cwd, filePaths, env);
 
           const stagedSummary = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedSummary",
@@ -2313,7 +2338,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (options?.stage !== undefined) {
       yield* stageCommitChanges(cwd, options.stage.filePaths);
     }
-    const args = ["commit", "-m", subject];
+    const args = ["commit", ...(options?.amend ? ["--amend"] : []), "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
@@ -2855,25 +2880,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const cwd = repository.worktreeRoot;
     // A per-file request only reads its own source.
-    const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
+    const dirtyRef =
+      input.file?.sourceKind === "branch-range"
+        ? null
+        : input.workingTreeScope === "unstaged"
+          ? ""
+          : "HEAD";
     const review =
-      input.file?.sourceKind === "working-tree"
+      input.workingTreeScope !== undefined || input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
+      ...(input.workingTreeScope === "staged" ? ["--cached"] : []),
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
     ];
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
       ref: string,
       env?: NodeJS.ProcessEnv,
     ) {
-      const args = [...diffArgs, "--numstat", "-z"];
+      const args = [...diffArgs, "--raw", "--numstat", "-z"];
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
         cwd,
-        [...args, ref, "--", ...pathArgs],
+        [...args, ...(ref ? [ref] : []), "--", ...pathArgs],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, env },
       );
       if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
@@ -2906,13 +2937,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
         cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
+        [...diffArgs, "--patch", ...(stat.ref ? [stat.ref] : []), "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
       );
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+      const untracked =
+        input.workingTreeScope === "staged"
+          ? { env: undefined }
+          : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
       // With no base both sources diff HEAD, so read it once.
       const [dirty, base] =
         review.mergeBase === dirtyRef
@@ -2959,7 +2993,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       {
         id: "working-tree",
         kind: "working-tree",
-        title: "Uncommitted",
+        title:
+          input.workingTreeScope === "staged"
+            ? "Staged"
+            : input.workingTreeScope === "unstaged"
+              ? "Unstaged"
+              : "Uncommitted",
         baseRef: "HEAD",
         headRef: null,
         diff: dirtyDiff,
@@ -3106,7 +3145,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const oldRevision =
       input.sourceKind === "working-tree"
-        ? (input.baseRef ?? "HEAD")
+        ? input.workingTreeScope === "unstaged"
+          ? ""
+          : (input.baseRef ?? "HEAD")
         : (yield* resolveReviewMergeBase(input.cwd, null, input.baseRef ?? undefined)).mergeBase;
     const [oldContents, newContents] = yield* Effect.all(
       [
@@ -3115,7 +3156,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : readReviewFileAtRevision(input, oldRevision, input.oldPath),
         input.changeType === "deleted"
           ? Effect.succeed("")
-          : readWorkingTreeReviewFile(input, repositoryRoot),
+          : input.workingTreeScope === "staged"
+            ? readReviewFileAtRevision(input, "", input.newPath)
+            : readWorkingTreeReviewFile(input, repositoryRoot),
       ],
       { concurrency: 2 },
     );

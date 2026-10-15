@@ -8,16 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
-import {
-  ArrowRightIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  Columns2Icon,
-  FolderTreeIcon,
-  PilcrowIcon,
-  Rows3Icon,
-  TextWrapIcon,
-} from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronDownIcon, FolderTreeIcon } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
@@ -48,17 +39,22 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadProjection, useThreadShell } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { WorkingChangesReview } from "./diffs/WorkingChangesReview";
+import { DiffDisplayControls } from "./diffs/DiffDisplayControls";
 import { DiffFileTree } from "./diffs/DiffFileTree";
+import { compareReviewFilePaths } from "@t3tools/client-runtime/review-workspace";
+import { useResizableWidth } from "~/hooks/useResizableWidth";
+import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
   Combobox,
@@ -201,14 +197,20 @@ export default function DiffPanel({
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const diffLayout = settings.diffLayout;
-  const updateClientSettings = useUpdateClientSettings();
-  const [wordWrap, setWordWrap] = useState(settings.wordWrap);
-  const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const wordWrap = settings.wordWrap;
+  const diffIgnoreWhitespace = settings.diffIgnoreWhitespace;
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     DIFF_FILE_TREE_STORAGE_KEY,
     false,
     Schema.Boolean,
   );
+  const treeWidth = useResizableWidth({
+    storageKey: "t3code:working-diff-tree-width",
+    defaultWidth: 320,
+    minWidth: 192,
+    maxWidth: 640,
+    edge: "left",
+  });
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
@@ -257,8 +259,19 @@ export default function DiffPanel({
       : null,
   );
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+    selectThreadDiffPanelSelection(
+      state.byThreadKey,
+      routeThreadRef,
+      gitStatusQuery.data?.hasWorkingTreeChanges ?? false,
+    ),
   );
+  useEffect(() => {
+    if (routeThreadRef && gitStatusQuery.data) {
+      useDiffPanelStore
+        .getState()
+        .initializeGitScope(routeThreadRef, gitStatusQuery.data.hasWorkingTreeChanges);
+    }
+  }, [routeThreadRef, gitStatusQuery.data]);
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByRunId } =
     useTurnDiffSummaries(activeThreadProjection);
@@ -361,7 +374,11 @@ export default function DiffPanel({
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const [workingRefresh, setWorkingRefresh] = useState(0);
+  const refreshDiffFromUserAction = useCallback(() => {
+    setWorkingRefresh((value) => value + 1);
+    refreshPreviewQuery();
+  }, [refreshPreviewQuery]);
 
   const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
@@ -475,7 +492,7 @@ export default function DiffPanel({
     retry,
     requestFile,
     readyFilePaths,
-    renderableFiles,
+    renderableFiles: unorderedFiles,
     settledFileCount,
     loadNextFiles,
   } = useReviewFilePatches({
@@ -490,7 +507,14 @@ export default function DiffPanel({
       : undefined,
     preview: renderablePatch,
   });
-  const refreshBranchDiffPreview = refreshPreviewQuery;
+  const renderableFiles = useMemo(
+    () =>
+      unorderedFiles.toSorted((left, right) =>
+        compareReviewFilePaths(resolveFileDiffPath(left), resolveFileDiffPath(right)),
+      ),
+    [unorderedFiles],
+  );
+  const refreshBranchDiffPreview = refreshDiffFromUserAction;
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
@@ -955,67 +979,7 @@ export default function DiffPanel({
             </TooltipPopup>
           </Tooltip>
         )}
-        <ToggleGroup
-          aria-label="Diff layout"
-          className="shrink-0"
-          variant="segmented"
-          value={[diffLayout]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              updateClientSettings({ diffLayout: next });
-            }
-          }}
-        >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3.5" />
-          </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3.5" />
-          </Toggle>
-        </ToggleGroup>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
-                variant="ghost"
-                size="sm"
-                pressed={wordWrap}
-                onPressedChange={(pressed) => {
-                  setWordWrap(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <TextWrapIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
-                }
-                variant="ghost"
-                size="sm"
-                pressed={diffIgnoreWhitespace}
-                onPressedChange={(pressed) => {
-                  setDiffIgnoreWhitespace(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <PilcrowIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
-          </TooltipPopup>
-        </Tooltip>
+        <DiffDisplayControls />
         {diffFileKeys.length > 0 && (
           <Tooltip>
             <TooltipTrigger
@@ -1062,6 +1026,22 @@ export default function DiffPanel({
             {fileAccess.error ?? "This connection cannot read local diffs."}
           </div>
         )
+      ) : selectedRunId === null && selectedGitScope === "unstaged" && activeCwd ? (
+        <WorkingChangesReview
+          key={`${activeThread.environmentId}:${activeThread.id}:${activeCwd}`}
+          navigationKey={`${activeThread.environmentId}:${activeThread.id}`}
+          environmentId={activeThread.environmentId}
+          cwd={activeCwd}
+          composerDraftTarget={composerDraftTarget}
+          wordWrap={wordWrap}
+          split={diffLayout === "split"}
+          ignoreWhitespace={diffIgnoreWhitespace}
+          projectName={activeProject?.title ?? "Workspace"}
+          onOpenFile={openDiffFile}
+          fileTreeOpen={fileTreeOpen}
+          revision={`${workspaceMutationId ?? ""}:${workingRefresh}`}
+          onChanged={refreshBranchDiffPreview}
+        />
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1154,7 +1134,7 @@ export default function DiffPanel({
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={setCodeView}
-                    codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
+                    codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
@@ -1165,13 +1145,15 @@ export default function DiffPanel({
                       const path = resolveFileDiffPath(fileDiff);
                       const state = fileStates.get(path);
                       return (
-                        <DiffFileHeaderSuffix
-                          filePath={path}
-                          hasStat={fileStats.has(path)}
-                          error={state?.error ?? false}
-                          truncated={state?.truncated ?? false}
-                          onRetry={retry}
-                        />
+                        <>
+                          <DiffFileHeaderSuffix
+                            filePath={path}
+                            hasStat={fileStats.has(path)}
+                            error={state?.error ?? false}
+                            truncated={state?.truncated ?? false}
+                            onRetry={retry}
+                          />
+                        </>
                       );
                     }}
                     {...(lazySource
@@ -1216,7 +1198,11 @@ export default function DiffPanel({
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                  <aside
+                    className="relative flex w-(--resizable-width) max-w-[60%] min-w-48 shrink-0 flex-col border-l border-border/60"
+                    style={{ "--resizable-width": `${treeWidth.width}px` } as React.CSSProperties}
+                  >
+                    <RightPanelResizeHandle handlers={treeWidth.handlers} />
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}

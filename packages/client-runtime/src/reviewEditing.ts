@@ -2,7 +2,53 @@ import type {
   PullRequestComment,
   PullRequestDetail,
   PullRequestReviewThread,
+  PullRequestReviewCommentDraft,
 } from "@t3tools/contracts";
+
+/** A resolved thread's compact label uses the host's total and distinct participant names. */
+export function resolvedReviewCommentsLabel(count: number, participants: ReadonlyArray<string>) {
+  const names = [...new Set(participants)].join(" and ");
+  return `${count} resolved ${count === 1 ? "comment" : "comments"}${names ? ` from ${names}` : ""}`;
+}
+
+/** Read private host drafts without replacing the identity of a locally saved draft. */
+export function pendingReviewCommentsFromThreads(threads: ReadonlyArray<PullRequestReviewThread>) {
+  return threads.flatMap((thread) => {
+    const line = thread.line;
+    if (line === null) return [];
+    return thread.comments.flatMap(
+      (comment): (PullRequestReviewCommentDraft & { id: string })[] => {
+        if (!comment.pendingReviewId || !comment.url) return [];
+        return [
+          {
+            id: comment.id,
+            path: thread.path,
+            position:
+              thread.side === "left"
+                ? {
+                    kind: "deleted",
+                    oldLine: line,
+                    startLine: thread.startLine,
+                    startSide: thread.startSide,
+                  }
+                : {
+                    kind: "added",
+                    newLine: line,
+                    startLine: thread.startLine,
+                    startSide: thread.startSide,
+                  },
+            body: comment.body,
+            hostedComment: {
+              reviewId: comment.pendingReviewId,
+              commentId: comment.id,
+              url: comment.url,
+            },
+          },
+        ];
+      },
+    );
+  });
+}
 
 /** Only the parts of a detail either answer reads, so a caller can pass a whole detail view. */
 type EditingSubject = Pick<

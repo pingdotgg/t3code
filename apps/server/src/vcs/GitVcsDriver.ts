@@ -174,6 +174,7 @@ export interface GitCommitProgress {
 }
 
 export interface GitCommitOptions {
+  readonly amend?: boolean;
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
   /** Stage the current working tree immediately before committing. */
@@ -320,6 +321,7 @@ export class GitVcsDriver extends Context.Service<
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
+      options?: { readonly stagedOnly?: boolean },
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
     readonly commit: (
       cwd: string,

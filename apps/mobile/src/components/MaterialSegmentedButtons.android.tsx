@@ -1,4 +1,10 @@
-import { SegmentedButton, SingleChoiceSegmentedButtonRow, Text } from "@expo/ui/jetpack-compose";
+import {
+  Badge,
+  Row,
+  SegmentedButton,
+  SingleChoiceSegmentedButtonRow,
+  Text,
+} from "@expo/ui/jetpack-compose";
 import { defaultMinSize, fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
@@ -28,7 +34,17 @@ export function MaterialSegmentedButtons<Value extends number | string>(
           }}
         >
           <SegmentedButton.Label>
-            <Text style={typography}>{option.label}</Text>
+            <Row horizontalArrangement={{ spacedBy: 6 }} verticalAlignment="center">
+              <Text style={typography}>{option.label}</Text>
+              {option.badge !== undefined ? (
+                <Badge
+                  containerColor={colors["--color-secondary"]}
+                  contentColor={colors["--color-primary-text"]}
+                >
+                  <Text>{String(option.badge)}</Text>
+                </Badge>
+              ) : null}
+            </Row>
           </SegmentedButton.Label>
         </SegmentedButton>
       ))}

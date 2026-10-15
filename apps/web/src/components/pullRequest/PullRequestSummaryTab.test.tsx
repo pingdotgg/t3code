@@ -17,6 +17,11 @@ vi.mock("../ui/menu", () => ({
   MenuGroupLabel: "div",
   MenuPopup: "div",
   MenuTrigger: "div",
+  MenuItem: "div",
+  MenuSeparator: "hr",
+  MenuSub: "div",
+  MenuSubPopup: "div",
+  MenuSubTrigger: "div",
 }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -181,7 +186,7 @@ function filterItem(label: string) {
   );
 }
 
-it("hides bot and resolved comments until the filter shows them, and remembers the choice", () => {
+it("shows bot comments and collapsed resolved comments, and remembers filter choices", () => {
   const comment = (index: number, login: string, body: string, isBot = false) => ({
     id: `comment-${index}`,
     kind: "issue-comment" as const,
@@ -221,6 +226,15 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   act(() => {
     renderer = create(render(value));
   });
+  expect(texts()).toContain("Human comment");
+  expect(texts().filter((text) => text.startsWith("Bot report"))).toHaveLength(8);
+  expect(texts()).not.toContain("Resolved remark");
+  expect(
+    renderer.root.findAllByType("button").some((button) => button.children.includes("Resolved")),
+  ).toBe(true);
+
+  act(() => filterItem("Bot comments").props.onCheckedChange(false));
+  act(() => filterItem("Resolved or dismissed").props.onCheckedChange(false));
   expect(texts()).toEqual(["Human comment"]);
   expect(
     renderer.root.findByProps({ "aria-label": "Filter comments" }).children.join(""),

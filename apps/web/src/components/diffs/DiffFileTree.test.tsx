@@ -1,7 +1,7 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
 import type { FileTree as FileTreeModel } from "@pierre/trees";
 import { FileTree } from "@pierre/trees/react";
-import { act, type MouseEvent, type ReactNode } from "react";
+import { act, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -17,6 +17,15 @@ vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render }: { render: ReactNode }) => render,
   TooltipPopup: () => null,
+}));
+vi.mock("../ui/menu", () => ({
+  Menu: ({ children }: { children: ReactNode }) => children,
+  MenuPopup: ({ children }: { children: ReactNode }) => children,
+  MenuItem: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
+    <button role="menuitem" onClick={onClick}>
+      {children}
+    </button>
+  ),
 }));
 
 const entries: DiffFileTreeEntry[] = [
@@ -44,9 +53,13 @@ describe("diff tree file activation", () => {
   function Panel({
     files = entries,
     selectedPath = null,
+    reviewEntries,
+    onReviewFiles,
   }: {
     files?: DiffFileTreeEntry[];
     selectedPath?: string | null;
+    reviewEntries?: ReadonlyArray<DiffFileTreeEntry>;
+    onReviewFiles?: ComponentProps<typeof DiffFileTree>["onReviewFiles"];
   }) {
     const reveal = useCodeViewFileReveal(viewer, "working-tree");
     return (
@@ -55,6 +68,8 @@ describe("diff tree file activation", () => {
         ariaLabel="Working tree files"
         selectedPath={selectedPath}
         onSelectFile={(path) => reveal(`${path}\0${path}`)}
+        {...(reviewEntries === undefined ? {} : { reviewEntries })}
+        onReviewFiles={onReviewFiles}
       />
     );
   }
@@ -65,6 +80,40 @@ describe("diff tree file activation", () => {
     await act(async () => {
       renderer = create(<Panel {...props} />);
     });
+  }
+
+  async function openReviewMenu(path: string) {
+    const tree = model();
+    const item = tree.getItem(path)!;
+    await act(async () => {
+      tree.getComposition()?.contextMenu?.onOpen?.(
+        { kind: item.isDirectory() ? "directory" : "file", name: path, path },
+        {
+          anchorElement: new TreeRow(path) as unknown as HTMLElement,
+          anchorRect: {
+            x: 20,
+            y: 30,
+            top: 30,
+            bottom: 30,
+            left: 20,
+            right: 20,
+            width: 0,
+            height: 0,
+          },
+          close: () => tree.getComposition()?.contextMenu?.onClose?.(),
+          restoreFocus: () => {},
+        },
+      );
+    });
+  }
+
+  const menuItem = (label: string) =>
+    renderer!.root
+      .findAllByProps({ role: "menuitem" })
+      .find((node) => node.children.includes(label));
+
+  async function chooseReviewAction(label: string) {
+    await act(async () => menuItem(label)!.props.onClick());
   }
 
   // Exercise T3's capture handler before the real Pierre model's selection transition.
@@ -225,5 +274,88 @@ describe("diff tree file activation", () => {
     });
     expect(model().getSelectedPaths()).toEqual(["03-medium.ts"]);
     expect(targets).toHaveLength(1);
+  });
+
+  it("marks a file reviewed and offers the reverse action after its state updates", async () => {
+    const onReviewFiles = vi.fn();
+    await mount({ onReviewFiles });
+    await openReviewMenu("02-short.ts");
+    expect(menuItem("Mark as unreviewed")).toBeUndefined();
+    await chooseReviewAction("Mark as reviewed");
+    expect(onReviewFiles).toHaveBeenCalledWith(["02-short.ts"], true);
+    expect(targets).toEqual([]);
+
+    await act(async () => {
+      renderer!.update(
+        <Panel
+          files={entries.map((entry) => ({ ...entry, reviewed: entry.path === "02-short.ts" }))}
+          onReviewFiles={onReviewFiles}
+        />,
+      );
+    });
+    await openReviewMenu("02-short.ts");
+    expect(menuItem("Mark as reviewed")).toBeUndefined();
+    await chooseReviewAction("Mark as unreviewed");
+    expect(onReviewFiles).toHaveBeenLastCalledWith(["02-short.ts"], false);
+  });
+
+  it("reviews selected files and a collapsed folder once, including filtered descendants", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "src/lib/a.ts", status: "modified" },
+      { path: "src/library/neighbor.ts", status: "modified" },
+      { path: "README.md", status: "modified" },
+    ];
+    const onReviewFiles = vi.fn();
+    await mount({
+      files,
+      onReviewFiles,
+      reviewEntries: [...files, { path: "src/lib/hidden.ts", status: "modified", reviewed: true }],
+    });
+    await act(async () => {
+      const folder = model().getItem("src/lib/")!;
+      folder.select();
+      if ("collapse" in folder) folder.collapse();
+      model().getItem("src/lib/a.ts")!.select();
+      model().getItem("README.md")!.select();
+    });
+    await openReviewMenu("src/lib/");
+    expect(menuItem("Mark as reviewed")).toBeDefined();
+    expect(menuItem("Mark as unreviewed")).toBeDefined();
+    await chooseReviewAction("Mark as unreviewed");
+    expect(onReviewFiles).toHaveBeenCalledWith(
+      ["src/lib/a.ts", "README.md", "src/lib/hidden.ts"],
+      false,
+    );
+  });
+
+  it("keeps the batch when opening a selected folder's child menu", async () => {
+    const onReviewFiles = vi.fn();
+    await mount({
+      files: [
+        { path: "src/a.ts", status: "modified" },
+        { path: "src/b.ts", status: "modified" },
+        { path: "README.md", status: "modified" },
+      ],
+      onReviewFiles,
+    });
+    await act(async () => {
+      model().getItem("src/")!.select();
+      model().getItem("README.md")!.select();
+    });
+    await openReviewMenu("src/a.ts");
+    await chooseReviewAction("Mark as reviewed");
+    expect(onReviewFiles).toHaveBeenCalledWith(["src/a.ts", "src/b.ts", "README.md"], true);
+  });
+
+  it("targets a right-clicked unselected file without reviewing unrelated selected files", async () => {
+    const onReviewFiles = vi.fn();
+    await mount({ onReviewFiles });
+    await act(async () => {
+      model().getItem("01-tall.ts")!.select();
+      model().getItem("03-medium.ts")!.select();
+    });
+    await openReviewMenu("02-short.ts");
+    await chooseReviewAction("Mark as reviewed");
+    expect(onReviewFiles).toHaveBeenCalledWith(["02-short.ts"], true);
   });
 });

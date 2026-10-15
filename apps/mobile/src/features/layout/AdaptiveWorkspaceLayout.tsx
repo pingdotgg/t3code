@@ -64,6 +64,10 @@ import {
 } from "../workspace/AndroidWorkspaceNavigation";
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import {
+  rememberedThreadWorkspaceNavigationState,
+  useRememberThreadWorkspaceLocation,
+} from "../workspace/threadWorkspaceNavigationMemory";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -260,6 +264,7 @@ function AdaptiveWorkspaceLayoutContent(
   const { scale: androidControlScale } = useAndroidControlSizing();
   const pathname = props.pathname;
   const navigation = useNavigation();
+  useRememberThreadWorkspaceLocation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
@@ -605,10 +610,20 @@ function AdaptiveWorkspaceLayoutContent(
         environmentId: String(thread.environmentId),
         threadId: String(thread.id),
       };
+      if (scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey) return;
       if (Platform.OS === "android") {
-        // Selecting a sidebar row enters its base chat, including from that chat's nested screens.
+        // Thread selection restores its remembered workspace destination.
         setFileInspectorPreferredVisible(false);
         selectAndroidWorkspace({ name: "Thread", params });
+        return;
+      }
+      const rememberedState = rememberedThreadWorkspaceNavigationState(
+        navigation.getState(),
+        params,
+      );
+      if (rememberedState) {
+        setFileInspectorPreferredVisible(false);
+        navigation.dispatch(CommonActions.reset(rememberedState));
         return;
       }
       const navigationAction = resolveThreadSelectionNavigationAction({

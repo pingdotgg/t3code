@@ -2,16 +2,15 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -24,7 +23,6 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -40,7 +38,11 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
+  /** Existing Git status data decorates loaded rows without loading more directories. */
+  gitChanges?: ReadonlyArray<GitStatusEntry>;
 }
+
+const NO_GIT_CHANGES: ReadonlyArray<GitStatusEntry> = [];
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -104,8 +106,25 @@ export default function FileBrowserPanel({
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
+  gitChanges = NO_GIT_CHANGES,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
+  const selectionCSS = useMemo(() => {
+    if (!selectedPath) return PIERRE_TREE_UNSAFE_CSS;
+    const path = selectedPath.replace(/\/$/, "");
+    return `${PIERRE_TREE_UNSAFE_CSS}
+      button[data-type='item']:is([data-item-path=${CSS.escape(path)}], [data-item-path=${CSS.escape(`${path}/`)}])::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        display: block;
+        pointer-events: none;
+        outline: 1px solid var(--ring);
+        outline-offset: -1px;
+        border-radius: var(--radius-md);
+      }
+    `;
+  }, [selectedPath]);
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
   const {
@@ -118,7 +137,6 @@ export default function FileBrowserPanel({
     loadingDirectories,
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
-  const [expandAll, setExpandAll] = useState(false);
   const pathSearch = useProjectPathSearch({ environmentId, cwd, query: query.slice(0, 256) }, 200);
   const entries = useMemo(() => {
     const result = new Map(directoryEntries.map((entry) => [entry.path, entry]));
@@ -295,7 +313,7 @@ export default function FileBrowserPanel({
         : null,
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
-    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
+    unsafeCSS: selectionCSS,
   });
   useEffect(() => {
     if (loadingDirectoriesRef.current === loadingDirectories) return;
@@ -304,14 +322,6 @@ export default function FileBrowserPanel({
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);
-  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
-    areAllDirectoriesExpanded(currentModel, directoryPaths),
-  );
-  const toggleAllDirectories = () => {
-    const expanded = !(expandAll || allDirectoriesExpanded);
-    setExpandAll(expanded);
-    setAllDirectoriesExpanded(model, directoryPaths, expanded);
-  };
   const closeSearch = () => {
     setQuery("");
     search.close();
@@ -332,7 +342,6 @@ export default function FileBrowserPanel({
             void load(path.replace(/\/$/, ""));
           }
         } else {
-          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
           expandedPathsRef.current.delete(path);
         }
       }
@@ -341,15 +350,18 @@ export default function FileBrowserPanel({
     return model.subscribe(loadExpanded);
   }, [directoryPaths, load, model]);
   useEffect(() => {
-    model.setGitStatus(
-      entries
-        .filter((entry) => entry.ignored)
-        .map((entry) => ({
-          path: treePath(entry),
-          status: "ignored",
-        })),
-    );
-  }, [entries, model]);
+    const statuses = new Map<string, GitStatusEntry>();
+    for (const entry of entries) {
+      if (entry.ignored) {
+        const path = treePath(entry);
+        statuses.set(path, { path, status: "ignored" });
+      }
+    }
+    // Pierre colors filenames, adds the status letter, and marks ancestor folders.
+    // Supplying unloaded paths also marks their visible ancestors without scanning them.
+    for (const change of gitChanges) statuses.set(change.path, change);
+    model.setGitStatus([...statuses.values()]);
+  }, [entries, gitChanges, model]);
   useEffect(() => {
     if (!selectedPath) return;
     const controller = new AbortController();
@@ -398,10 +410,6 @@ export default function FileBrowserPanel({
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (updates.length > 0) model.batch(updates);
   }, [ready, entryKinds, model, treePaths]);
-
-  useEffect(() => {
-    if (expandAll && !query.trim()) setAllDirectoriesExpanded(model, directoryPaths, true);
-  }, [directoryPaths, expandAll, model, query]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -501,7 +509,7 @@ export default function FileBrowserPanel({
   return (
     <div
       ref={panelRef}
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
@@ -516,33 +524,6 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={closeSearch}
         />
-        {directoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    expandAll || allDirectoriesExpanded
-                      ? "Collapse all folders"
-                      : "Expand all folders"
-                  }
-                  onClick={toggleAllDirectories}
-                />
-              }
-            >
-              <MorphIcon
-                className="size-3.5"
-                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-              />
-            </TooltipTrigger>
-            <TooltipPopup>
-              {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
       </div>
       {error || pathSearch.error ? (
         <button

@@ -128,6 +128,7 @@ export function useReviewDiffData(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly revision: string | undefined;
   readonly draftMessage: string;
+  readonly workingTreeScope?: "staged" | "unstaged" | undefined;
 }) {
   const { draftMessage, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
@@ -154,6 +155,7 @@ export function useReviewDiffData(input: {
     source?.kind,
     source?.baseRef,
     source?.diffHash,
+    input.workingTreeScope,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
   const indices = useMemo(
@@ -172,6 +174,9 @@ export function useReviewDiffData(input: {
                     cacheKey: scope,
                     request: {
                       cwd,
+                      ...(input.workingTreeScope
+                        ? { workingTreeScope: input.workingTreeScope }
+                        : {}),
                       ...(lazySource.baseRef ? { baseRef: lazySource.baseRef } : {}),
                       file: {
                         path: file.path,
@@ -183,7 +188,7 @@ export function useReviewDiffData(input: {
                 })
               : null,
           ),
-    [environmentId, cwd, lazySource, indices, scope],
+    [environmentId, cwd, lazySource, indices, scope, input.workingTreeScope],
   );
   const parsedQuery = useMemo(
     () =>
@@ -298,7 +303,12 @@ export function useReviewDiffData(input: {
     });
   }, [nativeReviewDiffData.rows.length, parsedDiff, selectedSection?.id]);
 
+  const rawPatches = useMemo(
+    () => patches.flatMap((patch) => (patch?._tag === "Success" ? [patch.value.source.diff] : [])),
+    [patches],
+  );
   return {
+    rawPatches,
     parsedDiff,
     loadVisibleFile,
     isPending: patches.some((patch) => patch?._tag === "Initial" || patch?.waiting),

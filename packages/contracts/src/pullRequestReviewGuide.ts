@@ -59,8 +59,8 @@ export const PullRequestReviewGuideStop = Schema.Struct({
   attention: Schema.NullOr(PullRequestReviewGuideAttention),
   excerpts: Schema.Array(PullRequestReviewGuideExcerpt),
   /**
-   * Changed files the tour never excerpts, each listed by one stop. A file the tour does show may
-   * be excerpted by several stops, each showing the part that stop is about.
+   * Changed files the tour never excerpts, each listed by one stop. All excerpts and notes for a
+   * file belong to one stop because hosts track viewed state for whole files.
    */
   files: Schema.Array(
     Schema.Struct({

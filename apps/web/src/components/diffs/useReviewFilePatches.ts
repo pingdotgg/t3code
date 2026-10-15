@@ -1,3 +1,4 @@
+import { orderReviewFiles } from "@t3tools/client-runtime/review-workspace";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
@@ -15,11 +16,6 @@ import {
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
-const filePathCollator = new Intl.Collator(undefined, {
-  numeric: true,
-  sensitivity: "base",
-});
-
 export function useReviewFilePatches({
   environmentId,
   cwd,
@@ -29,6 +25,7 @@ export function useReviewFilePatches({
   theme,
   revision,
   preview,
+  workingTreeScope,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -38,6 +35,7 @@ export function useReviewFilePatches({
   theme: "light" | "dark";
   revision: string | undefined;
   preview: RenderablePatch | null;
+  workingTreeScope?: "staged" | "unstaged" | undefined;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -46,7 +44,7 @@ export function useReviewFilePatches({
     source?.kind,
     source?.diffHash,
     baseRef,
-    ignoreWhitespace,
+    workingTreeScope,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
   const indices = useMemo(
@@ -54,7 +52,7 @@ export function useReviewFilePatches({
     [requested, scope],
   );
   const files = useMemo(
-    () => source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [],
+    () => orderReviewFiles(source?.files ?? [], (file) => file.path),
     [source?.files],
   );
   const queries = useMemo(
@@ -74,7 +72,10 @@ export function useReviewFilePatches({
                     request: {
                       cwd,
                       ...(baseRef ? { baseRef } : {}),
-                      ignoreWhitespace,
+                      // Keep the original patch for line and hunk actions. Whitespace
+                      // filtering changes only the displayed metadata below.
+                      ignoreWhitespace: false,
+                      ...(workingTreeScope ? { workingTreeScope } : {}),
                       file: {
                         path: file.path,
                         previousPath: file.previousPath,
@@ -85,7 +86,7 @@ export function useReviewFilePatches({
                 }),
               };
             }),
-    [environmentId, cwd, source, files, indices, scope, baseRef, ignoreWhitespace],
+    [environmentId, cwd, source, files, indices, scope, baseRef, workingTreeScope],
   );
   const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
   useEffect(() => {
@@ -108,6 +109,7 @@ export function useReviewFilePatches({
           AsyncResult.map(result, (source) => {
             let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
               compactPartialHunkOffsets: true,
+              ignoreWhitespace,
             });
             if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
               const stat = source.files[0]!;
@@ -120,7 +122,7 @@ export function useReviewFilePatches({
           }),
         ),
       ),
-    [theme],
+    [theme, ignoreWhitespace],
   );
   const patches = useAtomValue(
     useMemo(
@@ -182,7 +184,14 @@ export function useReviewFilePatches({
             return {
               name: file.path,
               ...(file.previousPath ? { prevName: file.previousPath } : {}),
-              type: file.previousPath ? "rename-changed" : "change",
+              type:
+                file.status === "added"
+                  ? "new"
+                  : file.status === "deleted"
+                    ? "deleted"
+                    : file.previousPath || file.status === "renamed"
+                      ? "rename-changed"
+                      : "change",
               hunks: [],
               additionLines: [],
               deletionLines: [],
@@ -192,9 +201,7 @@ export function useReviewFilePatches({
               cacheKey: `${scope}:${file.path}:pending`,
             };
           })
-        : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
-            filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
-          ),
+        : orderReviewFiles(preview?.kind === "files" ? preview.files : [], resolveFileDiffPath),
     [source, files, patches, scope, preview],
   );
   const fileStates = useMemo(
@@ -231,7 +238,15 @@ export function useReviewFilePatches({
       ),
     [files, patches],
   );
+  const rawPatches = useMemo(
+    () =>
+      [...patches.values()].flatMap((result) =>
+        result._tag === "Success" ? [result.value.source.diff] : [],
+      ),
+    [patches],
+  );
   return {
+    rawPatches,
     scope,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),

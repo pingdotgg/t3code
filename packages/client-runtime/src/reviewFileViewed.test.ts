@@ -9,7 +9,7 @@ import {
   toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
-} from "./pullRequestFilesViewed.logic";
+} from "./reviewFileViewed.ts";
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
 const NOTHING_PENDING: ReadonlySet<string> = new Set();

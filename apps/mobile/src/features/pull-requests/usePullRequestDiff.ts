@@ -42,7 +42,7 @@ export function pullRequestTarget(params: PullRequestParams) {
 
 const NO_PAGES: readonly PullRequestDiffPage[] = [];
 
-export function usePullRequestDiff(params: PullRequestDiffParams) {
+export function usePullRequestDiff(params: PullRequestDiffParams, ignoreWhitespace = false) {
   const reference = pullRequestTarget(params);
   const target = {
     ...reference,
@@ -70,10 +70,14 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
   }, [cursor, key, query.data, state.key, state.pages]);
   if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
 
-  const [parseCache] = useState(() => new WeakMap<PullRequestDiffResult, ReviewParsedDiff>());
+  const [parseCaches] = useState(() => ({
+    shown: new WeakMap<PullRequestDiffResult, ReviewParsedDiff>(),
+    hidden: new WeakMap<PullRequestDiffResult, ReviewParsedDiff>(),
+  }));
+  const parseCache = ignoreWhitespace ? parseCaches.hidden : parseCaches.shown;
   const parsed = useMemo(
-    () => combinePullRequestDiffPages(pages, parseCache, key),
-    [key, pages, parseCache],
+    () => combinePullRequestDiffPages(pages, parseCache, key, ignoreWhitespace),
+    [key, pages, parseCache, ignoreWhitespace],
   );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;

@@ -51,7 +51,11 @@ import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import {
+  groupReviewGuideFiles,
+  normalizeReviewGuide,
+  parseReviewGuideChange,
+} from "./pullRequestReviewGuideNormalize.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 
@@ -158,6 +162,9 @@ const make = Effect.gen(function* () {
           }),
       ),
       Effect.map(Option.getOrNull),
+      Effect.map((guide) =>
+        guide === null ? null : { ...guide, stops: groupReviewGuideFiles(guide.stops) },
+      ),
     );
 
   const get: PullRequestReviewGuideService["Service"]["get"] = Effect.fn(
@@ -186,8 +193,9 @@ const make = Effect.gen(function* () {
     headSha: string,
     stack: PullRequestStack | null,
     runId: string,
+    repositoryRemote: string | null | undefined,
   ) {
-    const remote = yield* git.resolvePrimaryRemoteName(workspaceRoot);
+    const remote = repositoryRemote ?? (yield* git.resolvePrimaryRemoteName(workspaceRoot));
     const fetch = (args: ReadonlyArray<string>) =>
       git.execute({
         operation: "PullRequestReviewGuideService.fetch",
@@ -372,6 +380,7 @@ const make = Effect.gen(function* () {
     headSha: string,
     runId: string,
     owns: Effect.Effect<boolean>,
+    repositoryRemote: string | null | undefined,
   ) {
     const [activity, settings, providers, stack] = yield* Effect.all(
       [
@@ -397,6 +406,7 @@ const make = Effect.gen(function* () {
       headSha,
       stack,
       runId,
+      repositoryRemote,
     ).pipe(
       Effect.flatMap((checkout) =>
         Effect.all(
@@ -517,7 +527,16 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(input, key, workspaceRoot, detail, currentHeadSha, runId, owns).pipe(
+    yield* write(
+      input,
+      key,
+      workspaceRoot,
+      detail,
+      currentHeadSha,
+      runId,
+      owns,
+      identity?.locator.remoteName,
+    ).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

@@ -548,6 +548,83 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
+  it("keeps open and resolved review conversations together, including thread-only replies", () => {
+    const root = { ...TIMELINE_SOURCE.comments[0]!, id: "root", path: "src/app.ts" };
+    const reply = {
+      ...root,
+      id: "reply",
+      body: "Please keep the fallback",
+      createdAt: "2026-07-05T00:00:00Z",
+    };
+    const thread: PullRequestReviewThread = {
+      id: "discussion",
+      path: "src/app.ts",
+      line: 10,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: [root, reply],
+    };
+    const resolved: PullRequestReviewThread = {
+      ...thread,
+      id: "finished",
+      isResolved: true,
+      comments: [{ ...root, id: "resolved-comment", body: "Fixed now" }],
+    };
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [root, TIMELINE_SOURCE.comments[0]!],
+      reviewThreads: [thread, resolved],
+    });
+    expect(events.map((event) => event.id)).toEqual([
+      "thread:discussion",
+      "c1",
+      "thread:finished",
+      "1baf7bdcafe",
+      "created",
+    ]);
+    expect(events[0]).toMatchObject({
+      kind: "thread",
+      at: reply.createdAt,
+      path: "src/app.ts",
+      reviewThread: thread,
+    });
+    expect(events[0]?.reviewThread?.comments.map((comment) => [comment.id, comment.body])).toEqual([
+      ["root", "looks good"],
+      ["reply", "Please keep the fallback"],
+    ]);
+    expect(events.find((event) => event.id === "thread:finished")?.reviewThread?.isResolved).toBe(
+      true,
+    );
+    expect(
+      groupPullRequestTimelineConversations(events).map((row) =>
+        row.kind === "comments" ? row.events.map((event) => event.id) : row.event.id,
+      ),
+    ).toEqual(["thread:discussion", ["c1"], "thread:finished", "1baf7bdcafe", "created"]);
+  });
+
+  it("retains a discussion whose first page has not loaded yet", () => {
+    const thread: PullRequestReviewThread = {
+      id: "unloaded",
+      path: "src/app.ts",
+      line: null,
+      side: "right",
+      isResolved: false,
+      isOutdated: true,
+      comments: [],
+      commentCount: 5,
+      nextCommentsCursor: "page-2",
+    };
+    const event = buildPullRequestTimeline({ ...TIMELINE_SOURCE, reviewThreads: [thread] }).find(
+      (entry) => entry.kind === "thread",
+    );
+    expect(event).toMatchObject({
+      reviewThread: thread,
+      actor: null,
+      at: TIMELINE_SOURCE.createdAt,
+    });
+  });
+
   it("orders creation, commits and comments newest first", () => {
     // What happened last is what the reader opening the tab is asking about.
     expect(buildPullRequestTimeline(TIMELINE_SOURCE).map((event) => event.id)).toEqual([

@@ -10,12 +10,7 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import {
-  CommonActions,
-  StackActions,
-  useNavigation,
-  type StaticScreenProps,
-} from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
@@ -42,7 +37,6 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
-import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -248,7 +242,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       }
       return undefined;
     },
-    [gitStatus.data, menuItems],
+    [gitStatus.data],
   );
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
@@ -320,21 +314,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             />
           </>
         ) : null}
-        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-        <SheetListRow
-          icon="text.bubble"
-          title="Review changes"
-          subtitle="Inspect changes, uncommitted edits, and turn diffs"
-          disabled={busy || !isRepo}
-          onPress={() => {
-            const params = { environmentId, threadId };
-            navigation.dispatch(
-              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
-                ? StackActions.replace("ThreadReview", params)
-                : CommonActions.navigate("ThreadReview", params),
-            );
-          }}
-        />
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"

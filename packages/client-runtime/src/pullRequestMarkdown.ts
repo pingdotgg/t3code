@@ -24,7 +24,7 @@ const VIDEO_TAG_MAX_LINES = 8;
 const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$|[?#])/iu;
-const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
+const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\(<?(https?:\/\/[^\s)<>]+)>?\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
 /** A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag. */
 const GITHUB_ASSET_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;

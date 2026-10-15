@@ -8,6 +8,7 @@ import {
   fileDiffRows,
   letterStopNotes,
   rowsToPatch,
+  reviewGuideStopProgress,
   stepTourPosition,
 } from "./reviewGuideTour.js";
 
@@ -54,6 +55,36 @@ describe("stepTourPosition", () => {
     expect(stepTourPosition(0, -1, 3)).toBe(0);
     expect(stepTourPosition(0, 1, 3)).toBe(1);
     expect(stepTourPosition(2, 1, 3)).toBe(2);
+  });
+});
+
+describe("reviewGuideStopProgress", () => {
+  it("counts each chapter file once and completes when its last file is reviewed", () => {
+    const chapter = stop({
+      files: [
+        { path: "a.ts", note: "" },
+        { path: "b.ts", note: "" },
+      ],
+      excerpts: [{ path: "a.ts", side: "new", start: 1, end: 3, caption: "" }],
+    });
+    const viewed = new Set(["a.ts"]);
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path))).toEqual({
+      paths: ["a.ts", "b.ts"],
+      reviewedCount: 1,
+      reviewed: false,
+    });
+    viewed.add("b.ts");
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path)).reviewed).toBe(true);
+    viewed.delete("a.ts");
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path)).reviewed).toBe(false);
+  });
+
+  it("does not mark a context-only chapter as reviewed", () => {
+    expect(reviewGuideStopProgress(stop({}), () => true)).toEqual({
+      paths: [],
+      reviewedCount: 0,
+      reviewed: false,
+    });
   });
 });
 

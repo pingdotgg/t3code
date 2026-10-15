@@ -1,3 +1,4 @@
+import { reviewPositionRange, reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
 import type {
   DiffLineAnnotation,
   FileDiffContentsLoader,
@@ -5,11 +6,18 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
-import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewGuideExcerpt,
+  PullRequestReviewPosition,
+} from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode, type RefObject } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
+import { PierreEntryIcon } from "../../chat/PierreEntryIcon";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -23,8 +31,11 @@ import {
 } from "~/reviewCommentContext";
 
 import { DiffCommentAnnotation } from "../../diffs/DiffCommentAnnotation";
-import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
+import { INLINE_RENAME_HEADER_CSS } from "../../diffs/StyledDiffCodeView";
+import { GUIDE_DIFF_UNSAFE_CSS } from "./guideDiffStyles";
 import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
+import { DiffFileRename } from "../../diffs/DiffFileRename";
 import {
   getReviewPositionAnchor,
   PendingReviewCommentCard,
@@ -40,9 +51,12 @@ import {
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
-// Long lines scroll inside the excerpt. The renderer only shows its scrollbar on hover, which
-// reads as code cut off at the edge, so the excerpt keeps it visible.
-const EXCERPT_UNSAFE_CSS = `${DIFF_VIEW_UNSAFE_CSS}
+// When wrapping is off, keep the excerpt's scrollbar visible so long lines do not look cut off.
+const EXCERPT_UNSAFE_CSS = `${GUIDE_DIFF_UNSAFE_CSS}
+${INLINE_RENAME_HEADER_CSS}
+[data-diffs-header] [data-change-icon] {
+  display: none;
+}
 [data-code]::-webkit-scrollbar-thumb {
   background-color: var(--diffs-bg-context);
 }
@@ -60,8 +74,19 @@ export interface ExcerptNoteMarker {
 export interface ExcerptCommenting {
   /** Whether a comment can be queued for the review; asking an agent needs no host support. */
   readonly canComment: boolean;
+  readonly canCommentRanges?: boolean;
+  readonly renderAttachments?: (
+    onTextChange: (text: string) => void,
+    onBusyChange: (busy: boolean) => void,
+    textareaRef: RefObject<HTMLTextAreaElement | null>,
+  ) => ReactNode;
   /** Comments already queued for the review, placed on the lines they belong to. */
   readonly pending: ReadonlyArray<PendingReviewComment>;
+  readonly pendingCommentTarget: {
+    environmentId: EnvironmentId;
+    reference: PullRequestRef;
+    canCopyLink: boolean;
+  };
   readonly onComment: (comment: {
     readonly path: string;
     readonly oldPath: string | null;
@@ -98,6 +123,8 @@ export function GuideExcerpt({
   commenting,
   loadDiffFiles,
   onOpenFile,
+  viewed,
+  onSetViewed,
 }: {
   excerpt: PullRequestReviewGuideExcerpt;
   /** The file's parsed diff, null while it loads or when the host withheld it. */
@@ -108,9 +135,12 @@ export function GuideExcerpt({
   /** Loads the file's unchanged lines for the bars around the excerpt. */
   loadDiffFiles: FileDiffContentsLoader;
   onOpenFile: (path: string) => void;
+  viewed: boolean;
+  onSetViewed: ((viewed: boolean) => void) | null;
 }) {
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const { resolvedTheme } = useTheme();
+  const settings = useClientSettings();
   const slice = useMemo(() => {
     if (file === null) return null;
     const rows = fileDiffRows(file);
@@ -118,7 +148,8 @@ export function GuideExcerpt({
     if (shown.length === 0) return null;
     const parsed = getRenderablePatch(
       rowsToPatch(excerpt.path, resolveFileDiffPreviousPath(file), shown),
-      `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
+      `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}:${settings.diffIgnoreWhitespace}`,
+      { ignoreWhitespace: settings.diffIgnoreWhitespace },
     );
     const fileDiff = parsed?.kind === "files" ? parsed.files[0] : undefined;
     if (fileDiff === undefined) return null;
@@ -128,7 +159,7 @@ export function GuideExcerpt({
       deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
     };
     return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
-  }, [excerpt, file]);
+  }, [excerpt, file, settings.diffIgnoreWhitespace]);
 
   // The excerpt expands against an old side of its own: the file's real old side differs from
   // the new one wherever another hunk changed it, and the renderer needs the two to agree around
@@ -205,13 +236,20 @@ export function GuideExcerpt({
   const beginComment = useCallback(
     (range: SelectedLineRange | null) => {
       if (range === null || file === null) return;
-      const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
-      if (position === null) return;
-      setDraft({ range, position });
+      const end = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
+      const start = resolveDiffReviewPosition(file, range.start, range.side);
+      if (end === null) return;
+      setDraft({ range, position: start ? reviewPositionRange(start, end) : end });
     },
     [file],
   );
-  const interactive = commenting !== null && draft === null;
+  const interactive =
+    commenting !== null &&
+    draft === null &&
+    (commenting.canComment || commenting.onAskAgent !== null);
+  const canQueueComment =
+    commenting?.canComment === true &&
+    (draft?.position.startLine === undefined || commenting.canCommentRanges === true);
   const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
     if (draft === null || file === null || onAskAgent === null) return;
@@ -230,9 +268,9 @@ export function GuideExcerpt({
 
   const options = useMemo(
     () => ({
-      diffStyle: "unified" as const,
+      diffStyle: settings.diffLayout === "split" ? ("split" as const) : ("unified" as const),
       lineDiffType: "none" as const,
-      overflow: "scroll" as const,
+      overflow: settings.wordWrap ? ("wrap" as const) : ("scroll" as const),
       theme: resolveDiffThemeName(resolvedTheme),
       themeType: resolvedTheme,
       preferredHighlighter: PREFERRED_HIGHLIGHTER,
@@ -247,19 +285,30 @@ export function GuideExcerpt({
         ? { hunkSeparators: "simple" as const }
         : { loadDiffFiles: loadExcerptFiles }),
     }),
-    [resolvedTheme, interactive, beginComment, loadExcerptFiles],
+    [
+      resolvedTheme,
+      interactive,
+      beginComment,
+      loadExcerptFiles,
+      settings.diffLayout,
+      settings.wordWrap,
+    ],
   );
 
   return (
     <figure className="flex min-w-0 flex-col gap-1.5">
       {excerpt.caption.trim() !== "" ? (
-        <figcaption className="text-xs text-muted-foreground">
+        <figcaption className="px-4 text-xs text-muted-foreground">
           <GuideProse text={excerpt.caption} plain />
         </figcaption>
       ) : null}
       {slice !== null ? (
-        <div className="min-w-0 overflow-hidden rounded-lg border border-border/60">
+        <div className="min-w-0 border-y border-border/60">
           <FileDiff<ExcerptAnnotation>
+            renderHeaderPrefix={() => (
+              <PierreEntryIcon pathValue={excerpt.path} kind="file" theme={resolvedTheme} />
+            )}
+            renderHeaderFilenameSuffix={() => (file ? <DiffFileRename file={file} /> : null)}
             fileDiff={slice.fileDiff}
             options={options}
             lineAnnotations={annotations}
@@ -276,33 +325,37 @@ export function GuideExcerpt({
                     ))}
                   </div>
                 ) : null}
-                {annotation.metadata.pending.map((comment) => (
-                  <PendingReviewCommentCard
-                    key={comment.id}
-                    comment={comment}
-                    onRemove={() => commenting?.onRemove(comment.id)}
-                  />
-                ))}
+                {commenting !== null
+                  ? annotation.metadata.pending.map((comment) => (
+                      <PendingReviewCommentCard
+                        key={comment.id}
+                        comment={comment}
+                        {...commenting.pendingCommentTarget}
+                      />
+                    ))
+                  : null}
                 {annotation.metadata.draft && draft !== null && commenting !== null ? (
                   <DiffCommentAnnotation
                     kind="draft"
-                    rangeLabel={`${excerpt.path}:${getReviewPositionAnchor(draft.position).line}`}
+                    renderAttachments={commenting.renderAttachments}
+                    pending={!canQueueComment && onAskAgent === null}
+                    rangeLabel={`${excerpt.path} · ${reviewPositionLabel(draft.position)}`}
                     text=""
                     placeholder={
-                      commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
+                      canQueueComment ? "Add a comment…" : "Ask the agent about these lines…"
                     }
-                    submitLabel={commenting.canComment ? "Add to review" : "Ask agent"}
-                    {...(commenting.canComment && onAskAgent !== null
+                    submitLabel={canQueueComment ? "Add to review" : "Add to composer"}
+                    {...(canQueueComment && onAskAgent !== null
                       ? {
                           secondaryAction: {
-                            label: "Ask agent",
+                            label: "Add to composer",
                             onAction: (text: string) => askAgent(text),
                           },
                         }
                       : {})}
                     onCancel={() => setDraft(null)}
                     onComment={(body) => {
-                      if (!commenting.canComment) {
+                      if (!canQueueComment) {
                         askAgent(body);
                         return;
                       }
@@ -319,7 +372,17 @@ export function GuideExcerpt({
               </div>
             )}
             renderHeaderMetadata={() => (
-              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                {onSetViewed ? (
+                  <label className="flex items-center gap-1.5">
+                    <Checkbox
+                      aria-label={`Reviewed ${excerpt.path}`}
+                      checked={viewed}
+                      onCheckedChange={(checked) => onSetViewed(checked === true)}
+                    />
+                    Reviewed
+                  </label>
+                ) : null}
                 <span className="tabular-nums">
                   {excerpt.side === "old" ? "removed code, " : ""}showing {slice.shown} of{" "}
                   {slice.total} diff lines

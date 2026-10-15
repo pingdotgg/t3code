@@ -1,12 +1,13 @@
-import type { useReviewHeaderPresentation as useIosReviewHeaderPresentation } from "./useReviewHeaderPresentation";
+import { useReviewHeaderPresentation as useSharedReviewHeaderPresentation } from "./useReviewHeaderPresentation.shared";
 
 export function useReviewHeaderPresentation(
-  props: Parameters<typeof useIosReviewHeaderPresentation>[0],
-): ReturnType<typeof useIosReviewHeaderPresentation> {
+  props: Parameters<typeof useSharedReviewHeaderPresentation>[0],
+): ReturnType<typeof useSharedReviewHeaderPresentation> {
+  const presentation = useSharedReviewHeaderPresentation(props);
   return {
-    title: "Review changes",
+    ...presentation,
+    title: "Git",
     subtitle: props.androidSubtitle || "Select a diff",
-    gitMenu: null,
     menuIcon: "ellipsis.circle",
     refreshAction: {
       id: "refresh",

@@ -26,6 +26,10 @@ export interface NativeReviewDiffRow {
   readonly fileId?: string;
   readonly filePath?: string;
   readonly previousPath?: string | null;
+  readonly renameSegments?: ReadonlyArray<{
+    readonly text: string;
+    readonly kind: "unchanged" | "removed" | "added" | "context";
+  }>;
   readonly changeType?:
     | "modified"
     | "new"
@@ -43,7 +47,15 @@ export interface NativeReviewDiffRow {
   readonly wordDiffRanges?: ReadonlyArray<NativeReviewDiffWordDiffRange>;
   readonly commentText?: string;
   readonly commentRangeLabel?: string;
+  readonly commentPending?: boolean;
+  readonly commentResolvedSummary?: string;
   readonly commentSectionTitle?: string;
+  readonly hunkAction?: "Stage hunk" | "Unstage hunk";
+  readonly hunkActionDisabled?: boolean;
+  readonly hunkRevertAction?: boolean;
+  readonly hunkRevertActionDisabled?: boolean;
+  readonly fileAction?: "Stage file" | "Unstage file";
+  readonly fileActionDisabled?: boolean;
 }
 
 export interface NativeReviewDiffWordDiffRange {
@@ -117,6 +129,9 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly collapsedFileIdsJson?: string;
   readonly viewedFileIdsJson?: string;
   readonly selectedRowIdsJson?: string;
+  readonly enableLineRangeSelection?: boolean;
+  readonly showViewedCheckbox?: boolean;
+  readonly viewedCheckboxEnabled?: boolean;
   readonly collapsedCommentIdsJson?: string;
   readonly appearanceScheme: "light" | "dark";
   readonly themeJson: string;
@@ -136,6 +151,12 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   ) => void;
   readonly onToggleFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onToggleViewedFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
+  readonly onPressHunk?: (
+    event: NativeSyntheticEvent<{ readonly rowId?: string; readonly action?: "stage" | "revert" }>,
+  ) => void;
+  readonly onPressFileAction?: (
+    event: NativeSyntheticEvent<{ readonly fileId?: string; readonly rowId?: string }>,
+  ) => void;
   readonly onPressLine?: (
     event: NativeSyntheticEvent<{
       readonly rowId?: string;
@@ -145,6 +166,9 @@ export interface NativeReviewDiffViewProps extends ViewProps {
       readonly newLineNumber?: number;
       readonly change?: "context" | "add" | "delete";
     }>,
+  ) => void;
+  readonly onSelectLineRange?: (
+    event: NativeSyntheticEvent<{ readonly startRowId: string; readonly endRowId: string }>,
   ) => void;
   readonly onToggleComment?: (event: NativeSyntheticEvent<{ readonly commentId?: string }>) => void;
 }
@@ -192,6 +216,7 @@ function useNativeReviewDiffPayload(
   nativeRef: React.RefObject<NativeReviewDiffViewRef | null>,
   method: NativeReviewDiffPayloadMethod,
   payload: string | undefined,
+  contentResetKey: string | undefined,
 ) {
   useEffect(() => {
     if (payload === undefined) {
@@ -231,9 +256,11 @@ function useNativeReviewDiffPayload(
       });
     };
 
-    // Fabric attaches the React ref before Expo registers the native tag used by
-    // view functions. Starting on the next frame avoids racing that registration.
-    frame = requestAnimationFrame(dispatch);
+    // Fabric attaches the ref before Expo registers the native tag. Reset props
+    // also clear the native rows, so replay after that prop transaction settles.
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(dispatch);
+    });
 
     return () => {
       cancelled = true;
@@ -241,7 +268,8 @@ function useNativeReviewDiffPayload(
         cancelAnimationFrame(frame);
       }
     };
-  }, [method, nativeRef, payload]);
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- Native reset clears unchanged payloads, which must be replayed after the reset.
+  }, [method, nativeRef, payload, contentResetKey]);
 }
 
 function getExpoViewConfig(moduleName: string) {
@@ -253,9 +281,14 @@ function getExpoViewConfig(moduleName: string) {
 function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
   const { nativeViewRef, rowsJson, tokensJson, tokensPatchJson, ...nativeProps } = props;
   const nativeRef = useRef<NativeReviewDiffViewRef>(null);
-  useNativeReviewDiffPayload(nativeRef, "setRowsJson", rowsJson);
-  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
-  useNativeReviewDiffPayload(nativeRef, "setTokensPatchJson", tokensPatchJson);
+  useNativeReviewDiffPayload(nativeRef, "setRowsJson", rowsJson, props.contentResetKey);
+  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson, props.contentResetKey);
+  useNativeReviewDiffPayload(
+    nativeRef,
+    "setTokensPatchJson",
+    tokensPatchJson,
+    props.contentResetKey,
+  );
   useImperativeHandle(
     nativeViewRef,
     () => ({
@@ -274,6 +307,7 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
     return null;
   }
 
+  // eslint-disable-next-line react/refs -- React receives this ref as an element prop; it is not read during render.
   return createElement(RawNativeView, {
     ...nativeProps,
     refreshEnabled: props.onPullToRefresh !== undefined,

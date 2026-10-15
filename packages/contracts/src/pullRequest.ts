@@ -208,8 +208,10 @@ export const PullRequestComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
+  reviewCommitSha: Schema.optional(Schema.String),
   /** Absent from a host with no reactions at all, which is a different thing from none on this. */
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
   /**
    * The host's own answer to whether this reader may rewrite this remark. Absent where the host
    * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
@@ -239,6 +241,7 @@ export const PullRequestThreadComment = Schema.Struct({
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
   /**
    * The host's own answer to whether this reader may rewrite this remark. Absent where the host
    * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
@@ -259,6 +262,8 @@ export const PullRequestReviewThread = Schema.Struct({
   /** Null when the host anchors the thread to a file rather than to a line. */
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
+  startLine: Schema.optional(PositiveInt),
+  startSide: Schema.optional(PullRequestDiffSide),
   isResolved: Schema.Boolean,
   /**
    * The line the thread was written against is no longer in the diff, so it cannot be shown
@@ -355,6 +360,10 @@ export type PullRequestCommit = typeof PullRequestCommit.Type;
 export const PullRequestReviewCapabilities = Schema.Struct({
   /** A new comment can be anchored to a line of the diff. */
   inlineComment: Schema.Boolean,
+  /** A comment can retain both ends of a selected range. Absent means single lines only. */
+  multilineComment: Schema.optional(Schema.Boolean),
+  /** Pending comments can be saved privately on the host to obtain their real links. */
+  draftComment: Schema.optional(Schema.Boolean),
   /** An existing thread can be replied to. */
   reply: Schema.Boolean,
   /** A thread can be marked resolved, and unresolved again. */
@@ -411,6 +420,9 @@ export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Typ
  * buttons.
  */
 export const PullRequestCapabilities = Schema.Struct({
+  /** Local media can be published to a host URL before composing a comment or review. */
+  attachments: Schema.optional(Schema.Boolean),
+
   /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
   /** A comment can be posted, and the conversation read back. */
@@ -480,6 +492,9 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 export const PullRequestViewerPermissions = Schema.Struct({
   /** May request remote stack rebases, including when this layer is already current. */
   stackRebase: Schema.optional(Schema.Boolean),
+  adminMerge: Schema.optional(Schema.Boolean),
+  /** May publish local media to the host attachment endpoint. */
+  attachments: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -884,6 +899,8 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  /** Whether the host's merge requirements are satisfied, including branch protection. */
+  mergeRequirementsSatisfied: Schema.optional(Schema.Boolean),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
@@ -1123,6 +1140,7 @@ export const PullRequestActionInput = Schema.Struct({
    * than at the moment it happens. Absent means the host's own default.
    */
   mergeMethod: Schema.optional(PullRequestMergeMethod),
+  adminOverride: Schema.optional(Schema.Boolean),
   /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
 });
@@ -1139,6 +1157,26 @@ export const PullRequestCommentInput = Schema.Struct({
   body: CommentBody,
 });
 export type PullRequestCommentInput = typeof PullRequestCommentInput.Type;
+
+export const PullRequestUploadAttachmentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  attachmentId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: Schema.Literals([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+  ]),
+  sizeBytes: PositiveInt.check(Schema.isLessThanOrEqualTo(100 * 1024 * 1024)),
+});
+export type PullRequestUploadAttachmentInput = typeof PullRequestUploadAttachmentInput.Type;
+
+export const PullRequestUploadAttachmentResult = Schema.Struct({ url: TrimmedNonEmptyString });
+export type PullRequestUploadAttachmentResult = typeof PullRequestUploadAttachmentResult.Type;
 
 /**
  * A change request's own words rewritten: its title, its description, or both. Each is optional
@@ -1174,15 +1212,19 @@ export const PullRequestCommentUpdateInput = Schema.Struct({
 });
 export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;
 
-/** The coordinates of one line in a pull request diff. */
+/** The end of a selection, plus its start when commenting on several lines. */
 export const PullRequestReviewPosition = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("added"),
     newLine: PositiveInt,
+    startLine: Schema.optional(PositiveInt),
+    startSide: Schema.optional(PullRequestDiffSide),
   }),
   Schema.Struct({
     kind: Schema.Literal("deleted"),
     oldLine: PositiveInt,
+    startLine: Schema.optional(PositiveInt),
+    startSide: Schema.optional(PullRequestDiffSide),
   }),
   Schema.Struct({
     kind: Schema.Literal("context"),
@@ -1190,9 +1232,18 @@ export const PullRequestReviewPosition = Schema.Union([
     newLine: PositiveInt,
     /** Which copy of an unchanged line the reviewer selected in a split diff. */
     side: PullRequestDiffSide,
+    startLine: Schema.optional(PositiveInt),
+    startSide: Schema.optional(PullRequestDiffSide),
   }),
 ]);
 export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
+
+export const PullRequestDraftCommentLink = Schema.Struct({
+  reviewId: TrimmedNonEmptyString,
+  commentId: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type PullRequestDraftCommentLink = typeof PullRequestDraftCommentLink.Type;
 
 /** One remark in a review that has not been sent yet, anchored to a line of the diff. */
 export const PullRequestReviewCommentDraft = Schema.Struct({
@@ -1205,8 +1256,21 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
   oldPath: Schema.optional(TrimmedNonEmptyString),
   position: PullRequestReviewPosition,
   body: CommentBody,
+  hostedComment: Schema.optional(PullRequestDraftCommentLink),
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
+
+export const PullRequestSaveDraftCommentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  comment: PullRequestReviewCommentDraft,
+});
+export type PullRequestSaveDraftCommentInput = typeof PullRequestSaveDraftCommentInput.Type;
+
+export const PullRequestDiscardDraftCommentInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  ...PullRequestDraftCommentLink.fields,
+});
+export type PullRequestDiscardDraftCommentInput = typeof PullRequestDiscardDraftCommentInput.Type;
 
 /**
  * A whole review, sent in one go. The line comments travel with the verdict rather than being
@@ -1216,6 +1280,7 @@ export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft
 export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
   verdict: PullRequestReviewVerdict,
+  pendingReviewId: Schema.optional(TrimmedNonEmptyString),
   /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),

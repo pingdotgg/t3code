@@ -45,6 +45,7 @@ function PopoverPopup({
   sideOffset = 4,
   alignOffset = 0,
   collisionAvoidance,
+  collisionPadding,
   tooltipStyle = false,
   keepMounted = false,
   anchor,
@@ -57,6 +58,7 @@ function PopoverPopup({
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: PopoverPrimitive.Positioner.Props["alignOffset"];
   collisionAvoidance?: PopoverPrimitive.Positioner.Props["collisionAvoidance"];
+  collisionPadding?: PopoverPrimitive.Positioner.Props["collisionPadding"];
   tooltipStyle?: boolean;
   keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
@@ -73,7 +75,7 @@ function PopoverPopup({
         anchor={anchor}
         collisionAvoidance={collisionAvoidance}
         // A panel's card already sits inside its own padding, so the panel can reach the edge.
-        collisionPadding={variant === "panel" ? 0 : undefined}
+        collisionPadding={collisionPadding ?? (variant === "panel" ? 0 : undefined)}
         className={cn(
           "h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
           variant === "panel"

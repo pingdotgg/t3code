@@ -108,10 +108,11 @@ export function PullRequestActionToolbar(props: {
   readonly params: PullRequestParams;
   readonly filePath?: string;
   readonly onOpenFiles?: () => void;
+  readonly showFiles?: boolean;
   readonly onHeightChange?: (height: number) => void;
 }) {
   const navigation = useNavigation();
-  const { draft } = usePullRequestReviewDraft(props.params);
+  const { comments, pendingReviewId, busy: draftBusy } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
   const nativeMetrics = useNativeLayoutMetrics();
@@ -119,11 +120,13 @@ export function PullRequestActionToolbar(props: {
   const permissions = usePullRequestPermissions(props.params, props.pr);
   const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
   const canReview = permissions.verdicts.length > 0;
-  const pendingReview = canReview && draft.comments.length > 0;
+  const pendingReview = canReview && (comments.length > 0 || Boolean(pendingReviewId));
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
   const threadLabel = agent.threads.length ? "Continue thread" : "Work on PR";
-  const primaryLabel = pendingReview ? `Submit review · ${draft.comments.length}` : threadLabel;
+  const primaryLabel = pendingReview
+    ? `Submit review${comments.length ? ` · ${comments.length}` : ""}`
+    : threadLabel;
   const chooseThread = agent.threads.length > 1;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
   const open = (mode: "review" | "comment") =>
@@ -133,7 +136,7 @@ export function PullRequestActionToolbar(props: {
   const openFiles =
     props.onOpenFiles ?? (() => navigation.navigate("PullRequestFiles", props.params));
   if (!props.pr) return null;
-  const primaryDisabled = pendingReview ? false : agent.disabled;
+  const primaryDisabled = pendingReview ? draftBusy : agent.disabled;
   const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
     const primary = (
@@ -183,11 +186,13 @@ export function PullRequestActionToolbar(props: {
                 )}
               </View>
             ) : null}
-            <MaterialIconButton
-              icon="file.diff"
-              accessibilityLabel="Changed files"
-              onPress={openFiles}
-            />
+            {props.showFiles !== false ? (
+              <MaterialIconButton
+                icon="file.diff"
+                accessibilityLabel="Changed files"
+                onPress={openFiles}
+              />
+            ) : null}
           </View>
         </MaterialFloatingToolbar>
       </View>
@@ -282,15 +287,16 @@ export function PullRequestActionToolbar(props: {
     </NativeHeaderToolbar.Menu>
   ) : null;
   // Tabler file-diff geometry, rasterized at 1x/2x/3x for UIKit template images.
-  const filesControl = (
-    <NativeHeaderToolbar.Button
-      identifier="workspace-trailing-action"
-      icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
-      accessibilityLabel="Changed files"
-      onPress={openFiles}
-      separateBackground
-    />
-  );
+  const filesControl =
+    props.showFiles !== false ? (
+      <NativeHeaderToolbar.Button
+        identifier="workspace-trailing-action"
+        icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
+        accessibilityLabel="Changed files"
+        onPress={openFiles}
+        separateBackground
+      />
+    ) : null;
   if (verticalControls)
     return (
       <NativeHeaderToolbar placement="bottom">

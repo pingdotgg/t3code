@@ -1,17 +1,25 @@
-import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestDetailView,
+  PullRequestRef,
+  PullRequestReviewGuideStop,
+} from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, type ReactNode } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import type { ExcerptCommenting } from "./guide/GuideExcerpt";
+import { PullRequestAttachments } from "./PullRequestAttachments";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { GuideProseContext } from "./guide/GuideProse";
 import { GuideTour } from "./guide/GuideTour";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -28,25 +36,34 @@ export function PullRequestGuideTab({
   environmentId,
   reference,
   title,
+  detail,
   workspaceRoot,
   active,
   canComment,
+  canCommentRanges = false,
   onAskAboutLines,
   onAskAboutStop,
   onFinishReview,
   onOpenFile,
   onTourShown,
+  fallback,
+  viewControlsTarget,
 }: {
+  /** The ordinary diff reader keeps the whole change available until the guide arrives. */
+  fallback: (status: ReactNode) => ReactNode;
+  viewControlsTarget: HTMLElement | null;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   /** The pull request's title for the notice when a guide is ready, null until the detail loads. */
   title: string | null;
+  detail: Pick<PullRequestDetailView, "capabilities" | "reviewThreads">;
   /** The checkout the guide's prose renders against, as the description does. */
   workspaceRoot: string;
   /** Whether this is the tab on screen. */
   active: boolean;
   /** Whether this reader may queue line comments for a review on this host. */
   canComment: boolean;
+  canCommentRanges?: boolean;
   /** Opens an agent thread about lines of the change. Null where no thread can be opened. */
   onAskAboutLines: ((comment: ReviewCommentContext, request: string) => void) | null;
   onAskAboutStop:
@@ -67,8 +84,8 @@ export function PullRequestGuideTab({
   const runKey = guideRunKey(environmentId, reference);
   // Line comments join the review the Code tab collects, so either place shows and sends them.
   const reviewKey = pullRequestReviewKey(reference);
-  const pending = usePendingReviewComments(reference);
-  const addComment = usePullRequestReviewStore((store) => store.addComment);
+  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting = useMemo<ExcerptCommenting | null>(
     () =>
@@ -76,19 +93,48 @@ export function PullRequestGuideTab({
         ? null
         : {
             canComment,
+            canCommentRanges,
+            renderAttachments: (onTextChange, onBusyChange, textareaRef) => (
+              <PullRequestAttachments
+                environmentId={environmentId}
+                reference={reference}
+                onTextChange={onTextChange}
+                textareaRef={textareaRef}
+                onBusyChange={onBusyChange}
+              />
+            ),
             pending,
+            pendingCommentTarget: {
+              environmentId,
+              reference,
+              canCopyLink: detail.capabilities.review.draftComment === true,
+            },
             onComment: ({ path, oldPath, position, body }) =>
-              addComment(reviewKey, {
-                id: nextPendingReviewCommentId(),
-                path,
-                ...(oldPath === null ? {} : { oldPath }),
-                position,
-                body,
-              }),
+              addComment(
+                {
+                  id: nextPendingReviewCommentId(),
+                  path,
+                  ...(oldPath === null ? {} : { oldPath }),
+                  position,
+                  body,
+                },
+                detail.capabilities.review.draftComment === true,
+              ),
             onRemove: (commentId) => removeComment(reviewKey, commentId),
             onAskAgent: onAskAboutLines,
           },
-    [addComment, canComment, onAskAboutLines, pending, removeComment, reviewKey],
+    [
+      addComment,
+      canComment,
+      canCommentRanges,
+      detail,
+      environmentId,
+      reference,
+      onAskAboutLines,
+      pending,
+      removeComment,
+      reviewKey,
+    ],
   );
   useEffect(() => {
     if (!active) return;
@@ -111,6 +157,22 @@ export function PullRequestGuideTab({
   // A failure is shown only while it is about the head the reader is looking at.
   const failure =
     runState?._tag === "Failed" && runState.headSha === currentHeadSha ? runState.detail : null;
+  const attemptedGuide = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !active ||
+      data === null ||
+      data === undefined ||
+      guide !== null ||
+      running ||
+      !canWrite ||
+      failure !== null ||
+      attemptedGuide.current === runKey
+    )
+      return;
+    attemptedGuide.current = runKey;
+    void write();
+  }, [active, data, guide, running, canWrite, failure, runKey, write]);
   const writeButton = (label: string, size: "sm" | "xs") =>
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
@@ -120,27 +182,32 @@ export function PullRequestGuideTab({
     ) : null;
 
   if (guide === null) {
-    if (query.isPending && data === null) {
-      return (
-        <div className="flex min-h-48 items-center justify-center">
-          <Spinner />
-        </div>
-      );
-    }
-    return (
-      <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
-        <p className="text-sm font-medium text-foreground">
-          {running ? "Writing a review guide" : "No review guide yet"}
-        </p>
-        <p className="max-w-md text-xs text-muted-foreground">
+    return fallback(
+      <div className="mb-4 flex flex-col gap-2" aria-busy={running}>
+        <style>{`
+          @keyframes guide-status-glimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+          [data-guide-generating] { background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%); background-size: 200% 100%; background-clip: text; color: transparent; animation: guide-status-glimmer 2.4s ease-in-out infinite; animation-play-state: var(--visible-animation-state, paused); }
+          @media (prefers-reduced-motion: reduce) { [data-guide-generating] { animation: none; } }
+        `}</style>
+        <h2
+          ref={running && active ? observeVisibleAnimation : undefined}
+          role="status"
+          data-guide-generating={(running && active) || undefined}
+          className="text-sm font-medium"
+        >
           {failure ??
             query.error ??
-            (running
-              ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
-              : "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")}
+            (running ? "Generating guide…" : query.isPending ? "Loading guide…" : "Review guide")}
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          {running
+            ? "Organizing this change into chapters. Review the files while you wait."
+            : "Review the files while the guide is prepared."}
         </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
-      </div>
+        {!running && !query.isPending
+          ? writeButton(failure === null ? "Write guide" : "Try again", "xs")
+          : null}
+      </div>,
     );
   }
 
@@ -164,6 +231,7 @@ export function PullRequestGuideTab({
         environmentId={environmentId}
         reference={reference}
         guide={guide}
+        viewControlsTarget={viewControlsTarget}
         banner={banner}
         active={active}
         commenting={commenting}

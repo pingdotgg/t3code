@@ -24,6 +24,7 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
+  PullRequestDraftCommentLink,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
@@ -228,6 +229,7 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  readonly mergeRequirementsSatisfied?: boolean;
   /** The head commit, where the host's detail read reports it. */
   readonly headSha?: string | null;
   readonly body: string;
@@ -585,6 +587,7 @@ export interface PullRequestProviderApi {
       readonly removeAgentCreditsOnMerge?: boolean;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly adminOverride?: boolean;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
     },
@@ -606,6 +609,15 @@ export interface PullRequestProviderApi {
   readonly comment: (
     input: ProviderRepositoryRef & { readonly number: number; readonly body: string },
   ) => Effect.Effect<void, PullRequestProviderError>;
+
+  readonly uploadAttachment?: (
+    input: ProviderRepositoryRef & {
+      readonly path: string;
+      readonly name: string;
+      readonly mimeType: string;
+      readonly sizeBytes: number;
+    },
+  ) => Effect.Effect<{ readonly url: string }, PullRequestProviderError>;
 
   /**
    * Rewrites a remark somebody already posted. Only called when `capabilities.edit.comment` is
@@ -629,10 +641,21 @@ export interface PullRequestProviderApi {
    * `capabilities.review.verdicts`, and with line comments only where it declared
    * `inlineComment`.
    */
+  readonly saveDraftComment?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly comment: PullRequestReviewCommentDraft;
+    },
+  ) => Effect.Effect<PullRequestDraftCommentLink, PullRequestProviderError>;
+  readonly discardDraftComment?: (
+    input: ProviderRepositoryRef & { readonly number: number } & PullRequestDraftCommentLink,
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
   readonly submitReview: (
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
+      readonly pendingReviewId?: string;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     },

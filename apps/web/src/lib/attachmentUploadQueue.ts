@@ -148,7 +148,7 @@ function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string)
   });
 }
 
-function uploadBytes(input: {
+export function uploadAttachmentBytes(input: {
   readonly url: string;
   readonly file: File;
   readonly mimeType: string;
@@ -302,7 +302,7 @@ async function runUpload(job: UploadJob): Promise<void> {
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
-      uploadBytes({
+      uploadAttachmentBytes({
         url,
         file,
         mimeType,

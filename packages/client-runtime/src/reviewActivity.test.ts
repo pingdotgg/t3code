@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { IsoDateTime, type PullRequestActivity, type PullRequestActor } from "@t3tools/contracts";
-import { DEFAULT_ACTIVITY_FILTER, filterPullRequestActivity } from "./pullRequestActivityFilter";
+import { DEFAULT_ACTIVITY_FILTER, filterPullRequestActivity } from "./reviewActivity.ts";
 
 const date = IsoDateTime.make("2026-10-11T00:00:00.000Z");
 const human: PullRequestActor = { login: "reader", name: null, avatarUrl: null };

@@ -51,11 +51,9 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
   pullRequestEnvironment: {
+    ...(await importOriginal<typeof import("~/state/pullRequests")>()).pullRequestEnvironment,
     detail: () => "detail",
     activity: () => "activity",
-    // The header menu reads the stored guide to label "Write guide" or "Rewrite guide".
-    reviewGuide: () => "review-guide",
-    generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
   },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
@@ -263,7 +261,6 @@ async function click(label: string) {
 const actions = [
   "Resolve conflicts",
   "Ask a question",
-  "Explain this PR",
   "Fix findings in this thread",
   "Fix check",
   "Add to agent",
@@ -428,7 +425,7 @@ it("changes the title only for the active tab's main scroller", async () => {
   await act(async () => mainScroll.props.onScrollCapture({ target: code }));
   expect(titleFold().props.inert).toBe(true);
   expect(code.scrollTop).toBe(100);
-  await click("Summary");
+  await click("Overview");
   expect(titleFold().props.inert).toBe(false);
   await click("Code");
   expect(titleFold().props.inert).toBe(true);

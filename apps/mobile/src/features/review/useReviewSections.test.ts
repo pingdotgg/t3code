@@ -1,6 +1,7 @@
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import {
   AuthFilesystemReadScope,
+  AuthOrchestrationReadScope,
   CheckpointRef,
   EnvironmentId,
   MessageId,
@@ -11,7 +12,7 @@ import {
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  session: null as Pick<AuthSessionState, "authenticated" | "scopes"> | null,
+  session: null as Pick<AuthSessionState, "authenticated" | "scopes" | "permissions"> | null,
   sessionError: null as string | null,
   sessionAtom: {},
   effects: [] as Array<() => void>,
@@ -120,7 +121,7 @@ function makeInput(reviewCache = makeReviewCache()) {
   };
 }
 
-function renderSections(input: ReturnType<typeof makeInput>) {
+function renderSections(input: Parameters<typeof useReviewSections>[0]) {
   const result = useReviewSections(input);
   const effects = state.effects.splice(0);
   effects.forEach((effect) => effect());
@@ -207,4 +208,31 @@ it("keeps a cached checkpoint available when the filesystem access check fails",
   const checkpoint = renderSections(makeInput());
   expect(checkpoint.selectedSection?.diff).toBe(checkpointDiff);
   expect(checkpoint.error).toBeNull();
+});
+
+it("keeps an opened file on its requested comparison without changing the overview selection", () => {
+  const input = makeInput();
+  const opened = renderSections({ ...input, selectedSectionId: "turn:1" });
+  expect(opened.selectedSection?.diff).toBe(checkpointDiff);
+  expect(input.reviewCache.selectedSectionId).toBe("git:working-tree");
+  expect(setReviewSelectedSectionId).not.toHaveBeenCalled();
+});
+
+it("does not expose a forced local comparison after filesystem access is denied", () => {
+  state.session = { authenticated: true, scopes: [] };
+  const opened = renderSections({ ...makeInput(), selectedSectionId: "git:working-tree" });
+  expect(opened.selectedSection?.diff).toBe(checkpointDiff);
+  expect(opened.reviewSections.some((section) => section.kind === "working-tree")).toBe(false);
+});
+
+it("explains old connection permissions even when a recorded turn remains readable", () => {
+  state.session = {
+    authenticated: true,
+    scopes: [AuthOrchestrationReadScope],
+    permissions: [AuthOrchestrationReadScope],
+  };
+  const review = renderSections(makeInput());
+  expect(review.selectedSection?.diff).toBe(checkpointDiff);
+  expect(review.reviewSections.map((section) => section.id)).toEqual(["turn:1"]);
+  expect(review.liveGitUnavailableReason).toContain("Pair again with Read files access");
 });

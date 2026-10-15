@@ -14,6 +14,7 @@ import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import {
   resolvePullRequestAuthorFilter,
@@ -33,6 +34,7 @@ import {
   type PullRequestReaction,
   type PullRequestReactionContent,
   type PullRequestReviewCommentDraft,
+  type PullRequestDraftCommentLink,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
@@ -50,6 +52,7 @@ import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
   ADD_REACTION_GRAPHQL_MUTATION,
   buildReviewSubmission,
+  gitHubPendingReviewCommentUrl,
   buildReviewerRequest,
   buildSetFilesViewedGraphQlMutation,
   decodeActorAvatarsJson,
@@ -357,6 +360,13 @@ export type GitHubPullRequestApiError =
   | SourceControlRateLimit.SourceControlRateLimitPausedError
   | GitHubViewerLoginUnavailableError
   | GitHubPullRequestUpdatedAtUnavailableError;
+
+const decodeAttachmentRepository = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ id: PositiveInt })),
+);
+const decodeAttachmentAsset = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ url: TrimmedNonEmptyString })),
+);
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -745,6 +755,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly adminOverride?: boolean;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
@@ -756,12 +767,39 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
+    readonly uploadAttachment: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly path: string;
+      readonly name: string;
+      readonly mimeType: string;
+      readonly sizeBytes: number;
+    }) => Effect.Effect<{ readonly url: string }, GitHubPullRequestApiError>;
+
+    readonly saveDraftComment: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly comment: PullRequestReviewCommentDraft;
+    }) => Effect.Effect<PullRequestDraftCommentLink, GitHubPullRequestApiError>;
+    readonly discardDraftComment: (
+      input: {
+        readonly cwd: string;
+        readonly repository: string;
+        readonly host: string;
+        readonly number: number;
+      } & PullRequestDraftCommentLink,
+    ) => Effect.Effect<void, GitHubPullRequestApiError>;
+
     readonly submitReview: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
+      readonly pendingReviewId?: string;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -1186,6 +1224,93 @@ const SIMPLE_ACTION_MUTATIONS = {
   reopen: REOPEN_PULL_REQUEST_GRAPHQL_MUTATION,
 } as const satisfies Partial<Record<PullRequestAction, string>>;
 
+const PendingReviewCommentSchema = Schema.Struct({
+  id: Schema.Number,
+  node_id: Schema.String,
+  html_url: Schema.String,
+  body: Schema.String,
+  path: Schema.String,
+  line: Schema.optional(Schema.NullOr(Schema.Number)),
+  side: Schema.optional(Schema.NullOr(Schema.String)),
+  start_line: Schema.optional(Schema.NullOr(Schema.Number)),
+  start_side: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const DraftThreadPositionsSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        reviewThreads: Schema.Struct({
+          pageInfo: Schema.Struct({
+            hasNextPage: Schema.Boolean,
+            endCursor: Schema.NullOr(Schema.String),
+          }),
+          nodes: Schema.Array(
+            Schema.Struct({
+              line: Schema.NullOr(Schema.Number),
+              diffSide: Schema.String,
+              startLine: Schema.NullOr(Schema.Number),
+              startDiffSide: Schema.NullOr(Schema.String),
+              comments: Schema.Struct({
+                nodes: Schema.Array(Schema.Struct({ id: Schema.String })),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const PendingReviewsSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        id: Schema.String,
+        reviews: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              fullDatabaseId: Schema.String,
+              body: Schema.String,
+              viewerDidAuthor: Schema.Boolean,
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const SavedDraftCommentSchema = Schema.Struct({ id: Schema.String, url: Schema.String });
+const CreatedDraftReviewSchema = Schema.Struct({
+  data: Schema.Struct({
+    addPullRequestReview: Schema.Struct({
+      pullRequestReview: Schema.Struct({
+        id: Schema.String,
+        comments: Schema.Struct({ nodes: Schema.Array(SavedDraftCommentSchema) }),
+      }),
+    }),
+  }),
+});
+const AddedDraftThreadSchema = Schema.Struct({
+  data: Schema.Struct({
+    addPullRequestReviewThread: Schema.Struct({
+      thread: Schema.Struct({
+        comments: Schema.Struct({ nodes: Schema.Array(SavedDraftCommentSchema) }),
+      }),
+    }),
+  }),
+});
+const decodePendingReviews = Schema.decodeEffect(Schema.fromJsonString(PendingReviewsSchema));
+const decodePendingReviewComments = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Array(PendingReviewCommentSchema)),
+);
+const decodeDraftThreadPositions = Schema.decodeEffect(
+  Schema.fromJsonString(DraftThreadPositionsSchema),
+);
+const decodeAddedDraftThread = Schema.decodeEffect(Schema.fromJsonString(AddedDraftThreadSchema));
+const decodeCreatedDraftReview = Schema.decodeEffect(
+  Schema.fromJsonString(CreatedDraftReviewSchema),
+);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
@@ -1411,6 +1536,271 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const draftReviewGate = Semaphore.makeUnsafe(1);
+  // A failed read is safe to repeat; a failed save may already have created its comment.
+  const retryPendingReviewRead = <A>(read: Effect.Effect<A, GitHubApi.GitHubApiError>) =>
+    read.pipe(
+      Effect.retry({
+        times: 2,
+        schedule: Schedule.exponential("250 millis"),
+        while: (error) =>
+          error._tag === "GitHubApiRequestError" ||
+          (error._tag === "GitHubApiResponseError" && [500, 502, 503, 504].includes(error.status)),
+      }),
+    );
+  const readPendingReview = Effect.fn("GitHubPullRequestApi.readPendingReview")(function* (
+    input: {
+      cwd: string;
+      host: string;
+      repository: string;
+      number: number;
+    },
+    includePositions = true,
+  ) {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    const response = yield* api
+      .graphql({
+        host: input.host,
+        operation: "pendingReview",
+        query: `query PendingReview($owner:String!,$name:String!,$number:Int!) {
+        repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+          id reviews(first:100,states:PENDING) { nodes { id fullDatabaseId body viewerDidAuthor } }
+        } }
+      }`,
+        variables: { owner, name, number: input.number },
+      })
+      .pipe(retryPendingReviewRead);
+    const decoded = yield* decodePendingReviews(response).pipe(
+      Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
+    );
+    const pullRequest = decoded.data.repository.pullRequest;
+    const review = pullRequest.reviews.nodes.find((entry) => entry.viewerDidAuthor);
+    const comments: Array<typeof PendingReviewCommentSchema.Type> = [];
+    if (review) {
+      for (let page = 1; page <= 10; page++) {
+        const read = yield* api
+          .rest({
+            host: input.host,
+            operation: "pendingReview",
+            path: `repos/${owner}/${name}/pulls/${input.number}/reviews/${review.fullDatabaseId}/comments?per_page=100&page=${page}`,
+          })
+          .pipe(retryPendingReviewRead);
+        const rows = yield* decodePendingReviewComments(read.body).pipe(
+          Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
+        );
+        comments.push(...rows);
+        if (rows.length < 100) break;
+        if (page === 10)
+          return yield* readError(
+            input.cwd,
+            "pendingReview",
+            new Error("The pending review is too large to read completely."),
+          );
+      }
+    }
+    // REST omits position fields for unsubmitted comments. Thread positions remain available
+    // through GraphQL, which is also how the reader pins those same private comments.
+    const needsPositions = new Set(
+      comments
+        .filter((comment) => includePositions && (comment.line == null || comment.side == null))
+        .map((comment) => comment.node_id),
+    );
+    const commentIndices = new Map(comments.map((comment, index) => [comment.node_id, index]));
+    let cursor: string | null = null;
+    for (let page = 0; needsPositions.size > 0 && page < REVIEW_THREAD_PAGES; page++) {
+      const response: string = yield* api
+        .graphql({
+          host: input.host,
+          operation: "pendingReview",
+          query: `query PendingReviewPositions($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+          repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+            reviewThreads(first:100,after:$cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes { line diffSide startLine startDiffSide comments(first:100) { nodes { id } } }
+            }
+          } }
+        }`,
+          variables: { owner, name, number: input.number, cursor },
+        })
+        .pipe(retryPendingReviewRead);
+      const decoded = yield* decodeDraftThreadPositions(response).pipe(
+        Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
+      );
+      const threads = decoded.data.repository.pullRequest.reviewThreads;
+      for (const thread of threads.nodes)
+        for (const entry of thread.comments.nodes) {
+          const index = commentIndices.get(entry.id);
+          if (index === undefined || !needsPositions.has(entry.id)) continue;
+          comments[index] = {
+            ...comments[index]!,
+            line: thread.line,
+            side: thread.diffSide,
+            start_line: thread.startLine,
+            start_side: thread.startDiffSide,
+          };
+          needsPositions.delete(entry.id);
+        }
+      if (!threads.pageInfo.hasNextPage) break;
+      cursor = threads.pageInfo.endCursor;
+    }
+    if (needsPositions.size > 0)
+      return yield* readError(
+        input.cwd,
+        "pendingReview",
+        new Error("Could not read all pending comment positions."),
+      );
+    return { pullRequestId: pullRequest.id, review, comments };
+  });
+  const sameDraftComment = (
+    saved: typeof PendingReviewCommentSchema.Type,
+    comment: PullRequestReviewCommentDraft,
+  ) => {
+    const position = buildReviewSubmission({ verdict: "comment", body: "", comments: [comment] })
+      .comments[0]!;
+    return (
+      saved.body === comment.body &&
+      saved.path === comment.path &&
+      saved.line === position.line &&
+      saved.side === position.side &&
+      (saved.start_line ?? undefined) === position.start_line &&
+      (saved.start_side ?? undefined) === position.start_side
+    );
+  };
+  const addDraftThread = Effect.fn("GitHubPullRequestApi.addDraftThread")(function* (
+    input: { cwd: string; host: string },
+    reviewId: string,
+    comment: PullRequestReviewCommentDraft,
+  ) {
+    const entry = buildReviewSubmission({ verdict: "comment", body: "", comments: [comment] })
+      .comments[0]!;
+    const response = yield* api.graphql({
+      host: input.host,
+      operation: "saveDraftComment",
+      query: `mutation SaveDraftComment($input:AddPullRequestReviewThreadInput!) {
+        addPullRequestReviewThread(input:$input) { thread { comments(first:1) { nodes { id url } } } }
+      }`,
+      variables: {
+        input: {
+          pullRequestReviewId: reviewId,
+          body: comment.body,
+          path: comment.path,
+          line: entry.line,
+          side: entry.side,
+          ...(entry.start_line === undefined
+            ? {}
+            : { startLine: entry.start_line, startSide: entry.start_side }),
+        },
+      },
+    });
+    const decoded = yield* decodeAddedDraftThread(response).pipe(
+      Effect.mapError((cause) => readError(input.cwd, "saveDraftComment", cause)),
+    );
+    const saved = decoded.data.addPullRequestReviewThread.thread.comments.nodes[0];
+    if (!saved)
+      return yield* readError(
+        input.cwd,
+        "saveDraftComment",
+        new Error("GitHub returned no saved comment."),
+      );
+    return { reviewId, commentId: saved.id, url: gitHubPendingReviewCommentUrl(saved.url) };
+  });
+  const saveDraftComment = Effect.fn("GitHubPullRequestApi.saveDraftComment")(function* (
+    input: Parameters<GitHubPullRequestApi["Service"]["saveDraftComment"]>[0],
+  ) {
+    const pending = yield* readPendingReview(input);
+    const hosted = input.comment.hostedComment;
+    if (hosted) {
+      const saved = pending.comments.find((comment) => comment.node_id === hosted.commentId);
+      if (pending.review?.id !== hosted.reviewId || !saved)
+        return yield* readError(
+          input.cwd,
+          "saveDraftComment",
+          new Error("The saved review comment changed on GitHub. Refresh the pull request."),
+        );
+      return {
+        reviewId: pending.review.id,
+        commentId: saved.node_id,
+        url: gitHubPendingReviewCommentUrl(saved.html_url),
+      };
+    }
+    if (pending.review) {
+      // Recover a successful save whose response was lost, without creating a second comment.
+      const saved = pending.comments.find((comment) => sameDraftComment(comment, input.comment));
+      if (saved)
+        return {
+          reviewId: pending.review.id,
+          commentId: saved.node_id,
+          url: gitHubPendingReviewCommentUrl(saved.html_url),
+        };
+      return yield* addDraftThread(input, pending.review.id, input.comment);
+    }
+    const entry = buildReviewSubmission({ verdict: "comment", body: "", comments: [input.comment] })
+      .comments[0]!;
+    const response = yield* api.graphql({
+      host: input.host,
+      operation: "saveDraftComment",
+      query: `mutation CreateDraftReview($input:AddPullRequestReviewInput!) {
+        addPullRequestReview(input:$input) { pullRequestReview { id comments(first:1) { nodes { id url } } } }
+      }`,
+      variables: {
+        input: {
+          pullRequestId: pending.pullRequestId,
+          threads: [
+            {
+              body: input.comment.body,
+              path: input.comment.path,
+              line: entry.line,
+              side: entry.side,
+              ...(entry.start_line === undefined
+                ? {}
+                : { startLine: entry.start_line, startSide: entry.start_side }),
+            },
+          ],
+        },
+      },
+    });
+    const decoded = yield* decodeCreatedDraftReview(response).pipe(
+      Effect.mapError((cause) => readError(input.cwd, "saveDraftComment", cause)),
+    );
+    const review = decoded.data.addPullRequestReview.pullRequestReview;
+    const saved = review.comments.nodes[0];
+    if (!saved)
+      return yield* readError(
+        input.cwd,
+        "saveDraftComment",
+        new Error("GitHub returned no saved comment."),
+      );
+    return {
+      reviewId: review.id,
+      commentId: saved.id,
+      url: gitHubPendingReviewCommentUrl(saved.url),
+    };
+  });
+  const discardDraftComment = Effect.fn("GitHubPullRequestApi.discardDraftComment")(function* (
+    input: Parameters<GitHubPullRequestApi["Service"]["discardDraftComment"]>[0],
+  ) {
+    const pending = yield* readPendingReview(input, false);
+    if (!pending.review) return;
+    if (pending.review.id !== input.reviewId)
+      return yield* readError(
+        input.cwd,
+        "discardDraftComment",
+        new Error("This comment is no longer in your pending review. Refresh the pull request."),
+      );
+    if (!pending.comments.some((comment) => comment.node_id === input.commentId)) return;
+    // Removing the final comment also removes an otherwise empty draft, so it does not block
+    // a later review. Preserve a review summary and any other pending comments.
+    const deleteReview = pending.comments.length === 1 && pending.review.body.trim().length === 0;
+    yield* graphql({
+      host: input.host,
+      operation: "discardDraftComment",
+      query: deleteReview
+        ? `mutation DiscardDraftReview($id:ID!) { deletePullRequestReview(input:{pullRequestReviewId:$id}) { clientMutationId } }`
+        : `mutation DiscardDraftComment($id:ID!) { deletePullRequestReviewComment(input:{id:$id}) { clientMutationId } }`,
+      variables: { id: deleteReview ? pending.review.id : input.commentId },
+    });
+  });
+
   /**
    * One page of the patch, read from the files API. GitHub refuses a whole diff past 300 changed
    * files, and still serves those files' hunks here.
@@ -1421,6 +1811,34 @@ export const make = Effect.gen(function* () {
    * A named commit is read from the commit endpoint, which lists the same file entries and pages
    * them the same way, only wrapped in an object.
    */
+  const readCommitScope = Effect.fn("GitHubPullRequestApi.readCommitScope")(function* (input: {
+    cwd: string;
+    repository: string;
+    host: string;
+    commit: string;
+  }) {
+    const [first, last] = input.commit.split("..");
+    if (
+      !first ||
+      !isCommitSha(first) ||
+      (last !== undefined && !isCommitSha(last)) ||
+      input.commit.split("..").length > 2
+    )
+      return yield* new GitHubDiffCommitError({ cwd: input.cwd });
+    const { owner, name } = parseRepositorySelector(input.repository);
+    const response = yield* api.rest({
+      host: input.host,
+      operation: "getPullRequestDiffFileContents",
+      path: `repos/${owner}/${name}/commits/${first}`,
+      timeout: DIFF_TIMEOUT,
+    });
+    const refs = decodeRevisionRefs(response.body);
+    if (Option.isNone(refs)) return yield* new GitHubDiffCommitError({ cwd: input.cwd });
+    const base = refs.value.parents?.[0]?.sha ?? "";
+    if (last !== undefined && !base) return yield* new GitHubDiffCommitError({ cwd: input.cwd });
+    return { base, head: last ?? first };
+  });
+
   const diffFilesPage = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -1483,7 +1901,10 @@ export const make = Effect.gen(function* () {
   const getPullRequestDiffFileContents: GitHubPullRequestApi["Service"]["getPullRequestDiffFileContents"] =
     (input) =>
       Effect.gen(function* () {
-        if (input.commit !== undefined && !isCommitSha(input.commit)) {
+        const range = input.commit?.includes("..")
+          ? yield* readCommitScope({ ...input, commit: input.commit })
+          : null;
+        if (input.commit !== undefined && range === null && !isCommitSha(input.commit)) {
           return yield* new GitHubDiffCommitError({ cwd: input.cwd });
         }
         const { owner, name } = parseRepositorySelector(input.repository);
@@ -1493,17 +1914,19 @@ export const make = Effect.gen(function* () {
           path:
             input.commit === undefined
               ? `repos/${owner}/${name}/pulls/${input.number}`
-              : `repos/${owner}/${name}/commits/${input.commit}`,
+              : `repos/${owner}/${name}/commits/${range?.head ?? input.commit}`,
           timeout: DIFF_TIMEOUT,
         });
         const refs = decodeRevisionRefs(refsResponse.body);
         // A root commit has no parent, which is an absent old revision. Every file in it is new,
         // so that is a usable answer whenever the caller does not need the old side.
-        const baseRef = Option.isSome(refs)
-          ? input.commit === undefined
-            ? refs.value.base?.sha
-            : (refs.value.parents?.[0]?.sha ?? "")
-          : undefined;
+        const baseRef =
+          range?.base ??
+          (Option.isSome(refs)
+            ? input.commit === undefined
+              ? refs.value.base?.sha
+              : (refs.value.parents?.[0]?.sha ?? "")
+            : undefined);
         const headRef = Option.isSome(refs)
           ? input.commit === undefined
             ? refs.value.head?.sha
@@ -2284,6 +2707,29 @@ export const make = Effect.gen(function* () {
       }),
 
     getPullRequestDiff: (input) => {
+      if (input.commit?.includes("..")) {
+        if (input.cursor !== undefined)
+          return Effect.fail(new GitHubDiffCursorError({ cwd: input.cwd }));
+        return Effect.gen(function* () {
+          const range = yield* readCommitScope({ ...input, commit: input.commit! });
+          const { owner, name } = parseRepositorySelector(input.repository);
+          const response = yield* api.rest({
+            host: input.host,
+            operation: "getPullRequestDiff",
+            path: `repos/${owner}/${name}/compare/${range.base}...${range.head}`,
+            accept: "application/vnd.github.diff",
+            maxResponseBytes: DIFF_MAX_OUTPUT_BYTES,
+            timeout: DIFF_TIMEOUT,
+          });
+          if (response.truncated)
+            return yield* readError(
+              input.cwd,
+              "getPullRequestDiff",
+              new Error("The selected commit range was too large to read."),
+            );
+          return { patch: response.body, truncated: false, nextCursor: null };
+        });
+      }
       const filesPage = (page: number) =>
         diffFilesPage({
           cwd: input.cwd,
@@ -2846,9 +3292,10 @@ export const make = Effect.gen(function* () {
         // GitHub stores the strategy with a standing instruction rather than choosing one at
         // merge time, so arming still names it.
         const auto =
-          state.isMergeQueueEnabled === true ||
-          (action === "enable-auto-merge" &&
-            !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+          input.adminOverride !== true &&
+          (state.isMergeQueueEnabled === true ||
+            (action === "enable-auto-merge" &&
+              !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? "")));
         yield* graphql({
           host: input.host,
           operation: "runPullRequestAction",
@@ -2865,6 +3312,58 @@ export const make = Effect.gen(function* () {
       });
     },
 
+    uploadAttachment: (input) =>
+      Effect.gen(function* () {
+        const host = input.host.toLowerCase();
+        if (host !== "github.com" && !host.endsWith(".ghe.com"))
+          return yield* readError(
+            input.cwd,
+            "uploadAttachment",
+            new Error(
+              "Local attachments are supported on GitHub.com and GitHub Enterprise Cloud. Paste a hosted link for this host.",
+            ),
+          );
+        const repository = yield* api.rest({
+          host,
+          operation: "uploadAttachment",
+          path: `repos/${input.repository}`,
+        });
+        const decoded = yield* decodeAttachmentRepository(repository.body).pipe(
+          Effect.mapError((cause) => readError(input.cwd, "uploadAttachment", cause)),
+        );
+        const result = yield* api.rest({
+          host,
+          operation: "uploadAttachment",
+          method: "POST",
+          path: "user-attachments/assets",
+          timeout: "2 minutes",
+          upload: {
+            repositoryId: decoded.id,
+            name: input.name,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            stream: fileSystem.stream(input.path),
+          },
+        });
+        const asset = yield* decodeAttachmentAsset(result.body).pipe(
+          Effect.mapError((cause) => readError(input.cwd, "uploadAttachment", cause)),
+        );
+        const url = yield* Effect.try({
+          try: () => new URL(asset.url),
+          catch: (cause) => readError(input.cwd, "uploadAttachment", cause),
+        });
+        if (
+          url.protocol !== "https:" ||
+          (url.hostname !== host && url.hostname !== `uploads.${host}`)
+        )
+          return yield* readError(
+            input.cwd,
+            "uploadAttachment",
+            new Error("GitHub returned an invalid attachment URL."),
+          );
+        return { url: asset.url };
+      }),
+
     commentOnPullRequest: (input) =>
       pullRequestNodeId({ ...input, operation: "commentOnPullRequest" }).pipe(
         Effect.flatMap((subjectId) =>
@@ -2877,7 +3376,85 @@ export const make = Effect.gen(function* () {
         ),
       ),
 
+    saveDraftComment: (input) => draftReviewGate.withPermits(1)(saveDraftComment(input)),
+    discardDraftComment: (input) => draftReviewGate.withPermits(1)(discardDraftComment(input)),
     submitReview: (input) => {
+      if (
+        input.pendingReviewId !== undefined ||
+        input.comments.some((comment) => comment.hostedComment !== undefined)
+      ) {
+        return draftReviewGate.withPermits(1)(
+          Effect.gen(function* () {
+            const pending = yield* readPendingReview(input);
+            const review = pending.review;
+            if (!review)
+              return yield* readError(
+                input.cwd,
+                "submitReview",
+                new Error("The saved review is no longer pending. Refresh the pull request."),
+              );
+            if (input.pendingReviewId !== undefined && input.pendingReviewId !== review.id)
+              return yield* readError(
+                input.cwd,
+                "submitReview",
+                new Error("The pending review changed on GitHub. Refresh before submitting."),
+              );
+            const consumed = new Set<string>();
+            for (const comment of input.comments) {
+              if (comment.hostedComment) {
+                const saved = pending.comments.find(
+                  (entry) => entry.node_id === comment.hostedComment?.commentId,
+                );
+                if (
+                  comment.hostedComment.reviewId !== review.id ||
+                  !saved ||
+                  !sameDraftComment(saved, comment)
+                )
+                  return yield* readError(
+                    input.cwd,
+                    "submitReview",
+                    new Error(
+                      "A saved review comment changed on GitHub. Refresh before submitting.",
+                    ),
+                  );
+                if (consumed.has(saved.node_id))
+                  return yield* readError(
+                    input.cwd,
+                    "submitReview",
+                    new Error("The review contains the same saved comment more than once."),
+                  );
+                consumed.add(saved.node_id);
+              }
+            }
+            for (const comment of input.comments) {
+              if (comment.hostedComment) continue;
+              const saved = pending.comments.find(
+                (entry) => !consumed.has(entry.node_id) && sameDraftComment(entry, comment),
+              );
+              if (saved) consumed.add(saved.node_id);
+              else yield* addDraftThread(input, review.id, comment);
+            }
+            yield* graphql({
+              host: input.host,
+              operation: "submitReview",
+              query: `mutation SubmitDraftReview($input:SubmitPullRequestReviewInput!) {
+              submitPullRequestReview(input:$input) { pullRequestReview { id } }
+            }`,
+              variables: {
+                input: {
+                  pullRequestReviewId: review.id,
+                  body: input.body,
+                  event: {
+                    comment: "COMMENT",
+                    approve: "APPROVE",
+                    "request-changes": "REQUEST_CHANGES",
+                  }[input.verdict],
+                },
+              },
+            });
+          }),
+        );
+      }
       const { owner, name } = parseRepositorySelector(input.repository);
       // The whole review is one request, so nothing is visible to anyone else until the verdict
       // is sent.

@@ -2,7 +2,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
-import type { ActivityFilter } from "./pullRequestActivityFilter";
+import type { ActivityFilter } from "@t3tools/client-runtime/review-activity";
 
 export function PullRequestActivityFilters({
   value,

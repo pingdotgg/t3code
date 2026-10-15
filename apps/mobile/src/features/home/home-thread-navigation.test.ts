@@ -196,3 +196,43 @@ describe("createHomeThreadNavigationAction", () => {
     });
   });
 });
+
+it("reopens a remembered review file from Home with its own chat and file tree underneath", () => {
+  const reviewOptions = {
+    ...routerOptions,
+    routeNames: ["Home", "Thread", "ThreadReview", "ThreadReviewFile"],
+    routeParamList: { ...routeParamList, ThreadReview: undefined, ThreadReviewFile: undefined },
+  };
+  const state = router.getInitialState(reviewOptions);
+  const params = { environmentId: "environment-home-restore", threadId: "review-thread" };
+  const action = createHomeThreadNavigationAction({
+    state,
+    dismissingRouteKey: null,
+    thread: { environmentId: params.environmentId, id: params.threadId } as ThreadSelection,
+    rememberedState: {
+      ...state,
+      index: 3,
+      routes: [
+        state.routes[0]!,
+        { name: "Thread", params },
+        { name: "ThreadReview", params },
+        {
+          name: "ThreadReviewFile",
+          params: { ...params, reviewSectionId: "turn:4", reviewFilePath: "src/example.ts" },
+        },
+      ],
+    },
+  });
+  const restored = router.getStateForAction(state, action, reviewOptions);
+  expect(restored?.routes.map((route) => route.name)).toEqual([
+    "Home",
+    "Thread",
+    "ThreadReview",
+    "ThreadReviewFile",
+  ]);
+  expect(restored?.routes.at(-1)?.params).toMatchObject({
+    ...params,
+    reviewSectionId: "turn:4",
+    reviewFilePath: "src/example.ts",
+  });
+});

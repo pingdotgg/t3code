@@ -19,6 +19,7 @@ interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly sourceKind: ReviewDiffPreviewSourceKind;
+  readonly workingTreeScope?: "staged" | "unstaged";
   readonly baseRef: string | null;
   readonly headRef: string | null;
   /** The comparison identity Pierre carries into its hydrated render cache. */
@@ -86,6 +87,7 @@ export function createGitDiffFileContentsLoader<E>(
       input: {
         cwd: source.cwd,
         sourceKind: source.sourceKind,
+        ...(source.workingTreeScope ? { workingTreeScope: source.workingTreeScope } : {}),
         changeType,
         baseRef: source.baseRef,
         headRef: source.headRef,

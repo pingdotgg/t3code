@@ -39,17 +39,17 @@ describe("PR agent drafts", () => {
     const actions = usePullRequestAgentActions(params, pr);
     expect(actions.disabled).toBe(false);
     actions.start("ask");
-    actions.start("explain");
+    actions.start("feedback");
     expect(state.ask.mock.calls).toEqual([
       [undefined, "ask"],
-      [undefined, "explain"],
+      [undefined, "feedback"],
     ]);
   });
 
   it("does not open drafts when the connection denies task access", () => {
     state.connected = true;
     state.canAsk = false;
-    usePullRequestAgentActions(params, pr).start("explain");
+    usePullRequestAgentActions(params, pr).start("feedback");
     expect(state.ask).not.toHaveBeenCalled();
   });
 });

@@ -105,7 +105,7 @@ describe("buildReviewSectionItems", () => {
       isLoading: false,
       diff: expect.stringContaining("loaded.ts"),
     });
-    expect(getDefaultReviewSectionId(items)).toBe("git:branch-range");
+    expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
   });
 
   it("falls back to the first turn without git sections", () => {
@@ -126,7 +126,7 @@ describe("buildReviewSectionItems", () => {
     expect(getDefaultReviewSectionId(items)).toBe("turn:1");
   });
 
-  it("holds the Changes place while git preview is loading", () => {
+  it("holds the uncommitted comparison while git preview is loading", () => {
     const items = buildReviewSectionItems({
       checkpoints: [],
       gitSections: [],
@@ -137,14 +137,14 @@ describe("buildReviewSectionItems", () => {
 
     expect(items).toEqual([
       expect.objectContaining({
-        id: "git:branch-range",
-        kind: "branch-range",
-        title: "Changes",
+        id: "git:working-tree",
+        kind: "working-tree",
+        title: "Uncommitted changes",
         diff: null,
         isLoading: true,
       }),
     ]);
-    expect(getDefaultReviewSectionId(items)).toBe("git:branch-range");
+    expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
   });
 });
 

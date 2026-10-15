@@ -3548,6 +3548,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "generates a message from the current partial index without adding unstaged or untracked content",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-message-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "staged marker\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "unstaged marker\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "untracked marker\n");
+        const indexBefore = NodeFS.readFileSync(NodePath.join(repoDir, ".git/index"));
+        let calls = 0;
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: (input) => {
+              calls++;
+              expect(input.stagedPatch).toContain("staged marker");
+              expect(input.stagedPatch).not.toContain("unstaged marker");
+              expect(input.stagedPatch).not.toContain("untracked marker");
+              return Effect.succeed({
+                subject: "Describe staged content",
+                body: "Only the current index.",
+              });
+            },
+          },
+        });
+        expect(yield* manager.generateStagedCommitMessage({ cwd: repoDir })).toBe(
+          "Describe staged content\n\nOnly the current index.",
+        );
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, ".git/index"))).toEqual(indexBefore);
+        expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("staged marker\n");
+        yield* runGit(repoDir, ["restore", "--staged", "README.md"]);
+        const empty = yield* manager
+          .generateStagedCommitMessage({ cwd: repoDir })
+          .pipe(Effect.flip);
+        expect(empty._tag).toBe("GitManagerError");
+        expect(calls).toBe(1);
+      }),
+  );
+
   it.effect("creates a commit when working tree is dirty", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -6828,6 +6868,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         '#!/bin/sh\necho "hook: start" >&2\nsleep 0.05\necho "hook: end" >&2\n',
         { mode: 0o755 },
       );
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "prepare-commit-msg"),
+        '#!/bin/sh\necho "hook: prepare" >&2\n',
+        { mode: 0o755 },
+      );
 
       const { manager } = yield* makeManager();
       const events: GitActionProgressEvent[] = [];
@@ -6872,11 +6917,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           expect.objectContaining({
             kind: "hook_finished",
             hookName: "pre-commit",
+            exitCode: 0,
           }),
           expect.objectContaining({
             kind: "action_finished",
           }),
         ]),
+      );
+      expect(
+        events.findIndex(
+          (event) => event.kind === "hook_finished" && event.hookName === "pre-commit",
+        ),
+      ).toBeLessThan(
+        events.findIndex(
+          (event) => event.kind === "hook_started" && event.hookName === "prepare-commit-msg",
+        ),
       );
     }),
   );
@@ -6926,6 +6981,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           expect.objectContaining({
             kind: "hook_output",
             text: "hook: fail",
+          }),
+          expect.objectContaining({
+            kind: "hook_finished",
+            hookName: "pre-commit",
+            exitCode: 1,
           }),
           expect.objectContaining({
             kind: "action_failed",
