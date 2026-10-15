@@ -331,6 +331,15 @@ export class BitbucketApi extends Context.Service<
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
 
     /**
+     * Adds the account's credentials to a request bound for the configured Bitbucket API, and
+     * leaves any other request as it is. For callers that stream a response themselves, such as
+     * a download whose redirect lands on a signed object store that must never see the token.
+     */
+    readonly authorize: (
+      request: HttpClientRequest.HttpClientRequest,
+    ) => Effect.Effect<HttpClientRequest.HttpClientRequest>;
+
+    /**
      * One authenticated request, returning the body verbatim. Bitbucket answers most endpoints
      * with JSON and a few — a pull request diff, for one — with plain text, so the body is
      * handed back undecoded for the caller to read as it sees fit.
@@ -984,6 +993,8 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
+    authorize: (request) =>
+      originOf(request.url) === apiOrigin ? withAuth(request) : Effect.succeed(request),
     probeAuth: executeJson(
       "probeAuth",
       HttpClientRequest.get(apiUrl("/user")),

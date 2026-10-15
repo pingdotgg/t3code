@@ -2739,8 +2739,9 @@ const layerWsRpc = (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "tool-output-image" ||
-              // GitHub media names the repository it authenticates through itself.
+              // Pull request media names the host it authenticates with itself.
               input.resource._tag === "github-media" ||
+              input.resource._tag === "bitbucket-media" ||
               (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
             ) {
               return yield* issueAssetUrl({ resource: input.resource });

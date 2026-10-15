@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
 import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
 
 export interface PullRequestMediaLocation {
@@ -9,13 +9,8 @@ export interface PullRequestMediaLocation {
 
 /** Keep the original resource identity so previewers can resolve and renew its capability. */
 export function pullRequestMediaSource(url: string, location: PullRequestMediaLocation | null) {
-  const fetchUrl = githubMediaFetchUrl(url);
-  return location && fetchUrl
-    ? {
-        environmentId: location.environmentId,
-        resource: { _tag: "github-media" as const, cwd: location.cwd, url: fetchUrl },
-      }
-    : { uri: url };
+  const resource = location ? pullRequestMediaResource(url, location.cwd) : null;
+  return location && resource ? { environmentId: location.environmentId, resource } : { uri: url };
 }
 
 export function pullRequestImageSource(

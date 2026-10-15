@@ -1055,6 +1055,23 @@ it.effect("does not follow a redirect off the configured Bitbucket", () =>
   ),
 );
 
+it.effect("authorizes only requests bound for the configured Bitbucket", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const api = yield* bitbucket.authorize(
+      HttpClientRequest.get("https://api.test.local/2.0/repositories/acme/web/downloads/a.png"),
+    );
+    assert.strictEqual(api.headers.authorization, `Basic ${btoa("user@example.com:token")}`);
+
+    // A download redirects to a signed object store, which must never see the token.
+    const objectStore = yield* bitbucket.authorize(
+      HttpClientRequest.get("https://bbuseruploads.s3.amazonaws.com/a.png?Signature=x"),
+    );
+    assert.strictEqual(objectStore.headers.authorization, undefined);
+  }).pipe(Effect.provide(makeLayer({ response: () => new Response(null) }).layer)),
+);
+
 it.effect("follows a redirect that stays on the configured Bitbucket", () =>
   Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;

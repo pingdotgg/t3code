@@ -66,6 +66,12 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
+  // A file a pull request body links from a Bitbucket Cloud repository's Downloads. A private
+  // repository serves it only through the API with a credential, so the server fetches it with
+  // the Bitbucket credential configured for the environment.
+  Schema.TaggedStruct("bitbucket-media", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -312,6 +318,15 @@ export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<Asset
   }
 }
 
+export class AssetBitbucketMediaUrlValidationError extends Schema.TaggedError<AssetBitbucketMediaUrlValidationError>()(
+  "AssetBitbucketMediaUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Only Bitbucket repository downloads can be fetched with a Bitbucket credential.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -326,6 +341,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetBitbucketMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

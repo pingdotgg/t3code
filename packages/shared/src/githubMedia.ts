@@ -52,19 +52,3 @@ export function githubMediaFetchUrl(source: string): string | null {
     ? `https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`
     : null;
 }
-
-/**
- * Last path segment, for the signed URL's display name. A percent sequence GitHub accepts but
- * `decodeURIComponent` rejects is left encoded rather than failing the whole asset.
- */
-export function githubMediaFileName(fetchUrl: string): string {
-  const segment = new URL(fetchUrl).pathname.split("/").pop() ?? "";
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(segment);
-  } catch {
-    decoded = segment;
-  }
-  const name = decoded.replace(/[\p{Cc}\\/]/gu, "");
-  return name.length > 0 ? name : "github-media";
-}
