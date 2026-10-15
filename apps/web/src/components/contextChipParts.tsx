@@ -113,6 +113,7 @@ export function PullRequestChip(props: {
       aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
       data-markdown-copy={props.copyMarkdown}
       onClick={(event) => props.onOpen(event, props.metadata.url)}
+      onAuxClick={(event) => props.onOpen(event, props.metadata.url)}
     >
       <StateIcon />
       <ContextChipLabel>{props.label}</ContextChipLabel>

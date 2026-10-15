@@ -15,8 +15,12 @@ import { isPreviewAvailableFor } from "./previewRuntime";
 
 export interface ResolveLinkTargetInput {
   readonly url: string;
-  /** Cmd/Ctrl-click always goes to the system browser, whatever the default. */
-  readonly event: { readonly metaKey: boolean; readonly ctrlKey: boolean };
+  /** Cmd/Ctrl-click and middle-click always go to the system browser, whatever the default. */
+  readonly event: {
+    readonly metaKey: boolean;
+    readonly ctrlKey: boolean;
+    readonly button?: number | undefined;
+  };
   readonly preference: BrowserLinkTarget;
   /** Whether this client has an in-app browser and a thread to open it beside. */
   readonly canOpenInApp: boolean;
@@ -30,7 +34,7 @@ export interface ResolveLinkTargetInput {
  * already treat it.
  */
 export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTarget {
-  if (input.event.metaKey || input.event.ctrlKey) return "system";
+  if (input.event.metaKey || input.event.ctrlKey || input.event.button === 1) return "system";
   if (input.preference !== "app") return "system";
   if (!input.canOpenInApp) return "system";
   if (!isWebUrl(input.url)) return "system";

@@ -67,6 +67,14 @@ describe("resolveLinkTarget", () => {
         canOpenInApp: true,
       }),
     ).toBe("system");
+    expect(
+      resolveLinkTarget({
+        url: "https://example.com/",
+        event: { metaKey: false, ctrlKey: false, button: 1 },
+        preference: "app",
+        canOpenInApp: true,
+      }),
+    ).toBe("system");
   });
 
   it("leaves non-web schemes to the shell", () => {

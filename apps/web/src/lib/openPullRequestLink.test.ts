@@ -221,6 +221,12 @@ describe("shouldOpenPullRequestExternally", () => {
     expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: true })).toBe(true);
   });
 
+  it("uses the browser for middle-click", () => {
+    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false, button: 1 })).toBe(
+      true,
+    );
+  });
+
   it("keeps an unmodified click in the pull request view", () => {
     expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false })).toBe(false);
   });
