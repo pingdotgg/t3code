@@ -17,7 +17,8 @@ let contextMenuShowGeneration = 0;
 // native menu when the preference can't be read.
 async function shouldUseStyledContextMenu(): Promise<boolean> {
   try {
-    const { getClientSettings } = await import("~/hooks/useSettings");
+    const { ensureClientSettingsHydrated, getClientSettings } = await import("~/hooks/useSettings");
+    await ensureClientSettingsHydrated();
     return getClientSettings().styledContextMenuEnabled === true;
   } catch {
     return false;
