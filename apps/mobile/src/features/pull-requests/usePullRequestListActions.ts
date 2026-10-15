@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -7,7 +7,7 @@ import * as Clipboard from "expo-clipboard";
 import { Atom } from "effect/reactivity";
 import { use, useCallback, useMemo, useRef, useState } from "react";
 import { Linking, Platform, Share } from "react-native";
-import type { MenuProps } from "../../components/Menu.types";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {

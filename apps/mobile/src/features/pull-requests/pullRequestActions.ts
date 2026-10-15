@@ -5,7 +5,7 @@ import type {
   PullRequestMergeMethod,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 type ActionDetail = Pick<
   PullRequestDetail,

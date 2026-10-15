@@ -4,8 +4,8 @@ import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useMediaActions } from "../state/mediaActions";
-import { AppText } from "./AppText";
-import { SymbolView } from "./AppSymbol";
+import { AppText } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { MediaSourceCaption } from "./MediaSourceCaption";

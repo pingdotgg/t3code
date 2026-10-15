@@ -1,6 +1,6 @@
 import { ScrollView } from "react-native";
 
-import { AppText } from "./AppText";
+import { AppText } from "./ui/AppText";
 
 /** Keep the original reference readable without letting long URLs displace the preview. */
 export function MediaSourceCaption(props: { readonly source: string | undefined }) {

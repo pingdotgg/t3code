@@ -1,4 +1,4 @@
-import * as Dialog from "./Dialog";
+import * as Dialog from "./ui/Dialog";
 import { useEffect, useEffectEvent } from "react";
 import { Modal, Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
@@ -6,7 +6,7 @@ import ImageViewing from "react-native-image-viewing";
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaImagePreview } from "./MediaImagePreview";
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 
 function DocumentPreview(props: {
   readonly source: ResolvedFilePreviewSource;

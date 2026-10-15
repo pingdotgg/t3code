@@ -1,5 +1,5 @@
-import { Toolbar } from "../../components/Toolbar";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import {
@@ -13,8 +13,8 @@ import { useCallback, useMemo, useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {

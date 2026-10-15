@@ -9,10 +9,10 @@ import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { type ReactNode, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { SymbolView } from "../../components/AppSymbol";
-import * as Dialog from "../../components/Dialog";
-import { Menu } from "../../components/Menu";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {

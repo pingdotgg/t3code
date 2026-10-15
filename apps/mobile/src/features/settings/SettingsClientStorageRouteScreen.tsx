@@ -1,6 +1,6 @@
-import * as Dialog from "../../components/Dialog";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import * as Dialog from "../../components/ui/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -8,8 +8,8 @@ import { useMemo } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   clearClientCacheAtom,

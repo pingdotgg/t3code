@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ConnectionRoute,
@@ -18,8 +18,8 @@ import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
-import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";

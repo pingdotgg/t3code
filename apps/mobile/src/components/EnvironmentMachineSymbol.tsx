@@ -1,5 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./ui/AppSymbol";
 
 export const ENVIRONMENT_MACHINE_SYMBOLS = {
   server: "server.rack",

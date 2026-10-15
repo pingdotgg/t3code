@@ -446,7 +446,7 @@ async function applyDeferredAppUpdateInstall(
 }
 
 async function defaultConfirmInstallNow(): Promise<boolean> {
-  const Dialog = await import("../../components/Dialog");
+  const Dialog = await import("../../components/ui/Dialog");
   return new Promise<boolean>((resolve) => {
     Dialog.alert(
       "Update ready",

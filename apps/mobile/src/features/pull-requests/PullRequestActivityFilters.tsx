@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { Menu } from "../../components/Menu";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
 import type { ActivityFilter } from "./pullRequestActivityFilter";
 
 export function PullRequestActivityFilters({

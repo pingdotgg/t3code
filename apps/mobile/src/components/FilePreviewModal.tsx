@@ -1,4 +1,4 @@
-import * as Dialog from "./Dialog";
+import * as Dialog from "./ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import {
   useCallback,

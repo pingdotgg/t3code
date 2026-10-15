@@ -1,9 +1,9 @@
 import { memo } from "react";
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { Menu } from "../../components/Menu";
-import type { MenuProps } from "../../components/Menu.types";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import {

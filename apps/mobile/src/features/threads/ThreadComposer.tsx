@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -68,14 +68,14 @@ import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
-import { AppText as Text } from "../../components/AppText";
-import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { GlassSurface } from "../../components/GlassSurface";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
 import {
@@ -97,7 +97,7 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { Menu } from "../../components/Menu";
+import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {

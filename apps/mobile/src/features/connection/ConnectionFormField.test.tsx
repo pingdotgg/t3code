@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("react-native", () => ({
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock("../../components/AppText", () => ({
+vi.mock("../../components/ui/AppText", () => ({
   AppText: ({
     accessibilityElementsHidden,
     importantForAccessibility,

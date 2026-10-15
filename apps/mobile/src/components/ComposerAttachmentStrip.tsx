@@ -1,12 +1,12 @@
 import { FilePreviewGallery, useFilePreviewGallery } from "./FilePreviewGallery";
 import { composerImageGallery } from "../lib/composerImageGallery";
-import { SymbolView } from "../components/AppSymbol";
+import { SymbolView } from "./ui/AppSymbol";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import {
   isFileBackedComposerAttachment,
@@ -17,7 +17,7 @@ import {
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
-import { PresentationSource } from "./NativePresentation";
+import { PresentationSource } from "./ui/NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
 import type { EnvironmentId } from "@t3tools/contracts";

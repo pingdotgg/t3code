@@ -3,7 +3,7 @@ import * as Haptics from "expo-haptics";
 import { useEffect, useRef } from "react";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Toast } from "../../components/Toast";
+import { Toast } from "../../components/ui/Toast";
 import { MOBILE_MOTION } from "../../lib/designTokens";
 import { APP_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";

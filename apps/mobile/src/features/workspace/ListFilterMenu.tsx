@@ -1,7 +1,7 @@
 import { Pressable } from "react-native";
-import { Chip } from "../../components/Chip";
-import { Menu } from "../../components/Menu";
-import type { MenuProps } from "../../components/Menu.types";
+import { Chip } from "../../components/ui/Chip";
+import { Menu } from "../../components/ui/Menu";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 /** A visible filter with a native menu containing only that filter's choices. */

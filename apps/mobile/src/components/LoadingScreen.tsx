@@ -1,9 +1,9 @@
 import { StatusBar, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppActivityIndicator } from "./AppActivityIndicator";
+import { AppActivityIndicator } from "./ui/AppActivityIndicator";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { BrandMark } from "./BrandMark";
 
 export function LoadingScreen(props: {

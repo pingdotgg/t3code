@@ -1,5 +1,5 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
@@ -30,8 +30,8 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { cn } from "../../lib/cn";
-import { EmptyState } from "../../components/EmptyState";
-import { FloatingActionButton } from "../../components/FloatingActionButton";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";

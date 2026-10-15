@@ -4,7 +4,7 @@ import type {
   PullRequestDetail,
   PullRequestListEntry,
 } from "@t3tools/contracts";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 const STATES = {
   open: {

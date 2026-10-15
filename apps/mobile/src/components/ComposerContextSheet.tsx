@@ -1,4 +1,4 @@
-import * as Dialog from "./Dialog";
+import * as Dialog from "./ui/Dialog";
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -24,8 +24,8 @@ import { contextImageGallery } from "../lib/contextImageGallery";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { VideoPreviewModal } from "./VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
-import { AppText as Text } from "./AppText";
-import { Sheet } from "./Sheet";
+import { AppText as Text } from "./ui/AppText";
+import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
 

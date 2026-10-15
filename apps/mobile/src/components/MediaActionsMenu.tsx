@@ -3,8 +3,8 @@ import type { ReactElement } from "react";
 import { Platform, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
 
 import type { useMediaActions } from "../state/mediaActions";
-import { SymbolView } from "./AppSymbol";
-import { Menu } from "./Menu";
+import { SymbolView } from "./ui/AppSymbol";
+import { Menu } from "./ui/Menu";
 
 export function MediaActionsMenu(props: {
   readonly media: ReturnType<typeof useMediaActions>;

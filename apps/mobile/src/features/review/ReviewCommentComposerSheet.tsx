@@ -7,10 +7,10 @@ import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPill } from "../../components/ControlPill";
+import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";

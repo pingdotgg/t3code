@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import {
   ComposerContextId,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
@@ -10,9 +10,9 @@ import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
-import { AppText as Text } from "../../components/AppText";
-import { Sheet } from "../../components/Sheet";
-import { Button } from "../../components/Button";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Sheet } from "../../components/ui/Sheet";
+import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
 

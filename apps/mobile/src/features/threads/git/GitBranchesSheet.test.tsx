@@ -30,10 +30,10 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ bottom: 0 }),
 }));
-vi.mock("../../../components/AndroidScreenHeader", () => ({
+vi.mock("../../../components/ui/AndroidScreenHeader", () => ({
   AndroidSheetHeader: "AndroidSheetHeader",
 }));
-vi.mock("../../../components/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
+vi.mock("../../../components/ui/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
 vi.mock("./gitSheetComponents", () => ({ SheetActionButton: "SheetActionButton" }));
 vi.mock("../../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { refName: "main" } }),

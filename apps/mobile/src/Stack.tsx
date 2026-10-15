@@ -29,7 +29,7 @@ import {
 } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
-import { AppText as Text } from "./components/AppText";
+import { AppText as Text } from "./components/ui/AppText";
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
 import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
 import { AndroidWorkspaceTabsProvider } from "./features/workspace/AndroidWorkspaceTabsProvider";

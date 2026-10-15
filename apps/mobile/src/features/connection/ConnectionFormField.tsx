@@ -1,6 +1,6 @@
 import { View } from "react-native";
 
-import { AppText, AppTextInput, type AppTextInputProps } from "../../components/AppText";
+import { AppText, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 
 type ConnectionFormFieldProps = Omit<AppTextInputProps, "accessibilityLabel" | "className"> & {

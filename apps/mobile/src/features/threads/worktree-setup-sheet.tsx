@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Sheet } from "../../components/Sheet";
+import { Sheet } from "../../components/ui/Sheet";
 
 export interface WorktreeSetupSheetProps {
   children: ReactElement;

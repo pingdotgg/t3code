@@ -1,5 +1,5 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import * as Dialog from "../../components/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import previewStreamScript from "@t3tools/mobile-preview-stream";
 import {
   previewStreamControlLabel,
@@ -24,7 +24,7 @@ import { Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";

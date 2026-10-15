@@ -1,4 +1,4 @@
-import { SegmentedControl } from "../../components/SegmentedControl.android";
+import { SegmentedControl } from "../../components/ui/SegmentedControl.android";
 import {
   BasicAlertDialog,
   Column,
@@ -29,7 +29,7 @@ import { requireNativeModule } from "expo";
 import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
 
-import { OverlayPortal } from "../../components/OverlayPortal";
+import { OverlayPortal } from "../../components/ui/OverlayPortal";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { CustomSnoozeSheet as SharedCustomSnoozeSheet } from "./CustomSnoozeSheet.shared";

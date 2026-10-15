@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { FloatingActionButton } from "./FloatingActionButton.android";
+import { FloatingActionButton } from "./ui/FloatingActionButton.android";
 import { ScrollComposeButton } from "./ScrollComposeButton.android";
 import type { NewThreadButton as SharedNewThreadButton } from "./NewThreadButton.shared";
 

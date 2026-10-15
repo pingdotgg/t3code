@@ -16,7 +16,7 @@ import {
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { Menu } from "../components/Menu";
+import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {

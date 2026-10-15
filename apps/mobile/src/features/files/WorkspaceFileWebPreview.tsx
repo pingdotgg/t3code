@@ -2,10 +2,10 @@ import { useState } from "react";
 import { View } from "react-native";
 import { WebView } from "react-native-webview";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
 import { FilePreviewLoading } from "./FilePreviewFeedback";
-import { LoadingStrip } from "../../components/LoadingStrip";
+import { LoadingStrip } from "../../components/ui/LoadingStrip";
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   const [loadProgress, setLoadProgress] = useState(0);

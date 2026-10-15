@@ -1,22 +1,22 @@
-import { Toolbar } from "../../../components/Toolbar";
+import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect, useMemo } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { AndroidScreenHeader } from "../../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   letterStopNotes,
   stepTourPosition,
   stopFilePaths,
 } from "@t3tools/client-runtime/review-guide-tour";
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { GuideOutline } from "./GuideOutline";
-import { AppText as Text } from "../../../components/AppText";
-import { ScreenScrollView } from "../../../components/ScreenScrollView";
-import { Menu } from "../../../components/Menu";
-import { IconButton } from "../../../components/IconButton";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { ScreenScrollView } from "../../../components/ui/ScreenScrollView";
+import { Menu } from "../../../components/ui/Menu";
+import { IconButton } from "../../../components/ui/IconButton";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";

@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthProvidersManageScope,
@@ -22,7 +22,7 @@ import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "rea
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { Linking, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";

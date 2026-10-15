@@ -1,4 +1,4 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
@@ -6,12 +6,12 @@ import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimation
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
-import { Menu } from "../../components/Menu";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Menu } from "../../components/ui/Menu";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";

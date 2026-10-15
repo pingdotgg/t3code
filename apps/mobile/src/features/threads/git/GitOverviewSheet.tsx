@@ -1,4 +1,4 @@
-import * as Dialog from "../../../components/Dialog";
+import * as Dialog from "../../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -17,7 +17,7 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
@@ -28,11 +28,11 @@ import { useUniwindTheme } from "../../../lib/useUniwindTheme";
 import {
   AndroidHeaderIconButton,
   AndroidSheetHeader,
-} from "../../../components/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../../components/AndroidAnchoredMenu";
-import { ScreenContent } from "../../../components/ScreenContent";
+} from "../../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../../components/ui/AndroidAnchoredMenu";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import {
   NativeStackScreenOptions,
   nativeHeaderScrollEdgeEffects,

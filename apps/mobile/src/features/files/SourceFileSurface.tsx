@@ -12,8 +12,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
-import { LoadingStrip } from "../../components/LoadingStrip";
+import { AppText as Text } from "../../components/ui/AppText";
+import { LoadingStrip } from "../../components/ui/LoadingStrip";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import {
   type NativeReviewDiffViewProps,

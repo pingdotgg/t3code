@@ -1,4 +1,4 @@
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { Pressable, View } from "react-native";
 
 export interface SidebarHeaderActionsProps {

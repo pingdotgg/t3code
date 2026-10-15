@@ -1,8 +1,8 @@
 import { Component, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
-import { AppText as Text } from "./AppText";
-import { Button } from "./Button";
+import { AppText as Text } from "./ui/AppText";
+import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 interface RenderErrorBoundaryProps {

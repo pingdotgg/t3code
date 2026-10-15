@@ -1,6 +1,6 @@
-import { Toolbar } from "../../components/Toolbar";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { Chip } from "../../components/Chip";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
@@ -27,9 +27,9 @@ import {
   PR_ACTION_LABELS,
 } from "./pullRequestActions";
 import * as Clipboard from "expo-clipboard";
-import { Menu } from "../../components/Menu";
-import { IconButton } from "../../components/IconButton";
-import { Button } from "../../components/Button";
+import { Menu } from "../../components/ui/Menu";
+import { IconButton } from "../../components/ui/IconButton";
+import { Button } from "../../components/ui/Button";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
@@ -63,15 +63,15 @@ import {
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
-import { EmptyState } from "../../components/EmptyState";
-import { SegmentedControl } from "../../components/SegmentedControl";
-import { SymbolView } from "../../components/AppSymbol";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { relativeTime } from "../../lib/time";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";

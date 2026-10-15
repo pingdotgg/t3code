@@ -34,10 +34,10 @@ vi.mock("@react-navigation/native", () => {
 vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
-vi.mock("../../components/AppBar", async () => {
+vi.mock("../../components/ui/AppBar", async () => {
   const { NativeStackScreenOptions } = await import("../../native/StackHeader");
   return {
-    AppBar: (props: import("../../components/AppBar.types").AppBarProps) => (
+    AppBar: (props: import("../../components/ui/AppBar.types").AppBarProps) => (
       <NativeStackScreenOptions options={props.options} optionsVersion={props.optionsVersion} />
     ),
   };

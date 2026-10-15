@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { BackHandler, Keyboard, type TextInputInstance, View } from "react-native";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { SearchField } from "../../components/SearchField";
-import { useToolbarLayout } from "../../components/useToolbarLayout";
+import {
+  AndroidHeaderIconButton,
+  AndroidScreenHeader,
+} from "../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { SearchField } from "../../components/ui/SearchField";
+import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
 /** Keep Files search in the same header row on compact and expanded layouts. */
 export function FilesHeader(props: {

@@ -8,9 +8,9 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useState } from "react";
 import { AppState, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { WorktreeSetupSheet } from "./worktree-setup-sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 

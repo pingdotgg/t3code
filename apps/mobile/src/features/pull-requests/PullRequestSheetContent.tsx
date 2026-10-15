@@ -3,11 +3,11 @@ import type { ReactNode } from "react";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
-import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
-import { IconButton } from "../../components/IconButton";
-import { ScreenContent } from "../../components/ScreenContent";
-import { ControlPill } from "../../components/ControlPill";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { IconButton } from "../../components/ui/IconButton";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { ControlPill } from "../../components/ui/ControlPill";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
 export function PullRequestSheetContent(props: {

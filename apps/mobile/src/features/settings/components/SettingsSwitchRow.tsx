@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 
-import { ListToggleRow } from "../../../components/ListToggleRow";
+import { ListToggleRow } from "../../../components/ui/ListToggleRow";
 
 export function SettingsSwitchRow({
   subtitle,

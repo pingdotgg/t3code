@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { View } from "react-native";
-import { ScreenContent } from "../../components/ScreenContent";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";

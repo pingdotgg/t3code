@@ -5,12 +5,12 @@ import type { PullRequestDetail } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
-import { Toolbar } from "../../components/Toolbar";
-import { Menu } from "../../components/Menu";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { Menu } from "../../components/ui/Menu";
 
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { type PullRequestParams } from "./usePullRequestDiff";

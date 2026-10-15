@@ -1,4 +1,4 @@
-import { Toolbar } from "../../components/Toolbar";
+import { Toolbar } from "../../components/ui/Toolbar";
 import {
   DatePicker,
   Host,

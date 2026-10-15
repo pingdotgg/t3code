@@ -1,5 +1,5 @@
-import { Toolbar } from "../../components/Toolbar";
-import * as Dialog from "../../components/Dialog";
+import { Toolbar } from "../../components/ui/Toolbar";
+import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
@@ -42,14 +42,14 @@ import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import {
   buildModelOptions,
@@ -68,7 +68,7 @@ import { environmentServerConfigsAtom, serverEnvironment } from "../../state/ser
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { ScreenContent } from "../../components/ScreenContent";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import {
   createProviderCatalogRefreshRunner,
   providerCatalogRefreshError,

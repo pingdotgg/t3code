@@ -1,5 +1,5 @@
-import { Toolbar } from "../../components/Toolbar";
-import * as Dialog from "../../components/Dialog";
+import { Toolbar } from "../../components/ui/Toolbar";
+import * as Dialog from "../../components/ui/Dialog";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -9,11 +9,14 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
-import { AudioFilePreview } from "../../components/AudioFilePreview";
-import { Menu } from "../../components/Menu";
-import { EmptyState } from "../../components/EmptyState";
+import {
+  AndroidHeaderIconButton,
+  AndroidScreenHeader,
+} from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AudioFilePreview } from "./AudioFilePreview";
+import { Menu } from "../../components/ui/Menu";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { nativeViewerErrorMessage } from "../../lib/attachmentDownload";

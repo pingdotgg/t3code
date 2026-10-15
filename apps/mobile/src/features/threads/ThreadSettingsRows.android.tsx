@@ -1,4 +1,4 @@
-import { RadioIndicator } from "../../components/RadioIndicator";
+import { RadioIndicator } from "../../components/ui/RadioIndicator";
 import {
   ModelRowContent,
   ChoiceRowContent,

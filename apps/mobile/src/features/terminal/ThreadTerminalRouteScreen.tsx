@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -8,14 +8,14 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
-import { SymbolView } from "../../components/AppSymbol";
-import { AppBar } from "../../components/AppBar";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
@@ -32,12 +32,12 @@ import {
   ComposerToolbarRow,
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
-import { EmptyState } from "../../components/EmptyState";
-import { GlassSurface } from "../../components/GlassSurface";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { ScreenContent } from "../../components/ScreenContent";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";

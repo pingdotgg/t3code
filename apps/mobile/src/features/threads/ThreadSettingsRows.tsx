@@ -1,4 +1,4 @@
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import {
   ModelRowContent,
   ChoiceRowContent,

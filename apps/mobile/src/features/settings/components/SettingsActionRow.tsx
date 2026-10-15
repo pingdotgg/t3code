@@ -1,1 +1,1 @@
-export { ListActionRow as SettingsActionRow } from "../../../components/ListActionRow";
+export { ListActionRow as SettingsActionRow } from "../../../components/ui/ListActionRow";

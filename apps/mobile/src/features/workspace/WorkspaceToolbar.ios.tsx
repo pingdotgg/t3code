@@ -1,4 +1,4 @@
-import { Toolbar } from "../../components/Toolbar";
+import { Toolbar } from "../../components/ui/Toolbar";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";

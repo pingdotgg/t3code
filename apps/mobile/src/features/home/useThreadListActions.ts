@@ -7,7 +7,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";

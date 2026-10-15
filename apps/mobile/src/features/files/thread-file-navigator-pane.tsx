@@ -1,8 +1,8 @@
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { SymbolView } from "../../components/AppSymbol";
-import { ScreenContent } from "../../components/ScreenContent";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
@@ -13,7 +13,7 @@ import {
   SearchBar,
 } from "react-native-screens";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { FilesHeader } from "./FilesHeader";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";

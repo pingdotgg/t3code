@@ -10,8 +10,8 @@ import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native"
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { FilePreviewItem } from "../../components/FilePreviewModal";
 import { isBotBadgeImage } from "./botBadgeImages";

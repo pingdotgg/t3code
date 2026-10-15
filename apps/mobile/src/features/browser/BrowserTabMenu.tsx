@@ -1,4 +1,4 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -11,8 +11,8 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 
-import { ControlPill } from "../../components/ControlPill";
-import { Menu } from "../../components/Menu";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 

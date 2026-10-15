@@ -1,6 +1,6 @@
-import { Toolbar } from "../../components/Toolbar";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import * as Dialog from "../../components/Dialog";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
@@ -14,8 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPill } from "../../components/ControlPill";
-import { AppBar } from "../../components/AppBar";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { AppBar } from "../../components/ui/AppBar";
 
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";

@@ -1,9 +1,12 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useCallback, useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidHeaderIconButton,
+  AndroidScreenHeader,
+} from "../../components/ui/AndroidScreenHeader";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { SearchField } from "../../components/SearchField";
+import { SearchField } from "../../components/ui/SearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";

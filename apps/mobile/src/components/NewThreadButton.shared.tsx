@@ -1,8 +1,8 @@
 import { Pressable, type StyleProp, type ViewStyle } from "react-native";
 
 import { cn } from "../lib/cn";
-import { AppText } from "./AppText";
-import { SymbolView } from "./AppSymbol";
+import { AppText } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
 
 /** Shared compose action for the floating button and empty workspace. */
 export function NewThreadButton(props: {

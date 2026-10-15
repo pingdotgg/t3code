@@ -1,4 +1,4 @@
-import * as Dialog from "./Dialog";
+import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -24,7 +24,7 @@ import {
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { ComposerContextSheet } from "./ComposerContextSheet";
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import {
   composerDocumentAttachment,
   composerMentionPath,

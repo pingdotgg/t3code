@@ -1,14 +1,14 @@
-import * as Dialog from "../../components/Dialog";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { NavigationRow } from "../../components/NavigationRow";
-import { AppBar } from "../../components/AppBar";
+import * as Dialog from "../../components/ui/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { NavigationRow } from "../../components/ui/NavigationRow";
+import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
   useIsFocused,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
@@ -20,10 +20,10 @@ import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
-import { ScreenContent } from "../../components/ScreenContent";
-import { Button } from "../../components/Button";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { AppText as Text } from "../../components/AppText";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { Button } from "../../components/ui/Button";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";

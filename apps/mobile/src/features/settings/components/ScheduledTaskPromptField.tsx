@@ -1,6 +1,6 @@
 import { TextInput, View } from "react-native";
 
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import type { ComposerEditorSelection } from "../../../components/ComposerEditor";
 import {
   ComposerDictationCancelAction,

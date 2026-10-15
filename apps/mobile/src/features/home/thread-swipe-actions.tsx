@@ -1,5 +1,5 @@
-import { SymbolView } from "../../components/AppSymbol";
-import { Menu } from "../../components/Menu";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
 import type { MenuAction } from "@react-native-menu/menu";
 import * as Haptics from "expo-haptics";
 import {
@@ -39,7 +39,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
 

@@ -2,8 +2,8 @@ import type { ChatAttachment, EnvironmentId } from "@t3tools/contracts";
 import { Image } from "expo-image";
 import { Pressable, ScrollView, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
 

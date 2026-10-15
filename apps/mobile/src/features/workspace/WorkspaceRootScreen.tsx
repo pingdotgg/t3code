@@ -5,7 +5,7 @@ import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import {

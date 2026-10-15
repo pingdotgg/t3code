@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { SliderRow } from "../../../../components/SliderRow";
+import { SliderRow } from "../../../../components/ui/SliderRow";
 
 export function FontSizeSliderRow(
   props: Omit<ComponentProps<typeof SliderRow>, "minimumIcon" | "maximumIcon">,

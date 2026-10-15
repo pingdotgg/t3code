@@ -10,16 +10,16 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppBar } from "../../components/AppBar";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppBar } from "../../components/ui/AppBar";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import { Platform, Pressable, RefreshControl, useWindowDimensions, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { relativeTime } from "../../lib/time";

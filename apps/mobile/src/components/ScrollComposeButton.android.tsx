@@ -1,4 +1,4 @@
-import { NativeThemeHost } from "./NativeThemeHost.android";
+import { NativeThemeHost } from "./ui/NativeThemeHost.android";
 import { Box, ExtendedFloatingActionButton, Icon, Text } from "@expo/ui/jetpack-compose";
 import {
   defaultMinSize,
@@ -10,7 +10,7 @@ import {
 } from "@expo/ui/jetpack-compose/modifiers";
 import { useCallback, useState } from "react";
 import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
-import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
 

@@ -1,4 +1,4 @@
-import * as Dialog from "./Dialog";
+import * as Dialog from "./ui/Dialog";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId } from "react";
 

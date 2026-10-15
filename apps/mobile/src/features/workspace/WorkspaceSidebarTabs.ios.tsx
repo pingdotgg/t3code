@@ -1,6 +1,6 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { Keyboard, View } from "react-native";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 

@@ -1,4 +1,4 @@
-import { Toolbar } from "../../components/Toolbar";
+import { Toolbar } from "../../components/ui/Toolbar";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { use, useCallback, useEffect, useRef } from "react";
 import { useNavigation, type ParamListBase } from "@react-navigation/native";

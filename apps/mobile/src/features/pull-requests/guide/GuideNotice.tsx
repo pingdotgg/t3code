@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
-import { AppText as Text } from "../../../components/AppText";
-import { SymbolView } from "../../../components/AppSymbol";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";

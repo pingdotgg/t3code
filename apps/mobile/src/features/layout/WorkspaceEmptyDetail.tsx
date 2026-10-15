@@ -1,10 +1,10 @@
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { NewThreadButton } from "../../components/NewThreadButton";
-import { FloatingActionButton } from "../../components/FloatingActionButton";
-import { EmptyState } from "../../components/EmptyState";
+import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
+import { EmptyState } from "../../components/ui/EmptyState";
 
 export function WorkspaceEmptyDetail(props: {
   readonly onStartNewTask?: () => void;

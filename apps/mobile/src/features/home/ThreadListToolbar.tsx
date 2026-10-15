@@ -11,17 +11,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
-import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { FloatingActionButton } from "../../components/FloatingActionButton";
-import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { Menu } from "../../components/Menu";
-import { SearchField } from "../../components/SearchField";
+import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { Menu } from "../../components/ui/Menu";
+import { SearchField } from "../../components/ui/SearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
-import { useToolbarLayout } from "../../components/useToolbarLayout";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function ThreadListToolbar(props: {
