@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { allEditors, getEditor } from "env-editor";
 import { getEditorInfo } from "open-editor";
 import {
   isCommandAvailable,
@@ -431,6 +432,10 @@ const resolveDefaultEditorLaunch = Effect.fn("externalLauncher.resolveDefaultEdi
       return Option.none();
     }
     if (!(yield* isCommandAvailable(command, { env }))) return Option.none();
+
+    const editor = getEditor(command);
+    // Unknown executables default to non-terminal in open-editor.
+    if (!allEditors().some((known) => known.id === editor.id)) return Option.none();
 
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

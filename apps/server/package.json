@@ -53,6 +53,7 @@
     "@t3tools/source-control-github": "workspace:*",
     "@t3tools/source-control-gitlab": "workspace:*",
     "effect": "catalog:",
+    "env-editor": "1.3.0",
     "jose": "catalog:",
     "node-pty": "^1.2.0-beta.15",
     "open-editor": "6.0.0",

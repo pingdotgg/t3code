@@ -1593,6 +1593,7 @@ for (const [name, platform, env] of [
   ["unset editor", "linux", { DISPLAY: ":42" }],
   ["missing executable", "linux", { EDITOR: "missing", DISPLAY: ":42" }],
   ["missing terminal", "linux", { EDITOR: "nvim", DISPLAY: ":42" }],
+  ["unclassified installed terminal editor", "linux", { EDITOR: "hx", DISPLAY: ":42" }],
   ["headless host", "linux", { EDITOR: "nvim" }],
   ["unsupported platform", "darwin", { EDITOR: "nvim", DISPLAY: ":42" }],
 ] satisfies Array<[string, NodeJS.Platform, Record<string, string>]>) {
@@ -1601,8 +1602,10 @@ for (const [name, platform, env] of [
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
-      yield* fs.writeFileString(path.join(binDir, "nvim"), "#!/bin/sh\nexit 0\n");
-      yield* fs.chmod(path.join(binDir, "nvim"), 0o755);
+      for (const command of ["nvim", "hx"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
       yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         assert.notInclude(yield* launcher.resolveAvailableEditors(), "default-editor");
