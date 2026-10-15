@@ -343,10 +343,40 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +    }
  }
 diff --git a/ios/Shared/RCTMenuItem.swift b/ios/Shared/RCTMenuItem.swift
-index bb6bb2b7ad56135089f267587c974b166760539d..949b3f7ec49af7ba26d966a8923a51f619443d5a 100644
+index bb6bb2b7ad56135089f267587c974b166760539d..4e35f96515327aa6a30aba4e19cd62998a97164f 100644
 --- a/ios/Shared/RCTMenuItem.swift
 +++ b/ios/Shared/RCTMenuItem.swift
-@@ -103,10 +103,18 @@ class RCTMenuAction {
+@@ -21,13 +21,28 @@ class RCTMenuAction {
+     // Only available in iOS 16+
+     var preferredElementSizeString: String?
+ 
++    /// Decodes a `data:` image synchronously, since UIKit builds the menu before any
++    /// async load could finish. It keeps its own colors and shows at SF Symbol size.
++    static func inlineImage(_ uri: String) -> UIImage? {
++        guard let url = URL(string: uri),
++              let data = try? Data(contentsOf: url),
++              let image = UIImage(data: data),
++              image.size.width > 0, image.size.height > 0 else { return nil }
++        let pixels = max(image.size.width, image.size.height) * image.scale
++        guard let cgImage = image.cgImage else { return image }
++        return UIImage(cgImage: cgImage, scale: pixels / 20, orientation: image.imageOrientation)
++            .withRenderingMode(.alwaysOriginal)
++    }
++
+     init(details: NSDictionary){
+ 
+         if let identifier = details["id"] as? NSString {
+             self.identifier = UIAction.Identifier(rawValue: identifier as String);
+         }
+ 
+-        if let image = details["image"] as? NSString {
++        if let image = details["image"] as? NSString, (image as String).hasPrefix("data:") {
++            self.image = RCTMenuAction.inlineImage(image as String)
++        } else if let image = details["image"] as? NSString {
+             self.image = UIImage(systemName: image as String);
+             if self.image === nil {
+                 self.image = UIImage(named: image as String)
+@@ -103,10 +118,18 @@ class RCTMenuAction {
                  subMenuActions.append(subaction.createUIMenuElement(handler))
              }
              var menu: UIMenu;

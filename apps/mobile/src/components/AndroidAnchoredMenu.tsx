@@ -1,4 +1,4 @@
-import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
+import type { MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
@@ -8,7 +8,7 @@ import Animated, { FadeIn } from "react-native-reanimated";
 
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
-import { MaterialMenuPopup } from "./MaterialMenuPopup";
+import { MaterialMenuPopup, type AndroidMenuAction } from "./MaterialMenuPopup";
 
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
@@ -34,7 +34,7 @@ type OverlayFrame = {
 };
 
 export type AndroidAnchoredMenuProps = {
-  readonly actions: readonly MenuAction[];
+  readonly actions: readonly AndroidMenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   /** Applied to the anchor wrapper — call sites flex these to fill toolbars. */
@@ -57,7 +57,7 @@ export type AndroidAnchoredMenuProps = {
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
-  const [path, setPath] = useState<readonly MenuAction[]>([]);
+  const [path, setPath] = useState<readonly AndroidMenuAction[]>([]);
   // Height of the modal's root view, in the modal's own coordinate space.
   // Menus that flip above their anchor are pinned by their BOTTOM edge
   // (bottom = rootHeight - anchorTop), so drill-in height changes grow
@@ -158,7 +158,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const placeable = local !== null && rootHeight !== null;
 
   const onPressItem = useCallback(
-    (action: MenuAction) => {
+    (action: AndroidMenuAction) => {
       if ((action.subactions?.length ?? 0) > 0) {
         setPath((current) => [...current, action]);
         return;

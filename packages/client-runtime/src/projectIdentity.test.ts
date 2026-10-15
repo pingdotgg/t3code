@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { PROJECT_ICON_COLORS } from "./projectIconColors";
-import { deriveProjectIdentity } from "./projectIdentity";
+import { ProjectIconColor } from "@t3tools/contracts";
+import { deriveProjectIdentity } from "./projectIdentity.ts";
 
 describe("deriveProjectIdentity", () => {
   it.each([
@@ -22,8 +22,8 @@ describe("deriveProjectIdentity", () => {
     expect(equivalent.color).toBe(canonical.color);
   });
 
-  it("uses only colors available in the icon picker", () => {
-    const palette = PROJECT_ICON_COLORS.map(({ value }) => value);
+  it("uses only assignable icon colors", () => {
+    const palette: ReadonlyArray<string> = ProjectIconColor.literals;
     for (const name of ["Jobs", "Scripts and Extractors", "T3", "文書", "", "---"]) {
       expect(palette).toContain(deriveProjectIdentity(name).color);
     }

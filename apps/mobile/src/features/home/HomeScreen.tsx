@@ -410,6 +410,15 @@ export function HomeScreen(props: HomeScreenProps) {
       }),
     [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
   );
+  const projectFilterOptions = useMemo(
+    () =>
+      projectScopes.map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+        representative: scope.representative,
+      })),
+    [projectScopes],
+  );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
@@ -986,7 +995,7 @@ export function HomeScreen(props: HomeScreenProps) {
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={projectFilterOptions}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}

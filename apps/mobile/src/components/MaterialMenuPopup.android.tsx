@@ -48,13 +48,15 @@ function MenuIcon(props: {
 /** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
   const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
-  const { scale, menuItemHeight } = useAndroidControlSizing();
+  const { scale, menuItemHeight, iconSize } = useAndroidControlSizing();
   const body = resolveScaledTextRole("body", appearance.baseFontSize);
   const caption = resolveScaledTextRole("caption", appearance.baseFontSize);
   const foreground = colors["--color-foreground"];
   const muted = colors["--color-foreground-muted"];
   // A fixed native item height clips wrapped labels; a minimum lets each row grow.
   const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
+  // Rows without a leading view keep its slot so labels line up, as in Material menus.
+  const reserveLeading = props.actions.some((action) => action.leading);
   const items = (
     <>
       {props.parent ? (
@@ -84,13 +86,28 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
           modifiers={itemModifiers}
           onClick={() => props.onPress(action)}
         >
-          {action.image && isAppSymbolName(action.image) ? (
+          {action.leading ? (
+            <DropdownMenuItem.LeadingIcon>
+              <RNHostView matchContents modifiers={[size(iconSize, iconSize)]}>
+                <View
+                  style={{ width: iconSize, height: iconSize }}
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  {action.leading}
+                </View>
+              </RNHostView>
+            </DropdownMenuItem.LeadingIcon>
+          ) : action.image && isAppSymbolName(action.image) ? (
             <DropdownMenuItem.LeadingIcon>
               <MenuIcon
                 name={action.image}
                 destructive={action.attributes?.destructive}
                 disabled={action.attributes?.disabled}
               />
+            </DropdownMenuItem.LeadingIcon>
+          ) : reserveLeading ? (
+            <DropdownMenuItem.LeadingIcon>
+              <Box modifiers={[size(iconSize, iconSize)]} />
             </DropdownMenuItem.LeadingIcon>
           ) : null}
           <DropdownMenuItem.Text>
