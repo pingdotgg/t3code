@@ -189,9 +189,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {/* Stop, restart recovery, and a failed start all hold the queue with the
+          same flag, so the label can't name a cause. */}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
-          <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
+          <Text className="text-sm text-foreground-muted">Queue paused</Text>
           <MaterialButton
             label="Resume queue"
             disabled={resuming || busyRunId !== null}
