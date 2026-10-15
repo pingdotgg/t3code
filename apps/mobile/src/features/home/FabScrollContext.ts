@@ -1,10 +1,10 @@
 import { createContext, useContext } from "react";
 import type { NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 
-export const MaterialFabScrollContext = createContext<
+export const FabScrollContext = createContext<
   ((event: NativeSyntheticEvent<NativeScrollEvent>) => void) | undefined
 >(undefined);
 
-export function useMaterialFabScroll() {
-  return useContext(MaterialFabScrollContext);
+export function useFabScroll() {
+  return useContext(FabScrollContext);
 }

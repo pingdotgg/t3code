@@ -1,14 +1,14 @@
-export interface MaterialFabScrollState {
+export interface FabScrollState {
   readonly anchor: number;
   readonly expanded: boolean;
 }
 
 /** Ignore small direction changes and overscroll; always show the label at the top. */
-export function updateMaterialFabScroll(
-  state: MaterialFabScrollState,
+export function updateFabScroll(
+  state: FabScrollState,
   offset: number,
   maxOffset: number,
-): MaterialFabScrollState {
+): FabScrollState {
   const y = Math.max(0, Math.min(offset, Math.max(0, maxOffset)));
   if (y <= 8) return { anchor: y, expanded: true };
   const anchor = state.expanded ? Math.min(state.anchor, y) : Math.max(state.anchor, y);

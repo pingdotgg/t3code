@@ -13,12 +13,12 @@ import { ListSection } from "../../components/ListSection";
 import { ListToggleRow } from "../../components/ListToggleRow";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
-import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
+import { FloatingActionButton } from "../../components/FloatingActionButton";
 import { SearchField } from "../../components/SearchField";
 import { LoadingStrip } from "../../components/LoadingStrip";
 import { Notice } from "../../components/Notice";
 import { NumberField } from "../../components/NumberField";
-import { ScreenHeader } from "../../components/ScreenHeader";
+import { AppBar } from "../../components/AppBar";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { SliderRow } from "../../components/SliderRow";
@@ -56,7 +56,7 @@ export function ComponentCatalogScreen() {
   };
   return (
     <View className="flex-1 bg-screen">
-      <ScreenHeader title="UI components" onBack={() => navigation.goBack()} sidebar={false} />
+      <AppBar title="UI components" onBack={() => navigation.goBack()} sidebar={false} />
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ padding: 16, gap: 20, paddingBottom: 40 }}
@@ -243,7 +243,7 @@ export function ComponentCatalogScreen() {
               <LoadingStrip progress={0.6} />
             </View>
             <View className="items-start">
-              <MaterialFloatingActionButton
+              <FloatingActionButton
                 label="New thread"
                 icon="plus"
                 variant="extended"

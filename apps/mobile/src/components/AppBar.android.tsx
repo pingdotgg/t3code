@@ -7,7 +7,7 @@ import {
   type TextInputInstance,
   View,
 } from "react-native";
-import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
+import { useToolbarLayout } from "./useToolbarLayout";
 import { NativeStackScreenOptions } from "../native/StackHeader";
 import { AndroidWorkspaceSidebarButton } from "../features/layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -17,12 +17,12 @@ import { SymbolView } from "./AppSymbol";
 import { Menu } from "./Menu";
 import { SearchField } from "./SearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
-import type { ScreenHeaderProps } from "./ScreenHeader.types";
+import type { AppBarProps } from "./AppBar.types";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-export function ScreenHeader(props: ScreenHeaderProps) {
+export function AppBar(props: AppBarProps) {
   const { search } = props;
-  const { paddingTop, paddingBottom } = useMaterialToolbarLayout();
+  const { paddingTop, paddingBottom } = useToolbarLayout();
   const { scale, buttonSize, iconSize, smallIconSize } = useAndroidControlSizing();
   const { themeVariables } = useAppearancePreferences();
   const inputRef = useRef<TextInputInstance>(null);

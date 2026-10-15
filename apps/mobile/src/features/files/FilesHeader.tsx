@@ -4,10 +4,10 @@ import { BackHandler, Keyboard, type TextInputInstance, View } from "react-nativ
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { SearchField } from "../../components/SearchField";
-import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
+import { useToolbarLayout } from "../../components/useToolbarLayout";
 
 /** Keep Files search in the same header row on compact and expanded layouts. */
-export function MaterialFilesHeader(props: {
+export function FilesHeader(props: {
   readonly projectName: string;
   readonly searchQuery: string;
   readonly onSearchQueryChange: (query: string) => void;
@@ -15,7 +15,7 @@ export function MaterialFilesHeader(props: {
   readonly onBack?: () => void;
   readonly leading?: ReactNode;
 }) {
-  const { paddingTop, paddingBottom } = useMaterialToolbarLayout();
+  const { paddingTop, paddingBottom } = useToolbarLayout();
   const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;

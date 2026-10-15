@@ -8,7 +8,7 @@ import { IconButton } from "./IconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
+import { useToolbarLayout } from "./useToolbarLayout";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -44,9 +44,7 @@ export function AndroidScreenHeader(props: {
 }) {
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
-  const { height: materialToolbarHeight, ...headerPadding } = useMaterialToolbarLayout(
-    props.embedded,
-  );
+  const { height: materialToolbarHeight, ...headerPadding } = useToolbarLayout(props.embedded);
   const [headerWidth, setHeaderWidth] = useState(0);
   const { visibleActions, overflowActions } = splitAndroidHeaderActions(
     props.actions ?? [],

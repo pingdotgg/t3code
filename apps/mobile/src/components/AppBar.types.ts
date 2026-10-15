@@ -3,7 +3,7 @@ import type { ColorValue } from "react-native";
 import type { AppNativeStackNavigationOptions } from "../native/StackHeader";
 import type { AppSymbolName } from "./AppSymbol";
 
-export interface ScreenHeaderAction {
+export interface AppBarAction {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
@@ -14,7 +14,7 @@ export interface ScreenHeaderAction {
   readonly tintColor?: ColorValue;
 }
 
-export type ScreenHeaderMenuItem =
+export type AppBarMenuItem =
   | {
       readonly id: string;
       readonly title: string;
@@ -29,18 +29,18 @@ export type ScreenHeaderMenuItem =
       readonly title?: string;
       readonly icon?: string;
       readonly inline?: boolean;
-      readonly items: ReadonlyArray<ScreenHeaderMenuItem>;
+      readonly items: ReadonlyArray<AppBarMenuItem>;
     };
 
-export interface ScreenHeaderMenu {
+export interface AppBarMenu {
   readonly title: string;
   readonly icon: AppSymbolName;
   readonly status?: string;
   readonly separateBackground?: boolean;
-  readonly items: ReadonlyArray<ScreenHeaderMenuItem>;
+  readonly items: ReadonlyArray<AppBarMenuItem>;
 }
 
-export interface ScreenHeaderSearch {
+export interface AppBarSearch {
   readonly value: string;
   readonly onChangeText: (value: string) => void;
   readonly placeholder: string;
@@ -54,12 +54,12 @@ export interface ScreenHeaderSearch {
   readonly refreshInToolbar?: boolean;
 }
 
-export interface ScreenHeaderProps {
+export interface AppBarProps {
   readonly title: string;
   readonly subtitle?: string;
-  readonly actions?: ReadonlyArray<ScreenHeaderAction>;
-  readonly menus?: ReadonlyArray<ScreenHeaderMenu>;
-  readonly search?: ScreenHeaderSearch;
+  readonly actions?: ReadonlyArray<AppBarAction>;
+  readonly menus?: ReadonlyArray<AppBarMenu>;
+  readonly search?: AppBarSearch;
   readonly onBack?: () => void;
   readonly sidebar?: boolean;
   readonly backInSplitView?: {

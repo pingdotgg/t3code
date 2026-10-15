@@ -23,7 +23,7 @@ import {
   androidHeaderMenuActions,
   findHeaderMenuAction,
 } from "../../components/headerMenu.android";
-import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+import type { AppBarMenuItem } from "../../components/AppBar.types";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -146,7 +146,7 @@ function DevicePreviewScreen({
     }
   };
 
-  const controls: ScreenHeaderMenuItem[] = [
+  const controls: AppBarMenuItem[] = [
     ...(state.data?.hosts
       .filter(
         (host) =>
@@ -243,7 +243,7 @@ function DevicePreviewScreen({
     },
   ];
   const pressHome = () => streamRef.current?.home();
-  const menuItems: ScreenHeaderMenuItem[] = [
+  const menuItems: AppBarMenuItem[] = [
     ...(previews.length > 1
       ? [
           {
@@ -344,7 +344,7 @@ function DevicePreviewScreen({
   );
 }
 
-function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<ScreenHeaderMenuItem> }) {
+function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenuItem> }) {
   return (
     <Menu
       actions={androidHeaderMenuActions(items)}

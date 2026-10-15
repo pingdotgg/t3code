@@ -9,7 +9,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
-import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
+import { Toolbar } from "../../components/Toolbar";
 import { Menu } from "../../components/Menu";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
@@ -151,7 +151,7 @@ export function PullRequestActionToolbar(props: {
         style={{ paddingBottom: insets.bottom + 16 }}
         onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
       >
-        <MaterialFloatingToolbar>
+        <Toolbar>
           <View className="flex-row items-center gap-2">
             {showAgentControls ? (
               <Menu
@@ -185,7 +185,7 @@ export function PullRequestActionToolbar(props: {
             ) : null}
             <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
           </View>
-        </MaterialFloatingToolbar>
+        </Toolbar>
       </View>
     );
   }

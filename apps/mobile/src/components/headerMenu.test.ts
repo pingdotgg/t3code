@@ -4,9 +4,9 @@ import {
   findHeaderMenuAction,
   splitAndroidHeaderActions,
 } from "./headerMenu.android";
-import type { ScreenHeaderMenuItem } from "./ScreenHeader.types";
+import type { AppBarMenuItem } from "./AppBar.types";
 
-const items: ReadonlyArray<ScreenHeaderMenuItem> = [
+const items: ReadonlyArray<AppBarMenuItem> = [
   {
     id: "sessions",
     title: "Sessions",

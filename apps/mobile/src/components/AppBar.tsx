@@ -11,7 +11,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import type { ScreenHeaderMenuItem, ScreenHeaderProps } from "./ScreenHeader.types";
+import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../native/use-native-mail-search-toolbar";
 
@@ -20,7 +20,7 @@ function iosIcon(icon: AppSymbolName) {
 }
 
 type MailMenu = NonNullable<HeaderBarButtonMailSearchToolbarItem["filterMenu"]>;
-function mailMenuItems(items: ReadonlyArray<ScreenHeaderMenuItem>): MailMenu["items"] {
+function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] {
   return items.map((item) =>
     "items" in item
       ? { type: "submenu", title: item.title ?? "", items: mailMenuItems(item.items) }
@@ -34,7 +34,7 @@ function mailMenuItems(items: ReadonlyArray<ScreenHeaderMenuItem>): MailMenu["it
   );
 }
 
-export function ScreenHeader(props: ScreenHeaderProps) {
+export function AppBar(props: AppBarProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const headerId = useId();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
@@ -184,9 +184,9 @@ export function ScreenHeader(props: ScreenHeaderProps) {
 }
 
 export type {
-  ScreenHeaderAction,
-  ScreenHeaderMenu,
-  ScreenHeaderMenuItem,
-  ScreenHeaderProps,
-  ScreenHeaderSearch,
-} from "./ScreenHeader.types";
+  AppBarAction,
+  AppBarMenu,
+  AppBarMenuItem,
+  AppBarProps,
+  AppBarSearch,
+} from "./AppBar.types";

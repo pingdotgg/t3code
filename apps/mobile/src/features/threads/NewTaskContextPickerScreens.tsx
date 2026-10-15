@@ -1,5 +1,5 @@
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { MaterialListRow } from "../../components/MaterialListRow";
+import { NavigationRow } from "../../components/NavigationRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
@@ -16,7 +16,7 @@ import { Alert, Platform, Pressable, ScrollView, TextInput, View } from "react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { MaterialScreenContent } from "../../components/MaterialScreenContent";
+import { ScreenContent } from "../../components/ScreenContent";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -46,7 +46,7 @@ function SelectionRow(props: {
 }) {
   if (Platform.OS === "android") {
     return (
-      <MaterialListRow
+      <NavigationRow
         className="bg-grouped-card"
         title={props.title}
         subtitle={props.subtitle}
@@ -215,7 +215,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           onBack={() => navigation.goBack()}
         />
       ) : null}
-      <MaterialScreenContent>
+      <ScreenContent>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{
@@ -252,7 +252,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
             ))}
           </PickerSurface>
         </ScrollView>
-      </MaterialScreenContent>
+      </ScreenContent>
     </View>
   );
 }
@@ -553,7 +553,7 @@ export function BranchPickerScreen(props: {
             value={props.query}
           />
         </View>
-        <MaterialScreenContent>{branchContent}</MaterialScreenContent>
+        <ScreenContent>{branchContent}</ScreenContent>
       </View>
     );
   }

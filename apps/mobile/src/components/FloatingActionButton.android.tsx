@@ -1,28 +1,20 @@
+import type { FloatingActionButtonProps } from "./FloatingActionButton.types";
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import {
   Box,
   ExtendedFloatingActionButton,
-  FloatingActionButton,
+  FloatingActionButton as ComposeFloatingActionButton,
   LargeFloatingActionButton,
   Text,
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, height, size, width } from "@expo/ui/jetpack-compose/modifiers";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { View } from "react-native";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView } from "./AppSymbol";
 
-export function MaterialFloatingActionButton(props: {
-  readonly onPress: () => void;
-  readonly label: string;
-  readonly icon: AppSymbolName;
-  readonly variant?: "extended" | "large";
-  readonly expanded?: boolean;
-  readonly tone?: "primary" | "secondary";
-  readonly className?: string;
-  readonly style?: StyleProp<ViewStyle>;
-}) {
+export function FloatingActionButton(props: FloatingActionButtonProps) {
   const { themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
   const { scale, iconSize: standardIconSize, fabSize, largeFabSize } = useAndroidControlSizing();
@@ -36,7 +28,7 @@ export function MaterialFloatingActionButton(props: {
       ? ExtendedFloatingActionButton
       : props.variant === "large"
         ? LargeFloatingActionButton
-        : FloatingActionButton;
+        : ComposeFloatingActionButton;
   const iconSize = props.variant === "large" ? Math.round(36 * scale) : standardIconSize;
   return (
     <View

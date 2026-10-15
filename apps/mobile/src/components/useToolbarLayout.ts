@@ -5,7 +5,7 @@ import { useScaledTextRole } from "../features/settings/appearance/useScaledText
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 /** Shared Android header geometry; class-based spacing uses the app's 14dp rem. */
-export function useMaterialToolbarLayout(embedded = false) {
+export function useToolbarLayout(embedded = false) {
   const insets = useSafeAreaInsets();
   const title = useScaledTextRole("title");
   const subtitle = useScaledTextRole("label");

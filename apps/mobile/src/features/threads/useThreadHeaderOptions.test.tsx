@@ -34,6 +34,14 @@ vi.mock("@react-navigation/native", () => {
 vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../components/AppBar", async () => {
+  const { NativeStackScreenOptions } = await import("../../native/StackHeader");
+  return {
+    AppBar: (props: import("../../components/AppBar.types").AppBarProps) => (
+      <NativeStackScreenOptions options={props.options} optionsVersion={props.optionsVersion} />
+    ),
+  };
+});
 vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({

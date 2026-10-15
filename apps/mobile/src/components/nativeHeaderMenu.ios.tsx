@@ -1,7 +1,7 @@
 import { NativeHeaderToolbar } from "../native/StackHeader";
-import type { ScreenHeaderMenu, ScreenHeaderMenuItem } from "./ScreenHeader.types";
+import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
 
-function renderMenuItems(items: ReadonlyArray<ScreenHeaderMenuItem>) {
+function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
   return items.map((item) =>
     "items" in item ? (
       <NativeHeaderToolbar.Menu
@@ -28,7 +28,7 @@ function renderMenuItems(items: ReadonlyArray<ScreenHeaderMenuItem>) {
 }
 
 /** Returns direct native items for toolbar serialization, including nested menu data. */
-export function createNativeHeaderMenu(menu: ScreenHeaderMenu) {
+export function createNativeHeaderMenu(menu: AppBarMenu) {
   return (
     <NativeHeaderToolbar.Menu
       key={menu.title}

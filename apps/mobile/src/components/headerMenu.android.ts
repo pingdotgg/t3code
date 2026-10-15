@@ -1,7 +1,7 @@
 import type { MenuAction } from "@react-native-menu/menu";
-import type { ScreenHeaderMenuItem } from "./ScreenHeader.types";
+import type { AppBarMenuItem } from "./AppBar.types";
 
-export function androidHeaderMenuActions(items: ReadonlyArray<ScreenHeaderMenuItem>): MenuAction[] {
+export function androidHeaderMenuActions(items: ReadonlyArray<AppBarMenuItem>): MenuAction[] {
   return items.flatMap((item): MenuAction[] =>
     "items" in item
       ? item.inline && !item.title
@@ -28,9 +28,9 @@ export function androidHeaderMenuActions(items: ReadonlyArray<ScreenHeaderMenuIt
 }
 
 export function findHeaderMenuAction(
-  items: ReadonlyArray<ScreenHeaderMenuItem>,
+  items: ReadonlyArray<AppBarMenuItem>,
   id: string,
-): Extract<ScreenHeaderMenuItem, { readonly onPress: () => void }> | undefined {
+): Extract<AppBarMenuItem, { readonly onPress: () => void }> | undefined {
   for (const item of items) {
     if ("items" in item) {
       const action = findHeaderMenuAction(item.items, id);

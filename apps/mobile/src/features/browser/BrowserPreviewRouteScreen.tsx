@@ -12,7 +12,7 @@ import { ActivityIndicator, Alert, AppState, Platform, TextInput, View } from "r
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
-import { ScreenHeader } from "../../components/ScreenHeader";
+import { AppBar } from "../../components/AppBar";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -115,7 +115,7 @@ function BrowserPreviewScreen({
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
-      <ScreenHeader
+      <AppBar
         title={tab ? browserTabTitle(tab) : "Browser"}
         sidebar={false}
         onBack={onClose}

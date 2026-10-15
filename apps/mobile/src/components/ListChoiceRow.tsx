@@ -4,7 +4,7 @@ import { useResolveClassNames } from "uniwind";
 import { cn } from "../lib/cn";
 import { SymbolView } from "./AppSymbol";
 import { ListRowLayout } from "./ListRowLayout";
-import { MaterialRadioIndicator } from "./MaterialRadioIndicator";
+import { RadioIndicator } from "./RadioIndicator";
 import { RowPressable } from "./RowPressable";
 
 export function ListChoiceRow(props: {
@@ -42,7 +42,7 @@ export function ListChoiceRow(props: {
             className="size-6 items-center justify-center"
           >
             {Platform.OS === "android" ? (
-              <MaterialRadioIndicator selected={props.selected} />
+              <RadioIndicator selected={props.selected} />
             ) : props.selected ? (
               <SymbolView
                 name="checkmark"

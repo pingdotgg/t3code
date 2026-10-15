@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { ScreenHeader } from "../../components/ScreenHeader";
+import { AppBar } from "../../components/AppBar";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import { Platform, Pressable, RefreshControl, useWindowDimensions, View } from "react-native";
@@ -49,7 +49,7 @@ function ArchivedThreadsHeader(props: {
   const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   return (
-    <ScreenHeader
+    <AppBar
       title="Archived threads"
       sidebar={false}
       onBack={() => navigation.goBack()}

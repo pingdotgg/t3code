@@ -1,13 +1,10 @@
-import type { ComponentProps } from "react";
 import { Pressable } from "react-native";
-import type { MaterialFloatingActionButton as AndroidMaterialFloatingActionButton } from "./MaterialFloatingActionButton.android";
+import type { FloatingActionButtonProps } from "./FloatingActionButton.types";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { cn } from "../lib/cn";
 
-export function MaterialFloatingActionButton(
-  props: ComponentProps<typeof AndroidMaterialFloatingActionButton>,
-) {
+export function FloatingActionButton(props: FloatingActionButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"

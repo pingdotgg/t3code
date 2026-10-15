@@ -24,7 +24,7 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
-vi.mock("../../components/MaterialListRow", () => ({ MaterialListRow: "MaterialListRow" }));
+vi.mock("../../components/NavigationRow", () => ({ NavigationRow: "NavigationRow" }));
 vi.mock("../../components/Button", () => ({ Button: "Button" }));
 vi.mock("../../components/ScreenScrollView", () => ({ ScreenScrollView: "ScrollView" }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: "SettingsScreen" }));

@@ -1,6 +1,6 @@
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/nativeHeaderMenu.ios";
-import type { ScreenHeaderMenu } from "../../components/ScreenHeader.types";
+import type { AppBarMenu } from "../../components/AppBar.types";
 import {
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -551,14 +551,14 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
 }
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
-export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): ScreenHeaderMenu | null {
+export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
   return threadGitMenuDefinition(props, useThreadGitControlModel(props));
 }
 
 function threadGitMenuDefinition(
   props: ThreadGitMenuProps,
   model: ReturnType<typeof useThreadGitControlModel>,
-): ScreenHeaderMenu {
+): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",

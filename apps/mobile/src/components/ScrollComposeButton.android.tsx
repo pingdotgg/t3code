@@ -15,7 +15,7 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
-export function MaterialScrollComposeButton(props: {
+export function ScrollComposeButton(props: {
   readonly expanded: boolean;
   readonly onPress: () => void;
   readonly className?: string;

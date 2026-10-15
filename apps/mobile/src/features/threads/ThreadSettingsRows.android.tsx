@@ -1,4 +1,4 @@
-import { MaterialRadioIndicator } from "../../components/MaterialRadioIndicator";
+import { RadioIndicator } from "../../components/RadioIndicator";
 import {
   ModelRowContent,
   ChoiceRowContent,
@@ -13,7 +13,7 @@ export function ModelRow(props: ModelRowProps) {
       labelNumberOfLines={2}
       minimumHeight={56}
       selectedClassName={props.selected ? "bg-secondary" : undefined}
-      leadingSelection={<MaterialRadioIndicator selected={props.selected} />}
+      leadingSelection={<RadioIndicator selected={props.selected} />}
     />
   );
 }
@@ -23,7 +23,7 @@ export function ChoiceRow(props: ChoiceRowProps) {
     <ChoiceRowContent
       {...props}
       minimumHeight={56}
-      leadingSelection={<MaterialRadioIndicator selected={props.selected} />}
+      leadingSelection={<RadioIndicator selected={props.selected} />}
     />
   );
 }

@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { SymbolView } from "../../../components/AppSymbol";
-import { MaterialScreenContent } from "../../../components/MaterialScreenContent";
+import { ScreenContent } from "../../../components/ScreenContent";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
 import { cn } from "../../../lib/cn";
@@ -101,7 +101,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           hideBottomBorder
         />
       ) : null}
-      <MaterialScreenContent fitToContents>
+      <ScreenContent fitToContents>
         <ScrollView
           nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"
@@ -302,7 +302,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             </View>
           </View>
         </ScrollView>
-      </MaterialScreenContent>
+      </ScreenContent>
     </View>
   );
 }

@@ -1,13 +1,13 @@
 import { Platform, Switch } from "react-native";
 
-import { MaterialSwitch } from "./MaterialSwitch";
-import type { ThemedSwitchProps } from "./MaterialSwitch.types";
+import { NativeSwitch } from "./NativeSwitch";
+import type { ThemedSwitchProps } from "./NativeSwitch.types";
 
-export type { ThemedSwitchProps } from "./MaterialSwitch.types";
+export type { ThemedSwitchProps } from "./NativeSwitch.types";
 
 export function ThemedSwitch(props: ThemedSwitchProps) {
   if (Platform.OS === "android") {
-    return <MaterialSwitch {...props} />;
+    return <NativeSwitch {...props} />;
   }
 
   return (

@@ -5,7 +5,7 @@ import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 
 /** Shared compose action for the floating button and empty workspace. */
-export function MaterialNewThreadButton(props: {
+export function NewThreadButton(props: {
   readonly onPress: () => void;
   readonly extended?: boolean;
   readonly expanded?: boolean;

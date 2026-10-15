@@ -1,15 +1,15 @@
-import { HorizontalFloatingToolbar, Host, RNHostView } from "@expo/ui/jetpack-compose";
-import type { ReactElement } from "react";
+import { NativeThemeHost } from "./NativeThemeHost.android";
+import { HorizontalFloatingToolbar, RNHostView } from "@expo/ui/jetpack-compose";
+import type { ToolbarProps } from "./Toolbar.types";
 
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useControlTheme } from "./useControlTheme";
 
 /** Native toolbar surface; hosted RN controls retain their existing menus and accessibility. */
-export function MaterialFloatingToolbar(props: { readonly children: ReactElement }) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+export function Toolbar(props: ToolbarProps) {
+  const { colors } = useControlTheme();
   return (
-    <Host
+    <NativeThemeHost
       matchContents
-      colorScheme={themeAppearance}
       ignoreSafeAreaKeyboardInsets
       style={{ alignSelf: "center", maxWidth: "100%" }}
     >
@@ -21,6 +21,6 @@ export function MaterialFloatingToolbar(props: { readonly children: ReactElement
       >
         <RNHostView matchContents>{props.children}</RNHostView>
       </HorizontalFloatingToolbar>
-    </Host>
+    </NativeThemeHost>
   );
 }
