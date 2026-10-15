@@ -1304,3 +1304,16 @@ export function pullRequestQuickActions(
           : ["close", "merge"];
   return forState.filter((action) => hostActions.has(action));
 }
+
+export function largestPullRequestReadCount(
+  entries: ReadonlyArray<EnvironmentPullRequestEntry>,
+): number {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const read = `${entry.environmentId} ${entry.host.toLowerCase()} ${
+      entry.provider === "github" ? "" : entry.repository.toLowerCase()
+    }`;
+    counts.set(read, (counts.get(read) ?? 0) + 1);
+  }
+  return Math.max(0, ...counts.values());
+}
