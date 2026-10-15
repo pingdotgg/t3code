@@ -132,6 +132,26 @@ function makeService(input: {
   );
 }
 
+describe("resolveGitHostBinding", () => {
+  it("scopes Azure DevOps work items to the project rather than the repository", () => {
+    expect(
+      IssueService.resolveGitHostBinding(
+        project({
+          id: "p",
+          provider: "azure-devops",
+          host: "dev.azure.com",
+          repository: "acme/Web App/_git/web",
+        }),
+      ),
+    ).toEqual({ tracker: "azure-devops", host: "dev.azure.com", scope: "acme/Web App" });
+    expect(
+      IssueService.resolveGitHostBinding(
+        project({ id: "p", provider: "azure-devops", host: "dev.azure.com", repository: "web" }),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("IssueService", () => {
   it.effect("reads another repository on the same host but refuses to write to it", () =>
     Effect.gen(function* () {

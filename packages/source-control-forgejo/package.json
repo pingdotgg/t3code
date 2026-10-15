@@ -15,6 +15,14 @@
       "types": "./src/server/ForgejoCli.ts",
       "import": "./src/server/ForgejoCli.ts"
     },
+    "./server/forgejoIssueJson": {
+      "types": "./src/server/forgejoIssueJson.ts",
+      "import": "./src/server/forgejoIssueJson.ts"
+    },
+    "./server/ForgejoIssueTracker": {
+      "types": "./src/server/ForgejoIssueTracker.ts",
+      "import": "./src/server/ForgejoIssueTracker.ts"
+    },
     "./server/forgejoPullRequestJson": {
       "types": "./src/server/forgejoPullRequestJson.ts",
       "import": "./src/server/forgejoPullRequestJson.ts"
@@ -30,6 +38,10 @@
     "./server/ForgejoSourceControlProvider": {
       "types": "./src/server/ForgejoSourceControlProvider.ts",
       "import": "./src/server/ForgejoSourceControlProvider.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
     }
   },
   "scripts": {
@@ -38,6 +50,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",

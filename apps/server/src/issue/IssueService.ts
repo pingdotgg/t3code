@@ -71,12 +71,29 @@ interface SupportedProject extends ProjectTrackerBinding {
 }
 
 /**
+ * Azure work items belong to the project, not the repository, so the scope is
+ * `organization/project` out of the remote's `organization/project/_git/repository` path. The
+ * source control selector answers only the repository name there, which addresses no work item.
+ */
+function azureDevOpsProjectScope(displayName: string | undefined): string | null {
+  const segments = (displayName ?? "").split("/").filter((part) => part.length > 0);
+  const marker = segments.indexOf("_git");
+  const [organization, project] = marker === 2 ? segments : [];
+  return organization && project ? `${organization}/${project}` : null;
+}
+
+/**
  * The git-host path of resolution: the tracker is the host's own, named like the remote's
  * provider kind. Null for a project with no remote or a kind no tracker claims.
  */
-function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrackerBinding | null {
+export function resolveGitHostBinding(
+  project: OrchestrationProjectShell,
+): ProjectTrackerBinding | null {
   const identity = project.repositoryIdentity;
-  const scope = sourceControlRepositorySelector(identity);
+  const scope =
+    identity?.provider === "azure-devops"
+      ? azureDevOpsProjectScope(identity.displayName)
+      : sourceControlRepositorySelector(identity);
   const kind = identity?.provider;
   if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
   return {
