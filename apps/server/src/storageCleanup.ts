@@ -107,7 +107,6 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
 /** Live sessions keep their cwd even when no turn is currently running. */
 export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
   return (
-    thread.branch !== null &&
     thread.worktreePath !== null &&
     thread.activeRunId === null &&
     (thread.status === "idle" ||
@@ -133,6 +132,32 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
       thread.latestRunCompletedAt,
     ].flatMap((value) => (value == null ? [] : [DateTime.toEpochMillis(value)])),
   );
+}
+
+/** Only a complete subagent chain within this worktree shares ownership. */
+function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
+  if (threads.length === 1) return threads[0];
+  const byId = new Map(threads.map((thread) => [thread.id, thread]));
+  const tops = threads.filter((thread) => !byId.has(thread.lineage.parentThreadId!));
+  if (tops.length !== 1) return undefined;
+  const owner = tops[0]!;
+  for (const thread of threads) {
+    let current = thread;
+    const seen = new Set<string>();
+    while (current.id !== owner.id) {
+      if (
+        seen.has(current.id) ||
+        current.lineage.relationshipToParent !== "subagent" ||
+        current.lineage.rootThreadId !== owner.lineage.rootThreadId
+      )
+        return undefined;
+      seen.add(current.id);
+      const parent = byId.get(current.lineage.parentThreadId!);
+      if (parent === undefined) return undefined;
+      current = parent;
+    }
+  }
+  return owner;
 }
 
 /**
@@ -441,13 +466,15 @@ const make = Effect.gen(function* () {
       (thread) => path.resolve(thread.worktreePath!),
     );
     const candidates = [
-      ...[...groups.values()].map((group) => group[0]!),
+      ...[...groups.values()].map((group) => worktreeOwner(group) ?? group[0]!),
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
     ];
     for (const thread of candidates) {
       const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
       if (!worktreeCleanupEnabled(settings)) continue;
       const worktreePath = path.resolve(thread.worktreePath!);
+      const group = groups.get(worktreePath) ?? [];
+      const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
@@ -466,11 +493,16 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        const shared = groups.get(worktreePath)?.length ?? 0;
-        if (shared > 1) return keep(`shared by ${shared} threads`);
+        if (group.length > 1 && worktreeOwner(group) === undefined)
+          return keep(`shared by ${group.length} threads`);
         if (project === undefined) return keep("project is unavailable");
-        if (!deleted && !storageCleanupThreadIdle(thread, now))
+        if (
+          thread.branch === null ||
+          (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
+        )
           return keep("thread is running or has pending work");
+        if (group.some((member) => member.branch !== thread.branch))
+          return keep("a subagent thread's branch differs from this worktree's branch");
         if (hasTerminal(worktreePath)) return keep("open terminal");
         // Roots are canonical, so compare canonical paths. A symlinked parent
         // (a linked drive) is fine; a symlinked worktree directory is not.
@@ -494,19 +526,23 @@ const make = Effect.gen(function* () {
         // settlement backdates settledAt to the thread's last activity.
         if (
           !deleted &&
-          thread.settledAt !== null &&
-          now - DateTime.toEpochMillis(thread.updatedAt) < SETTLE_SCRIPT_GRACE_MS
+          group.some(
+            (member) =>
+              member.settledAt !== null &&
+              now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
+                SETTLE_SCRIPT_GRACE_MS,
+          )
         )
           return keep("settled moments ago");
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
-          storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+          activityAt < now - settings.worktreeAfterDays * DAY_MS;
         const settledFor =
           deleted || thread.settledAt === null
             ? null
-            : now - DateTime.toEpochMillis(thread.settledAt);
+            : now - Math.max(DateTime.toEpochMillis(thread.settledAt), activityAt);
         const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
         const settled =
           settledFor !== null &&
@@ -516,7 +552,7 @@ const make = Effect.gen(function* () {
         let removalReason = deleted
           ? "thread was deleted"
           : old
-            ? `inactive for ${Math.floor((now - storageCleanupActivityAt(thread)) / DAY_MS)} days`
+            ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
             : `settled for ${settledDays} days`;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
@@ -564,7 +600,7 @@ const make = Effect.gen(function* () {
         if (!eligible)
           return keep(
             !deleted && settings.worktreeAfterDays !== null
-              ? `inactive for ${Math.floor((now - storageCleanupActivityAt(thread)) / DAY_MS)} of ${settings.worktreeAfterDays} days`
+              ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} of ${settings.worktreeAfterDays} days`
               : settings.worktreeSettledAfterDays !== null
                 ? settledFor === null
                   ? "not settled"
@@ -575,7 +611,7 @@ const make = Effect.gen(function* () {
           );
         // Threads, queued deletion work and provider sessions as they are now, so a
         // queued turn, resumed session or new thread sharing this path cancels
-        // the removal. Read only this path and this thread: a full snapshot per
+        // the removal. Read only this path's threads: a full snapshot per
         // worktree takes seconds on large databases.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
           const latestProjects = yield* projectStore.listShells();
@@ -600,15 +636,28 @@ const make = Effect.gen(function* () {
             `;
             if (pendingCleanup.length > 0) return "thread deletion is still pending";
           } else {
-            const latestShell =
-              latest.length === 1 && latest[0]!.threadId === thread.id
-                ? yield* projections.getThreadShell(thread.id)
-                : null;
+            const latestShells = yield* Effect.forEach(latest, (entry) =>
+              projections.getThreadShell(entry.threadId),
+            );
+            const latestGroup = latestShells.filter((shell) => shell !== null);
+            const latestOwner = worktreeOwner(latestGroup);
             if (
-              latestShell === null ||
-              !storageCleanupThreadIdle(latestShell, now) ||
-              storageCleanupActivityAt(latestShell) !== storageCleanupActivityAt(thread) ||
-              !Equal.equals(latestShell.settledAt, thread.settledAt)
+              latestGroup.length !== group.length ||
+              latestOwner?.id !== thread.id ||
+              latestOwner?.branch !== thread.branch ||
+              latestGroup.some((shell) => {
+                const previous = group.find((member) => member.id === shell.id);
+                return (
+                  previous === undefined ||
+                  shell.branch !== thread.branch ||
+                  !Equal.equals(shell.settledAt, previous.settledAt) ||
+                  (shell.settledAt !== null &&
+                    !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
+                  !storageCleanupThreadIdle(shell, now) ||
+                  path.resolve(shell.worktreePath!) !== worktreePath ||
+                  storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
+                );
+              })
             )
               return "thread activity or shared worktree changed since check";
           }
