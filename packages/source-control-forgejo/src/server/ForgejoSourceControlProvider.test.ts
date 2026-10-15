@@ -123,6 +123,73 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   );
 });
 
+it.effect("reads clone URLs on the given host rather than the checkout's", () => {
+  const urls: string[] = [];
+  const client = HttpClient.make((request) => {
+    urls.push(request.url);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          encodeJson({
+            full_name: "maria/project",
+            clone_url: "https://forgejo.test/maria/project.git",
+            ssh_url: "git@forgejo.test:maria/project.git",
+          }),
+        ),
+      ),
+    );
+  });
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    const cloneUrls = yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+    });
+    assert.strictEqual(cloneUrls.url, "https://forgejo.test/maria/project.git");
+    assert.deepStrictEqual(urls, ["https://forgejo.test/api/v1/repos/maria/project"]);
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forgejo.test": { type: "Application", token: "test-token" },
+                "code.example": { type: "Application", token: "other-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git") {
+              assert.deepStrictEqual(input.args, ["remote", "-v"]);
+              // The checkout is on another Forgejo server with a same-named repository.
+              return Effect.succeed(
+                processOutput("origin\thttps://code.example/maria/project.git (fetch)"),
+              );
+            }
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("reads Forgejo checks without repository or viewer requests", () => {
   const paths: string[] = [];
   return Effect.gen(function* () {
