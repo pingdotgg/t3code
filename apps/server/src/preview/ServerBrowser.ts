@@ -490,13 +490,17 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const services = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(services);
+  const runPromise = Effect.runPromiseWith(services);
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   // The fix every host error names, rendered for how this server was launched.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<string, Promise<ServerTab>>();
+  /** Capacity held before a session has an id, then until its page finishes opening. */
+  const openingTabs = new Map<string | symbol, string | null>();
   /** Sessions closed while their tab was still opening; the open discards its page. */
   const closedPendingTabs = new Set<string>();
   /** Popup pages waiting for the tab their `opened` event creates. */
@@ -920,6 +924,7 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
+    openingTabs.delete(key);
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
     if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
@@ -1220,9 +1225,7 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
-    const agentId = opener.control.agentId;
-    // A popup past an agent's limit closes; its page sees window.open return a closed window.
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
+    if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
     }
@@ -1231,8 +1234,8 @@ const make = Effect.gen(function* () {
     const controller = [...opener.viewers].find(
       (viewer) => viewer.id === opener.control.controller,
     );
-    await Effect.runPromise(
-      manager.open({
+    await runPromise(
+      openTab({
         threadId: opener.threadId,
         ...(/^https?:/i.test(url) ? { url } : {}),
         runtime: "server",
@@ -1248,10 +1251,9 @@ const make = Effect.gen(function* () {
           }),
       }),
     ).then(
-      (snapshot) => {
+      (tab) => {
         // The opener stays open behind it, so `window.opener` can still report back.
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+        if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
       },
       async () => {
         await popup.close().catch(constVoid);
@@ -1265,6 +1267,7 @@ const make = Effect.gen(function* () {
     if (pending) return pending;
     const existing = tabs.get(key);
     if (existing) return Promise.resolve(existing);
+    openingTabs.set(key, snapshot.automationOwner ?? null);
     const opening = createTab(snapshot)
       .catch((cause: unknown) => {
         runFork(
@@ -1277,6 +1280,7 @@ const make = Effect.gen(function* () {
       })
       .finally(() => {
         pendingTabs.delete(key);
+        openingTabs.delete(key);
         closedPendingTabs.delete(key);
       });
     pendingTabs.set(key, opening);
@@ -1299,17 +1303,53 @@ const make = Effect.gen(function* () {
     });
 
   const atTabLimit = (agentSessionId: string) =>
-    tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
-    [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
+    tabs.size + openingTabs.size >= SERVER_TAB_LIMIT ||
+    [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length +
+      [...openingTabs.values()].filter((owner) => owner === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
-  const assertTabCapacity = (agentSessionId: string) => {
-    if (atTabLimit(agentSessionId))
-      throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
-        "tabLimit",
-      );
-  };
+  const openTab = Effect.fnUntraced(function* (input: Parameters<typeof manager.open>[0]) {
+    const reservation = yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (input.automationOwner !== undefined && atTabLimit(input.automationOwner))
+          return yield* Effect.fail(
+            new BrowserControlInterrupted(
+              `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
+              "tabLimit",
+            ),
+          );
+        const reservation = { key: Symbol() as string | symbol };
+        openingTabs.set(reservation.key, input.automationOwner ?? null);
+        return reservation;
+      }),
+      (reservation) =>
+        Effect.sync(() => {
+          openingTabs.delete(reservation.key);
+        }),
+    );
+    const snapshot = yield* Effect.acquireRelease(
+      manager.open({
+        ...input,
+        beforePublish: (snapshot) => {
+          openingTabs.delete(reservation.key);
+          reservation.key = tabKey(snapshot.threadId, snapshot.tabId);
+          openingTabs.set(reservation.key, input.automationOwner ?? null);
+          input.beforePublish?.(snapshot);
+        },
+      }),
+      // A failed or interrupted launch must not leave a session that can relaunch without a slot.
+      (snapshot, exit) =>
+        Exit.isFailure(exit)
+          ? manager
+              .close({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
+              .pipe(Effect.orDie)
+          : Effect.void,
+    );
+    return yield* Effect.tryPromise({
+      try: () => ensureTab(snapshot),
+      catch: ServerBrowserPage.toOperationError,
+    });
+  }, Effect.scoped);
 
   /** Closes agent tabs that no one watches and the agent stopped using. */
   const closeIdleAgentTabs = () => {
@@ -1813,21 +1853,18 @@ const make = Effect.gen(function* () {
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
           closeIdleAgentTabs();
-          assertTabCapacity(request.agentSessionId);
         }
         const tab =
           existing ??
-          (await ensureTab(
-            await Effect.runPromise(
-              manager.open({
-                threadId: request.threadId,
-                ...(url ? { url } : {}),
-                ...(profileId === undefined ? {} : { profileId }),
-                runtime: "server",
-                reveal: false,
-                automationOwner: request.agentSessionId,
-              }),
-            ),
+          (await runPromise(
+            openTab({
+              threadId: request.threadId,
+              ...(url ? { url } : {}),
+              ...(profileId === undefined ? {} : { profileId }),
+              runtime: "server",
+              reveal: false,
+              automationOwner: request.agentSessionId,
+            }),
           ));
         if (existing?.dialog)
           throw new BrowserControlInterrupted(

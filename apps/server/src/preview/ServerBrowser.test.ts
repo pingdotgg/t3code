@@ -1286,6 +1286,204 @@ it.live("control updates replace a stalled viewer backlog in the order they happ
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("concurrent agent opens count pending tabs toward the eight-tab limit", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const gate = (contextGate = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const opens = [];
+      for (let index = 0; index < 12; index++) {
+        opens.push(
+          yield* broker
+            .invoke({ scope, operation: "open", input: { reuseExistingTab: false, show: false } })
+            .pipe(Effect.result, Effect.forkScoped),
+        );
+      }
+      // The host receives this after all preceding opens, while their contexts are gated.
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      const reused = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "open",
+        input: { show: false },
+      });
+      expect(reused.tabId).toBe(tabId);
+      gate.resolve();
+      const results = yield* Effect.forEach(opens, Fiber.join);
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(7);
+      for (const result of results) {
+        if (result._tag === "Failure") {
+          expect(result.failure).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            reason: "tabLimit",
+          });
+        }
+      }
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("concurrent agents count pending tabs toward the 32-tab server limit", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const gate = (contextGate = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const opens = [];
+      for (let agent = 0; agent < 5; agent++) {
+        for (let index = 0; index < 8; index++) {
+          opens.push(
+            yield* broker
+              .invoke({
+                scope: asSession(`concurrent-agent-${agent}`),
+                operation: "open",
+                input: { reuseExistingTab: false, show: false },
+              })
+              .pipe(Effect.result, Effect.forkScoped),
+          );
+        }
+      }
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      gate.resolve();
+      const results = yield* Effect.forEach(opens, Fiber.join);
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(31);
+      for (const result of results) {
+        if (result._tag === "Failure") expect(result.failure).toMatchObject({ reason: "tabLimit" });
+      }
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(32);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("failed session and browser launches release capacity, as does closing a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      for (let count = 1; count < 7; count++) yield* open;
+      const failSession = vi
+        .spyOn(manager, "open")
+        .mockImplementationOnce(() => Effect.die(new Error("session creation failed")));
+      yield* Effect.addFinalizer(() => Effect.sync(() => failSession.mockRestore()));
+      expect(yield* open.pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+      failSession.mockRestore();
+      const events = yield* manager.subscribeEvents;
+      contextFailure = new Error("Chromium launch failed");
+      expect(yield* open.pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+      let failedSession = yield* PubSub.take(events);
+      while (failedSession.type !== "opened") failedSession = yield* PubSub.take(events);
+      // A failed launch must not leave a session a viewer can relaunch past the budget.
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(7);
+      contextFailure = null;
+      expect((yield* open).available).toBe(true);
+      expect(yield* open.pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(
+        yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId: PreviewTabId.make(failedSession.tabId),
+            operation: "open",
+            input: { show: false },
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "tabLimit" });
+      const browser = yield* ServerBrowser.ServerBrowser;
+      expect(
+        yield* browser.attachViewer(viewerInput(failedSession.tabId, false)).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "ServerBrowserTabNotFoundError" });
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      expect((yield* open).available).toBe(true);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live.each(["agent", "server"] as const)(
+  "concurrent agent popups share the %s tab budget with pending opens",
+  (budget) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, browser, tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        if (budget === "server") {
+          for (let index = 0; index < 30; index++) {
+            yield* broker.invoke({
+              scope: asSession(`other-agent-${Math.floor(index / 8)}`),
+              operation: "open",
+              input: { reuseExistingTab: false, show: false },
+            });
+          }
+        }
+        const gate = Promise.withResolvers<void>();
+        yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+        const events = yield* manager.subscribeEvents;
+        const popups = Array.from({ length: 12 }, () => {
+          const popup = makeContext();
+          const newCDPSession = popup.newCDPSession;
+          popup.newCDPSession = async () => {
+            await gate.promise;
+            return newCDPSession();
+          };
+          return popup;
+        });
+        for (const popup of popups) contexts[0]!.page.emit("popup", popup.page);
+        const admitted = budget === "agent" ? 7 : 1;
+        for (let count = 0; count < admitted; count++) {
+          let event = yield* PubSub.take(events);
+          while (event.type !== "opened") event = yield* PubSub.take(events);
+        }
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+        expect(sessions).toHaveLength(budget === "agent" ? 8 : 32);
+        expect(popups.filter((popup) => popup.page.isClosed())).toHaveLength(12 - admitted);
+        // Pending popup pages also block ordinary opens from taking the same capacity.
+        expect(
+          yield* broker
+            .invoke<PreviewAutomationStatus>({
+              scope,
+              operation: "open",
+              input: { reuseExistingTab: false, show: false },
+            })
+            .pipe(Effect.flip),
+        ).toMatchObject({ reason: "tabLimit" });
+        gate.resolve();
+        for (const session of sessions) {
+          yield* browser.attachViewer(viewerInput(session.tabId, false));
+        }
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.tabs).toHaveLength(sessions.length);
+        expect(contexts[0]!.page.close).not.toHaveBeenCalled();
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.live("an agent's tabs stop at the limit until an unwatched idle tab closes", () =>
   Effect.scoped(
     Effect.gen(function* () {
