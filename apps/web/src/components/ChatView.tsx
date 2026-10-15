@@ -771,6 +771,19 @@ function eventPathContainsSelector(event: Event, selector: string): boolean {
 }
 
 const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
+const RIGHT_PANEL_CONTENT_SELECTOR = "[data-right-panel-surface-content]";
+const GUIDE_TOUR_KEYS_SELECTOR = "[data-guide-tour-keys]";
+
+/**
+ * Whether a review guide on screen takes this key instead of the composer.
+ * The guide steps on J and K, and stepping drops focus to the body, so the
+ * reader's last click or focus decides whose key it is, not the event target.
+ */
+function guideTourTakesKey(event: KeyboardEvent, rightPanelEngaged: boolean): boolean {
+  if (!rightPanelEngaged || event.shiftKey) return false;
+  if (event.key !== "j" && event.key !== "k") return false;
+  return document.querySelector(GUIDE_TOUR_KEYS_SELECTOR) !== null;
+}
 
 /**
  * Whether input that landed outside any editable or interactive element
@@ -7870,6 +7883,19 @@ export default function ChatView(props: ChatViewProps) {
   const closeThreadFind = () => threadFindControlsRef.current?.close();
   const closeThreadFindStable = useStableCallback(closeThreadFind);
 
+  const rightPanelEngagedRef = useRef(false);
+  useEffect(() => {
+    const record = (event: Event) => {
+      rightPanelEngagedRef.current = eventPathContainsSelector(event, RIGHT_PANEL_CONTENT_SELECTOR);
+    };
+    window.addEventListener("pointerdown", record, true);
+    window.addEventListener("focusin", record, true);
+    return () => {
+      window.removeEventListener("pointerdown", record, true);
+      window.removeEventListener("focusin", record, true);
+    };
+  }, []);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -7894,6 +7920,7 @@ export default function ChatView(props: ChatViewProps) {
       if (
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
+        !guideTourTakesKey(event, rightPanelEngagedRef.current) &&
         shouldTypeToFocusComposer(event)
       ) {
         if (composerRef.current?.insertTextAtEnd(event.key)) {

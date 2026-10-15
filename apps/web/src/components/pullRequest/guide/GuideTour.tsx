@@ -117,7 +117,12 @@ export function GuideTour({
   return (
     // Three widths: one column with the rail folded; the rail beside the stop; and, on a
     // maximized panel, the stop's notes in a column of their own (see GuideStop).
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
+    <div
+      ref={scrollRef}
+      // The chat's type-to-focus reads this to leave J and K to the tour.
+      data-guide-tour-keys={active && stopCount > 1 ? "jk" : undefined}
+      className="@container/guide h-full overflow-y-auto scrollbar-gutter-both"
+    >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
         {/* Beside the stop on a wide panel; narrow, the stop folds the same list open under its
             header instead. */}
