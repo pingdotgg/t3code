@@ -87,6 +87,7 @@ const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
   "enable-auto-merge": "Auto-merge enabled",
   "disable-auto-merge": "Auto-merge disabled",
   revert: "Revert pull request opened",
+  "delete-branch": "Branch deleted",
   "approve-workflows": "Workflows approved",
 };
 
@@ -101,6 +102,7 @@ const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
   "enable-auto-merge": "Could not enable auto-merge",
   "disable-auto-merge": "Could not disable auto-merge",
   revert: "Could not open a revert pull request",
+  "delete-branch": "Could not delete this branch",
   "approve-workflows": "Could not approve workflows",
 };
 
@@ -120,6 +122,8 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   "disable-auto-merge": "The host refused it. Check that you have write access to this repository.",
   revert:
     "The host refused it. Check that you have write access and that this pull request was merged on the host.",
+  "delete-branch":
+    "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
   "approve-workflows":
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
 };

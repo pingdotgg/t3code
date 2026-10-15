@@ -1339,11 +1339,26 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "enable-auto-merge": false,
   "disable-auto-merge": false,
   revert: false,
+  "delete-branch": false,
   "approve-workflows": true,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
   return ACTION_NEEDS_HOST_REFRESH[action];
+}
+
+export function canDeletePullRequestBranch(
+  detail: Pick<PullRequestDetail, "state"> & {
+    readonly capabilities: Pick<PullRequestDetail["capabilities"], "actions" | "deleteBranch">;
+    readonly viewerPermissions: Pick<PullRequestDetail["viewerPermissions"], "actions">;
+  },
+): boolean {
+  return (
+    detail.state !== "open" &&
+    detail.capabilities.deleteBranch === true &&
+    detail.capabilities.actions.includes("delete-branch") &&
+    detail.viewerPermissions.actions.includes("delete-branch")
+  );
 }
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;

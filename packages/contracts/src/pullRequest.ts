@@ -83,6 +83,7 @@ export const PullRequestAction = Schema.Literals([
   "draft",
   "close",
   "reopen",
+  "delete-branch",
   /** Bring the base branch's commits into this one, which is what unblocks a stale branch. */
   "update-branch",
   /**
@@ -418,6 +419,7 @@ export const PullRequestCapabilities = Schema.Struct({
   actions: Schema.Array(PullRequestAction),
   /** Merge strategies the provider itself offers, before repository settings narrow them. */
   mergeMethods: Schema.Array(PullRequestMergeMethod),
+  deleteBranch: Schema.optional(Schema.Boolean),
   /**
    * How this host can bring a stale branch up to date. Absent where it cannot at all, which is
    * every host that has not said otherwise — so a provider that says nothing offers nothing.

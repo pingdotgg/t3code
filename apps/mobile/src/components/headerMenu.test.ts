@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
+import {
+  androidHeaderMenuActions,
+  findHeaderMenuAction,
+  splitAndroidHeaderActions,
+} from "./headerMenu.android";
 import type { ScreenHeaderMenuItem } from "./ScreenHeader.types";
 
 const items: ReadonlyArray<ScreenHeaderMenuItem> = [
@@ -62,5 +66,37 @@ describe("header menus", () => {
     });
     expect(findHeaderMenuAction(items, "sessions")).toBeUndefined();
     expect(findHeaderMenuAction(items, "removed-session")).toBeUndefined();
+  });
+
+  it("keeps overflow-only Android header actions in the overflow menu", () => {
+    const action = (accessibilityLabel: string, overflowOnly?: boolean) => ({
+      accessibilityLabel,
+      icon: "trash" as const,
+      onPress: () => {},
+      overflowOnly,
+    });
+    const labels = (
+      split: ReturnType<typeof splitAndroidHeaderActions<ReturnType<typeof action>>>,
+    ) => ({
+      visible: split.visibleActions.map((item) => item.accessibilityLabel),
+      overflow: split.overflowActions.map((item) => item.accessibilityLabel),
+    });
+    const open = action("Open");
+    const remove = action("Delete", true);
+    expect(labels(splitAndroidHeaderActions([open, action("Comment")], false))).toEqual({
+      visible: ["Open", "Comment"],
+      overflow: [],
+    });
+    expect(labels(splitAndroidHeaderActions([open, remove], true))).toEqual({
+      visible: ["Open"],
+      overflow: ["Delete"],
+    });
+    expect(labels(splitAndroidHeaderActions([remove], true))).toEqual({
+      visible: [],
+      overflow: ["Delete"],
+    });
+    expect(
+      labels(splitAndroidHeaderActions([action("Review"), action("Comment"), open, remove], true)),
+    ).toEqual({ visible: ["Review", "Comment", "Open"], overflow: ["Delete"] });
   });
 });

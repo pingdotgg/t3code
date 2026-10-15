@@ -325,6 +325,7 @@ function actionArgs(
     // Never reached: this host does not declare the action, so the service refuses it first.
     case "revert":
     case "approve-workflows":
+    case "delete-branch":
       throw new Error(`Azure DevOps pull request action ${action} is unsupported`);
   }
 }
