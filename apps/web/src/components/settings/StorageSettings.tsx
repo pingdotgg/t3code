@@ -583,8 +583,9 @@ export function StorageSettingsPanel() {
               ) && (
                 <SettingsRow
                   title="Delete settled worktrees"
+                  {...ruleProps("worktreeSettledAfterDays")}
                   status={[
-                    ruleStatus("worktreeSettledAfterDays"),
+                    ruleProps("worktreeSettledAfterDays").status,
                     environments.length > connectedEnvironments.length
                       ? "Offline machines will not get this setting"
                       : undefined,
