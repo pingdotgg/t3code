@@ -106,6 +106,22 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires the destination orchestration grant to update a scheduled task", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const update = createCommandPermissions(runtime, WS_METHODS.scheduledTasksUpdate);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(update.permissionAtom(env))).toBe(false);
+        const denied = yield* update.authorize(registry, env).pipe(Effect.flip);
+        expect(denied.requiredScope).toBe(AuthOrchestrationOperateScope);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(update.permissionAtom(env))).toBe(true);
+        yield* update.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

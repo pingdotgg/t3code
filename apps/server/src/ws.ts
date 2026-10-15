@@ -90,6 +90,7 @@ import {
   PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  ScheduledTaskError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -2071,6 +2072,20 @@ const layerWsRpc = (
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpdate]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.update(input)),
+            Effect.flatMap((updated) =>
+              Option.isNone(updated)
+                ? Effect.fail(
+                    new ScheduledTaskError({
+                      message: "Schedule task not found in this project.",
+                      taskId: input.id,
+                    }),
+                  )
+                : Effect.succeed(updated.value),
+            ),
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
@@ -2078,6 +2093,16 @@ const layerWsRpc = (
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
+            Effect.flatMap((deleted) =>
+              Option.isNone(deleted)
+                ? Effect.fail(
+                    new ScheduledTaskError({
+                      message: "Schedule task not found.",
+                      taskId: input.id,
+                    }),
+                  )
+                : Effect.succeed(deleted.value),
+            ),
           ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(

@@ -3,7 +3,11 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskUpsertInput, SecretRequestError } from "@t3tools/contracts";
+import {
+  ScheduledTaskUpdateInput,
+  ScheduledTaskUpsertInput,
+  SecretRequestError,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,6 +27,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+const decodeUpdateInput = Schema.decodeUnknownEffect(ScheduledTaskUpdateInput);
 
 type LaunchInput = ThreadLaunchService.ThreadLaunchInput;
 
@@ -760,6 +765,18 @@ it.effect("a signature can take the user's secret by ref, which works only once"
         )
         .pipe(Effect.flip);
       assert.include(reused.message, "already used");
+      assert.instanceOf(reused.cause, SecretRequestError);
+      const reusedByEdit = yield* service
+        .update(
+          yield* decodeUpdateInput({
+            id: task.id,
+            projectId: task.projectId,
+            schedule: githubSchedule("secret-ref:00000000000000000000000000000001"),
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.include(reusedByEdit.message, "already used");
+      assert.instanceOf(reusedByEdit.cause, SecretRequestError);
     }),
   ),
 );
