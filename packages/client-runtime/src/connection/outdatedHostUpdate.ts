@@ -199,8 +199,9 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
       yield* discovery.refresh;
     }
+    // Clearing the block reconnects it if the user left it on; the on/off
+    // choice itself stays theirs.
     yield* registry.setCompatibility(environmentId, null);
-    yield* registry.setEnabled(environmentId, true);
     return { ...result, targetVersion: resumed.value.serverVersion };
   },
 );

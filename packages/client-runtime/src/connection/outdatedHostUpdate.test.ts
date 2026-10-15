@@ -112,7 +112,7 @@ class OutdatedHostSocket {
 }
 
 describe("updateOutdatedHost", () => {
-  it.effect("updates a protocol-1 host over a bare socket, then switches it back on", () =>
+  it.effect("updates a protocol-1 host over a bare socket, then clears its block", () =>
     Effect.gen(function* () {
       const blocked = orchestrationProtocolCompatibilityError(descriptor(undefined, "0.0.45"));
       expect(blocked).toMatchObject({ serverUpdateRequired: true });
@@ -128,7 +128,7 @@ describe("updateOutdatedHost", () => {
             {
               target: TARGET,
               profile: Option.none(),
-              enabled: false,
+              enabled: true,
               unsupportedReason: blocked?.message ?? "",
               serverUpdateRequired: true,
             },
@@ -140,8 +140,6 @@ describe("updateOutdatedHost", () => {
         entries,
         setCompatibility: (_environmentId: EnvironmentId, error: unknown) =>
           Effect.sync(() => calls.push(`compatibility:${error === null ? "clear" : "block"}`)),
-        setEnabled: (_environmentId: EnvironmentId, enabled: boolean) =>
-          Effect.sync(() => calls.push(`enabled:${enabled}`)),
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
       const resolver = ConnectionResolver.ConnectionResolver.of({
         prepare: () => Effect.die(new Error("The update must bypass the protocol gate.")),
@@ -202,7 +200,7 @@ describe("updateOutdatedHost", () => {
         WS_METHODS.serverUpdateServer,
       ]);
       expect(result.targetVersion).toBe("0.0.46");
-      expect(calls).toEqual(["compatibility:clear", "enabled:true"]);
+      expect(calls).toEqual(["compatibility:clear"]);
     }),
   );
 

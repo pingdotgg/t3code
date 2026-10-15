@@ -22,7 +22,7 @@ import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
-  if (!environment.isEnabled && environment.connectionState !== "unsupported") {
+  if (!environment.isEnabled) {
     return "Off";
   }
   return environmentStatusText({
@@ -51,7 +51,9 @@ export function ConnectionEnvironmentRow(props: {
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
   const unsupported = props.environment.connectionState === "unsupported";
-  const enabled = props.environment.isEnabled && !unsupported;
+  // The switch shows the user's choice; a version mismatch only pauses it.
+  const switchedOn = props.environment.isEnabled;
+  const enabled = switchedOn && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   // Unsupported is a compatibility note, not a failure, so it stays muted.
@@ -89,7 +91,7 @@ export function ConnectionEnvironmentRow(props: {
         <View className="flex-1 gap-0.5">
           <View className="flex-row items-center gap-1.5">
             <ConnectionStatusDot
-              state={enabled || unsupported ? props.environment.connectionState : "available"}
+              state={switchedOn ? props.environment.connectionState : "available"}
               pulse={isRetrying}
               size={8}
             />
@@ -133,9 +135,8 @@ export function ConnectionEnvironmentRow(props: {
 
         <ThemedSwitch
           style={{ alignSelf: "center" }}
-          disabled={unsupported}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
-          value={enabled}
+          value={switchedOn}
         />
         <SymbolView
           name={props.opensDetails ? "chevron.right" : "chevron.down"}
@@ -199,7 +200,7 @@ export function ConnectionEnvironmentRow(props: {
                 accessibilityLabel="Reconnect environment"
                 icon="arrow.clockwise"
                 variant="tonal"
-                disabled={!enabled}
+                disabled={!switchedOn}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
               />
               <MaterialIconButton
@@ -230,7 +231,7 @@ export function ConnectionEnvironmentRow(props: {
 
               <Pressable
                 className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70 disabled:opacity-40"
-                disabled={!enabled}
+                disabled={!switchedOn}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
               >
                 <SymbolView

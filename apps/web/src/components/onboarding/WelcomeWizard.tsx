@@ -146,8 +146,12 @@ export function WelcomeWizard({
     for (const environment of newComputers) {
       autoSelectedComputers.current.add(environment.environmentId);
     }
-    // A computer the user switched off stays unselected until they pick it.
-    const enabledComputers = newComputers.filter((environment) => environment.entry.enabled);
+    // A computer the user switched off, or one this app cannot talk to yet,
+    // stays unselected until they pick it.
+    const enabledComputers = newComputers.filter(
+      (environment) =>
+        environment.entry.enabled && environment.entry.unsupportedReason === undefined,
+    );
     if (enabledComputers.length === 0) return;
     setSelection(
       (current) =>
@@ -366,7 +370,7 @@ function ConnectionStep({
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {/* Same rule as Settings: a switched-off computer reads Off, not Not connected. */}
-                    {!environment.entry.enabled && environment.connection.phase !== "unsupported"
+                    {!environment.entry.enabled
                       ? "Off"
                       : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
                   </span>

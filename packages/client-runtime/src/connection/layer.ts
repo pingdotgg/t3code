@@ -57,9 +57,14 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               (previous.descriptor?.orchestrationProtocolVersion ?? 1) !==
                 (descriptor.orchestrationProtocolVersion ?? 1) ||
               previous.descriptor?.serverVersion !== descriptor.serverVersion;
-            const error = orchestrationProtocolCompatibilityError(descriptor);
-            // A replayed health result must not clear a newer socket rejection.
-            if (error !== null || fresh) yield* registry.setCompatibility(environmentId, error);
+            // Only a new health result applies: a replayed one must neither clear
+            // a newer socket rejection nor re-block a host a retry found compatible.
+            if (fresh) {
+              yield* registry.setCompatibility(
+                environmentId,
+                orchestrationProtocolCompatibilityError(descriptor),
+              );
+            }
             seenChecks.set(environmentId, status);
           }
         }).pipe(

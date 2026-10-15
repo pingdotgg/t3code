@@ -1453,8 +1453,7 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
   readonly text: string;
   readonly tone: "muted" | "error";
 } {
-  if (!environment.entry.enabled && environment.connection.phase !== "unsupported")
-    return { text: "Off", tone: "muted" };
+  if (!environment.entry.enabled) return { text: "Off", tone: "muted" };
   const { connection } = environment;
   switch (connection.phase) {
     case "connected":
@@ -1497,7 +1496,10 @@ function SavedBackendListRow({
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
-  const enabled = environment.entry.enabled && !unsupported;
+  // The switch shows the user's choice; a version mismatch only pauses it.
+  const switchedOn = environment.entry.enabled;
+  const enabled = switchedOn && !unsupported;
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
@@ -1603,11 +1605,11 @@ function SavedBackendListRow({
     (serverUpdateState.status === "idle" || serverUpdateState.status === "failed");
 
   const statusTooltip = `${
-    unsupported
-      ? (environment.connection.error ?? connectionStatusText(environment.connection))
-      : enabled
-        ? connectionStatusText(environment.connection)
-        : "Switched off"
+    !switchedOn
+      ? "Switched off"
+      : unsupported
+        ? (environment.connection.error ?? connectionStatusText(environment.connection))
+        : connectionStatusText(environment.connection)
   }${
     versionMismatch
       ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
@@ -1713,6 +1715,11 @@ function SavedBackendListRow({
         </>
       }
     >
+      {switchedOn && unsupported && serverUpdateState.status !== "running" ? (
+        <Button size="xs" variant="ghost" onClick={() => void retryEnvironment(environmentId)}>
+          Check again
+        </Button>
+      ) : null}
       {unsupported &&
       environment.entry.serverUpdateRequired === true &&
       serverUpdateState.status !== "running" ? (
@@ -1742,16 +1749,14 @@ function SavedBackendListRow({
           render={
             <Switch
               size="sm"
-              checked={enabled}
-              disabled={isRemoving || unsupported}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
+              checked={switchedOn}
+              disabled={isRemoving}
+              aria-label={`${switchedOn ? "Switch off" : "Switch on"} ${environment.label}`}
               onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
             />
           }
         />
-        <TooltipPopup side="top">
-          {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
+        <TooltipPopup side="top">{switchedOn ? "Switch off" : "Switch on"}</TooltipPopup>
       </Tooltip>
       <Menu>
         <MenuTrigger
@@ -2131,15 +2136,16 @@ export function ConnectionsSettings() {
       }),
     [savedServerUpdateStates],
   );
-  // Switched-off machines never receive threads, so they stay out of the
-  // load balancing and GitHub sharing lists. The WSL backend has no row in
-  // the Environments list but does take threads, so it stays in here. This
-  // machine leads the list.
+  // Switched-off and unsupported machines never receive threads, so they stay
+  // out of the load balancing and GitHub sharing lists. The WSL backend has no
+  // row in the Environments list but does take threads, so it stays in here.
+  // This machine leads the list.
   const loadBalancingEnvironments = useMemo(
-    () => [
-      ...(primaryEnvironment ? [primaryEnvironment] : []),
-      ...savedEnvironments.filter((environment) => environment.entry.enabled),
-    ],
+    () =>
+      [
+        ...(primaryEnvironment ? [primaryEnvironment] : []),
+        ...savedEnvironments.filter((environment) => environment.entry.enabled),
+      ].filter((environment) => environment.connection.phase !== "unsupported"),
     [primaryEnvironment, savedEnvironments],
   );
   const savedDesktopSshEnvironmentKeys = useMemo(() => {

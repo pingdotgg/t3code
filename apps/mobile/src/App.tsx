@@ -1,4 +1,5 @@
 import { PermissionUpdateNotice } from "./components/PermissionUpdateNotice";
+import { SwitchedOffEnvironmentsNotice } from "./components/SwitchedOffEnvironmentsNotice";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -81,6 +82,7 @@ function AppContent() {
       <SplashScreenCoordinator />
       <SubscriptionUsageCoordinator />
       <PermissionUpdateNotice />
+      <SwitchedOffEnvironmentsNotice />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

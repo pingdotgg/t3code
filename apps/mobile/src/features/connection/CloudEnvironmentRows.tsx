@@ -209,8 +209,9 @@ function ConnectedCloudEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
+  // The switch shows the user's choice; a version mismatch only pauses it.
+  const switchedOn = props.environment.isEnabled;
   const unsupported = props.environment.connectionState === "unsupported";
-  const enabled = props.environment.isEnabled && !unsupported;
   // Discovery empties its map on every refresh; hold the last descriptor seen
   // so the glyph does not blink back to the generic one each time.
   const [lastDescriptor, setLastDescriptor] = useState(props.descriptor);
@@ -227,9 +228,11 @@ function ConnectedCloudEnvironmentRow(props: {
     >
       <CloudEnvironmentRowShell
         opensDetails={props.onOpen !== undefined}
-        connectionError={enabled || unsupported ? props.environment.connectionError : null}
-        connectionErrorTraceId={enabled ? props.environment.connectionErrorTraceId : null}
-        connectionState={enabled || unsupported ? props.environment.connectionState : "available"}
+        connectionError={switchedOn ? props.environment.connectionError : null}
+        connectionErrorTraceId={
+          switchedOn && !unsupported ? props.environment.connectionErrorTraceId : null
+        }
+        connectionState={switchedOn ? props.environment.connectionState : "available"}
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
         machine={resolveEnvironmentMachineKind(
@@ -237,9 +240,8 @@ function ConnectedCloudEnvironmentRow(props: {
         )}
         onValueChange={props.onSetEnabled}
         onToggleError={props.onToggleError}
-        disabled={unsupported}
-        {...(enabled || unsupported ? {} : { statusText: "Off" })}
-        value={enabled}
+        {...(switchedOn ? {} : { statusText: "Off" })}
+        value={switchedOn}
       />
     </Pressable>
   );

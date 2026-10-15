@@ -27,17 +27,42 @@ export interface EnvironmentCatalogState {
 
 /**
  * Environments that take part in the workspace: projects, threads, and shell
- * summaries only come from these. Disabled environments stay in `entries` so
- * Settings can list them and switch them back on.
+ * summaries only come from these. Disabled environments, and ones whose host
+ * this client cannot talk to, stay in `entries` so Settings can list them.
  */
 export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
   for (const [environmentId, entry] of catalog.entries) {
-    if (entry.enabled) {
+    if (entry.enabled && entry.unsupportedReason === undefined) {
       yield environmentId;
     }
   }
+}
+
+/**
+ * Saved environments switched off on this device. Older builds also
+ * switched environments off when their host ran an incompatible version, and
+ * nothing records which ones, so clients ask about these once instead of
+ * switching anything back on themselves. Remove it with both notices once no
+ * client in use predates that fix.
+ */
+export function switchedOffSavedEnvironments(
+  catalog: EnvironmentCatalogState,
+): ReadonlyArray<{ readonly environmentId: EnvironmentIdType; readonly label: string }> {
+  return [...catalog.entries]
+    .filter(([, entry]) => !entry.enabled && entry.target._tag !== "PrimaryConnectionTarget")
+    .map(([environmentId, entry]) => ({ environmentId, label: entry.target.label }));
+}
+
+/** Names for a notice line: the first few, then how many more. */
+export function summarizeEnvironmentLabels(
+  environments: ReadonlyArray<{ readonly label: string }>,
+  shown = 3,
+): string {
+  const names = environments.slice(0, shown).map(({ label }) => label);
+  const rest = environments.length - names.length;
+  return rest > 0 ? `${names.join(", ")} and ${rest} more` : names.join(", ");
 }
 
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
