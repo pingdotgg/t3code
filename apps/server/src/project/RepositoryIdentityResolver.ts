@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { expandSshHostAlias } from "./sshHostAlias.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
@@ -88,11 +89,15 @@ function buildRepositoryOrigin(
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  /** The remote with SSH host aliases expanded, which keys the repository. */
+  readonly resolvedRemoteUrl: string;
   readonly originUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
+  const canonicalKey = normalizeGitRemoteUrl(input.resolvedRemoteUrl);
+  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(
+    input.resolvedRemoteUrl,
+  );
   const repositoryPath = repositoryPathOf(canonicalKey);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
@@ -154,11 +159,25 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
+  // `git remote -v` already applies `url.<base>.insteadOf`; SSH host aliases
+  // live outside git, so they are expanded here.
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
-  return remote
-    ? buildRepositoryIdentity({ ...remote, originUrl: remotes.get("origin"), rootPath: cacheKey })
-    : null;
+  if (!remote) return null;
+  const resolvedRemoteUrl = yield* expandSshHostAlias(remote.remoteUrl);
+  const originUrl = remotes.get("origin");
+  const resolvedOriginUrl =
+    originUrl === remote.remoteUrl
+      ? resolvedRemoteUrl
+      : originUrl
+        ? yield* expandSshHostAlias(originUrl)
+        : undefined;
+  return buildRepositoryIdentity({
+    ...remote,
+    resolvedRemoteUrl,
+    originUrl: resolvedOriginUrl,
+    rootPath: cacheKey,
+  });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
