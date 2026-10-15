@@ -10,7 +10,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { PortalCaptureShortcut } from "./PortalCaptureShortcut.ts";
 
 it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
-  "registers, rebinds saved keys, receives activations, and replaces sessions over real D-Bus",
+  "registers, rebinds saved keys, and restores capture after portal replacement over real D-Bus",
   async () => {
     const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-shortcut-dbus-"));
     let daemon: NodeChildProcess.ChildProcess | undefined;
@@ -41,7 +41,7 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
       const connect = () => sessionBus({ busAddress: String(address) });
       server = connect();
       server.on("error", () => undefined);
-      await server.requestName("org.freedesktop.portal.Desktop", NameFlag.DO_NOT_QUEUE);
+      await server.requestName("org.freedesktop.portal.Desktop", NameFlag.ALLOW_REPLACEMENT);
       const root = "/org/freedesktop/portal/desktop";
       const iface = "org.freedesktop.portal.GlobalShortcuts";
       const sessions = new Map<string, string>();
@@ -50,60 +50,62 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
       const closed = new Set<string>();
       const closeWaiters = new Map<string, () => void>();
       let bindCount = 0;
-      server.addMethodHandler((message: Message) => {
-        if (message.member === "Register") {
-          expect(message.body[0]).toBe("com.t3tools.T3Code");
-          identities.add(message.sender);
-          server!.send(Message.newMethodReturn(message));
-        } else if (message.member === "Get") {
-          server!.send(Message.newMethodReturn(message, "v", [new Variant("u", 2)]));
-        } else if (message.member === "Close") {
-          closed.add(message.path);
-          closeWaiters.get(message.path)?.();
-        } else if (["CreateSession", "BindShortcuts"].includes(message.member)) {
-          expect(identities.has(message.sender)).toBe(true);
-          const options = message.body.at(-1) as Record<string, Variant<string>>;
-          const sender = message.sender.slice(1).replaceAll(".", "_");
-          const handle = `${root}/request/${sender}/${options.handle_token!.value}`;
-          let results: Record<string, Variant<unknown>>;
-          if (message.member === "CreateSession") {
-            const session = `${root}/session/${sender}/${options.session_handle_token!.value}`;
-            sessions.set(message.sender, session);
-            results = { session_handle: new Variant("s", session) };
-          } else {
-            bindCount++;
-            const shortcuts = message.body[1] as Array<
-              [string, { preferred_trigger: Variant<string> }]
-            >;
-            expect(shortcuts).toHaveLength(1);
-            const [id, properties] = shortcuts[0]!;
-            expect(properties.preferred_trigger.signature).toBe("s");
-            bindings.set(message.sender, id);
-            const bound = [
-              [
-                id,
-                {
-                  description: new Variant("s", "Capture a window"),
-                  trigger_description: new Variant("s", properties.preferred_trigger.value),
-                },
-              ],
-            ];
-            results = { shortcuts: new Variant("a(sa{sv})", bound) };
-          }
-          // Exercise the fast-portal race: Response is delivered before the method's handle reply.
-          const response = Message.newSignal(
-            handle,
-            "org.freedesktop.portal.Request",
-            "Response",
-            "ua{sv}",
-            [0, results],
-          );
-          response.destination = message.sender;
-          server!.send(response);
-          server!.send(Message.newMethodReturn(message, "o", [handle]));
-        } else return false;
-        return true;
-      });
+      const serve = (bus: MessageBus) =>
+        bus.addMethodHandler((message: Message) => {
+          if (message.member === "Register") {
+            expect(message.body[0]).toBe("com.t3tools.T3Code");
+            identities.add(message.sender);
+            bus.send(Message.newMethodReturn(message));
+          } else if (message.member === "Get") {
+            bus.send(Message.newMethodReturn(message, "v", [new Variant("u", 2)]));
+          } else if (message.member === "Close") {
+            closed.add(message.path);
+            closeWaiters.get(message.path)?.();
+          } else if (["CreateSession", "BindShortcuts"].includes(message.member)) {
+            expect(identities.has(message.sender)).toBe(true);
+            const options = message.body.at(-1) as Record<string, Variant<string>>;
+            const sender = message.sender.slice(1).replaceAll(".", "_");
+            const handle = `${root}/request/${sender}/${options.handle_token!.value}`;
+            let results: Record<string, Variant<unknown>>;
+            if (message.member === "CreateSession") {
+              const session = `${root}/session/${sender}/${options.session_handle_token!.value}`;
+              sessions.set(message.sender, session);
+              results = { session_handle: new Variant("s", session) };
+            } else {
+              bindCount++;
+              const shortcuts = message.body[1] as Array<
+                [string, { preferred_trigger: Variant<string> }]
+              >;
+              expect(shortcuts).toHaveLength(1);
+              const [id, properties] = shortcuts[0]!;
+              expect(properties.preferred_trigger.signature).toBe("s");
+              bindings.set(message.sender, id);
+              const bound = [
+                [
+                  id,
+                  {
+                    description: new Variant("s", "Capture a window"),
+                    trigger_description: new Variant("s", properties.preferred_trigger.value),
+                  },
+                ],
+              ];
+              results = { shortcuts: new Variant("a(sa{sv})", bound) };
+            }
+            // Exercise the fast-portal race: Response is delivered before the method's handle reply.
+            const response = Message.newSignal(
+              handle,
+              "org.freedesktop.portal.Request",
+              "Response",
+              "ua{sv}",
+              [0, results],
+            );
+            response.destination = message.sender;
+            bus.send(response);
+            bus.send(Message.newMethodReturn(message, "o", [handle]));
+          } else return false;
+          return true;
+        });
+      serve(server);
 
       const shortcut = {
         key: "2",
@@ -114,17 +116,20 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
         metaKey: false,
       };
       const start = (key = "2") => {
-        const received = Promise.withResolvers<void>();
-        const capture = vi.fn(() => received.resolve());
+        const events = new NodeEvents.EventEmitter();
+        const capture = vi.fn(() => events.emit("capture"));
         const client = new PortalCaptureShortcut(
           "com.t3tools.T3Code",
           { ...shortcut, key },
           capture,
-          () => {},
+          () => {
+            events.emit("changed");
+            if (!client.state.shortcutPending) events.emit("settled");
+          },
           connect(),
         );
         clients.push(client);
-        return { client, capture, received: received.promise };
+        return { client, capture, events };
       };
       const activate = (sender: string) => {
         const signal = Message.newSignal(root, iface, "Activated", "osta{sv}", [
@@ -140,8 +145,9 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
       await first.client.ready;
       expect(first.client.state.shortcutRegistered).toBe(true);
       const firstSender = [...bindings.keys()][0]!;
+      const firstCapture = NodeEvents.EventEmitter.once(first.events, "capture");
       activate(firstSender);
-      await first.received;
+      await firstCapture;
       expect(first.capture).toHaveBeenCalledOnce();
       const sessionClosed = new Promise<void>((resolve) =>
         closeWaiters.set(sessions.get(firstSender)!, resolve),
@@ -161,9 +167,49 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
       expect(bindCount).toBe(3);
       const lastSender = [...bindings.keys()].at(-1)!;
       expect(bindings.get(lastSender)).not.toBe(bindings.get(firstSender));
+      const nextCapture = NodeEvents.EventEmitter.once(next.events, "capture");
       activate(lastSender);
-      await next.received;
+      await nextCapture;
       expect(next.capture).toHaveBeenCalledOnce();
+      restoredClient.client.close();
+
+      for (const directReplacement of [false, true]) {
+        const previousSession = sessions.get(lastSender)!;
+        const previousServer = server;
+        const sessionReleased = new Promise<void>((resolve) =>
+          closeWaiters.set(previousSession, resolve),
+        );
+        const pending = NodeEvents.EventEmitter.once(next.events, "changed");
+        if (!directReplacement) {
+          await previousServer.releaseName("org.freedesktop.portal.Desktop");
+          await pending;
+          expect(next.client.state.shortcutPending).toBe(true);
+          expect(next.client.hasSession).toBe(false);
+        }
+        identities.clear();
+        server = connect();
+        server.on("error", () => undefined);
+        serve(server);
+        const settled = NodeEvents.EventEmitter.once(next.events, "settled");
+        try {
+          await server.requestName(
+            "org.freedesktop.portal.Desktop",
+            NameFlag.ALLOW_REPLACEMENT | NameFlag.REPLACE_EXISTING,
+          );
+          await pending;
+          await settled;
+          await sessionReleased;
+          expect(next.client.state.shortcutRegistered).toBe(true);
+          expect(sessions.get(lastSender)).not.toBe(previousSession);
+          const captured = NodeEvents.EventEmitter.once(next.events, "capture");
+          activate(lastSender);
+          await captured;
+        } finally {
+          previousServer.disconnect();
+        }
+      }
+      expect(next.capture).toHaveBeenCalledTimes(3);
+      expect(bindCount).toBe(5);
     } finally {
       clients.forEach((client) => client.close());
       server?.disconnect();
