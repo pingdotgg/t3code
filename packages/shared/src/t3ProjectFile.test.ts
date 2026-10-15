@@ -92,4 +92,13 @@ describe("parseT3ProjectFile", () => {
     expect(parseT3ProjectFile("{ not json")).toBeNull();
     expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "spaceship" }')).toBeNull();
   });
+
+  it("reads project defaults after a block comment containing a URL", () => {
+    expect(
+      parseT3ProjectFile(`{
+        /* See https://t3.codes/schema/t3.json */
+        "defaultThreadEnvMode": "worktree"
+      }`),
+    ).toEqual({ defaultThreadEnvMode: "worktree" });
+  });
 });
