@@ -84,7 +84,7 @@ export const layer = Layer.effectDiscard(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          ["messages", "runs", "providerTurns", "providerThreads"],
           {
             messageIds:
               request.delegatedCompletion === undefined
@@ -92,11 +92,28 @@ export const layer = Layer.effectDiscard(
                 : [request.delegatedCompletion.messageId],
           },
         );
-        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
-          yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
-            threadId: request.threadId,
-            providerThreadId: request.providerThreadId,
-          });
+        const archived =
+          projection.thread.archivedAt !== null || projection.thread.deletedAt !== null;
+        // A buffered wake holds output only the provider that buffered it can
+        // replay. Another provider would get the notification text as a prompt.
+        const bufferedBy =
+          request.delegatedCompletion === undefined && request.delivery !== "message_text"
+            ? projection.providerThreads.find(
+                (providerThread) => providerThread.id === request.providerThreadId,
+              )?.providerInstanceId
+            : undefined;
+        const providerChanged =
+          bufferedBy !== undefined && bufferedBy !== projection.thread.modelSelection.instanceId;
+        if (archived || providerChanged) {
+          yield* Effect.logInfo(
+            archived
+              ? "orchestration-v2.provider-continuation.thread-archived"
+              : "orchestration-v2.provider-continuation.provider-changed",
+            {
+              threadId: request.threadId,
+              providerThreadId: request.providerThreadId,
+            },
+          );
           if (request.delegatedCompletion !== undefined) {
             yield* clearRetryAttempt(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
