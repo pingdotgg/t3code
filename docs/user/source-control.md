@@ -294,6 +294,25 @@ returns to your inbox.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+## Issues
+
+The Issues page lists the issues of every project whose remote is on a supported tracker
+(GitHub today), grouped per tracker account. Open it from the sidebar's utility row or with
+**Open issues** in the command palette. Filter by open or closed, by your involvement
+(assigned, opened by you, mentioning you), and by tracker; the search box asks the tracker
+itself where it can search. Press **Load more** at the end of a group to read further back.
+
+Select an issue to open it beside the list: description, comments, state changes, linked pull
+requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
+comment, edit the title and description, change labels and assignees, react, and close or
+reopen (with a close reason where the tracker records one) when the tracker and your account
+allow it. An issue read through a project that does not own its repository is shown read-only.
+
+**New issue** files an issue on a project's tracker. Where the repository offers issue templates,
+pick one to start from its title, body, labels, and assignees.
+
+Writing to a tracker over a remote connection requires the `source-control:write` scope.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
