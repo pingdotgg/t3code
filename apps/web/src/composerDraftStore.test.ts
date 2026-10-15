@@ -72,7 +72,7 @@ import {
   clearBackgroundDraftSubmissionByRef,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
-  restoreFailedBackgroundDraftThread,
+  restoreFailedDraftThread,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
@@ -1671,7 +1671,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     const freshId = DraftId.make("fresh-background-draft");
     store.setProjectDraftThreadId(projectRef, freshId, { threadId: ThreadId.make("fresh-thread") });
     store.setPrompt(freshId, "new work");
-    restoreFailedBackgroundDraftThread(draftId, sentDraft, ThreadId.make("retry-thread"));
+    restoreFailedDraftThread(draftId, sentDraft, ThreadId.make("retry-thread"));
     store.setPrompt(draftId, "retry work");
     expect(useComposerDraftStore.getState().getDraftSession(draftId)?.promotedTo).toBeNull();
     expect(useComposerDraftStore.getState().getDraftSession(draftId)?.threadId).toBe(
