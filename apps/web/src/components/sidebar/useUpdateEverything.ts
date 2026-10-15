@@ -12,8 +12,9 @@ import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
-import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
+import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
+  closeFinishedUpdateRun,
   collectRestartingMachines,
   collectServerUpdateTargets,
   collectUpdateEverythingResult,
@@ -28,7 +29,12 @@ import {
   setUpdateEverythingRun,
   settleUpdateRunMachine,
   showUpdateEverythingResult,
+  waitForServerUpdateHandoff,
+  waitForUpdateRestart,
 } from "./updateEverythingRun";
+
+/** How long this app counts down before it relaunches, so the user can postpone it. */
+const UPDATE_RESTART_DELAY_MS = 5_000;
 
 /** Where this app's own download or install reports a failure. */
 export type ReportLocalUpdateError = (title: string, description: string) => void;
@@ -40,7 +46,9 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
  * only once npm confirms that version. `run` performs the whole pass, including
  * this app's own download and install when given. It updates quietly, tracks
  * each machine in the run state, and reports one summary toast at the end.
- * When this app installs, the summary waits for the relaunch.
+ * This app relaunches once every server restarts into its update, after a
+ * short countdown the user can postpone. The summary then waits for the
+ * relaunch, and servers still restarting are followed after it.
  */
 export function useUpdateEverything(localUpdateVersion: string | null) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
@@ -126,14 +134,19 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
         localFailures.push(`${title}: ${description}`);
       };
+      const startedAt = Date.now();
       const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
       for (const machine of providers.machines) {
         machinesById.set(machine.environmentId, {
           environmentId: machine.environmentId,
           label: machine.label,
           updatesProviders: true,
-          updatesServer: false,
+          server: null,
+          handedOffVersion: null,
+          startedAt,
           result: null,
+          failure: null,
+          providerFailure: null,
         });
       }
       for (const server of servers) {
@@ -142,17 +155,23 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           environmentId: server.environmentId,
           label: server.serverLabel,
           updatesProviders: existing?.updatesProviders ?? false,
-          updatesServer: true,
+          server,
+          handedOffVersion: null,
+          startedAt,
           result: null,
+          failure: null,
+          providerFailure: null,
         });
       }
       const localVersion = installLocal ? localUpdateVersion : null;
       setUpdateEverythingRun(() => ({
         localVersion,
         phase: "providers",
+        restartAt: null,
         machines: Array.from(machinesById.values()),
       }));
-      const failedProviderMachines = new Set<UpdateRunMachine["environmentId"]>();
+      const providerFailures = new Map<UpdateRunMachine["environmentId"], string>();
+      const finishedServers: Array<{ label: string; outcome: ServerUpdateOutcome }> = [];
       try {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
@@ -161,49 +180,94 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
               // An interrupted update did not finish either, so its row is not "done".
-              if (runOutcome.status !== "updated") failedProviderMachines.add(run.environmentId);
+              if (runOutcome.status !== "updated") {
+                providerFailures.set(
+                  run.environmentId,
+                  runOutcome.status === "failed" ? runOutcome.line : "Provider update interrupted",
+                );
+              }
               return runOutcome;
             });
             for (const machine of machinesById.values()) {
-              if (!machine.updatesServer) {
+              if (machine.server === null) {
                 settleUpdateRunMachine(
                   machine.environmentId,
-                  failedProviderMachines.has(machine.environmentId),
+                  providerFailures.get(machine.environmentId) ?? null,
                 );
               }
             }
-            setUpdateEverythingRun((run) => run && { ...run, phase: "servers" });
+            const serversStartedAt = Date.now();
+            setUpdateEverythingRun(
+              (run) =>
+                run && {
+                  ...run,
+                  phase: "servers",
+                  machines: run.machines.map((machine) =>
+                    machine.server === null ? machine : { ...machine, startedAt: serversStartedAt },
+                  ),
+                },
+            );
             return outcomes;
           },
-          updateServers: () =>
-            Promise.all(
-              servers.map(async (server) => {
-                const serverOutcome = await updateServer(server, { quiet: true });
-                settleUpdateRunMachine(
-                  server.environmentId,
-                  serverOutcome.status === "failed" ||
-                    failedProviderMachines.has(server.environmentId),
-                );
-                return { label: server.serverLabel, outcome: serverOutcome };
-              }),
-            ),
+          updateServers: async () => {
+            const runs = servers.map(async (server) => {
+              const serverOutcome = await updateServer(server, { quiet: true });
+              settleUpdateRunMachine(
+                server.environmentId,
+                serverOutcome.status === "failed"
+                  ? serverOutcome.message
+                  : (providerFailures.get(server.environmentId) ?? null),
+                {
+                  serverUpdated: serverOutcome.status !== "failed",
+                  providerFailure: providerFailures.get(server.environmentId) ?? null,
+                },
+              );
+              const finished = { label: server.serverLabel, outcome: serverOutcome };
+              finishedServers.push(finished);
+              return finished;
+            });
+            // Once a server restarts into its update it finishes on its own,
+            // so this app does not wait for it to come back.
+            await Promise.all(
+              servers.map((server, index) =>
+                waitForServerUpdateHandoff(server.environmentId, runs[index]!),
+              ),
+            );
+            return runs;
+          },
         });
-        const result = () =>
+        const result = (finished: ReadonlyArray<{ label: string; outcome: ServerUpdateOutcome }>) =>
           collectUpdateEverythingResult({
             localVersion: null,
             localFailures,
-            servers: outcome.servers,
+            servers: finished,
             providers: outcome.providers,
           });
         if (outcome.localReady && installLocal) {
-          setUpdateEverythingRun((run) => run && { ...run, phase: "installing" });
-          saveUpdateEverythingResult({ ...result(), localVersion });
-          if (await installLocal(reportLocalError)) return;
-          clearSavedUpdateEverythingResult();
+          if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {
+            setUpdateEverythingRun(
+              (run) => run && { ...run, phase: "installing", restartAt: null },
+            );
+            saveUpdateEverythingResult({ ...result(finishedServers), localVersion });
+            if (await installLocal(reportLocalError)) return;
+            clearSavedUpdateEverythingResult();
+          }
         }
-        showUpdateEverythingResult(result());
-      } finally {
+        // This app is not relaunching, so the pass waits for every server.
+        setUpdateEverythingRun(
+          (run) =>
+            run &&
+            closeFinishedUpdateRun({
+              ...run,
+              phase: "servers",
+              restartAt: null,
+              localVersion: null,
+            }),
+        );
+        showUpdateEverythingResult(result(await Promise.all(outcome.servers)));
+      } catch (error) {
         setUpdateEverythingRun(() => null);
+        throw error;
       }
     },
   };

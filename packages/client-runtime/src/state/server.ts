@@ -283,6 +283,11 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   });
 });
 
+/**
+ * "resuming" means the server has its update and restarts without this
+ * client. A desktop app update is not there yet when its prepare step
+ * completes: the client still has to commit it, so it stays "installing".
+ */
 export function serverUpdateStateForProgressEvent(
   fromVersion: string,
   targetVersion: string,
@@ -290,7 +295,12 @@ export function serverUpdateStateForProgressEvent(
 ): Extract<ServerUpdateState, { status: "running" }> {
   return {
     status: "running",
-    stage: event.type === "complete" ? "resuming" : event.stage,
+    stage:
+      event.type !== "complete"
+        ? event.stage
+        : event.result.method === "desktop-app" && event.result.desktopUpdateToken !== undefined
+          ? "installing"
+          : "resuming",
     fromVersion,
     targetVersion,
   };
@@ -753,11 +763,13 @@ export function createServerEnvironmentAtoms<R, E>(
                     .pipe(
                       Stream.runForEach((event) =>
                         Effect.sync(() => {
-                          currentStage = event.type === "complete" ? "resuming" : event.stage;
-                          atomRegistry.set(
-                            stateAtom,
-                            serverUpdateStateForProgressEvent(fromVersion, targetVersion, event),
+                          const state = serverUpdateStateForProgressEvent(
+                            fromVersion,
+                            targetVersion,
+                            event,
                           );
+                          currentStage = state.stage;
+                          atomRegistry.set(stateAtom, state);
                         }).pipe(
                           Effect.andThen(
                             event.type === "complete"

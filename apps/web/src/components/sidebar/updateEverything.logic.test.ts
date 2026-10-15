@@ -4,14 +4,37 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectRestartingMachines,
   collectServerUpdateTargets,
+  closeFinishedUpdateRun,
   collectUpdateEverythingResult,
+  describeUpdateCapsule,
   describeUpdateEverything,
   getUpdateEverythingToastView,
   resolveUpdateRunMachineStatus,
   runUpdateEverything,
   type UpdateEverythingMachine,
+  type UpdateEverythingRun,
   type UpdateRunMachine,
+  type UpdateRunMachineStatus,
+  UPDATE_SLOW_AFTER_MS,
 } from "./updateEverything.logic";
+
+const runMachine = (overrides: Partial<UpdateRunMachine> = {}): UpdateRunMachine => ({
+  environmentId: EnvironmentId.make("alvin"),
+  label: "alvin",
+  updatesProviders: true,
+  server: {
+    environmentId: EnvironmentId.make("alvin"),
+    serverLabel: "alvin",
+    selfUpdate: "boot-service",
+    targetVersion: "0.0.50",
+  },
+  handedOffVersion: null,
+  startedAt: 0,
+  result: null,
+  failure: null,
+  providerFailure: null,
+  ...overrides,
+});
 
 function machine(
   id: string,
@@ -175,14 +198,6 @@ describe("runUpdateEverything", () => {
 });
 
 describe("resolveUpdateRunMachineStatus", () => {
-  const runMachine = (overrides: Partial<UpdateRunMachine> = {}): UpdateRunMachine => ({
-    environmentId: EnvironmentId.make("alvin"),
-    label: "alvin",
-    updatesProviders: true,
-    updatesServer: true,
-    result: null,
-    ...overrides,
-  });
   const running = (stage: "downloading" | "installing" | "resuming") =>
     ({ status: "running", stage, fromVersion: "0.0.40", targetVersion: "0.0.50" }) as const;
 
@@ -206,6 +221,92 @@ describe("resolveUpdateRunMachineStatus", () => {
     expect(resolveUpdateRunMachineStatus(runMachine({ result: "failed" }), "servers", idle)).toBe(
       "failed",
     );
+    // After this app relaunched, a handed-off server has no live update state.
+    expect(
+      resolveUpdateRunMachineStatus(
+        runMachine({ server: null, handedOffVersion: "0.0.50" }),
+        "servers",
+        idle,
+      ),
+    ).toBe("restarting");
+  });
+});
+
+describe("update capsule", () => {
+  const run = (overrides: Partial<UpdateEverythingRun> = {}): UpdateEverythingRun => ({
+    localVersion: null,
+    phase: "servers",
+    restartAt: null,
+    machines: [],
+    ...overrides,
+  });
+  const view = (
+    label: string,
+    status: UpdateRunMachineStatus,
+    overrides: Partial<UpdateRunMachine> = {},
+  ) => ({
+    machine: runMachine({ environmentId: EnvironmentId.make(label), label, ...overrides }),
+    status,
+  });
+
+  it("counts down this app's restart before anything else", () => {
+    expect(
+      describeUpdateCapsule(
+        run({ phase: "countdown", restartAt: 5_000, localVersion: "0.0.50" }),
+        [view("alvin", "restarting")],
+        { status: "waiting" },
+        1_200,
+      ),
+    ).toEqual({ tone: "default", label: "Restart in 4s", action: "later" });
+  });
+
+  it("names the slowest machine once it passes the slow threshold", () => {
+    const machines = [
+      view("bb-1", "done"),
+      view("zbook", "downloading", { startedAt: 60_000 }),
+      view("alvin", "restarting", { startedAt: 0 }),
+    ];
+    expect(describeUpdateCapsule(run(), machines, null, 60_000)).toEqual({
+      tone: "default",
+      label: "1 of 3 updated",
+      action: null,
+    });
+    expect(describeUpdateCapsule(run(), machines, null, UPDATE_SLOW_AFTER_MS + 6 * 60_000)).toEqual(
+      {
+        tone: "slow",
+        label: "alvin",
+        slow: { status: "restarting", elapsed: "9m" },
+        action: null,
+      },
+    );
+  });
+
+  it("offers a retry only for failed servers it can update again", () => {
+    expect(describeUpdateCapsule(run(), [view("alvin", "failed")], null, 0)).toEqual({
+      tone: "failed",
+      label: "alvin failed",
+      action: "retry",
+    });
+    expect(
+      describeUpdateCapsule(
+        run(),
+        [view("alvin", "failed", { server: null }), view("box", "failed", { server: null })],
+        null,
+        0,
+      ),
+    ).toEqual({ tone: "failed", label: "2 failed", action: "dismiss" });
+  });
+
+  it("ends the run only when every machine is done and this app is not installing", () => {
+    const done = runMachine({ result: "done" });
+    expect(closeFinishedUpdateRun(run({ machines: [done] }))).toBeNull();
+    expect(
+      closeFinishedUpdateRun(run({ machines: [done], localVersion: "0.0.50" })),
+    ).not.toBeNull();
+    expect(
+      closeFinishedUpdateRun(run({ machines: [runMachine({ result: "failed" })] })),
+    ).not.toBeNull();
+    expect(closeFinishedUpdateRun(run({ machines: [done], phase: "providers" }))).not.toBeNull();
   });
 });
 
@@ -231,6 +332,7 @@ describe("update everything summary", () => {
       localVersion: "0.0.50",
       updatedServers: 2,
       updatedProviders: 1,
+      restarting: [],
       failures: [
         "This app: Could not download update: Network error.",
         "alvin: Download failed.",
@@ -256,11 +358,24 @@ describe("update everything summary", () => {
   });
 
   it("reports a failure when nothing updated, and nothing when nothing finished", () => {
-    const empty = { localVersion: null, updatedServers: 0, updatedProviders: 0 };
+    const empty = { localVersion: null, updatedServers: 0, updatedProviders: 0, restarting: [] };
     expect(
       getUpdateEverythingToastView({ ...empty, failures: ["alvin: offline"] }, "0.0.50"),
     ).toEqual({ type: "error", title: "Update failed", description: "alvin: offline" });
     expect(getUpdateEverythingToastView({ ...empty, failures: [] }, "0.0.50")).toBeNull();
+  });
+
+  it("names servers still restarting when this app relaunched", () => {
+    expect(
+      getUpdateEverythingToastView(
+        { ...result, failures: [], restarting: ["alvin", "zbook"] },
+        "0.0.50",
+      ),
+    ).toEqual({
+      type: "success",
+      title: "Updated this app, 2 servers, and 1 provider",
+      description: "alvin and zbook are still restarting.",
+    });
   });
 });
 
