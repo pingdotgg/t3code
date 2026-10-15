@@ -94,7 +94,7 @@ import {
   type AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
-import { makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
+import { makeGrokAdapterV2, makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 import {
   acpRegistryPromptFailure,
   registerMistralVibeAcpExtensions,
@@ -11679,9 +11679,60 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect(
-    "mid-turn unhandled background completion still offers exactly one continuation after finalize",
-    () =>
+  it.effect.each([
+    { defer: false, status: "completed" as const, replayAck: false },
+    { defer: true, status: "completed" as const, replayAck: false },
+    { defer: true, status: "failed" as const, replayAck: false },
+    { defer: true, status: "completed" as const, replayAck: true },
+    { defer: true, status: "failed" as const, replayAck: true },
+    {
+      defer: true,
+      status: "completed" as const,
+      replayAck: true,
+      repeatTerminal: true,
+      repeatOutput: undefined,
+    },
+    {
+      defer: true,
+      status: "failed" as const,
+      replayAck: true,
+      repeatTerminal: true,
+      repeatOutput: undefined,
+    },
+    {
+      defer: true,
+      status: "completed" as const,
+      replayAck: true,
+      repeatTerminal: true,
+      repeatOutput: "",
+    },
+    {
+      defer: true,
+      status: "completed" as const,
+      replayAck: true,
+      repeatTerminal: true,
+      repeatOutput: "UPDATED_OUTPUT\n",
+    },
+    { defer: true, status: "completed" as const, replayAck: false, omitReport: true },
+    { defer: true, status: "failed" as const, replayAck: false, omitReport: true },
+    {
+      defer: true,
+      status: "completed" as const,
+      replayAck: true,
+      omitReport: true,
+      repeatTerminal: true,
+      repeatOutput: undefined,
+    },
+    {
+      defer: true,
+      status: "completed" as const,
+      replayAck: false,
+      omitReport: true,
+      replaceAck: true,
+    },
+  ])(
+    "mid-turn unhandled background completion offers once after finalize: $defer / $status / replay=$replayAck / repeat=$repeatTerminal:$repeatOutput / reportless=$omitReport / progress=$replaceAck",
+    ({ defer, status, replayAck, ...scenario }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -11696,24 +11747,52 @@ describe("AcpAdapterV2", () => {
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const promptHeld = yield* Deferred.make<void>();
         const capturedMutation: {
           current:
             | ((mutation: {
                 readonly sessionId: string;
                 readonly taskId: string;
                 readonly status: "running" | "completed" | "failed";
+                readonly output?: string;
+                readonly report?: { readonly kind: "command" };
               }) => Effect.Effect<void>)
             | null;
         } = { current: null };
         const instanceId = ProviderInstanceId.make("acp-test");
+        const grokFlavor = makeGrokAcpAdapterFlavor(
+          {
+            instanceId,
+            settings: DEFAULT_GROK_SETTINGS,
+            environment: {},
+            hostPlatform: yield* HostProcess.Platform,
+            selfInvocation,
+          },
+          yield* HostProcess.HomeDirectory,
+        );
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
+          testHooks: {
+            afterPromptSettledWithBackgroundWork: () =>
+              Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+          },
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             enablePostSettleContinuation: true,
-            extractBackgroundTaskId: (toolCall) =>
-              toolCall.toolCallId === "tool-call-monitor-late" ? "task-monitor-late" : undefined,
+            deferFinalizeForBackgroundWork: defer,
+            ...(defer
+              ? {
+                  normalizeToolCall: normalizeXAiAcpToolCallState,
+                  isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool ?? (() => false),
+                }
+              : {}),
+            extractBackgroundTaskId: defer
+              ? (grokFlavor.extractBackgroundTaskId ?? (() => undefined))
+              : (toolCall) =>
+                  toolCall.toolCallId === "tool-call-monitor-late"
+                    ? "task-monitor-late"
+                    : undefined,
             registerExtensions: (context) =>
               Effect.sync(() => {
                 capturedMutation.current = context.applyBackgroundTaskMutation;
@@ -11799,18 +11878,60 @@ describe("AcpAdapterV2", () => {
             sessionUpdate: "tool_call_update",
             toolCallId: "tool-call-monitor-late",
             status: "in_progress",
+            ...(defer
+              ? { rawOutput: { type: "BackgroundTaskStarted", task_id: "task-monitor-late" } }
+              : {}),
           },
         });
+        if (replayAck) {
+          // Keep the settled root open while the completed command's ACK is replayed.
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool-call-blocker",
+              title: "Another background command",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: {},
+              rawOutput: { type: "BackgroundTaskStarted", task_id: "task-blocker" },
+            },
+          });
+        }
         yield* applyMutation({
           sessionId: "mock-session-1",
           taskId: "task-monitor-late",
           status: "running",
         });
+        if ("replaceAck" in scenario) {
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-monitor-late",
+              status: "in_progress",
+              rawOutput: { type: "Text", text: "Command progress" },
+            },
+          });
+        }
+        const report =
+          defer && !("omitReport" in scenario) ? { report: { kind: "command" as const } } : {};
         yield* applyMutation({
           sessionId: "mock-session-1",
           taskId: "task-monitor-late",
-          status: "completed",
+          status,
+          output: "EARLY_BG_DONE\n",
+          ...report,
         });
+        if ("repeatOutput" in scenario) {
+          yield* applyMutation({
+            sessionId: "mock-session-1",
+            taskId: "task-monitor-late",
+            status,
+            ...report,
+            ...(scenario.repeatOutput === undefined ? {} : { output: scenario.repeatOutput }),
+          });
+        }
         assert.lengthOf(
           continuationRequests,
           0,
@@ -11818,18 +11939,59 @@ describe("AcpAdapterV2", () => {
         );
 
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        if (replayAck) {
+          yield* Deferred.await(promptHeld);
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-monitor-late",
+              status: "completed",
+              rawOutput: { type: "BackgroundTaskStarted", task_id: "task-monitor-late" },
+            },
+          });
+          yield* applyMutation({
+            sessionId: "mock-session-1",
+            taskId: "task-blocker",
+            status: "completed",
+            report: { kind: "command" },
+          });
+          yield* TestClock.adjust("3 seconds");
+        }
         const providerTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
         });
         let terminalStatus: string | null = null;
+        let backgroundItem: ProviderAdapter.ProviderAdapterV2Event | undefined;
         while (terminalStatus === null) {
           const event = yield* Queue.take(events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tool-call-monitor-late"
+          ) {
+            backgroundItem = event;
+          }
           if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
             terminalStatus = event.status;
           }
         }
         assert.equal(terminalStatus, "completed");
+        if (defer) {
+          assert.equal(backgroundItem?.type, "turn_item.updated");
+          if (backgroundItem?.type === "turn_item.updated") {
+            assert.equal(backgroundItem.turnItem.status, status);
+            assert.equal(backgroundItem.turnItem.type, "command_execution");
+            if (backgroundItem.turnItem.type === "command_execution") {
+              assert.equal(
+                backgroundItem.turnItem.output ?? "",
+                "repeatOutput" in scenario && scenario.repeatOutput !== undefined
+                  ? scenario.repeatOutput
+                  : "EARLY_BG_DONE\n",
+              );
+            }
+          }
+        }
         assert.lengthOf(
           continuationRequests,
           1,
