@@ -75,6 +75,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    undici:
+      specifier: 8.11.2
+      version: 8.11.2
     unified:
       specifier: 11.0.5
       version: 11.0.5
@@ -696,6 +699,9 @@ importers:
       stream-json:
         specifier: 3.6.0
         version: 3.6.0
+      undici:
+        specifier: 'catalog:'
+        version: 8.11.2
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
