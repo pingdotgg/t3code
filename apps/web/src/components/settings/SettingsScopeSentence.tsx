@@ -45,10 +45,10 @@ interface SettingsScopeMenuProps {
 }
 
 /**
- * "Applying settings for <project> across <environment>" at the top of a settings
- * page. The two pickers are the targets a change is written to. A project is
- * the same project on every environment, so the environment alone decides
- * where a project override is written.
+ * "Applying settings for <project> across <environment>" pinned to the top of a
+ * settings page. The two pickers are the targets a change is written to. A
+ * project is the same project on every environment, so the environment alone
+ * decides where a project override is written.
  */
 export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
@@ -63,7 +63,11 @@ export function SettingsScopeSentence() {
     onChange: scope.selectScope,
   };
   return (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
+    // Pinned to the top of the settings scroll area so the pickers stay in reach
+    // on long pages. The negative margins pull the opaque background over the
+    // page's top padding and down toward the first section without moving the
+    // layout, and the trailing gradient fades rows out as they slide under it.
+    <p className="sticky top-0 z-10 -mt-6 -mb-3 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 bg-background px-3 pt-6 pb-3 text-base text-muted-foreground after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-background after:to-transparent sm:px-4">
       {/* Each connective stays with its picker so a wrap never strands "on". */}
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">Applying settings for</span>

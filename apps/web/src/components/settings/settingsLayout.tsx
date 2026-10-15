@@ -571,7 +571,8 @@ export function SettingsPageContainer({
       onTargetHandled={clearTargetHash}
     >
       <div
-        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
+        // The scroll padding keeps focused rows clear of the pinned scope sentence.
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 scroll-pt-24 overflow-y-auto"
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
