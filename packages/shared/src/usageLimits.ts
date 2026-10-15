@@ -573,6 +573,15 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
 }
 
+/** Quota even spending would leave by now, 0..100: where a bar's pace mark sits. */
+export function paceRemainingPercent(
+  window: ServerProviderUsageWindow,
+  now: number,
+): number | null {
+  const elapsed = elapsedShare(window, now);
+  return elapsed === null ? null : Math.round((1 - elapsed) * 100);
+}
+
 export type LimitPace = "ahead" | "on" | "under";
 
 /**
