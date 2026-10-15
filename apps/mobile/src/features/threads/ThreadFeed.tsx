@@ -218,6 +218,7 @@ import { environmentThreadShells, threadEnvironment } from "../../state/threads"
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
+  expandHomeFilePath,
   fileRoutePathSegments,
   isAbsolutePath,
   resolveWorkspaceRelativeFilePath,
@@ -1850,18 +1851,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
 
       const presentation = resolveMarkdownLinkPresentation(href);
-      if (presentation.kind === "file") {
-        const relativePath = resolveWorkspaceRelativeFilePath(
-          props.workspaceRoot,
-          presentation.path,
-        );
+      const file =
+        presentation.kind === "file"
+          ? { ...presentation, path: expandHomeFilePath(presentation.path, props.workspaceRoot) }
+          : null;
+      if (file) {
+        const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, file.path);
         if (relativePath) {
           void Haptics.selectionAsync();
           navigation.navigate("ThreadFile", {
             environmentId: String(props.environmentId),
             threadId: String(props.threadId),
             path: fileRoutePathSegments(relativePath),
-            ...(presentation.line ? { line: String(presentation.line) } : {}),
+            ...(file.line ? { line: String(file.line) } : {}),
           });
           return;
         }
@@ -1869,13 +1871,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
       // A host file outside the workspace, such as a report an agent wrote to
       // a temp directory, opens read-only in the file screen.
-      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
+      if (file && isAbsolutePath(file.path)) {
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
           environmentId: String(props.environmentId),
           threadId: String(props.threadId),
-          path: fileRoutePathSegments(presentation.path),
-          ...(presentation.line ? { line: String(presentation.line) } : {}),
+          path: fileRoutePathSegments(file.path),
+          ...(file.line ? { line: String(file.line) } : {}),
         });
         return;
       }

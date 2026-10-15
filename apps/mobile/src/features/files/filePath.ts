@@ -1,3 +1,4 @@
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -66,6 +67,11 @@ function normalizeRelativePath(value: string): string | null {
     segments.push(segment);
   }
   return segments.length > 0 ? segments.join("/") : null;
+}
+
+/** `~/x` names a host file under the home inferred from the workspace root, as on web. */
+export function expandHomeFilePath(path: string, workspaceRoot: string | null | undefined): string {
+  return workspaceRoot && path.startsWith("~/") ? resolvePathLinkTarget(path, workspaceRoot) : path;
 }
 
 export function resolveWorkspaceRelativeFilePath(
