@@ -14,10 +14,11 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -231,6 +232,7 @@ function PoolSegment({
   color,
   now,
   index,
+  labeled,
   showAccountName,
 }: {
   readonly account: LimitAccount;
@@ -240,6 +242,8 @@ function PoolSegment({
   readonly now: number;
   /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
   readonly index: number;
+  /** The segment has room for its own label; otherwise it shows its position and a legend row. */
+  readonly labeled: boolean;
   readonly showAccountName: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -255,7 +259,10 @@ function PoolSegment({
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
+            className={cn(
+              "relative min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border",
+              labeled ? "h-8" : "h-5",
+            )}
           />
         }
       >
@@ -278,11 +285,19 @@ function PoolSegment({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className={cn(
+            "absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums",
+            labeled && "hidden",
+          )}
         >
           {index}
         </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+        <div
+          className={cn(
+            "relative h-full min-w-0 items-center gap-1.5 px-2 text-xs",
+            labeled ? "flex" : "hidden",
+          )}
+        >
           {showAccountName ? (
             <AccountName
               account={account}
@@ -309,7 +324,9 @@ function PoolSegment({
           </span>
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      {labeled ? null : (
+        <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      )}
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}
@@ -360,7 +377,7 @@ function LegendRow({
     <PopoverTrigger
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
-      className="min-w-0 @2xl/pool:hidden"
+      className="min-w-0"
     >
       <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
         <span
@@ -443,14 +460,19 @@ function RedeemableSegmentPopup({
   );
 }
 
+/** A segment's width in pixels with room for a name beside its percentage and countdown. */
+const LABELED_SEGMENT_MIN_WIDTH = 224;
+
 /**
  * One pooled window as equal-width segments, one per account, each filled by
  * the share of that account's quota still open. Equal widths are honest: every
  * account contributes the same share of the pool, whatever its plan.
  *
- * Wide, each segment carries its own label. Narrow, the bar is a bare strip
- * and a legend below lists the accounts in the same order; both open the
- * same popover.
+ * When every segment has room, each carries its own label. Otherwise the bar
+ * is a bare strip and a legend below lists the accounts in the same order;
+ * both open the same popover. Room depends on the account count as well as
+ * the bar's width, so the bar measures its width rather than using a
+ * container query.
  */
 function PoolBar({
   pool,
@@ -462,9 +484,25 @@ function PoolBar({
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
+  const columns = pool.columns.length;
+  const [labeled, setLabeled] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const observeWidth = useCallback(
+    (probe: HTMLDivElement) =>
+      observeResize(probe, ([entry]) => {
+        if (!entry || !gridRef.current) return;
+        const gap = Number.parseFloat(getComputedStyle(gridRef.current).columnGap) || 0;
+        const segmentWidth = (entry.contentRect.width - gap * (columns - 1)) / columns;
+        setLabeled(segmentWidth >= LABELED_SEGMENT_MIN_WIDTH);
+      }),
+    [columns],
+  );
   return (
-    <div className="@container/pool min-w-0">
+    <div className="min-w-0">
+      {/* Empty so its size never changes with the layout: measuring the bar itself would loop. */}
+      <div ref={observeWidth} />
       <div
+        ref={gridRef}
         className="grid gap-x-1 gap-y-1"
         style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
       >
@@ -478,6 +516,7 @@ function PoolBar({
               color={color}
               now={now}
               index={position + 1}
+              labeled={labeled}
               showAccountName={pool.columns.length > 1}
             />
           ) : null,
