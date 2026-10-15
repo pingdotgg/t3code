@@ -883,16 +883,15 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   );
 }
 
-function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): ThreadFeedEntry[] {
-  const childrenByRun = new Map<RunId, Set<string>>();
-  for (const entry of entries) {
-    if (entry.type !== "activity") continue;
-    const item = entry.activity.projectedItem.item;
-    if (item.type !== "subagent" || item.origin !== "app_owned" || item.runId === null) continue;
-    const children = childrenByRun.get(item.runId) ?? new Set<string>();
-    children.add(item.subagentId);
-    childrenByRun.set(item.runId, children);
-  }
+/**
+ * `onRestart` hears each entry after which no group is open, with the grouped
+ * length so far: the entries before it group the same whatever follows.
+ */
+function groupAdjacentActivities(
+  entries: ReadonlyArray<RawThreadFeedEntry>,
+  childrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>,
+  onRestart?: (entryIndex: number, groupedLength: number) => void,
+): ThreadFeedEntry[] {
   const grouped: ThreadFeedEntry[] = [];
   let firstActivityEntry: Extract<RawThreadFeedEntry, { readonly type: "activity" }> | null = null;
   let openGroupActivities: ThreadFeedActivity[] = [];
@@ -920,7 +919,8 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     openGroupActivities = [];
   };
 
-  for (const entry of entries) {
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex]!;
     // A successful delegation is already represented by its durable child card.
     // Pending, failed and unmatched calls remain visible, even with identical prompts.
     if (entry.type === "activity") {
@@ -949,6 +949,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     if (entry.type !== "activity") {
       flushGroup();
       grouped.push(entry);
+      onRestart?.(entryIndex, grouped.length);
       continue;
     }
 
@@ -1254,6 +1255,82 @@ function settleSupersededReasoning(
   return settled;
 }
 
+interface ThreadFeedPresentationBuild {
+  readonly feed: ReadonlyArray<ThreadFeedEntry>;
+  readonly latestRun: ThreadFeedLatestRun | null;
+  readonly expandedRunIds: ReadonlySet<RunId>;
+  readonly expandedWorkGroupIds: ReadonlySet<string>;
+  readonly activeWorkStartedAt: string | null;
+  readonly runlessWorkActive: boolean;
+  readonly rows: ReadonlyArray<ThreadFeedEntry>;
+  /** Feed entry `entry` is a user message whose rows start at `rowsLength`. */
+  readonly restarts: ReadonlyArray<{ readonly entry: number; readonly rowsLength: number }>;
+  /** Where each run's entries begin, so a reused prefix never shares a run with the rest. */
+  readonly firstEntryByRun: ReadonlyMap<RunId, number>;
+}
+
+// Like `lastFeedBuild`: rows before the newest user messages are reused while
+// the inputs that reach them are unchanged.
+let lastPresentation: ThreadFeedPresentationBuild | null = null;
+
+function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLatestRun | null) {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.runId === right.runId &&
+      left.status === right.status &&
+      left.startedAt === right.startedAt &&
+      left.completedAt === right.completedAt)
+  );
+}
+
+function feedEntryRunId(entry: ThreadFeedEntry): RunId | null {
+  return entry.type === "message" ? (entry.message.runId ?? null) : entry.runId;
+}
+
+function isUserMessageEntry(entry: ThreadFeedEntry | undefined): boolean {
+  return entry?.type === "message" && entry.message.role === "user";
+}
+
+/**
+ * A user message starts every fold and is never hidden or grouped, so the
+ * rows before it depend only on the entries before it, their runs, and the
+ * shared inputs. Returns the user message entry to restart from, or null to
+ * present the whole feed.
+ */
+function presentationRestart(
+  previous: ThreadFeedPresentationBuild | null,
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  latestRun: ThreadFeedLatestRun | null,
+  expandedRunIds: ReadonlySet<RunId>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+  activeWorkStartedAt: string | null,
+  runlessWorkActive: boolean,
+): { readonly entry: number; readonly rowsLength: number; readonly index: number } | null {
+  if (
+    previous === null ||
+    !latestRunsEqual(previous.latestRun, latestRun) ||
+    previous.activeWorkStartedAt !== activeWorkStartedAt ||
+    previous.runlessWorkActive !== runlessWorkActive ||
+    !setsEqual(previous.expandedRunIds, expandedRunIds) ||
+    !setsEqual(previous.expandedWorkGroupIds, expandedWorkGroupIds)
+  ) {
+    return null;
+  }
+  const firstChanged = firstChangedIndex(previous.feed, feed);
+  let index = previous.restarts.length - 1;
+  while (index >= 0 && previous.restarts[index]!.entry > firstChanged) index -= 1;
+  const restart = previous.restarts[index];
+  if (restart === undefined || !isUserMessageEntry(feed[restart.entry])) return null;
+  for (let entryIndex = restart.entry; entryIndex < feed.length; entryIndex += 1) {
+    const runId = feedEntryRunId(feed[entryIndex]!);
+    const firstEntry = runId === null ? undefined : previous.firstEntryByRun.get(runId);
+    if (firstEntry !== undefined && firstEntry < restart.entry) return null;
+  }
+  return { ...restart, index };
+}
+
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1263,10 +1340,40 @@ export function deriveThreadFeedPresentation(
   /** The live work is a provider-native subagent's runless root turn. */
   runlessWorkActive = false,
 ): ThreadFeedEntry[] {
-  const retainedFeed = feed.filter(
-    (entry) =>
-      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
+  const previous = lastPresentation;
+  const restart = presentationRestart(
+    previous,
+    feed,
+    latestRun,
+    expandedRunIds,
+    expandedWorkGroupIds,
+    activeWorkStartedAt,
+    runlessWorkActive,
   );
+  const start = restart?.entry ?? 0;
+  const result: ThreadFeedEntry[] =
+    restart === null ? [] : previous!.rows.slice(0, restart.rowsLength);
+  const restarts = restart === null ? [] : previous!.restarts.slice(0, restart.index);
+  const firstEntryByRun = new Map<RunId, number>();
+  if (restart !== null) {
+    for (const [runId, entry] of previous!.firstEntryByRun) {
+      if (entry < start) firstEntryByRun.set(runId, entry);
+    }
+  }
+  const tailStart = result.length;
+  const lastEntryByRun = new Map<RunId, number>();
+
+  const retainedFeed: Array<
+    Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>
+  > = [];
+  const retainedFeedIndices: number[] = [];
+  for (let index = start; index < feed.length; index += 1) {
+    const entry = feed[index]!;
+    if (entry.type === "run-fold" || entry.type === "work-toggle" || entry.type === "thinking")
+      continue;
+    retainedFeed.push(entry);
+    retainedFeedIndices.push(index);
+  }
   const sourceFeed = retainedFeed.map((entry, index) =>
     settleSupersededReasoning(entry, index === retainedFeed.length - 1),
   );
@@ -1286,8 +1393,17 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
-  const result: ThreadFeedEntry[] = [];
-  for (const entry of sourceFeed) {
+  for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
+    const entry = sourceFeed[sourceIndex]!;
+    const feedIndex = retainedFeedIndices[sourceIndex]!;
+    if (isUserMessageEntry(entry)) {
+      restarts.push({ entry: feedIndex, rowsLength: result.length });
+    }
+    const runId = feedEntryRunId(entry);
+    if (runId !== null) {
+      if (!firstEntryByRun.has(runId)) firstEntryByRun.set(runId, feedIndex);
+      lastEntryByRun.set(runId, feedIndex);
+    }
     // A provider-native subagent works without a run: its null-run tail is
     // live only while that runless work is active.
     const isActiveTailGroup =
@@ -1369,15 +1485,49 @@ export function deriveThreadFeedPresentation(
   ) {
     result.push(thinkingRow(activeWorkStartedAt, activeRunId));
   }
-  return result.map((row, index) => {
-    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(result[index + 1])) return row;
+  // Reused rows are final: the user message after them never continues a work log.
+  for (let index = tailStart; index < result.length; index += 1) {
+    const row = result[index]!;
+    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(result[index + 1])) continue;
     let continued = continuedWorkLogRows.get(row);
     if (!continued) {
       continued = { ...row, continuesWorkLog: true };
       continuedWorkLogRows.set(row, continued);
     }
-    return continued;
+    result[index] = continued;
+  }
+  // A run that crosses a user message made the rows before it from entries
+  // after it, so a later build cannot restart there even once those entries
+  // are gone. Only runs of this build's own entries can cross its restarts.
+  const crossings = Array.from({ length: feed.length - start + 1 }, () => 0);
+  for (const [runId, last] of lastEntryByRun) {
+    const first = firstEntryByRun.get(runId)!;
+    if (first >= last) continue;
+    crossings[first - start + 1]! += 1;
+    crossings[last - start + 1]! -= 1;
+  }
+  let crossingRuns = 0;
+  let crossingIndex = 0;
+  const cleanRestarts = restarts.filter((candidate) => {
+    if (candidate.entry < start) return true;
+    while (crossingIndex <= candidate.entry - start) {
+      crossingRuns += crossings[crossingIndex]!;
+      crossingIndex += 1;
+    }
+    return crossingRuns === 0;
   });
+  lastPresentation = {
+    feed,
+    latestRun,
+    expandedRunIds,
+    expandedWorkGroupIds,
+    activeWorkStartedAt,
+    runlessWorkActive,
+    rows: result,
+    restarts: cleanRestarts,
+    firstEntryByRun,
+  };
+  return result;
 }
 
 const continuedWorkLogRows = new WeakMap<ThreadFeedEntry, ThreadFeedEntry>();
@@ -1747,6 +1897,48 @@ export function buildPendingUserInputAnswers(
   return answers;
 }
 
+interface ThreadFeedBuild {
+  readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
+  readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
+  readonly foldedAnswerMessageIds: ReadonlySet<string>;
+  readonly delegatedChildrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>;
+  readonly feed: ReadonlyArray<ThreadFeedEntry>;
+  /** Grouping is empty before `row`: the rows before it produced `feed.slice(0, feedLength)`. */
+  readonly restarts: ReadonlyArray<{ readonly row: number; readonly feedLength: number }>;
+}
+
+// A streamed chunk changes the newest rows of a thread that can hold thousands.
+// The last build lets the next one keep its unchanged prefix instead of
+// regrouping the whole thread.
+let lastFeedBuild: ThreadFeedBuild | null = null;
+
+function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+  if (left.size !== right.size) return false;
+  for (const value of left) if (!right.has(value)) return false;
+  return true;
+}
+
+function setMapsEqual<K, V>(
+  left: ReadonlyMap<K, ReadonlySet<V>>,
+  right: ReadonlyMap<K, ReadonlySet<V>>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [key, values] of left) {
+    const other = right.get(key);
+    if (other === undefined || !setsEqual(values, other)) return false;
+  }
+  return true;
+}
+
+/** Index of the first entry that differs, or the shorter length when one extends the other. */
+function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>): number {
+  const limit = Math.min(previous.length, next.length);
+  let index = 0;
+  while (index < limit && previous[index] === next[index]) index += 1;
+  return index;
+}
+
 /**
  * Projects the server-authored visible sequence into mobile row presentation.
  * It deliberately preserves the incoming order and never rebuilds chat from
@@ -1760,7 +1952,7 @@ export function buildThreadFeed(
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   },
 ): ThreadFeedEntry[] {
-  const entries: RawThreadFeedEntry[] = [];
+  const anchoredMessages = options?.anchoredMessages ?? [];
   const attemptByRootNodeId = new Map(
     (options?.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -1781,14 +1973,44 @@ export function buildThreadFeed(
     }
     return null;
   };
-  const foldedAnswerMessageIds = new Set(
-    visibleTurnItems.flatMap(({ item }) =>
-      item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
-        : [],
-    ),
-  );
-  for (const row of visibleTurnItems) {
+  // Thread-wide facts that change rows anywhere in the feed. A cached prefix
+  // is reused only while these match the build that produced it.
+  const foldedAnswerMessageIds = new Set<string>();
+  const delegatedChildrenByRun = new Map<RunId, Set<string>>();
+  for (const { item } of visibleTurnItems) {
+    if (item.type === "user_input_request" && item.questionAnswer) {
+      foldedAnswerMessageIds.add(`async-answer:${item.questionAnswer.requestId}`);
+    } else if (item.type === "subagent" && item.origin === "app_owned" && item.runId !== null) {
+      const children = delegatedChildrenByRun.get(item.runId) ?? new Set<string>();
+      children.add(item.subagentId);
+      delegatedChildrenByRun.set(item.runId, children);
+    }
+  }
+
+  const previous = lastFeedBuild;
+  let restartIndex = -1;
+  if (
+    previous !== null &&
+    anchoredMessages.length === 0 &&
+    previous.attempts === options?.attempts &&
+    previous.nodes === options?.nodes &&
+    setsEqual(previous.foldedAnswerMessageIds, foldedAnswerMessageIds) &&
+    setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun)
+  ) {
+    const firstChanged = firstChangedIndex(previous.rows, visibleTurnItems);
+    restartIndex = previous.restarts.length - 1;
+    while (restartIndex >= 0 && previous.restarts[restartIndex]!.row > firstChanged) {
+      restartIndex -= 1;
+    }
+  }
+  const restart = restartIndex === -1 ? null : previous!.restarts[restartIndex]!;
+  const prefix = restart === null ? [] : previous!.feed.slice(0, restart.feedLength);
+  const restarts = restart === null ? [] : previous!.restarts.slice(0, restartIndex + 1);
+
+  const entries: RawThreadFeedEntry[] = [];
+  const entryRows: number[] = [];
+  for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
+    const row = visibleTurnItems[index]!;
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
@@ -1802,6 +2024,7 @@ export function buildThreadFeed(
     const cached = projectedEntriesCache.get(row);
     if (cached?.attemptId === attemptId) {
       entries.push(cached.entry);
+      entryRows.push(index);
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
@@ -1820,6 +2043,7 @@ export function buildThreadFeed(
       };
       projectedEntriesCache.set(row, { attemptId, entry });
       entries.push(entry);
+      entryRows.push(index);
       continue;
     }
     const app =
@@ -1839,6 +2063,7 @@ export function buildThreadFeed(
       };
       projectedEntriesCache.set(row, { attemptId, entry });
       entries.push(entry);
+      entryRows.push(index);
       continue;
     }
     if (item.type === "user_message" || item.type === "assistant_message") {
@@ -1873,6 +2098,7 @@ export function buildThreadFeed(
       };
       projectedEntriesCache.set(row, { attemptId, entry });
       entries.push(entry);
+      entryRows.push(index);
       continue;
     }
     const activity = toFeedActivity(row, attemptId);
@@ -1885,6 +2111,7 @@ export function buildThreadFeed(
     };
     projectedEntriesCache.set(row, { attemptId, entry });
     entries.push(entry);
+    entryRows.push(index);
   }
   const retainedMessageIds = new Set([
     ...foldedAnswerMessageIds,
@@ -1914,7 +2141,7 @@ export function buildThreadFeed(
     localMessageEntriesCache.set(message, entry);
     return entry;
   };
-  for (const message of options?.anchoredMessages ?? []) {
+  for (const message of anchoredMessages) {
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
     const entry = appendLocalMessage(message);
@@ -1924,5 +2151,30 @@ export function buildThreadFeed(
     if (insertionIndex === -1) entries.push(entry);
     else entries.splice(insertionIndex, 0, entry);
   }
-  return groupAdjacentActivities(entries);
+  const grouped = groupAdjacentActivities(
+    entries,
+    delegatedChildrenByRun,
+    // Anchored messages shift entries away from their rows; such a build is not reused.
+    anchoredMessages.length > 0
+      ? undefined
+      : (entryIndex, groupedLength) =>
+          restarts.push({
+            row: entryRows[entryIndex]! + 1,
+            feedLength: prefix.length + groupedLength,
+          }),
+  );
+  const feed = prefix.length === 0 ? grouped : prefix.concat(grouped);
+  lastFeedBuild =
+    anchoredMessages.length > 0
+      ? null
+      : {
+          rows: visibleTurnItems,
+          attempts: options?.attempts,
+          nodes: options?.nodes,
+          foldedAnswerMessageIds,
+          delegatedChildrenByRun,
+          feed,
+          restarts,
+        };
+  return feed;
 }
