@@ -64,6 +64,7 @@ const schema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -190,6 +191,7 @@ const plainSchema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -1357,5 +1359,47 @@ describe("inline code entry", () => {
     type(editor, open);
     expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}foo${open}`);
     expect(marked(editor, mark)).toEqual(["foo"]);
+  });
+});
+
+describe("picked skill persistence", () => {
+  it("keeps both same-name files through editing, copy and prompt rehydration", () => {
+    const skills = [
+      { name: "review.v2", path: "/repo/my skills/100%/SKILL.md", enabled: true },
+      {
+        name: "review.v2",
+        path: String.raw`C:\Users\Jane Doe\skills (old)\SKILL.md`,
+        enabled: true,
+      },
+    ];
+    const prompt = String.raw`[$review.v2](/repo/my%20skills/100%25/SKILL.md) and [$review.v2](C:\Users\Jane%20Doe\skills%20%28old%29\SKILL.md) please`;
+
+    for (const [editorSchema, styling] of [
+      [schema, true],
+      [plainSchema, false],
+    ] as const) {
+      const doc = ProseMirrorNode.fromJSON(
+        editorSchema,
+        buildDocJson(prompt, (name) => ({ label: name, description: null }), { styling }),
+      );
+      doc.check();
+      const state = EditorState.create({ doc });
+      const edited = state.apply(state.tr.insertText("Updated: ", 1)).doc;
+      const stored = serializeEditorDoc(edited).value;
+      expect(stored).toBe(`Updated: ${prompt}`);
+      expect(serializeSelection(edited, 1, edited.content.size - 1)).toBe(stored);
+      const restored = ProseMirrorNode.fromJSON(
+        editorSchema,
+        buildDocJson(stored, () => ({ label: "Unavailable skill", description: null }), {
+          styling,
+        }),
+      );
+      const paths: string[] = [];
+      restored.descendants((node) => {
+        if (node.type.name === "composer-skill") paths.push(node.attrs.skillPath);
+      });
+      expect(paths).toEqual(skills.map((skill) => skill.path));
+      expect(serializeEditorDoc(restored).value).toBe(stored);
+    }
   });
 });

@@ -111,10 +111,13 @@ describe("discoverGrokSkills", () => {
     ),
   );
 
-  it.effect("skips entries without a name or a filesystem path", () =>
+  it.effect("skips entries without a name or a filesystem path, and keeps same-name files", () =>
     Effect.gen(function* () {
       const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
-      expect(skills.map((skill) => skill.name)).toEqual(["kept"]);
+      expect(skills.map((skill) => skill.path)).toEqual([
+        "/repo/.grok/skills/kept/SKILL.md",
+        "/home/.grok/skills/kept/SKILL.md",
+      ]);
     }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -125,6 +128,7 @@ describe("discoverGrokSkills", () => {
             { name: "no-source" },
             "not-an-object",
             { name: "kept", source: { type: "project", path: "/repo/.grok/skills/kept/SKILL.md" } },
+            { name: "kept", source: { type: "user", path: "/home/.grok/skills/kept/SKILL.md" } },
           ]),
         ),
       ),

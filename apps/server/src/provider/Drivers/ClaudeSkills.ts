@@ -503,7 +503,7 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
-/** First name wins, matching Claude Code's precedence of user skills over project skills. */
+// Keeps every file for explicit picks; user skills stay first for plain mentions, as in Claude Code.
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
@@ -535,7 +535,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     )),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
     const singleSkill =
       root.prefix !== undefined &&
@@ -579,7 +579,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         if (mention?.[2] !== name) continue;
       }
 
-      if (skillsByName.has(name)) {
+      if (skillsByPath.has(skillPath)) {
         continue;
       }
 
@@ -587,7 +587,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
-      skillsByName.set(name, {
+      skillsByPath.set(skillPath, {
         name,
         path: skillPath,
         enabled: override?.enabled ?? true,
@@ -603,5 +603,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

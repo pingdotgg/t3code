@@ -138,6 +138,7 @@ import {
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
+import { collectLinkedSkillMentions, replaceLinkedSkillMentions } from "../linkedSkillMentions.ts";
 import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
@@ -442,6 +443,24 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  */
 function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+}
+
+// Codex skips name resolution for names already selected by structured input.
+function codexSkillInputs(text: string) {
+  const mentions = collectLinkedSkillMentions(text);
+  return {
+    text: codexSkillMentionText(
+      replaceLinkedSkillMentions(text, mentions, (mention) => `$${mention.name}`),
+    ),
+    skills: [
+      ...new Map(
+        mentions.map((mention) => [
+          mention.path,
+          { type: "skill" as const, name: mention.name, path: mention.path },
+        ]),
+      ).values(),
+    ],
+  };
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
@@ -3380,8 +3399,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          const skillInputs = codexSkillInputs(turnInput.message.text);
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: skillInputs.text,
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -3396,6 +3416,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               text,
             });
           }
+          inputItems.push(...skillInputs.skills);
           const attachmentItems = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             resolveCodexAttachment,

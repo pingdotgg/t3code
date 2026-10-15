@@ -88,8 +88,9 @@ timestamp shows when the displayed wait started.
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's
-`.claude/skills` folder. If both define the same name, the config-directory copy
-wins. Skills disabled in Claude's settings do not appear in the composer.
+`.claude/skills` folder. If both define the same name, select the file by its path
+in the composer. A plain `$name` uses the config-directory copy. Skills disabled
+in Claude's settings do not appear in the composer.
 
 Use `$` in the composer to select a skill. Enabled installed Claude plugins also
 contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`

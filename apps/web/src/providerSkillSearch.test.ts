@@ -32,7 +32,7 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "gfc").map((skill) => skill.name)).toEqual(["gh-fix-ci"]);
   });
 
-  it("returns the first enabled definition for each skill name", () => {
+  it("returns every file for a shared skill name", () => {
     const skills = [
       makeSkill({ name: "branch-audit", path: "/Users/matt/.codex/skills/branch-audit/SKILL.md" }),
       makeSkill({ name: "browser" }),
@@ -42,6 +42,7 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "").map((skill) => skill.path)).toEqual([
       "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       "/tmp/browser/SKILL.md",
+      "/Users/matt/.agents/skills/branch-audit/SKILL.md",
     ]);
   });
 });

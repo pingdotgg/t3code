@@ -4,12 +4,15 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
+  formatProviderSkillMention,
+  formatProviderSkillMenuDescription,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
@@ -40,29 +43,54 @@ const provider = {
 } satisfies ServerProvider;
 
 describe("getProviderSkillsForSlashMenu", () => {
-  it("shows one row when enabled skills share a name", () => {
-    const skills = [
-      {
-        name: "babysit-pr",
-        path: "/Users/matt/.codex/skills/babysit-pr/SKILL.md",
-        enabled: true,
-      },
-      {
-        name: "browser",
-        path: "/Users/matt/.agents/skills/browser/SKILL.md",
-        enabled: true,
-      },
-      {
-        name: "babysit-pr",
-        path: "/Users/matt/.agents/skills/babysit-pr/SKILL.md",
-        enabled: true,
-      },
-    ];
-
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
-      "babysit-pr",
-      "browser",
+  it("offers distinct, path-labelled picks for same-name files without duplicate rows", () => {
+    const first = {
+      name: "review.v2",
+      path: "/home/me/skills/review/SKILL.md",
+      enabled: true,
+      description: "Review code",
+    };
+    const second = { ...first, path: "/repo/my skills/100%/review/SKILL.md" };
+    const skills = [first, second, { ...second, path: second.path.replaceAll("/", "\\") }];
+    const rows = getProviderSkillsForSlashMenu(skills, true);
+    expect(rows).toEqual([first, second]);
+    expect(rows.map((skill) => formatProviderSkillMenuDescription(skill, skills))).toEqual([
+      `${first.path} · Review code`,
+      `${second.path} · Review code`,
     ]);
+    expect(
+      rows.map(
+        (skill) => collectComposerInlineTokens(`${formatProviderSkillMention(skill, skills)} `)[0],
+      ),
+    ).toMatchObject([
+      { type: "skill", value: "review.v2", path: first.path },
+      { type: "skill", value: "review.v2", path: second.path },
+    ]);
+  });
+
+  it("keeps plain mentions for unique invocable skills", () => {
+    const skill = { name: "review", path: "/repo/review/SKILL.md", enabled: true };
+    expect(formatProviderSkillMention(skill, [skill])).toBe("$review");
+    expect(
+      formatProviderSkillMention(skill, [
+        skill,
+        { ...skill, path: "/other/SKILL.md", enabled: false },
+      ]),
+    ).toBe("$review");
+    expect(
+      formatProviderSkillMention(skill, [
+        skill,
+        { ...skill, path: "/other/SKILL.md", userInvocable: false },
+      ]),
+    ).toBe("$review");
+
+    for (const path of ["acp://skill/review", "pi:skill:review", "https://example.com/SKILL.md"]) {
+      const native = { ...skill, path };
+      const duplicate = { ...native, path: `${path}/other` };
+      expect(getProviderSkillsForSlashMenu([native, duplicate], true)).toEqual([native]);
+      expect(formatProviderSkillMention(native, [native, duplicate])).toBe("$review");
+      expect(collectComposerInlineTokens(`[$review](${path}) `)).toEqual([]);
+    }
   });
 
   it("keeps an enabled skill when a disabled duplicate appears first", () => {

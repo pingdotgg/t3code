@@ -7,6 +7,10 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import {
+  formatLinkedSkillMention,
+  isLocalSkillFilePath,
+} from "@t3tools/shared/composerInlineTokens";
 import { Atom } from "effect/reactivity";
 
 import { deadlineStore } from "./clock.ts";
@@ -18,18 +22,53 @@ function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
 }
 
-export function dedupeProviderSkillsByName(
+export function dedupeProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
-  const seenNames = new Set<string>();
+  const seen = new Set<string>();
   return skills.filter((skill) => {
-    const normalizedName = skill.name.trim().toLowerCase();
-    if (seenNames.has(normalizedName)) {
-      return false;
-    }
-    seenNames.add(normalizedName);
+    // Native identifiers such as acp://skill/name still invoke by name.
+    const key = isLocalSkillFilePath(skill.path)
+      ? `path:${normalizePathSeparators(skill.path)}`
+      : `name:${skill.name.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
+}
+
+function isProviderSkillNameShared(
+  skill: Pick<ServerProviderSkill, "name" | "path">,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): boolean {
+  return (
+    isLocalSkillFilePath(skill.path) &&
+    skills.some(
+      (other) =>
+        other.name === skill.name &&
+        normalizePathSeparators(other.path) !== normalizePathSeparators(skill.path) &&
+        isProviderSkillUserInvocable(other),
+    )
+  );
+}
+
+export function formatProviderSkillMention(
+  skill: Pick<ServerProviderSkill, "name" | "path">,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  return isProviderSkillNameShared(skill, skills)
+    ? formatLinkedSkillMention(skill)
+    : `$${skill.name}`;
+}
+
+export function formatProviderSkillMenuDescription(
+  skill: ServerProviderSkill,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  fallback = "",
+): string {
+  const description = skill.shortDescription ?? skill.description ?? fallback;
+  if (!isProviderSkillNameShared(skill, skills)) return description;
+  return description ? `${skill.path} · ${description}` : skill.path;
 }
 
 /**
@@ -47,7 +86,7 @@ export function getProviderSkillsForSlashMenu(
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
+    ? dedupeProviderSkills(skills.filter(isProviderSkillUserInvocable))
     : [];
 }
 

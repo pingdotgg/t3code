@@ -437,6 +437,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly turnRuntime?: Pick<
+      ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      "driver" | "startTurn" | "steerTurn"
+    >;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
@@ -546,6 +550,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
           steerTurn: () => Effect.void,
+          ...options.turnRuntime,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
               ...current,
@@ -599,6 +604,10 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly turnRuntime?: Pick<
+    ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    "driver" | "startTurn" | "steerTurn"
+  >;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
@@ -638,6 +647,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.turnRuntime === undefined ? {} : { turnRuntime: input.turnRuntime }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
@@ -4635,6 +4645,124 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each(["claudeAgent", "codex"] as const)(
+  "preserves picked skill files through %s start and steer",
+  (driver) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const starts = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+      const steers = yield* Ref.make<
+        ReadonlyArray<Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["steerTurn"]>[0]>
+      >([]);
+      const first = "[$review.v2](/repo/my%20skills/100%25/review/SKILL.md)";
+      const second = "[$review.v2](/home/me/skills/review/SKILL.md)";
+      const originalText = `${first} then $lint and ${first}`;
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-picked-skills");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const input = {
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: originalText,
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        } satisfies ProviderAdapter.ProviderAdapterV2TurnInput;
+        yield* runtime.startTurn(input);
+        yield* runtime.steerTurn({
+          threadId,
+          runId,
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ProviderDriverKind.make(driver),
+            nativeTurnId: "picked-skill-turn",
+          }),
+          message: { ...input.message, text: `$lint then ${second}` },
+        });
+        const start = (yield* Ref.get(starts))[0];
+        const steer = (yield* Ref.get(steers))[0];
+        assert.isDefined(start);
+        assert.isDefined(steer);
+        if (driver === "codex") {
+          assert.equal(start!.message.text, originalText);
+          assert.equal(steer!.message.text, `$lint then ${second}`);
+        } else {
+          assert.include(start!.message.text, "review.v2 then $lint and review.v2");
+          assert.include(steer!.message.text, "$lint then review.v2");
+          for (const [text, picked, other] of [
+            [
+              start!.message.text,
+              "/repo/my skills/100%/review/SKILL.md",
+              "/home/me/skills/review/SKILL.md",
+            ],
+            [
+              steer!.message.text,
+              "/home/me/skills/review/SKILL.md",
+              "/repo/my skills/100%/review/SKILL.md",
+            ],
+          ] as const) {
+            assert.equal(text.split(picked).length, 2, "bind the picked file once");
+            assert.notInclude(text, other);
+            assert.notInclude(text, "$review");
+          }
+        }
+        assert.equal(
+          input.message.text,
+          originalText,
+          "dispatch must not rewrite the stored prompt",
+        );
+        yield* manager.close(providerSessionId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            turnRuntime: {
+              driver: ProviderDriverKind.make(driver),
+              startTurn: (input) => Ref.update(starts, (inputs) => [...inputs, input]),
+              steerTurn: (input) => Ref.update(steers, (inputs) => [...inputs, input]),
+            },
+          }),
+        ),
+      );
     }),
 );
 

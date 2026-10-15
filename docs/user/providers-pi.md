@@ -48,7 +48,8 @@ dialogs appear in the T3 Code composer, and the thread details context window fo
 reporting while a response streams and after it settles.
 
 Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
-loads for the current workspace; selecting one uses Pi's native skill expansion.
+loads for the current workspace. Plain skill mentions use Pi's native skill expansion;
+when files share a name, select the file by its path to follow that file's instructions.
 
 Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi.
 Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Notifications appear in

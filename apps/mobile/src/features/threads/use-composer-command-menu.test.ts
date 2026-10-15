@@ -105,6 +105,24 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  it("inserts the picked file when two skills share a name", () => {
+    const skills = [
+      { name: "review.v2", path: "/repo/my skills/100%/SKILL.md", enabled: true },
+      { name: "review.v2", path: "/home/me/review/SKILL.md", enabled: true },
+    ];
+    const select = (skill: (typeof skills)[number]) =>
+      resolveComposerCommandSelection({
+        draftMessage: "$rev",
+        trigger: { rangeStart: 0, rangeEnd: 4 },
+        item: { id: `skill:${skill.path}`, type: "skill", skill, label: skill.name },
+        skills,
+      }).text;
+    expect(skills.map(select)).toEqual([
+      "[$review.v2](/repo/my%20skills/100%25/SKILL.md) ",
+      "[$review.v2](/home/me/review/SKILL.md) ",
+    ]);
+  });
 });
 
 describe("mobile model mentions", () => {

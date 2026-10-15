@@ -316,6 +316,7 @@ const ComposerSkillExtension = Node.create({
   addAttributes() {
     return {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     };
@@ -391,9 +392,14 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
+  const skillPath = (node.attrs.skillPath as string | null) ?? null;
   const skill = skills.find(
-    (candidate) => candidate.name === skillName && isProviderSkillUserInvocable(candidate),
+    (candidate) =>
+      (skillPath ? candidate.path === skillPath : candidate.name === skillName) &&
+      isProviderSkillUserInvocable(candidate),
   );
+  // A linked file missing from the current skill list is still the one picked.
+  const instructionsPath = skill?.path ?? skillPath;
   // The node outlives a provider switch, so its stored label can be another provider's.
   const skillLabel = skill
     ? formatProviderSkillDisplayName(skill)
@@ -404,7 +410,9 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
         label={skillLabel}
         description={skill ? skillPopoverDescription(skill) : skillDescription}
         onViewInstructions={
-          skill?.path && actions.environmentId ? () => actions.openMention(skill.path) : undefined
+          instructionsPath && actions.environmentId
+            ? () => actions.openMention(instructionsPath)
+            : undefined
         }
       />
     </NodeViewWrapper>

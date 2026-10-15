@@ -11,6 +11,8 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      /** The exact SKILL.md, present when the mention is linked: `[$name](path)`. */
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -25,6 +27,9 @@ const SKILL_MENTION_SOURCE =
     .source;
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
+// Brackets delimit provider names, including dots; destinations encode whitespace and parentheses.
+const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([^\s[\]]+)\]\(([^()\s]+)\)(?=\s)/gu;
+const SKILL_FILE_REGEX = /[\\/]SKILL\.md$/i;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 // Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
@@ -93,18 +98,55 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+export function isLocalSkillFilePath(path: string): boolean {
+  return (
+    SKILL_FILE_REGEX.test(path) &&
+    (!URI_SCHEME_REGEX.test(path) || WINDOWS_DRIVE_PATH_REGEX.test(path))
+  );
+}
+
+export function formatLinkedSkillMention(skill: {
+  readonly name: string;
+  readonly path: string;
+}): string {
+  // encodeURIComponent leaves parentheses as they are.
+  const destination = skill.path.replace(/[%()<>\s]/gu, (character) =>
+    character === "(" ? "%28" : character === ")" ? "%29" : encodeURIComponent(character),
+  );
+  return `[$${skill.name}](${destination})`;
+}
+
+function collectLinkTokens(text: string): ComposerInlineToken[] {
+  const matches = collectMentionTokens(text);
+  for (const match of text.matchAll(LINKED_SKILL_TOKEN_REGEX)) {
+    let path: string;
+    try {
+      path = decodeURIComponent(match[3] ?? "");
+    } catch {
+      continue;
+    }
+    if (!isLocalSkillFilePath(path)) continue;
+    const start = (match.index ?? 0) + (match[1] ?? "").length;
+    const end = (match.index ?? 0) + match[0].length;
+    const source = text.slice(start, end);
+    matches.push({ type: "skill", value: match[2] ?? "", path, source, start, end });
+  }
+
+  return matches;
+}
+
 /**
- * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`.
+ * Formulas in composer text, ignoring `$` and `\[` inside file and skill links such as `posts.$postId.tsx`.
  * Links are masked with letters, not spaces, so a leading link cannot become an indented code
  * block. Bare `@path` mentions stay unmasked so `@README.md$` can still close a formula.
  */
 export function composerMathRanges(
   text: string,
-  mentions: ReadonlyArray<ComposerInlineToken> = collectMentionTokens(text),
+  mentions: ReadonlyArray<ComposerInlineToken> = collectLinkTokens(text),
 ) {
   let masked = text;
   for (const mention of mentions) {
-    if (mention.type !== "mention" || !mention.source.startsWith("[")) continue;
+    if (!mention.source.startsWith("[")) continue;
     masked =
       masked.slice(0, mention.start) +
       "x".repeat(mention.end - mention.start) +
@@ -121,7 +163,7 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  const matches = collectLinkTokens(text);
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

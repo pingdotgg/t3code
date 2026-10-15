@@ -464,7 +464,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
+  it.effect("lists user and project skills that share a name, skipping .agents", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -497,6 +497,13 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "User deploy.",
+        },
+        {
+          name: "deploy",
+          path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Claude deploy.",
         },
       ]);
     }),

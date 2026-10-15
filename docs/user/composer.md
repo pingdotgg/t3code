@@ -279,6 +279,10 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → Chat →
 Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 
+When skill files share a name, the menu shows their paths. Pick the file you want;
+its linked mention keeps that choice when you edit or save the prompt. Typing a
+plain `$name` uses the provider's usual name resolution.
+
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.

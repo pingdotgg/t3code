@@ -21,7 +21,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers project, user, then built-in skills by precedence", async () =>
+  it("discovers project, user, then built-in skills by precedence, keeping same-name files", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -106,6 +106,20 @@ describe("Cursor skills", () => {
             description: "project review",
             path: path.join(workspace, ".agents", "skills", "nested", "review", "SKILL.md"),
             scope: "project",
+            enabled: true,
+          },
+          {
+            name: "review",
+            description: "user review",
+            path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "review",
+            description: "builtin review",
+            path: path.join(builtinRoot, "review", "SKILL.md"),
+            scope: "system",
             enabled: true,
           },
         ]);
