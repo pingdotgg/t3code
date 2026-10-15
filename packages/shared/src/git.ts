@@ -207,6 +207,33 @@ export function normalizeGitRemoteUrl(value: string): string {
 }
 
 /**
+ * Reads `git remote -v` output, one entry per remote and direction. Partial clones print the
+ * remote's filter after the direction, as in `origin <url> (fetch) [blob:none]`, so trailing
+ * bracketed annotations are accepted and dropped. Lines that are not remote entries are skipped.
+ */
+export function parseGitRemoteVerbose(stdout: string): Array<{
+  readonly name: string;
+  readonly url: string;
+  readonly direction: "fetch" | "push";
+}> {
+  return stdout.split("\n").flatMap((line) => {
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]*\])*$/.exec(line.trim());
+    if (!match) return [];
+    const direction: "fetch" | "push" = match[3] === "fetch" ? "fetch" : "push";
+    return [{ name: match[1]!, url: match[2]!, direction }];
+  });
+}
+
+/** Fetch URL per remote name from `git remote -v` output; a later line for the same name wins. */
+export function parseGitRemoteFetchUrls(stdout: string): Map<string, string> {
+  return new Map(
+    parseGitRemoteVerbose(stdout)
+      .filter((remote) => remote.direction === "fetch")
+      .map((remote) => [remote.name, remote.url]),
+  );
+}
+
+/**
  * Unquote a git config value: strip an inline `#` or `;` comment outside
  * quotes, then drop surrounding quotes and backslash escapes.
  */

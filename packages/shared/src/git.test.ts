@@ -10,6 +10,8 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  parseGitRemoteFetchUrls,
+  parseGitRemoteVerbose,
   parseOriginUrlFromGitConfig,
   resolveAutoFeatureBranchName,
   sanitizeFeatureBranchName,
@@ -85,6 +87,76 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/T3Code")).toBe(
       "ssh.dev.azure.com/v3/t3tools/t3code",
+    );
+  });
+});
+
+describe("parseGitRemoteVerbose", () => {
+  const url = "https://github.com/pingdotgg/t3code";
+
+  it("reads fetch and push lines", () => {
+    expect(
+      parseGitRemoteVerbose(
+        `origin\t${url} (fetch)\norigin\t${url} (push)\nfork\tgit@github.com:me/t3code.git (fetch)\n`,
+      ),
+    ).toEqual([
+      { name: "origin", url, direction: "fetch" },
+      { name: "origin", url, direction: "push" },
+      { name: "fork", url: "git@github.com:me/t3code.git", direction: "fetch" },
+    ]);
+  });
+
+  it("reads partial-clone lines that carry their filter after the direction", () => {
+    expect(
+      parseGitRemoteVerbose(`origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)`),
+    ).toEqual([
+      { name: "origin", url, direction: "fetch" },
+      { name: "origin", url, direction: "push" },
+    ]);
+    expect(parseGitRemoteVerbose(`origin\t${url} (fetch) [tree:0]`)).toEqual([
+      { name: "origin", url, direction: "fetch" },
+    ]);
+    expect(parseGitRemoteVerbose(`origin\t${url} (fetch) [blob:none] [tree:0]`)).toEqual([
+      { name: "origin", url, direction: "fetch" },
+    ]);
+  });
+
+  it("tolerates CRLF line endings and blank lines", () => {
+    expect(
+      parseGitRemoteVerbose(
+        `\r\norigin\t${url} (fetch) [blob:none]\r\n\r\norigin\t${url} (push)\r\n`,
+      ),
+    ).toEqual([
+      { name: "origin", url, direction: "fetch" },
+      { name: "origin", url, direction: "push" },
+    ]);
+  });
+
+  it("skips lines that are not remote entries", () => {
+    expect(
+      parseGitRemoteVerbose(
+        [
+          "origin",
+          `origin\t${url}`,
+          `origin\t${url} (pull)`,
+          `origin\t${url} (fetch) trailing`,
+          `origin\t${url} (fetch) [blob:none`,
+          `origin\t${url} (push)`,
+        ].join("\n"),
+      ),
+    ).toEqual([{ name: "origin", url, direction: "push" }]);
+  });
+
+  it("maps each remote to its fetch URL", () => {
+    expect(
+      parseGitRemoteFetchUrls(
+        `origin\t${url} (fetch) [blob:none]\norigin\thttps://push.example/t3code (push)\nfork\tgit@github.com:me/t3code.git (fetch)\n`,
+      ),
+    ).toEqual(
+      new Map([
+        ["origin", url],
+        ["fork", "git@github.com:me/t3code.git"],
+      ]),
     );
   });
 });

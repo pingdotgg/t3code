@@ -175,6 +175,41 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
 
+  it.effect("resolves a partial clone whose fetch line carries its filter", () => {
+    const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.succeed({
+          stdout: input.args.includes("rev-parse")
+            ? "/repo\n"
+            : "origin\thttps://github.com/pingdotgg/t3code (fetch) [blob:none]\norigin\thttps://github.com/pingdotgg/t3code (push)\n",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+    });
+    const layerResolver = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(layerProcessRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve("/repo");
+
+      expect(identity?.canonicalKey).toBe("github.com/pingdotgg/t3code");
+      expect(identity?.locator).toEqual({
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/pingdotgg/t3code",
+      });
+      expect(identity?.provider).toBe("github");
+    }).pipe(Effect.provide(layerResolver));
+  });
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -3679,6 +3679,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
       }),
     );
+
+    it.effect("ensureRemote reuses a partial-clone remote with an annotated fetch line", () =>
+      Effect.gen(function* () {
+        const url = "https://github.com/pingdotgg/t3code.git";
+        const commands: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+            commands.push(args);
+            return makeSuccessfulHandle(
+              args[0] === "remote" && args[1] === "-v"
+                ? `origin\t${url} (fetch) [blob:none]\norigin\t${url} (push)\n`
+                : "",
+            );
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const remoteName = yield* driver.ensureRemote({
+          cwd: "/repo",
+          preferredName: "pingdotgg",
+          url: "git@github.com:pingdotgg/t3code.git",
+        });
+
+        assert.equal(remoteName, "origin");
+        assert.isFalse(commands.some((args) => args[0] === "remote" && args[1] === "add"));
+      }),
+    );
   });
 
   describe("commit context", () => {
