@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -140,6 +141,17 @@ const tokenGranted = {
   }),
 };
 
+const rotatedTokenGranted = {
+  status: 200,
+  body: encodeTestTokenResponse({
+    access_token: "access-token-2",
+    refresh_token: "refresh-token-2",
+    id_token: idTokenWithEmail,
+    expires_in: 3600,
+    token_type: "bearer",
+  }),
+};
+
 const layerDeviceFlow = (server: DeviceFlowServer) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -167,44 +179,169 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
 const tokenRequests = (requests: ReadonlyArray<RecordedTokenRequest>) =>
   requests.filter((request) => request.url.endsWith("/oauth/token"));
 
-// The endpoint sends 200 headers, then the JSON body never finishes.
-const layerStalledBody = Layer.succeed(
-  HttpClient.HttpClient,
-  HttpClient.make((request) =>
-    Effect.succeed(
-      HttpClientResponse.fromWeb(
-        request,
-        new Response(
-          new ReadableStream({
-            start: (controller) => controller.enqueue(new TextEncoder().encode("{")),
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
+// The endpoint sends headers, then the JSON body never finishes.
+const layerStalledBody = (status: number) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream({
+              start: (controller) => controller.enqueue(new TextEncoder().encode("{")),
+            }),
+            { status, headers: { "content-type": "application/json" } },
+          ),
         ),
       ),
     ),
-  ),
-);
+  );
 
 const expiredStoredToken = new TextEncoder().encode(
   JSON.stringify({ accessToken: "expired", refreshToken: "refresh-token-1", expiresAtEpochMs: 0 }),
 );
 
-it.effect("a stalled token refresh fails and releases the credential lock", () =>
+const layerRefreshResponse = (reply: { readonly status: number; readonly body: string }) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(reply.body, {
+            status: reply.status,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ),
+    ),
+  );
+
+const layerUnreadableResponseBody = (status: number) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream({
+              start: (controller) => controller.error(new Error("body read failed")),
+            }),
+            { status, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    ),
+  );
+
+it.effect("persists a rotated refresh token before parent interruption is delivered", () =>
+  Effect.gen(function* () {
+    const requestStarted = yield* Deferred.make<void>();
+    const releaseRequest = yield* Deferred.make<void>();
+    const persistStarted = yield* Deferred.make<Uint8Array>();
+    const releasePersist = yield* Deferred.make<void>();
+    let persisted: Uint8Array | undefined;
+
+    const httpClient = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(requestStarted, undefined);
+          yield* Deferred.await(releaseRequest);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(rotatedTokenGranted.body, {
+              status: rotatedTokenGranted.status,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      ),
+    );
+    const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
+      get: () => Effect.succeedSome(expiredStoredToken),
+      set: (_name, value) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(persistStarted, value);
+          yield* Deferred.await(releasePersist);
+          persisted = value;
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const manager = yield* CliTokenManager.CloudCliTokenManager;
+      const refresh = yield* manager.getExisting.pipe(Effect.forkChild);
+
+      yield* Deferred.await(requestStarted);
+      const interruption = yield* Effect.forkChild(Fiber.interrupt(refresh), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(releaseRequest, undefined);
+      const persistedBeforeExit = yield* Effect.raceFirst(
+        Deferred.await(persistStarted).pipe(Effect.as(true)),
+        Fiber.await(refresh).pipe(Effect.as(false)),
+      );
+      assert.isTrue(persistedBeforeExit, "refresh exited before persistence started");
+      yield* Deferred.succeed(releasePersist, undefined);
+      yield* Fiber.join(interruption);
+
+      // The queued interruption may be delivered immediately after the
+      // uninterruptible refresh transaction completes. Either exit is valid;
+      // the important guarantee is that persistence finished first.
+      yield* Fiber.await(refresh);
+      assert.isDefined(persisted);
+      assert.equal(
+        JSON.parse(new TextDecoder().decode(persisted!)).refreshToken,
+        "refresh-token-2",
+      );
+    }).pipe(
+      Effect.provide(
+        CliTokenManager.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              httpClient,
+              secrets,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              NodeServices.layer,
+            ),
+          ),
+        ),
+      ),
+      provideTestEnv,
+    );
+  }),
+);
+
+it.effect.each([
+  { status: 400, requiresLogin: true },
+  { status: 401, requiresLogin: true },
+  { status: 403, requiresLogin: true },
+  { status: 408, requiresLogin: false },
+  { status: 429, requiresLogin: false },
+  { status: 500, requiresLogin: false },
+])("marks refresh status $status as requiresLogin=$requiresLogin", ({ status, requiresLogin }) =>
   Effect.gen(function* () {
     const manager = yield* CliTokenManager.CloudCliTokenManager;
-    const refresh = yield* manager.getExisting.pipe(Effect.flip, Effect.forkChild);
-    const hasCredential = yield* manager.hasCredential.pipe(Effect.forkChild);
+    const error = yield* manager.getExisting.pipe(Effect.flip);
 
-    yield* TestClock.adjust(Duration.seconds(10));
-
-    assert.instanceOf(yield* Fiber.join(refresh), CliTokenManager.CloudCliCredentialRefreshError);
-    assert.isTrue(yield* Fiber.join(hasCredential));
+    assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
+    assert.equal(error.requiresLogin, requiresLogin);
+    assert.equal(error.message.includes("t3 connect login"), requiresLogin);
+    assert.equal(error.message.includes("OAuth error: invalid_grant"), requiresLogin);
+    assert.notInclude(error.message, "private-oauth-diagnostic");
   }).pipe(
     Effect.provide(
       CliTokenManager.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            layerStalledBody,
+            layerRefreshResponse({
+              status,
+              body: JSON.stringify({
+                error: "invalid_grant",
+                error_description: "private-oauth-diagnostic",
+              }),
+            }),
             Layer.mock(ServerSecretStore.ServerSecretStore)({
               get: () => Effect.succeedSome(expiredStoredToken),
             }),
@@ -216,6 +353,138 @@ it.effect("a stalled token refresh fails and releases the credential lock", () =
     ),
     provideTestEnv,
   ),
+);
+
+it.effect("only includes an allowlisted OAuth error code in a login prompt", () =>
+  Effect.gen(function* () {
+    const manager = yield* CliTokenManager.CloudCliTokenManager;
+    const error = yield* manager.getExisting.pipe(Effect.flip);
+
+    assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
+    assert.isTrue(error.requiresLogin);
+    assert.include(error.message, "t3 connect login");
+    assert.notInclude(error.message, "provider_secret");
+    assert.notInclude(error.message, "private-oauth-diagnostic");
+    assert.notInclude(error.message, "OAuth error:");
+  }).pipe(
+    Effect.provide(
+      CliTokenManager.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerRefreshResponse({
+              status: 400,
+              body: JSON.stringify({
+                error: "provider_secret",
+                error_description: "private-oauth-diagnostic",
+              }),
+            }),
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeedSome(expiredStoredToken),
+            }),
+            Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+            NodeServices.layer,
+          ),
+        ),
+      ),
+    ),
+    provideTestEnv,
+  ),
+);
+
+it.effect.each([
+  {
+    name: "malformed",
+    layer: layerRefreshResponse({ status: 400, body: "{" }),
+    expectedBodyCause: false,
+  },
+  { name: "unreadable", layer: layerUnreadableResponseBody(400), expectedBodyCause: true },
+])("keeps the permanent status for a $name refresh error body", ({ layer, expectedBodyCause }) =>
+  Effect.gen(function* () {
+    const manager = yield* CliTokenManager.CloudCliTokenManager;
+    const error = yield* manager.getExisting.pipe(Effect.flip);
+
+    assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
+    assert.isTrue(error.requiresLogin);
+    assert.include(error.message, "t3 connect login");
+    assert.isTrue(HttpClientError.isHttpClientError(error.cause));
+    if (HttpClientError.isHttpClientError(error.cause)) {
+      assert.equal(error.cause.reason._tag, "StatusCodeError");
+      if (error.cause.reason._tag === "StatusCodeError") {
+        assert.equal(error.cause.reason.response.status, 400);
+        if (expectedBodyCause) {
+          assert.isTrue(HttpClientError.isHttpClientError(error.cause.reason.cause));
+          if (HttpClientError.isHttpClientError(error.cause.reason.cause)) {
+            assert.equal(error.cause.reason.cause.reason._tag, "DecodeError");
+            if (error.cause.reason.cause.reason._tag === "DecodeError") {
+              assert.instanceOf(error.cause.reason.cause.reason.cause, Error);
+              assert.equal(
+                (error.cause.reason.cause.reason.cause as Error).message,
+                "body read failed",
+              );
+            }
+          }
+        } else {
+          assert.isUndefined(error.cause.reason.cause);
+        }
+      }
+    }
+  }).pipe(
+    Effect.provide(
+      CliTokenManager.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layer,
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeedSome(expiredStoredToken),
+            }),
+            Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+            NodeServices.layer,
+          ),
+        ),
+      ),
+    ),
+    provideTestEnv,
+  ),
+);
+
+it.effect.each([200, 400])(
+  "a stalled $status token refresh fails and releases the credential lock",
+  (status) =>
+    Effect.gen(function* () {
+      const manager = yield* CliTokenManager.CloudCliTokenManager;
+      const refresh = yield* manager.getExisting.pipe(Effect.flip, Effect.forkChild);
+      const hasCredential = yield* manager.hasCredential.pipe(Effect.forkChild);
+
+      yield* TestClock.adjust(Duration.seconds(10));
+
+      const error = yield* Fiber.join(refresh);
+      assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
+      assert.equal(error.requiresLogin, status === 400);
+      assert.equal(error.message.includes("t3 connect login"), status === 400);
+      if (status === 400 && HttpClientError.isHttpClientError(error.cause)) {
+        assert.equal(error.cause.reason._tag, "StatusCodeError");
+        if (error.cause.reason._tag === "StatusCodeError") {
+          assert.isTrue(Cause.isTimeoutError(error.cause.reason.cause));
+        }
+      }
+      assert.isTrue(yield* Fiber.join(hasCredential));
+    }).pipe(
+      Effect.provide(
+        CliTokenManager.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerStalledBody(status),
+              Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: () => Effect.succeedSome(expiredStoredToken),
+              }),
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              NodeServices.layer,
+            ),
+          ),
+        ),
+      ),
+      provideTestEnv,
+    ),
 );
 
 it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) => {
@@ -380,7 +649,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
   it.effect("fails instead of hanging when the device authorization response stalls", () =>
     Effect.gen(function* () {
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(layerStalledBody),
+        Effect.provide(layerStalledBody(200)),
         provideTestEnv,
         Effect.flip,
         Effect.forkChild,

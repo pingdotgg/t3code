@@ -313,7 +313,9 @@ const isPermanentLinkError = Schema.is(
 
 /** Whether a failed link step may succeed on retry: not when the relay or this server refused it. */
 export const shouldRetryCloudLink = (error: unknown): boolean =>
-  shouldRetryRelayRequest(error) && !isPermanentLinkError(error);
+  shouldRetryRelayRequest(error) &&
+  !isPermanentLinkError(error) &&
+  !(CliTokenManager.isCloudCliCredentialRefreshError(error) && error.requiresLogin === true);
 
 /** A failed rollback leaves a setting changed; it is logged, not hidden. */
 const rollbackFailed = (cause: unknown) =>

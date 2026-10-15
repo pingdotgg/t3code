@@ -1271,6 +1271,18 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.each([
+    { requiresLogin: true, retry: false },
+    { requiresLogin: false, retry: true },
+  ])("$requiresLogin refresh errors are retry=$retry", ({ requiresLogin, retry }) => {
+    const error = new CliTokenManager.CloudCliCredentialRefreshError({
+      cause: new Error("refresh failed"),
+      requiresLogin,
+    });
+
+    expect(CloudLink.shouldRetryCloudLink(error)).toBe(retry);
+  });
+
   it.effect("keeps a tunnel configuration replaced during recovery", () => {
     const { store, values } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
