@@ -33,6 +33,9 @@ import {
 
 const BOOT_SERVICE_NAME = "t3code";
 const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
+// Systemd expands this exact-match glob only over loaded units, so an unloaded
+// unit has no failed state to reset.
+const BOOT_SERVICE_RESET_FAILED_PATTERN = "[t]3code.service";
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.t3tools.t3code), so launchd and TCC records never collide.
 const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
@@ -228,6 +231,8 @@ export interface BootServiceManager {
   readonly render: (plan: BootServicePlan) => string;
   /** Before rewriting files, when a unit is already installed. */
   readonly stop: ReadonlyArray<BootServiceStep>;
+  /** Clear manager failure state before starting an existing unit. */
+  readonly resetFailed: ReadonlyArray<BootServiceStep>;
   /** After files are written. The last entry starts the service. */
   readonly activate: ReadonlyArray<BootServiceStep>;
   /** Best-effort recovery after a failed repair of an installed service. */
@@ -259,6 +264,13 @@ function systemdManager(input: {
         command: "systemctl",
         args: ["--user", "stop", BOOT_SERVICE_UNIT_FILE],
         timeout: STOP_STEP_TIMEOUT,
+      },
+    ],
+    resetFailed: [
+      {
+        step: "clearing the failed service state",
+        command: "systemctl",
+        args: ["--user", "reset-failed", BOOT_SERVICE_RESET_FAILED_PATTERN],
       },
     ],
     activate: [
@@ -346,6 +358,7 @@ function launchdManager(input: {
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
+    resetFailed: [],
     activate: [
       // A persisted `launchctl disable` override refuses bootstrap; clear it.
       {
@@ -891,6 +904,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
+        if (installed) {
+          yield* runSteps(manager.resetFailed);
+        }
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
       }
@@ -917,7 +933,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       return false;
     }
     yield* runSteps(manager.stop);
-    yield* runSteps(manager.activate).pipe(
+    yield* Effect.gen(function* () {
+      yield* runSteps(manager.resetFailed);
+      yield* runSteps(manager.activate);
+    }).pipe(
       // Same recovery as a failed repair: a service that was running should
       // not be left stopped because daemon-reload or enable failed.
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
