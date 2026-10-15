@@ -1,3 +1,4 @@
+import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -1133,7 +1134,10 @@ export default function GitActionsControl({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = gitStatus;
+  const gitStatusForActions = useMemo(
+    () => resolveThreadGitStatus(gitStatus, activeServerThread?.pullRequests),
+    [gitStatus, activeServerThread?.pullRequests],
+  );
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
