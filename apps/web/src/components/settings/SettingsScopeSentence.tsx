@@ -27,6 +27,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
+  settingsScopeEnvironmentOptions,
 } from "./settingsScopeAxis";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
@@ -122,6 +123,9 @@ function EnvironmentScopeMenu({
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
   );
+  // A stale link may still name an environment outside this list; the trigger
+  // keeps its label so the unavailable notice below reads correctly.
+  const options = settingsScopeEnvironmentOptions(value, groups, environments);
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
@@ -162,7 +166,7 @@ function EnvironmentScopeMenu({
             <MenuSeparator />
           </>
         ) : null}
-        {environments.map((environment) => (
+        {options.map((environment) => (
           <MenuRadioItem
             key={environment.environmentId}
             value={environment.environmentId}

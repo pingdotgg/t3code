@@ -75,3 +75,25 @@ export function selectSingleEnvironmentScope(
     candidates[0];
   return selected ? { ...search, machine: selected.environmentId } : search;
 }
+
+/**
+ * Environments the environment axis offers. With a project picked, only the
+ * environments holding one of its checkouts are listed, like the composer's
+ * "Run on" picker; a project override has nowhere to land anywhere else.
+ */
+export function settingsScopeEnvironmentOptions<
+  E extends Pick<EnvironmentPresentation, "environmentId">,
+>(
+  search: SettingsScopeSearch,
+  groups: readonly {
+    readonly projectKey: string;
+    readonly memberProjects: readonly { readonly environmentId: string }[];
+  }[],
+  environments: readonly E[],
+): readonly E[] {
+  if (!search.project) return environments;
+  const group = groups.find((candidate) => candidate.projectKey === search.project);
+  if (!group) return environments;
+  const memberEnvironmentIds = new Set(group.memberProjects.map((member) => member.environmentId));
+  return environments.filter((environment) => memberEnvironmentIds.has(environment.environmentId));
+}

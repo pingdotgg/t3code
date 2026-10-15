@@ -15,7 +15,16 @@ import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
@@ -64,10 +73,13 @@ export function ProjectSettingsPanel({
   projectKey,
   environmentId = null,
   checkoutKey = null,
+  unavailable = null,
 }: {
   projectKey: string;
   environmentId?: EnvironmentId | null;
   checkoutKey?: string | null;
+  /** Shown while the project exists but no checkout matches the axes. */
+  unavailable?: ReactNode;
 }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate({ from: "/settings" });
@@ -139,12 +151,7 @@ export function ProjectSettingsPanel({
       </div>
     );
   }
-  if (members.length === 0)
-    return (
-      <p className="p-8 text-sm text-muted-foreground">
-        This checkout is no longer available in the selected project and environment.
-      </p>
-    );
+  if (members.length === 0) return unavailable;
   const scopedGroup = {
     ...selected,
     memberProjects: members,

@@ -7,6 +7,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
+  settingsScopeEnvironmentOptions,
 } from "./settingsScopeAxis";
 
 const first = {
@@ -84,5 +85,26 @@ describe("environmentAxisValue", () => {
     expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
     expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
     expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  });
+});
+
+describe("settings scope environment options", () => {
+  const demo = { projectKey: "demo", memberProjects: [{ environmentId: first.environmentId }] };
+  const environments = [first, second];
+
+  it("lists every environment without a project", () => {
+    expect(settingsScopeEnvironmentOptions({}, [demo], environments)).toEqual(environments);
+  });
+
+  it("lists only environments holding a checkout of the picked project", () => {
+    expect(settingsScopeEnvironmentOptions({ project: "demo" }, [demo], environments)).toEqual([
+      first,
+    ]);
+  });
+
+  it("falls back to every environment when the picked project is unknown", () => {
+    expect(settingsScopeEnvironmentOptions({ project: "gone" }, [demo], environments)).toEqual(
+      environments,
+    );
   });
 });
