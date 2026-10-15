@@ -1,4 +1,6 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -6274,37 +6276,45 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef],
   );
-  const copyRightPanelFilePath = useCallback((relativePath: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    void navigator.clipboard.writeText(relativePath).then(
-      () => {
-        toastManager.add({
-          type: "success",
-          title: "Path copied",
-          description: relativePath,
-        });
-      },
-      (error) => {
+  const fileCopyCwd = gitCwd ?? activeProjectCwd ?? "";
+  const copyRightPanelFilePath = useCallback(
+    (relativePath: string) => {
+      if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Failed to copy path",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            description: "Clipboard API unavailable.",
           }),
         );
-      },
-    );
-  }, []);
+        return;
+      }
+
+      const clipboardPath = formatFilePathForClipboard(
+        relativePath,
+        resolvePathLinkTarget(relativePath, fileCopyCwd),
+      );
+      void navigator.clipboard.writeText(clipboardPath).then(
+        () => {
+          toastManager.add({
+            type: "success",
+            title: "Path copied",
+            description: clipboardPath,
+          });
+        },
+        (error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to copy path",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        },
+      );
+    },
+    [fileCopyCwd],
+  );
   useEffect(
     () =>
       subscribePreviewAction((action) => {

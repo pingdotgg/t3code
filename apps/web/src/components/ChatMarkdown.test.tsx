@@ -16,6 +16,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { readLocalApi } from "../localApi";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -1075,6 +1076,105 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+describe.each(["Win32", "MacIntel"])(
+  "ChatMarkdown file path clipboard actions on %s",
+  (platform) => {
+    it.each([
+      {
+        name: "full Windows drive path with spaces",
+        cwd: "C:/Users/me/project",
+        href: "C:/Users/me/project/reports/Device Users.csv",
+        action: "copy-full",
+        expected: String.raw`C:\Users\me\project\reports\Device Users.csv`,
+      },
+      {
+        name: "relative Windows drive path",
+        cwd: "C:/Users/me/project",
+        href: "C:/Users/me/project/reports/Device Users.csv",
+        action: "copy-relative",
+        expected: String.raw`project\reports\Device Users.csv`,
+      },
+      {
+        name: "relative link in a Windows workspace",
+        cwd: String.raw`C:\Users\me\project`,
+        href: "reports/Device Users.csv",
+        action: "copy-full",
+        expected: String.raw`C:\Users\me\project\reports\Device Users.csv`,
+      },
+      {
+        name: "full UNC path",
+        cwd: String.raw`\\server\share\project`,
+        href: "file://server/share/project/reports/Device%20Users.csv",
+        action: "copy-full",
+        expected: String.raw`\\server\share\project\reports\Device Users.csv`,
+      },
+      {
+        name: "relative UNC path",
+        cwd: String.raw`\\server\share\project`,
+        href: "file://server/share/project/reports/Device%20Users.csv",
+        action: "copy-relative",
+        expected: String.raw`project\reports\Device Users.csv`,
+      },
+      {
+        name: "full POSIX path",
+        cwd: "/home/me/project",
+        href: "/home/me/project/reports/Device Users.csv",
+        action: "copy-full",
+        expected: "/home/me/project/reports/Device Users.csv",
+      },
+      {
+        name: "relative POSIX path",
+        cwd: "/home/me/project",
+        href: "/home/me/project/reports/Device Users.csv",
+        action: "copy-relative",
+        expected: "project/reports/Device Users.csv",
+      },
+      {
+        name: "Windows path with line and column",
+        cwd: "C:/Users/me/project",
+        href: "C:/Users/me/project/src/main.ts:12:3",
+        action: "copy-full",
+        expected: String.raw`C:\Users\me\project\src\main.ts:12:3`,
+      },
+    ])("copies $name", async ({ cwd, href, action, expected }) => {
+      const writeText = vi.fn(async (_text: string) => {});
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+
+      try {
+        vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+        vi.stubGlobal("navigator", { platform, clipboard: { writeText } });
+        const api = readLocalApi();
+        if (!api) throw new Error("Local API unavailable");
+        vi.spyOn(api.contextMenu, "show").mockResolvedValue(action);
+        await act(async () => {
+          root.render(
+            <ChatMarkdown
+              cwd={cwd}
+              environmentId={EnvironmentId.make("env-file-copy")}
+              text={`[File](<${href}>)`}
+            />,
+          );
+        });
+        const link = container.querySelector(".chat-markdown-file-link");
+        if (!link) throw new Error("File link unavailable");
+        await act(async () => {
+          link.dispatchEvent(
+            new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
+          );
+        });
+        expect(writeText).toHaveBeenCalledWith(expected);
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+      }
+    });
+  },
+);
 
 it("opens a disclosure only when find selects a match inside it", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

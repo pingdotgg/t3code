@@ -224,7 +224,12 @@ import {
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
+import {
+  fileChipClipboardPath,
+  fileChipMenu,
+  resolveFileChipTarget,
+  type FileChipAction,
+} from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
@@ -1907,13 +1912,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onFileContextMenuAction: (href, actionId) => {
         const target = resolveFileChipTarget(href, props.workspaceRoot);
         if (!target) return;
-        switch (actionId as FileChipAction) {
+        const action = actionId as FileChipAction;
+        switch (action) {
           case "copy-full-path":
-            if (target.fullPath) copyTextWithHaptic(target.fullPath);
+          case "copy-relative-path": {
+            const clipboardPath = fileChipClipboardPath(target, action);
+            if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
             return;
-          case "copy-relative-path":
-            if (target.relativePath) copyTextWithHaptic(target.relativePath);
-            return;
+          }
           case "open-file":
             onMarkdownLinkPress(href);
             return;

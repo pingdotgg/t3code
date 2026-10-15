@@ -14,6 +14,8 @@ import {
   mediaMimeTypeFromExtension,
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { AudioFilePreview } from "../../components/AudioFilePreview";
@@ -819,7 +821,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               title: "Copy path",
               icon: "doc.on.doc",
               inline: false,
-              onPress: () => copyTextWithHaptic(relativePath),
+              onPress: () =>
+                copyTextWithHaptic(
+                  formatFilePathForClipboard(
+                    relativePath,
+                    resolvePathLinkTarget(relativePath, cwd ?? ""),
+                  ),
+                ),
             } as const,
           ]),
       // Selecting a long file by hand is painful on a phone, so copying the whole thing is
@@ -881,6 +889,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     isBrowserFile,
     isImageFile,
     isVideoFile,
+    cwd,
     relativePath,
     resolvedActiveMode,
     mediaSource,

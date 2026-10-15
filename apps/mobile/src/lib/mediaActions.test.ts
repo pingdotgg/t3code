@@ -5,6 +5,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -94,6 +95,70 @@ beforeEach(() => {
   state.shareDraft.mockReset().mockResolvedValue(undefined);
   state.navigate.mockReset();
   state.copy.mockReset();
+});
+
+it.each([
+  [
+    "C:/repo/assets/shot.png",
+    "C:/repo",
+    String.raw`C:\repo\assets\shot.png`,
+    String.raw`assets\shot.png`,
+  ],
+  [
+    "C:/repo/assets/clip with spaces.mp4",
+    "C:/repo",
+    String.raw`C:\repo\assets\clip with spaces.mp4`,
+    String.raw`assets\clip with spaces.mp4`,
+  ],
+  [
+    String.raw`\\server\share\repo/assets/shot.png`,
+    String.raw`\\server\share\repo`,
+    String.raw`\\server\share\repo\assets\shot.png`,
+    String.raw`assets\shot.png`,
+  ],
+  [
+    String.raw`\\server\share\repo/assets/clip.mp4`,
+    String.raw`\\server\share\repo`,
+    String.raw`\\server\share\repo\assets\clip.mp4`,
+    String.raw`assets\clip.mp4`,
+  ],
+  ["/repo/assets/shot.png", "/repo", "/repo/assets/shot.png", "assets/shot.png"],
+  ["/repo/assets/clip.mp4", "/repo", "/repo/assets/clip.mp4", "assets/clip.mp4"],
+] as const)("copies full and relative media paths for %s", (path, root, full, relative) => {
+  const media = useMediaActions({
+    environmentId,
+    threadId,
+    resource: { _tag: "media-file", threadId, path },
+    reference: mediaFileReference(path, root),
+    name: path.split(/[\\/]/).at(-1)!,
+    mimeType: path.endsWith(".mp4") ? "video/mp4" : "image/png",
+  });
+  for (const [actionId, expected] of [
+    ["copy-full-path", full],
+    ["copy-relative-path", relative],
+  ] as const) {
+    const action = media.actions.find(({ id }) => id === actionId);
+    if (!action) throw new Error(`Missing media action: ${actionId}`);
+    action.run();
+    expect(state.copy).toHaveBeenLastCalledWith(expected);
+  }
+  expect(state.refresh).not.toHaveBeenCalled();
+  expect(state.download).not.toHaveBeenCalled();
+});
+
+it.each(["image/png", "video/mp4"])("preserves the %s URL when copying", (mimeType) => {
+  const url = "https://cdn.test/assets/media?path=C:/repo/media";
+  const media = useMediaActions({
+    uri: url,
+    name: "media",
+    mimeType,
+    reference: { kind: "url", url },
+  });
+  const action = media.actions.find(({ id }) => id === "copy-url");
+  if (!action) throw new Error("Copy URL action missing");
+  action.run();
+  expect(state.copy).toHaveBeenCalledWith(url);
+  expect(state.refresh).not.toHaveBeenCalled();
 });
 
 it.each(["workspace-file", "media-file"] as const)(

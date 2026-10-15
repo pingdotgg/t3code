@@ -5,6 +5,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { createElement, isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -24,6 +25,7 @@ const state = vi.hoisted(() => ({
   showMenu: vi.fn(),
   openFile: vi.fn(),
   clipboard: vi.fn(),
+  copyText: vi.fn(),
   menuFinished: null as (() => void) | null,
 }));
 
@@ -33,7 +35,7 @@ vi.mock("react", async (importOriginal) => ({
   useRef: <A,>(current: A) => ({ current }),
   useState: <A,>(initial: A) => [initial, () => {}],
 }));
-vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: vi.fn() }));
+vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: state.copyText }));
 vi.mock("../../localApi", () => ({
   readLocalApi: () => ({ contextMenu: { show: state.showMenu } }),
 }));
@@ -128,6 +130,7 @@ beforeEach(() => {
   state.png.mockReset().mockResolvedValue(new Blob(["png"], { type: "image/png" }));
   state.showMenu.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
+  state.copyText.mockReset().mockResolvedValue(true);
   state.menuFinished = null;
   class TestClipboardItem {
     constructor(readonly items: Record<string, Promise<Blob>>) {}
@@ -140,6 +143,72 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it.each([
+  [
+    "image",
+    "C:/repo/assets/shot.png",
+    "C:/repo",
+    String.raw`C:\repo\assets\shot.png`,
+    String.raw`assets\shot.png`,
+  ],
+  [
+    "video",
+    "C:/repo/assets/clip with spaces.mp4",
+    "C:/repo",
+    String.raw`C:\repo\assets\clip with spaces.mp4`,
+    String.raw`assets\clip with spaces.mp4`,
+  ],
+  [
+    "image",
+    String.raw`\\server\share\repo/assets/shot.png`,
+    String.raw`\\server\share\repo`,
+    String.raw`\\server\share\repo\assets\shot.png`,
+    String.raw`assets\shot.png`,
+  ],
+  [
+    "video",
+    String.raw`\\server\share\repo/assets/clip.mp4`,
+    String.raw`\\server\share\repo`,
+    String.raw`\\server\share\repo\assets\clip.mp4`,
+    String.raw`assets\clip.mp4`,
+  ],
+  ["image", "/repo/assets/shot.png", "/repo", "/repo/assets/shot.png", "assets/shot.png"],
+  ["video", "/repo/assets/clip.mp4", "/repo", "/repo/assets/clip.mp4", "assets/clip.mp4"],
+] as const)(
+  "copies full and relative paths for %s %s",
+  async (kind, path, root, full, relative) => {
+    const source: MediaActionSource = {
+      ...hostSource(),
+      kind,
+      reference: mediaFileReference(path, root),
+    };
+    for (const [action, expected] of [
+      ["copy-full-path", full],
+      ["copy-relative-path", relative],
+    ] as const) {
+      const completed = deferred<void>();
+      state.menuFinished = () => completed.resolve();
+      state.showMenu.mockResolvedValue(action);
+      openMenu(source);
+      await completed.promise;
+      expect(state.copyText).toHaveBeenLastCalledWith(expected, "file path");
+    }
+    expect(state.mint).not.toHaveBeenCalled();
+    expect(state.download).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["image", "video"] as const)("preserves the %s URL when copying", async (kind) => {
+  const url = `https://cdn.test/assets/${kind === "image" ? "shot.png" : "clip.mp4"}?path=C:/repo/media`;
+  const completed = deferred<void>();
+  state.menuFinished = () => completed.resolve();
+  state.showMenu.mockResolvedValue("copy-url");
+  openMenu({ ...hostSource(), kind, src: url, reference: { kind: "url", url } });
+  await completed.promise;
+  expect(state.copyText).toHaveBeenCalledWith(url, "URL");
+  expect(state.mint).not.toHaveBeenCalled();
+});
 
 it.each(["workspace-file", "media-file"] as const)(
   "waits for the %s grant before enabling host menu actions",
