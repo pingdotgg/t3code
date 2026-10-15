@@ -10,7 +10,7 @@ import { useEnvironments } from "~/state/environments";
 import { useNpmReleasePublished } from "~/state/npmRelease";
 import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
-import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
+import { getProviderUpdateRunOutcome } from "../ProviderUpdate.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
