@@ -91,6 +91,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
       toCheckpointRef: secondRef,
       fallbackFromToHead: false,
       ignoreWhitespace: true,
+      maxOutputBytes: 9_999_988,
     });
   }).pipe(Effect.provide(layer));
 });
@@ -112,7 +113,10 @@ it.effect("leaves Git imports out of large turn diffs", () => {
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    for (const path of ownPaths) assert.include(result.diff, path);
+    assert.notInclude(result.diff, "upstream.ts");
+    assert.notInclude(result.diff, "[truncated]");
 
     const patchPaths = diffCheckpoints.mock.calls
       .map(([call]) => call)
@@ -120,6 +124,113 @@ it.effect("leaves Git imports out of large turn diffs", () => {
       .map((call) => call.filePaths ?? ["all"]);
     assert.isAbove(patchPaths.length, 1);
     assert.sameMembers(patchPaths.flat(), ownPaths);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each(["x".repeat(10_000_000), "é".repeat(3_000_000)])(
+  "caps filtered diffs across batches (case %#)",
+  (firstPatch) => {
+    const ownPaths = Array.from({ length: 2_000 }, (_, index) => `src/module-${index}/file.ts`);
+    const allowances: number[] = [];
+    const diffCheckpoints = (input: CheckpointStore.DiffCheckpointsInput) => {
+      if (input.format === "numstat") {
+        return Effect.succeed(
+          [...ownPaths, "upstream.ts"].map((path) => `1\t0\t${path}\0`).join(""),
+        );
+      }
+      allowances.push(input.maxOutputBytes ?? 10_000_000);
+      const patch = allowances.length === 1 ? firstPatch : "x".repeat(10_000_000);
+      return Effect.succeed(patch);
+    };
+    const layer = layerFor({
+      projection: Effect.succeed(makeProjection()),
+      authoredPaths: new Set(ownPaths),
+      diffCheckpoints,
+    });
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+      assert.isAtMost(Buffer.byteLength(result.diff), 10_000_000);
+      assert.isTrue(result.diff.endsWith("\n\n[truncated]"));
+      assert.deepEqual(
+        allowances,
+        Buffer.byteLength(firstPatch) >= 9_999_987 ? [9_999_988] : [9_999_988, 3_999_988],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("caps unfiltered diffs without splitting a UTF-8 character", () => {
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints: () => Effect.succeed("😀".repeat(2_500_000)),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.isAtMost(Buffer.byteLength(result.diff), 10_000_000);
+    assert.isTrue(result.diff.endsWith("\n\n[truncated]"));
+    assert.notInclude(result.diff, "�");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([9_999_984, 9_999_985])(
+  "drops a UTF-8 character cut by storage at byte %i",
+  (prefixBytes) => {
+    const layer = layerFor({
+      projection: Effect.succeed(makeProjection()),
+      diffCheckpoints: (input) =>
+        Effect.succeed(
+          Buffer.from(`${"x".repeat(prefixBytes)}😀`)
+            .subarray(0, input.maxOutputBytes)
+            .toString("utf8"),
+        ),
+    });
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+      assert.isAtMost(Buffer.byteLength(result.diff), 10_000_000);
+      assert.isTrue(result.diff.endsWith("\n\n[truncated]"));
+      assert.notInclude(result.diff, "�");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("does not mark an exact-fit complete patch as truncated", () => {
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints: () => Effect.succeed("x".repeat(9_999_987)),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.strictEqual(Buffer.byteLength(result.diff), 9_999_987);
+    assert.notInclude(result.diff, "[truncated]");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("stops before the next batch when a patch exactly exhausts the budget", () => {
+  const ownPaths = Array.from({ length: 1_000 }, (_, index) => `src/module-${index}/file.ts`);
+  let patchReads = 0;
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    authoredPaths: new Set(ownPaths),
+    diffCheckpoints: (input) => {
+      if (input.format === "numstat") {
+        return Effect.succeed(
+          [...ownPaths, "upstream.ts"].map((path) => `1\t0\t${path}\0`).join(""),
+        );
+      }
+      patchReads += 1;
+      return Effect.succeed("x".repeat(9_999_987));
+    },
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.strictEqual(Buffer.byteLength(result.diff), 10_000_000);
+    assert.isTrue(result.diff.endsWith("\n\n[truncated]"));
+    assert.strictEqual(patchReads, 1);
   }).pipe(Effect.provide(layer));
 });
 

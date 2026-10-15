@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
@@ -35,6 +36,7 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
+const DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
 
 /** Splits files into pathspec lists that each fit on one git command line. Renames keep both paths together. */
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
@@ -228,19 +230,40 @@ export const make = Effect.gen(function* () {
             );
       const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
       // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
-      const diff =
-        retainedFiles.length === files.length
-          ? yield* checkpointStore
-              .diffCheckpoints(comparison)
-              .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
-          : (yield* Effect.forEach(
-              batchFilePaths(retainedFiles),
-              (filePaths) =>
-                checkpointStore
-                  .diffCheckpoints({ ...comparison, filePaths })
-                  .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
-              { concurrency: 4 },
-            )).join("");
+      const pathBatches =
+        retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
+      const patches: string[] = [];
+      // Reserve the marker once for the entire query, including an unfiltered diff.
+      let remainingBytes =
+        CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER);
+      for (const filePaths of pathBatches) {
+        if (remainingBytes === 0) {
+          patches.push(DIFF_TRUNCATED_MARKER);
+          break;
+        }
+        const patch = yield* checkpointStore
+          .diffCheckpoints({
+            ...comparison,
+            ...(filePaths === undefined ? {} : { filePaths }),
+            // One extra byte distinguishes an exact fit from a truncated patch.
+            maxOutputBytes: remainingBytes + 1,
+          })
+          .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+        const patchBytes = Buffer.byteLength(patch);
+        if (patchBytes > remainingBytes) {
+          // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
+          patches.push(
+            new TextDecoder().decode(Buffer.from(patch).subarray(0, remainingBytes), {
+              stream: true,
+            }),
+            DIFF_TRUNCATED_MARKER,
+          );
+          break;
+        }
+        patches.push(patch);
+        remainingBytes -= patchBytes;
+      }
+      const diff = patches.join("");
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
