@@ -6,7 +6,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
-import { NativeThemeHost } from "./NativeThemeHost";
+import { NativeThemeHost } from "./NativeThemeHost.android";
 import { useControlTheme } from "./useControlTheme";
 import type { SliderRow as SharedSliderRow } from "./SliderRow";
 

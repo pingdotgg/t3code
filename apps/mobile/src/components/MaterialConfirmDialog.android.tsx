@@ -1,6 +1,6 @@
+import { NativeThemeHost } from "./NativeThemeHost.android";
 import {
   AlertDialog,
-  Host,
   OutlinedTextField,
   Text,
   TextButton,
@@ -12,7 +12,7 @@ import { useScaledTextRole } from "../features/settings/appearance/useScaledText
 import type { MaterialConfirmDialogProps } from "./MaterialConfirmDialog";
 
 export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");
   const bodyTypography = useScaledTextRole("footnote");
   const inputTypography = useScaledTextRole("body");
@@ -25,11 +25,7 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
     props.onConfirm(value);
   };
   return (
-    <Host
-      colorScheme={themeAppearance}
-      ignoreSafeAreaKeyboardInsets
-      style={{ height: 0, width: 0 }}
-    >
+    <NativeThemeHost ignoreSafeAreaKeyboardInsets style={{ height: 0, width: 0 }}>
       <AlertDialog
         onDismissRequest={props.onCancel}
         tonalElevation={0}
@@ -96,6 +92,6 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
           </TextButton>
         </AlertDialog.ConfirmButton>
       </AlertDialog>
-    </Host>
+    </NativeThemeHost>
   );
 }

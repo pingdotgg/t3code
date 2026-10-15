@@ -1,4 +1,5 @@
-import { Box, ExtendedFloatingActionButton, Host, Icon, Text } from "@expo/ui/jetpack-compose";
+import { NativeThemeHost } from "./NativeThemeHost.android";
+import { Box, ExtendedFloatingActionButton, Icon, Text } from "@expo/ui/jetpack-compose";
 import {
   defaultMinSize,
   fillMaxWidth,
@@ -20,7 +21,7 @@ export function MaterialScrollComposeButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { appearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
   const { iconSize, fabSize } = useAndroidControlSizing();
   // Scale the native 56dp minimum; keep text and icons at their requested sizes.
@@ -38,9 +39,8 @@ export function MaterialScrollComposeButton(props: {
       style={[props.style, { left: 20, height: fabSize }]}
     >
       <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
-        <Host
+        <NativeThemeHost
           matchContents={{ vertical: true }}
-          colorScheme={themeAppearance}
           ignoreSafeAreaKeyboardInsets
           style={{ width: "100%" }}
         >
@@ -83,7 +83,7 @@ export function MaterialScrollComposeButton(props: {
               </ExtendedFloatingActionButton.Text>
             </ExtendedFloatingActionButton>
           </Box>
-        </Host>
+        </NativeThemeHost>
       </View>
       {/* The visual host is wider than the button; only this target intercepts list touches. */}
       <Pressable

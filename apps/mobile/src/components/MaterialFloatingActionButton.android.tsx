@@ -1,8 +1,8 @@
+import { NativeThemeHost } from "./NativeThemeHost.android";
 import {
   Box,
   ExtendedFloatingActionButton,
   FloatingActionButton,
-  Host,
   LargeFloatingActionButton,
   Text,
 } from "@expo/ui/jetpack-compose";
@@ -23,7 +23,7 @@ export function MaterialFloatingActionButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
   const { scale, iconSize: standardIconSize, fabSize, largeFabSize } = useAndroidControlSizing();
   const buttonSize = props.variant === "large" ? largeFabSize : fabSize;
@@ -49,7 +49,7 @@ export function MaterialFloatingActionButton(props: {
       style={props.style}
     >
       <View importantForAccessibility="no-hide-descendants">
-        <Host matchContents colorScheme={themeAppearance} ignoreSafeAreaKeyboardInsets>
+        <NativeThemeHost matchContents ignoreSafeAreaKeyboardInsets>
           <Component
             modifiers={[
               defaultMinSize({ minWidth: buttonSize }),
@@ -71,7 +71,7 @@ export function MaterialFloatingActionButton(props: {
               </ExtendedFloatingActionButton.Text>
             ) : null}
           </Component>
-        </Host>
+        </NativeThemeHost>
       </View>
       {/* The RN icon stays outside Compose so it cannot intercept native button taps. */}
       <View

@@ -1,9 +1,5 @@
-import {
-  FilledIconButton,
-  FilledTonalIconButton,
-  Host,
-  IconButton,
-} from "@expo/ui/jetpack-compose";
+import { NativeThemeHost } from "./NativeThemeHost.android";
+import { FilledIconButton, FilledTonalIconButton, IconButton } from "@expo/ui/jetpack-compose";
 import { size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
@@ -20,7 +16,7 @@ export function MaterialIconButton(props: {
   readonly variant?: "standard" | "primary" | "tonal" | "danger";
   readonly tintColorClassName?: string;
 }) {
-  const { colorScheme, colors } = useControlTheme();
+  const { colors } = useControlTheme();
   const { iconSize, buttonSize } = useAndroidControlSizing();
   const variant = props.variant ?? "standard";
   const Component =
@@ -57,8 +53,7 @@ export function MaterialIconButton(props: {
       style={{ width: buttonSize, height: buttonSize }}
     >
       <View importantForAccessibility="no-hide-descendants">
-        <Host
-          colorScheme={colorScheme}
+        <NativeThemeHost
           ignoreSafeAreaKeyboardInsets
           style={{ width: buttonSize, height: buttonSize }}
         >
@@ -74,7 +69,7 @@ export function MaterialIconButton(props: {
           >
             {null}
           </Component>
-        </Host>
+        </NativeThemeHost>
       </View>
       {/* Keep RN SVG measurement outside Compose; the native button owns touch and ripple. */}
       <View pointerEvents="none" className="absolute inset-0 items-center justify-center">

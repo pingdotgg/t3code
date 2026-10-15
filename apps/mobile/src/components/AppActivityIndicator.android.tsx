@@ -1,4 +1,5 @@
-import { LoadingIndicator, Host } from "@expo/ui/jetpack-compose";
+import { NativeThemeHost } from "./NativeThemeHost.android";
+import { LoadingIndicator } from "@expo/ui/jetpack-compose";
 import { size as composeSize } from "@expo/ui/jetpack-compose/modifiers";
 import { StyleSheet, View, type ActivityIndicatorProps } from "react-native";
 import { useResolveClassNames, withUniwind } from "uniwind";
@@ -30,12 +31,12 @@ function AndroidActivityIndicator({
         style={{ width: diameter, height: diameter }}
       >
         {animating ? (
-          <Host ignoreSafeAreaKeyboardInsets style={{ flex: 1 }}>
+          <NativeThemeHost ignoreSafeAreaKeyboardInsets style={{ flex: 1 }}>
             <LoadingIndicator
               color={color ?? primaryColor}
               modifiers={[composeSize(diameter, diameter)]}
             />
-          </Host>
+          </NativeThemeHost>
         ) : null}
       </View>
     </View>

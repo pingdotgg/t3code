@@ -1,9 +1,9 @@
+import { NativeThemeHost } from "./NativeThemeHost.android";
 import {
   Box,
   Column,
   DropdownMenu,
   DropdownMenuItem,
-  Host,
   RNHostView,
   Text,
 } from "@expo/ui/jetpack-compose";
@@ -47,7 +47,7 @@ function MenuIcon(props: {
 
 /** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
-  const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();
   const body = resolveScaledTextRole("body", appearance.baseFontSize);
   const caption = resolveScaledTextRole("caption", appearance.baseFontSize);
@@ -129,19 +129,17 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
   );
   if (props.inline) {
     return (
-      <Host
-        colorScheme={themeAppearance}
+      <NativeThemeHost
         ignoreSafeAreaKeyboardInsets
         matchContents
         style={{ width: props.menuWidth }}
       >
         <Column>{items}</Column>
-      </Host>
+      </NativeThemeHost>
     );
   }
   return (
-    <Host
-      colorScheme={themeAppearance}
+    <NativeThemeHost
       ignoreSafeAreaKeyboardInsets
       style={{
         position: "absolute",
@@ -157,6 +155,6 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
         </DropdownMenu.Trigger>
         <DropdownMenu.Items>{items}</DropdownMenu.Items>
       </DropdownMenu>
-    </Host>
+    </NativeThemeHost>
   );
 }
