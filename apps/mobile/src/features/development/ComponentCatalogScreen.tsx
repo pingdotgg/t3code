@@ -1,3 +1,5 @@
+import { Toast } from "../../components/Toast";
+import { Progress } from "../../components/Progress";
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { View, type TextInputInstance } from "react-native";
@@ -15,7 +17,6 @@ import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import { FloatingActionButton } from "../../components/FloatingActionButton";
 import { SearchField } from "../../components/SearchField";
-import { LoadingStrip } from "../../components/LoadingStrip";
 import { Notice } from "../../components/Notice";
 import { NumberField } from "../../components/NumberField";
 import { AppBar } from "../../components/AppBar";
@@ -203,10 +204,16 @@ export function ComponentCatalogScreen() {
             <AppText className="text-lg font-t3-semibold">Feedback and presentation</AppText>
             <Notice message="This action could not finish. Try again." tone="danger" />
             {notice ? (
-              <Notice
+              <Toast
                 message="Changes are ready to review."
-                icon="checkmark.circle"
-                floating
+                tone="success"
+                action={{
+                  label: "Undo",
+                  onPress: () => {
+                    setNotice(false);
+                    setText("Restored example");
+                  },
+                }}
                 onDismiss={() => setNotice(false)}
               />
             ) : (
@@ -239,9 +246,8 @@ export function ComponentCatalogScreen() {
                 <Chip label="Menu" trailingIcon="chevron.down" />
               </Menu>
             </View>
-            <View className="relative h-3 overflow-hidden rounded-full bg-subtle">
-              <LoadingStrip progress={0.6} />
-            </View>
+            <Progress value={0.6} label="Example upload" />
+            <Progress label="Connecting" />
             <View className="items-start">
               <FloatingActionButton
                 label="New thread"
