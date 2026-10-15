@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/AppSymbol";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -6,7 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useState } from "react";
-import { Platform, Alert, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
@@ -70,7 +71,7 @@ export function ConnectionEnvironmentRow(props: {
       return;
     }
     const error = Cause.squash(result.cause);
-    Alert.alert(
+    Dialog.alert(
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );

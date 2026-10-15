@@ -7,7 +7,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { type ReactNode, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
@@ -95,7 +95,7 @@ export function T3ConnectProfilePage() {
       traceId,
       cause,
     });
-    Alert.alert(
+    Dialog.alert(
       "Could not deregister server",
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
       traceId

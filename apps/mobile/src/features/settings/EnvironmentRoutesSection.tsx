@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ConnectionRoute,
@@ -14,7 +15,7 @@ import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useState } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -118,7 +119,7 @@ export function EnvironmentRoutesSection({
     return to;
   };
   const confirmRemove = (route: ConnectionRoute) =>
-    Alert.alert(
+    Dialog.alert(
       `Remove ${connectionRouteLabel(route)}?`,
       connectionRouteAddress(route) ?? undefined,
       [

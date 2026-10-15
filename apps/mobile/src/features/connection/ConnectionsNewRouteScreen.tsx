@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -12,7 +13,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Linking, Pressable, StyleSheet, View } from "react-native";
+import { Linking, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -116,7 +117,7 @@ export function ConnectionsNewRouteScreen({
       return;
     }
     if (permission.canAskAgain) return;
-    Alert.alert(
+    Dialog.alert(
       "Camera access needed",
       "Camera access was denied for this app. Open Settings to enable it.",
       [
@@ -144,7 +145,7 @@ export function ConnectionsNewRouteScreen({
         setScannerLocked(false);
       } catch (error) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert(
+        Dialog.alert(
           "Invalid QR code",
           error instanceof Error ? error.message : "Scanned QR code was not recognized.",
         );
