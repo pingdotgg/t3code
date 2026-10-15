@@ -2337,7 +2337,8 @@ code {
       env(safe-area-inset-right) + 0.75rem + var(--chat-lane-inset-end, 0px)
     );
   }
-  [data-chat-canvas] .messages-timeline-scroll {
+  [data-chat-canvas] .messages-timeline-scroll,
+  [data-chat-canvas] .workflow-run-lane {
     padding-inline-start: calc(
       0.75rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
     );
@@ -2357,7 +2358,8 @@ code {
       );
       padding-inline-end: calc(env(safe-area-inset-right) + 3rem + var(--chat-lane-inset-end, 0px));
     }
-    [data-chat-canvas] .messages-timeline-scroll {
+    [data-chat-canvas] .messages-timeline-scroll,
+    [data-chat-canvas] .workflow-run-lane {
       padding-inline-start: calc(
         3rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
       );

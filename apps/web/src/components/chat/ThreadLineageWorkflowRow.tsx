@@ -24,7 +24,7 @@ import {
  * first start to the last finish is the time the phase actually took. Shaped
  * for AgentElapsed, which ticks it while the phase is still running.
  */
-function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
+export function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
   const instants = (key: "startedAt" | "completedAt") =>
     phase.members
       .map((member) => member[key])
