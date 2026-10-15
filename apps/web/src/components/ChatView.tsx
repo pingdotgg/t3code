@@ -7452,6 +7452,7 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: presentation.title,
+      descriptionPlacement: "below",
       // A single named item is already in the title.
       description:
         presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
@@ -7468,7 +7469,7 @@ export default function ChatView(props: ChatViewProps) {
                       {separator}
                     </>
                   ) : (
-                    <span className="whitespace-nowrap">
+                    <span>
                       <InlineButton
                         tone="muted"
                         aria-label={`Open subagent ${item.label}`}
