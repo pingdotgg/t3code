@@ -1,0 +1,57 @@
+name: Setup CI dependencies
+description: Install Vite+ dependencies using a Blacksmith sticky pnpm store on Linux.
+inputs:
+  run-install:
+    description: Install arguments forwarded to setup-vp.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    # Cache packages only; node_modules and prepare scripts stay fresh each job.
+    - name: Mount pnpm store
+      id: sticky
+      continue-on-error: true
+      uses: useblacksmith/stickydisk@v1
+      with:
+        key: ${{ github.repository }}-ci-pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'patches/**') }}
+        path: ${{ runner.temp }}/t3-ci-pnpm-store
+        # Each job gets a private clone. PRs must not publish into main's snapshot.
+        commit: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+    - name: Check pnpm store mount
+      id: store
+      shell: bash
+      env:
+        STICKY_OUTCOME: ${{ steps.sticky.outcome }}
+        STICKY_STORE_PATH: ${{ runner.temp }}/t3-ci-pnpm-store
+        PUBLISHES: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      run: |
+        # stickydisk can return success after falling back to an ordinary directory.
+        # An empty disk (no pnpm `v*` store from a main snapshot yet) only helps the
+        # main push that fills it; everyone else keeps the setup-vp cache.
+        if [[ "$STICKY_OUTCOME" == success ]] && mountpoint -q "$STICKY_STORE_PATH" && test -w "$STICKY_STORE_PATH" \
+          && { [[ "$PUBLISHES" == true ]] || compgen -G "$STICKY_STORE_PATH/v*" > /dev/null; }; then
+          echo 'mounted=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'mounted=false' >> "$GITHUB_OUTPUT"
+          echo '::warning::Sticky pnpm store unavailable or empty; using setup-vp dependency cache.'
+        fi
+
+    - name: Setup Vite+ with sticky store
+      if: steps.store.outputs.mounted == 'true'
+      uses: voidzero-dev/setup-vp@v1
+      env:
+        pnpm_config_store_dir: ${{ runner.temp }}/t3-ci-pnpm-store
+      with:
+        node-version-file: package.json
+        cache: false
+        run-install: ${{ inputs.run-install }}
+
+    - name: Setup Vite+ with cache fallback
+      if: steps.store.outputs.mounted != 'true'
+      uses: voidzero-dev/setup-vp@v1
+      with:
+        node-version-file: package.json
+        cache: true
+        run-install: ${{ inputs.run-install }}
