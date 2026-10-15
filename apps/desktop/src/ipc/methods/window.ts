@@ -90,73 +90,84 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+const readLocalEnvironmentBootstrapSnapshot = Effect.fn(
+  "desktop.ipc.window.getLocalEnvironmentBootstraps",
+)(function* () {
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+  const instances = yield* pool.list;
+  const bootstraps: DesktopEnvironmentBootstrap[] = [];
+  for (const instance of instances) {
+    const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+    const config = yield* instance.currentConfig;
+    const snapshot = yield* instance.snapshot;
+    // A secondary backend (e.g. a parallel WSL backend) that hasn't produced
+    // a config yet (mid-registration, before its first start cycle) or that
+    // is retrying a *transient* preflight failure (WSL VM still booting, a
+    // not-yet-built linux server entry) is not listening on a port. We
+    // surface it as a *pending* bootstrap (null endpoints, no token) so the
+    // renderer can show a "Connecting…" indicator while it retries — null
+    // endpoints keep the renderer from dialing the dead port, avoiding the
+    // needless /api/auth/bootstrap/bearer error cycles a real endpoint would
+    // trigger.
+    if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
+      // Skip the primary (same-origin, no "connecting" affordance) and skip a
+      // secondary whose preflight failed *fatally* (no node, wrong version,
+      // missing build tools): it has stopped retrying, so an indefinite
+      // "Connecting…" would be misleading — its error is surfaced by the
+      // WSL-state UI instead.
+      const fatalPreflight =
+        Option.isSome(config) &&
+        Option.isSome(config.value.preflightFailure) &&
+        config.value.preflightFailure.value.fatal;
+      const stoppedPreflight =
+        Option.isSome(config) &&
+        Option.isSome(config.value.preflightFailure) &&
+        (!snapshot.desiredRunning || !snapshot.restartScheduled);
+      if (isPrimary || fatalPreflight || stoppedPreflight) continue;
+      bootstraps.push({
+        id: instance.id,
+        label: yield* instance.label,
+        runningDistro: null,
+        httpBaseUrl: null,
+        wsBaseUrl: null,
+      });
+      continue;
+    }
+    const { bootstrap, httpBaseUrl } = config.value;
+    const runningDistro = config.value.runningDistro ?? null;
+    bootstraps.push({
+      id: instance.id,
+      label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
+      runningDistro,
+      httpBaseUrl: httpBaseUrl.href,
+      wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
+      // A backend launched with the desktop secret accepts whichever token
+      // the secret derives for the current window, so hand out that one
+      // rather than the token frozen into its launch config. Every backend
+      // the desktop launches (primary, staged or mounted WSL runtime) is the
+      // server build bundled with this desktop, so it understands the secret.
+      ...(bootstrap.desktopBootstrapSecret
+        ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+        : bootstrap.desktopBootstrapToken
+          ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+          : {}),
+    });
+  }
+  return bootstraps;
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
-  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
-    const pool = yield* DesktopBackendPool.DesktopBackendPool;
-    const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-    const instances = yield* pool.list;
-    const bootstraps: DesktopEnvironmentBootstrap[] = [];
-    for (const instance of instances) {
-      const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
-      const config = yield* instance.currentConfig;
-      const snapshot = yield* instance.snapshot;
-      // A secondary backend (e.g. a parallel WSL backend) that hasn't produced
-      // a config yet (mid-registration, before its first start cycle) or that
-      // is retrying a *transient* preflight failure (WSL VM still booting, a
-      // not-yet-built linux server entry) is not listening on a port. We
-      // surface it as a *pending* bootstrap (null endpoints, no token) so the
-      // renderer can show a "Connecting…" indicator while it retries — null
-      // endpoints keep the renderer from dialing the dead port, avoiding the
-      // needless /api/auth/bootstrap/bearer error cycles a real endpoint would
-      // trigger.
-      if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
-        // Skip the primary (same-origin, no "connecting" affordance) and skip a
-        // secondary whose preflight failed *fatally* (no node, wrong version,
-        // missing build tools): it has stopped retrying, so an indefinite
-        // "Connecting…" would be misleading — its error is surfaced by the
-        // WSL-state UI instead.
-        const fatalPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          config.value.preflightFailure.value.fatal;
-        const stoppedPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          (!snapshot.desiredRunning || !snapshot.restartScheduled);
-        if (isPrimary || fatalPreflight || stoppedPreflight) continue;
-        bootstraps.push({
-          id: instance.id,
-          label: yield* instance.label,
-          runningDistro: null,
-          httpBaseUrl: null,
-          wsBaseUrl: null,
-        });
-        continue;
-      }
-      const { bootstrap, httpBaseUrl } = config.value;
-      const runningDistro = config.value.runningDistro ?? null;
-      bootstraps.push({
-        id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
-        runningDistro,
-        httpBaseUrl: httpBaseUrl.href,
-        wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // A backend launched with the desktop secret accepts whichever token
-        // the secret derives for the current window, so hand out that one
-        // rather than the token frozen into its launch config. Every backend
-        // the desktop launches (primary, staged or mounted WSL runtime) is the
-        // server build bundled with this desktop, so it understands the secret.
-        ...(bootstrap.desktopBootstrapSecret
-          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
-          : bootstrap.desktopBootstrapToken
-            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-            : {}),
-      });
-    }
-    return bootstraps;
-  }),
+  handler: readLocalEnvironmentBootstrapSnapshot,
+});
+
+export const readLocalEnvironmentBootstraps = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopEnvironmentBootstrapSchema),
+  handler: readLocalEnvironmentBootstrapSnapshot,
 });
 
 // Pull the distro selection out of a backend instance id like

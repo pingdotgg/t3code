@@ -55,6 +55,47 @@ describe("desktop local connection identity", () => {
 });
 
 describe("desktop local topology reads", () => {
+  it("refreshes asynchronously without calling the synchronous bridge and preserves failures", async () => {
+    const secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
+    };
+    let entries = [secondary];
+    let failure: Error | undefined;
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => {
+        throw new Error("synchronous IPC unavailable");
+      },
+      readLocalEnvironmentBootstraps: async () => {
+        if (failure !== undefined) throw failure;
+        return entries.map((entry) => ({ ...entry }));
+      },
+    }));
+    const connected = await reader.refresh();
+    expect(connected).toEqual({ _tag: "Success", bootstraps: [secondary] });
+    if (connected._tag !== "Success") throw new Error("expected connected topology");
+    expect(reader.readSnapshot()).toBe(connected.bootstraps);
+    expect(await reader.refresh()).toEqual(connected);
+    failure = new Error("main process unavailable");
+    expect(await reader.refresh()).toEqual({ _tag: "Failure", cause: failure });
+    expect(reader.readSnapshot()).toBe(connected.bootstraps);
+    failure = undefined;
+    entries = [];
+    expect(await reader.refresh()).toEqual({ _tag: "Success", bootstraps: [] });
+    expect(reader.readSnapshot()).toEqual([]);
+  });
+
+  it("refreshes through an older desktop's synchronous bridge", async () => {
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [],
+    }));
+    expect(await reader.refresh()).toEqual({ _tag: "Success", bootstraps: [] });
+  });
+
   it("reuses snapshots when polling returns fresh objects for the same topology", () => {
     const secondary: DesktopEnvironmentBootstrap = {
       id: "wsl:default",

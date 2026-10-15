@@ -624,7 +624,7 @@ const layerPlatformConnectionSource = Layer.effect(
         }
       }
 
-      const topologyRead = readDesktopSecondaryBootstrapsResult();
+      const topologyRead = yield* Effect.promise(readDesktopSecondaryBootstrapsResult);
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(
         previous,
         topologyRead,
