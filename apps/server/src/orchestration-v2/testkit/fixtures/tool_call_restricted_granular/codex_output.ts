@@ -1,3 +1,4 @@
+import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
@@ -33,4 +34,13 @@ export function assertToolCallRestrictedGranularOutput(
   assertRuntimeRequestKinds(projection, ["file-change"]);
   assertAllRuntimeRequestsResolved(projection);
   assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
+
+  // Codex sends the file change's item/started before its approval request,
+  // so the approval names the recorded file even though its reason is null.
+  const approval = projection.turnItems.find((item) => item.type === "approval_request");
+  if (approval?.type !== "approval_request") throw new Error("expected an approval item");
+  assert.equal(
+    approval.prompt,
+    "add /home/replay-user/t3code/packages/effect-codex-app-server/.codex-probe-write-action.txt",
+  );
 }

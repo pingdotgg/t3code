@@ -153,11 +153,16 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
+// Change kind by path. Legacy apply-patch payloads fit as they are.
+type CodexFileChangeKinds = Readonly<
+  Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
+>;
+
 /** Describe approval scope even when Codex omits or blanks the optional reason. */
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
-  readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
+  readonly fileChanges?: CodexFileChangeKinds;
 }): string | undefined {
   const reason = input.reason?.trim();
   if (reason) return reason;
@@ -1944,6 +1949,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        // File change kinds from item/started, by turn and item, so the item's
+        // approval request can list its paths. Diffs are not kept.
+        const fileChangeKindsByTurn = yield* Ref.make(
+          new Map<string, Map<string, CodexFileChangeKinds>>(),
+        );
         // Native completion and the interrupt timeout share one finalization
         // path. Serialize the race so only one can publish terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
@@ -4738,6 +4748,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
 
+            if (payload.item.type === "fileChange") {
+              const kinds = Object.fromEntries(
+                payload.item.changes.map((change) => [change.path, change.kind]),
+              );
+              yield* Ref.update(fileChangeKindsByTurn, (current) => {
+                const updated = new Map(current);
+                const items = new Map(updated.get(payload.turnId) ?? []);
+                items.set(payload.item.id, kinds);
+                updated.set(payload.turnId, items);
+                return updated;
+              });
+              return;
+            }
+
             if (payload.item.type === "agentMessage") {
               if (payload.item.phase !== "commentary") {
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
@@ -4841,6 +4865,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "collabAgentToolCall" && payload.item.tool !== "spawnAgent") {
               yield* updateSubagentStates({ item: payload.item });
               return;
+            }
+            if (payload.item.type === "fileChange") {
+              yield* Ref.update(fileChangeKindsByTurn, (current) => {
+                const items = current.get(payload.turnId);
+                if (items === undefined || !items.has(payload.item.id)) {
+                  return current;
+                }
+                const remaining = new Map(items);
+                remaining.delete(payload.item.id);
+                const updated = new Map(current);
+                if (remaining.size === 0) {
+                  updated.delete(payload.turnId);
+                } else {
+                  updated.set(payload.turnId, remaining);
+                }
+                return updated;
+              });
             }
             const resolved = yield* resolveItemEventContext(payload.turnId);
             if (resolved === undefined) {
@@ -5201,12 +5242,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
 
+            // Codex sends item/started before this request, so the item's paths
+            // are cached. Without them the prompt falls back as before.
+            const fileChanges = (yield* Ref.get(fileChangeKindsByTurn))
+              .get(payload.turnId)
+              ?.get(payload.itemId);
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
-              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              prompt:
+                codexFileChangeApprovalPrompt({
+                  ...payload,
+                  ...(fileChanges === undefined ? {} : { fileChanges }),
+                }) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -6025,6 +6075,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* releaseSettledTurnIfIdle(input.nativeTurnId);
               }
               yield* Ref.update(activeTurns, (current) => {
+                const updated = new Map(current);
+                updated.delete(input.nativeTurnId);
+                return updated;
+              });
+              yield* Ref.update(fileChangeKindsByTurn, (current) => {
+                if (!current.has(input.nativeTurnId)) {
+                  return current;
+                }
                 const updated = new Map(current);
                 updated.delete(input.nativeTurnId);
                 return updated;
