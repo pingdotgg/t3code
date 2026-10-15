@@ -150,6 +150,19 @@ describe("siblingPullRequestUrl", () => {
 });
 
 describe("changeRequestUrlFor", () => {
+  it("builds a browser URL for Tangled on the appview and on a knot", () => {
+    for (const host of ["tangled.org", "knot1.tangled.sh"]) {
+      const url = changeRequestUrlFor("tangled", host, "alice.example/repo", 19);
+      expect(url).toBe(`https://${host}/alice.example/repo/pulls/19`);
+      expect(parseChangeRequestUrl(url!)).toEqual({
+        host,
+        repository: "alice.example/repo",
+        number: 19,
+        authority: host,
+      });
+    }
+  });
+
   it("preserves the origin when the Forgejo host already contains its port", () => {
     expect(
       changeRequestUrlFor(

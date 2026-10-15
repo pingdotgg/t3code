@@ -245,3 +245,22 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   expect(filterItem("Bot comments").props.checked).toBe(true);
   expect(texts()).toContain("Bot report 11");
 });
+
+it("explains that comment text is unavailable and directs to host when comments are truncated and empty", () => {
+  const value: PullRequestDetailView = {
+    ...detail,
+    commentCount: 1,
+    comments: [],
+    commentsTruncated: true,
+  };
+  act(() => {
+    renderer = create(render(value));
+  });
+  const renderedTexts = texts();
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("longer"))).toBe(false);
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("no comments"))).toBe(false);
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("host"))).toBe(true);
+  expect(renderedTexts).toContain(
+    "Comments are not available here. Open this pull request on the host to read them.",
+  );
+});

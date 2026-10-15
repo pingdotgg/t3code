@@ -15,6 +15,7 @@ import * as Forgejo from "@t3tools/source-control-forgejo/client/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/client/definition";
 import * as GitHub from "@t3tools/source-control-github/client/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/client/definition";
+import * as Tangled from "@t3tools/source-control-tangled/client/definition";
 
 const definitions: ReadonlyArray<SourceControlClientDefinition> = [
   GitHub.definition,
@@ -23,6 +24,7 @@ const definitions: ReadonlyArray<SourceControlClientDefinition> = [
   Bitbucket.definition,
   Forgejo.definition,
   GitCafe.definition,
+  Tangled.definition,
 ];
 
 /** Secret field names per host kind; a host with none is absent. */

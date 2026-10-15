@@ -103,6 +103,8 @@ export function changeRequestUrlFor(
       return `https://${host}/${repository}/pull/${number}`;
     case "gitcafe":
       return `https://${host}/${repository}/pulls/${number}`;
+    case "tangled":
+      return `https://${host}/${repository}/pulls/${number}`;
     case "forgejo": {
       try {
         const remote = new URL(remoteUrl ?? "");

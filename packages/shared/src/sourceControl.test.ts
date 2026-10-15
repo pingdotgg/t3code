@@ -165,6 +165,24 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("unknown");
   });
 
+  it("detects Tangled remotes on the appview, the clone host, and any knot", () => {
+    for (const remote of [
+      "git@tangled.org:alice.example/repo",
+      "https://tangled.org/alice.example/repo",
+      "https://tangled.sh/alice.example/repo",
+      "git@knot1.tangled.sh:alice.example/repo",
+    ]) {
+      expect(detectSourceControlProviderFromRemoteUrl(remote)?.kind).toBe("tangled");
+    }
+  });
+
+  it("does not treat an unrelated host as Tangled", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://nottangled.example.com/owner/repo.git")
+        ?.kind,
+    ).toBe("unknown");
+  });
+
   it("detects SSH remotes with non-git SSH users (e.g. gitlab@, deploy@)", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")?.kind,

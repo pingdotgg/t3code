@@ -24,6 +24,8 @@ import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
+import * as TangledCli from "@t3tools/source-control-tangled/server/TangledCli";
+import * as TangledDriver from "@t3tools/source-control-tangled/server/driver";
 import type { SourceControlDriver } from "@t3tools/source-control-core/server/driver";
 import * as Layer from "effect/Layer";
 
@@ -36,6 +38,7 @@ const drivers = [
   BitbucketDriver.driver,
   ForgejoDriver.driver,
   GitCafeDriver.driver,
+  TangledDriver.driver,
 ];
 
 /** Every service a built-in driver's `make` needs; the server's layers must provide them all. */
@@ -57,4 +60,8 @@ export const layer = Layer.mergeAll(
   ForgejoCli.layer,
   GitCafeApi.layer.pipe(Layer.provideMerge(GitCafeCredentials.layer)),
   GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer)),
+  // Tangled's pull request reader is a value the driver's `make` builds, not a service, so only
+  // the `tg` CLI it runs is a layer here. The numbering it reads from tangled.org takes the same
+  // HTTP client from the server as GitCafe's API does.
+  TangledCli.layer,
 ).pipe(Layer.provideMerge(ServerSourceControlHost.layer));

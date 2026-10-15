@@ -11,6 +11,7 @@ import {
   resolveEnvModeLabel,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
+  resolveBranchToolbarPullRequest,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
@@ -298,6 +299,36 @@ describe("resolveBranchToolbarPrBranch", () => {
         resolvedActiveBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveBranchToolbarPullRequest", () => {
+  const old = {
+    number: 1,
+    title: "Old PR",
+    url: "https://tangled.org/noz.am/t3-test/pulls/1",
+    headRef: "test/pull-request",
+    baseRef: "main",
+    state: "closed" as const,
+  };
+  const current = { ...old, number: 3, headRef: "test/another-branch", state: "open" as const };
+
+  it("uses the displayed branch's PR instead of a linked PR from another branch", () => {
+    expect(resolveBranchToolbarPullRequest("test/another-branch", old, current)).toBe(current);
+  });
+
+  it("shows none when the displayed branch has no PR or is switching", () => {
+    expect(resolveBranchToolbarPullRequest("no-pr", old, null)).toBeNull();
+    expect(resolveBranchToolbarPullRequest(null, current, current)).toBeNull();
+  });
+
+  it("keeps a linked PR when it belongs to the displayed branch", () => {
+    expect(resolveBranchToolbarPullRequest("test/pull-request", old, null)).toBe(old);
+  });
+
+  it("prefers a newly detected PR when a branch has been reused", () => {
+    const reopened = { ...current, headRef: old.headRef };
+    expect(resolveBranchToolbarPullRequest(old.headRef, old, reopened)).toBe(reopened);
   });
 });
 

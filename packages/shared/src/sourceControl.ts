@@ -9,6 +9,7 @@ export interface ChangeRequestPresentation {
     | "azure-devops"
     | "bitbucket"
     | "gitcafe"
+    | "tangled"
     | "change-request";
   readonly providerName: string;
   readonly shortName: string;
@@ -89,6 +90,16 @@ const GITCAFE_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://git.cafe/owner/repo/pulls/42",
 };
 
+const TANGLED_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "tangled",
+  providerName: "Tangled",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Tangled pull request",
+  urlExample: "https://tangled.org/owner/repo/pulls/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -116,6 +127,8 @@ export function resolveChangeRequestPresentation(
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
     case "gitcafe":
       return GITCAFE_CHANGE_REQUEST_PRESENTATION;
+    case "tangled":
+      return TANGLED_CHANGE_REQUEST_PRESENTATION;
     default:
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -212,6 +225,20 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+/**
+ * tangled.org serves repository pages, `tangled.sh` the HTTPS clones that redirect to a knot, and
+ * every `*.tangled.sh` is a knot that holds repositories of its own. A remote on any of them
+ * names a repository below the host as `handle/repo`.
+ */
+function isTangledHost(host: string): boolean {
+  return (
+    host === "tangled.org" ||
+    host === "tangled.sh" ||
+    host.endsWith(".tangled.org") ||
+    host.endsWith(".tangled.sh")
+  );
+}
+
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
@@ -225,6 +252,14 @@ export function detectSourceControlProviderFromRemoteUrl(
     return {
       kind: SourceControlProviderKind.make("gitcafe"),
       name: "GitCafe",
+      baseUrl: toBaseUrl(hostname),
+    };
+  }
+
+  if (isTangledHost(hostname)) {
+    return {
+      kind: SourceControlProviderKind.make("tangled"),
+      name: "Tangled",
       baseUrl: toBaseUrl(hostname),
     };
   }

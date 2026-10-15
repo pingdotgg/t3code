@@ -51,6 +51,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
+  resolveBranchToolbarPullRequest,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -615,16 +616,23 @@ export function BranchToolbarBranchSelector({
     serverThread?.pullRequests,
     serverThread?.branchPullRequest,
   );
-  const currentLinkedPr = supportsMultiplePullRequests
+  const threadLinkedPr = supportsMultiplePullRequests
     ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
     : null;
   const prBadge = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
     : null;
-  const displayedPr = linkedStatus?.pr ?? (currentLinkedPr === null ? branchPr : null);
+  const displayedPr =
+    displayMode === "panel"
+      ? resolveBranchToolbarPullRequest(branchPrBranch, linkedStatus?.pr ?? null, branchPr)
+      : (linkedStatus?.pr ?? (threadLinkedPr === null ? branchPr : null));
+  const currentLinkedPr =
+    displayMode === "panel" && threadLinkedPr?.url !== displayedPr?.url ? null : threadLinkedPr;
   const displayedPrStatus = prStatusIndicator(
     displayedPr,
-    linkedStatus?.sourceControlProvider ?? branchStatusQuery.data?.sourceControlProvider,
+    displayedPr === linkedStatus?.pr
+      ? linkedStatus.sourceControlProvider
+      : branchStatusQuery.data?.sourceControlProvider,
   );
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;

@@ -4,6 +4,7 @@ import type {
   VcsRef,
   ProjectId,
   WorktreeSubmodules,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
@@ -245,6 +246,16 @@ export function resolveBranchToolbarPrBranch(input: {
   resolvedActiveBranch: string | null;
 }): string | null {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
+}
+
+export function resolveBranchToolbarPullRequest(
+  branch: string | null,
+  linked: VcsStatusResult["pr"],
+  detected: VcsStatusResult["pr"],
+): VcsStatusResult["pr"] {
+  if (branch === null) return null;
+  if (detected?.headRef === branch) return detected;
+  return linked?.headRef === branch ? linked : null;
 }
 
 export function resolveLocalCheckoutBranchMismatch(input: {

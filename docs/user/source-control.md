@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
-and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and
+Tangled to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -113,6 +113,30 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 
 Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
+
+### Tangled
+
+Install the [Tangled CLI (`tg`)](https://tangled.org/aly.codes/tg) and sign in:
+
+```bash
+tg auth login
+```
+
+Git push and clone use SSH, so add a key under **Settings → Keys** on tangled.org first.
+**Settings → Source Control → Tangled** holds the two values `tg` needs: the **knot** that hosts
+new repositories (`knot1.tangled.sh` by default) and the **appview** that resolves handles and
+repositories (`https://api.next.tangled.org` by default). Leave a field blank to let `tg` use its
+own configuration in `~/.config/tg/config.toml`.
+
+Tangled has no private repositories, so a project published to it is public.
+
+T3 Code creates Tangled pull requests, and checks first that the branch does not already have an
+open one, so it will not make a second. The branch panel shows the pull request for the current
+branch. You can also browse and link pull requests from the **Pull requests** panel.
+Descriptions and authors are available; `tg` does not return comments, reviews, or commit activity.
+
+Checking out a pull request by reference is not available. Use
+**Open on Tangled**, or run `tg pr` yourself.
 
 ## Start, clone, or publish a project
 

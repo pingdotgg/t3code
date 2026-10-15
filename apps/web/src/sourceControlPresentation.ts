@@ -12,6 +12,7 @@ import {
   GitCafeIcon,
   GitHubIcon,
   GitLabIcon,
+  TangledIcon,
 } from "./components/Icons";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
@@ -27,6 +28,7 @@ const SOURCE_CONTROL_ICONS: Partial<Record<string, SourceControlIcon>> = {
   bitbucket: BitbucketIcon,
   "azure-devops": AzureDevOpsIcon,
   gitcafe: GitCafeIcon,
+  tangled: TangledIcon,
 };
 
 export function sourceControlIcon(definition: SourceControlClientDefinition): SourceControlIcon {

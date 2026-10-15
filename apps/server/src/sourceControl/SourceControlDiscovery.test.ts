@@ -30,6 +30,7 @@ import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
+import * as TangledCli from "@t3tools/source-control-tangled/server/TangledCli";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
@@ -60,6 +61,15 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(GitCafeCredentials.GitCafeCredentials)({
           cliEnv: () => Effect.succeed({}),
         }),
+        Layer.mock(TangledCli.TangledCli)({}),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          // Tangled reads its pull request numbering from tangled.org; these tests never reach
+          // that read, so the client only has to exist.
+          HttpClient.make(() =>
+            Effect.die("Unexpected HTTP request in a source control registry test."),
+          ),
+        ),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
         ServerSourceControlHost.layer.pipe(
@@ -216,6 +226,12 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unknown",
           account: Option.none(),
         },
+        {
+          kind: SourceControlProviderKind.make("tangled"),
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -284,6 +300,11 @@ Logged in to gitlab.com as gitlab-user
           processOutput(
             encodeJson({ schemaVersion: 1, data: { host: "git.cafe", username: "cafe-user" } }),
           ),
+        );
+      }
+      if (input.command === "tg" && input.args.join(" ") === "auth status --json") {
+        return Effect.succeed(
+          processOutput(encodeJson({ authenticated: true, handle: "tangled-user" })),
         );
       }
       return Effect.fail(
@@ -365,6 +386,12 @@ Logged in to gitlab.com as gitlab-user
           kind: SourceControlProviderKind.make("gitcafe"),
           auth: "authenticated",
           account: Option.some("cafe-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: SourceControlProviderKind.make("tangled"),
+          auth: "authenticated",
+          account: Option.some("tangled-user"),
           detail: Option.none(),
         },
       ],
