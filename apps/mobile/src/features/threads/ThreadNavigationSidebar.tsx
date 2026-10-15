@@ -10,10 +10,10 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
-import { LegendList } from "@legendapp/list/react-native";
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
@@ -26,6 +26,8 @@ import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
+import { HeaderHeightContext } from "@react-navigation/elements";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
@@ -64,6 +66,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
+import { useThreadListDrag } from "./thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
   buildThreadListV2Items,
@@ -84,6 +87,7 @@ type SidebarListItem =
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
 
 const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
+const SIDEBAR_ESTIMATED_ROW_HEIGHT = 64;
 
 interface ThreadNavigationSidebarProps {
   readonly width: number;
@@ -653,6 +657,22 @@ function ThreadNavigationSidebarPane(
     return true;
   }, [props.nativeChrome, props.onRequestVisibility, props.visible]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
+  const listRef = useRef<LegendListRef>(null);
+  const navigationHeaderHeight = useContext(HeaderHeightContext);
+  const drag = useThreadListDrag({
+    listRef,
+    estimatedRowHeight: SIDEBAR_ESTIMATED_ROW_HEIGHT,
+    items: listItems,
+    workingShelfEnabled,
+    onMoveThread: moveThread,
+    // The native-chrome list scrolls under its translucent header.
+    edgeInsets:
+      props.nativeChrome && NATIVE_LIQUID_GLASS_SUPPORTED
+        ? { top: navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT, bottom: insets.bottom }
+        : Platform.OS === "ios"
+          ? { top: stickyHeaderHeight, bottom: 0, scrollInsetTop: 0 }
+          : undefined,
+  });
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
@@ -741,6 +761,7 @@ function ThreadNavigationSidebarPane(
               }
               canMoveUp={item.canMoveUp}
               canMoveDown={item.canMoveDown}
+              dragTarget={drag.target}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
@@ -802,6 +823,7 @@ function ThreadNavigationSidebarPane(
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      drag.target,
       machineByEnvironmentId,
       moveThread,
       openPendingTask,
@@ -936,9 +958,11 @@ function ThreadNavigationSidebarPane(
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
+                ref={listRef}
+                {...drag.listProps}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
@@ -966,6 +990,7 @@ function ThreadNavigationSidebarPane(
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         </View>
       </>
@@ -1002,9 +1027,11 @@ function ThreadNavigationSidebarPane(
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
+                ref={listRef}
+                {...drag.listProps}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
@@ -1031,6 +1058,7 @@ function ThreadNavigationSidebarPane(
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         )}
       </View>

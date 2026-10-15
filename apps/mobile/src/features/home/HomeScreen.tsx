@@ -57,6 +57,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
+import { useThreadListDrag } from "../threads/thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
   buildThreadListV2Items,
@@ -708,6 +709,22 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   useThreadJumpShortcuts(threadListV2Items, props.onSelectThread);
+  const drag = useThreadListDrag({
+    listRef,
+    estimatedRowHeight: ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT,
+    items: threadListV2Items,
+    workingShelfEnabled,
+    onMoveThread: props.onMoveThread,
+    // iOS lays the list under the translucent header and bottom toolbar.
+    edgeInsets:
+      Platform.OS === "ios"
+        ? {
+            top: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 54 : 0,
+            bottom: iosBottomClearance,
+            scrollInsetTop: insets.top,
+          }
+        : undefined,
+  });
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
   }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
@@ -823,6 +840,7 @@ export function HomeScreen(props: HomeScreenProps) {
           }
           canMoveUp={item.canMoveUp}
           canMoveDown={item.canMoveDown}
+          dragTarget={drag.target}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -838,6 +856,7 @@ export function HomeScreen(props: HomeScreenProps) {
       );
     },
     [
+      drag.target,
       handleDeleteThread,
       activeReorderEnvironmentIds,
       handleMoveThread,
@@ -1054,6 +1073,7 @@ export function HomeScreen(props: HomeScreenProps) {
           <GestureDetector gesture={homeScrollGesture}>
             <LegendList
               ref={listRef}
+              {...drag.listProps}
               onLoad={() => activateVisibleRows(threadListV2Items)}
               onTouchStart={(event) => trackListTouches(event, true)}
               onTouchEnd={(event) => trackListTouches(event, false)}
@@ -1105,6 +1125,7 @@ export function HomeScreen(props: HomeScreenProps) {
               }}
             />
           </GestureDetector>
+          {drag.overlay}
         </SwipeableScrollGateProvider>
       </View>
     </View>

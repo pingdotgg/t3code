@@ -22,6 +22,7 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
           cloneElement(child, {
             onLongPress: () => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              props.onOpenMenu?.();
               open();
             },
           })

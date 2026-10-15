@@ -310,6 +310,13 @@ export interface ThreadListV2Layout {
   readonly nextSnoozeWakeAt: string | null;
 }
 
+/** List key of a thread row; rows use it to find their own drag layout. */
+export function threadListV2ThreadItemKey(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "id">,
+): string {
+  return `v2-thread:${thread.environmentId}:${thread.id}`;
+}
+
 export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
   readonly key: string;
@@ -545,7 +552,7 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     return {
       type: "v2-thread",
-      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      key: threadListV2ThreadItemKey(item.thread),
       item,
       snoozeWakeLabelText,
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
