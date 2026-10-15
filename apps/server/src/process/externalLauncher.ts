@@ -609,6 +609,18 @@ function buildFileExplorerRevealPowerShellSource(explorerCommand: string, target
   return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
 }
 
+/**
+ * Keeps reveals in a replacement file manager (File Pilot, Directory Opus,
+ * XYplorer) set as the Windows default. Those register a default verb on
+ * `Directory\shell`, which stock Windows leaves as `none`, and launching
+ * Explorer directly bypasses it. Opening the containing folder through the
+ * shell runs that verb; only Explorer has a selection switch, so the file
+ * itself is not selected there.
+ */
+function buildDefaultFileManagerRevealPowerShellSource(target: string): string {
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ([IO.Path]::GetDirectoryName(${escapePowerShellStringLiteral(target)})) } else { ${buildFileExplorerRevealPowerShellSource("explorer.exe", target)} }`;
+}
+
 function fileExplorerRevealLaunch(
   target: string,
   explorerTarget: string,
@@ -620,7 +632,7 @@ function fileExplorerRevealLaunch(
     command: powershellCommand,
     args: [
       ...POWERSHELL_ARGUMENTS_PREFIX,
-      encodeUtf16LeBase64(buildFileExplorerRevealPowerShellSource("explorer.exe", explorerTarget)),
+      encodeUtf16LeBase64(buildDefaultFileManagerRevealPowerShellSource(explorerTarget)),
     ],
   };
 }
