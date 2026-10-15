@@ -39,7 +39,11 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
-  readonly remoteRefinementArgs?: ReadonlyArray<string>;
+  readonly remoteRefinementArgs?:
+    | ReadonlyArray<string>
+    | ((input: {
+        readonly context: SourceControlProvider.SourceControlProviderContext;
+      }) => ReadonlyArray<string>);
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   readonly refineUnknownRemote?: (
@@ -311,11 +315,15 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
         return spec.refineUnknownRemote({ cwd: input.cwd, context });
       }
       if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
+      const remoteRefinementArgs =
+        typeof spec.remoteRefinementArgs === "function"
+          ? spec.remoteRefinementArgs({ context })
+          : (spec.remoteRefinementArgs ?? spec.authArgs);
       return input.process
         .run({
           operation: "source-control.discovery.refine-unknown-remote",
           command: spec.executable,
-          args: spec.remoteRefinementArgs ?? spec.authArgs,
+          args: remoteRefinementArgs,
           cwd: input.cwd,
           allowNonZeroExit: true,
           timeoutMs: probeTimeoutMs(spec),

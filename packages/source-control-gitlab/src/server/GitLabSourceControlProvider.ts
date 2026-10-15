@@ -80,11 +80,27 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+function normalizeGitLabHost(value: string) {
+  const candidate = value.trim();
+  if (candidate === "" || /\s/u.test(candidate)) return null;
+
+  try {
+    return new URL(
+      candidate.includes("://") ? candidate : `https://${candidate}`,
+    ).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
-  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
-    (entry) => entry.account !== null && entry.host === host,
-  );
+  const remoteHost = normalizeGitLabHost(gitLabRemoteHost(input.context));
+  const configuredHost = normalizeGitLabHost(input.auth.stdout);
+  const authenticated =
+    input.auth.exitCode === 0 &&
+    remoteHost !== null &&
+    configuredHost !== null &&
+    configuredHost === remoteHost;
 
   if (!authenticated) {
     return null;
@@ -97,6 +113,14 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   } as const;
 }
 
+function gitLabRemoteHost(context: SourceControlProvider.SourceControlProviderContext) {
+  try {
+    return new URL(context.provider.baseUrl).host;
+  } catch {
+    return context.provider.name;
+  }
+}
+
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("gitlab"),
@@ -104,6 +128,13 @@ export const discovery = {
   executable: "glab",
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
+  remoteRefinementArgs: ({ context }) => [
+    "config",
+    "get",
+    "api_host",
+    "--host",
+    gitLabRemoteHost(context),
+  ],
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
