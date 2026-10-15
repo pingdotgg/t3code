@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import * as Dialog from "../../components/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -15,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
 import { AppBar } from "../../components/AppBar";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserTabMenu } from "./BrowserTabMenu";
@@ -159,14 +160,14 @@ function BrowserPreviewScreen({
         }
       />
       {Platform.OS === "ios" ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
+        <Toolbar placement="left">
+          <Toolbar.Button
             icon="xmark"
             accessibilityLabel="Close browser"
             onPress={onClose}
             separateBackground
           />
-        </NativeHeaderToolbar>
+        </Toolbar>
       ) : null}
       {tab ? (
         <>

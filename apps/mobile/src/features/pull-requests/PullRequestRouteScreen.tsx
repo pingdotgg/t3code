@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { Chip } from "../../components/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
@@ -72,7 +73,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { SymbolView } from "../../components/AppSymbol";
 import { relativeTime } from "../../lib/time";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -446,44 +447,42 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             ]}
           />
         ) : null}
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Menu
+        <Toolbar placement="right">
+          <Toolbar.Menu
             title="Pull request"
             accessibilityLabel="Pull request actions"
             icon="ellipsis"
           >
             {permissions.verdicts.length ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 icon="text.bubble"
                 onPress={() =>
                   navigation.navigate("PullRequestReview", { ...params, mode: "review" })
                 }
               >
-                <NativeHeaderToolbar.Label>Submit review</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
+                <Toolbar.Label>Submit review</Toolbar.Label>
+              </Toolbar.MenuAction>
             ) : null}
             {permissions.canComment ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 icon="plus.bubble"
                 onPress={() =>
                   navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
                 }
               >
-                <NativeHeaderToolbar.Label>Add comment</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
+                <Toolbar.Label>Add comment</Toolbar.Label>
+              </Toolbar.MenuAction>
             ) : null}
             {pr ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 icon="arrow.up.right"
                 onPress={() => void Linking.openURL(pr.url)}
               >
-                <NativeHeaderToolbar.Label>
-                  {openOnProviderLabel(pr.provider)}
-                </NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
+                <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
+              </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 icon={PR_ACTION_ICONS["delete-branch"]}
                 destructive
                 disabled={!action.available("delete-branch")}
@@ -496,13 +495,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 }
                 onPress={confirmDeleteBranch}
               >
-                <NativeHeaderToolbar.Label>
-                  {PR_ACTION_LABELS["delete-branch"]}
-                </NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
+                <Toolbar.Label>{PR_ACTION_LABELS["delete-branch"]}</Toolbar.Label>
+              </Toolbar.MenuAction>
             ) : null}
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
+          </Toolbar.Menu>
+        </Toolbar>
         <View
           style={{
             flex: 1,
@@ -1014,63 +1011,59 @@ export function PullRequestFileRouteScreen({
           }
         />
       ) : null}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu
-          title="Diff options"
-          accessibilityLabel="Diff options"
-          icon="ellipsis"
-        >
+      <Toolbar placement="right">
+        <Toolbar.Menu title="Diff options" accessibilityLabel="Diff options" icon="ellipsis">
           {permissions.verdicts.length ? (
-            <NativeHeaderToolbar.MenuAction
+            <Toolbar.MenuAction
               icon="text.bubble"
               onPress={() =>
                 navigation.navigate("PullRequestReview", { ...route.params, mode: "review" })
               }
             >
-              <NativeHeaderToolbar.Label>Submit review</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
+              <Toolbar.Label>Submit review</Toolbar.Label>
+            </Toolbar.MenuAction>
           ) : null}
           {permissions.canComment ? (
-            <NativeHeaderToolbar.MenuAction
+            <Toolbar.MenuAction
               icon="plus.bubble"
               onPress={() =>
                 navigation.navigate("PullRequestReview", { ...route.params, mode: "comment" })
               }
             >
-              <NativeHeaderToolbar.Label>Add comment</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
+              <Toolbar.Label>Add comment</Toolbar.Label>
+            </Toolbar.MenuAction>
           ) : null}
-          <NativeHeaderToolbar.MenuAction
+          <Toolbar.MenuAction
             icon="text.alignleft"
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <NativeHeaderToolbar.Label>Word wrap</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-          <NativeHeaderToolbar.MenuAction
+            <Toolbar.Label>Word wrap</Toolbar.Label>
+          </Toolbar.MenuAction>
+          <Toolbar.MenuAction
             icon="line.3.horizontal.decrease"
             isOn={filter.hideTestFiles}
             onPress={toggleTestFiles}
           >
-            <NativeHeaderToolbar.Label>Hide test files</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
+            <Toolbar.Label>Hide test files</Toolbar.Label>
+          </Toolbar.MenuAction>
           {selectedRow && selectedFile && canCommentOnDiff ? (
-            <NativeHeaderToolbar.MenuAction icon="bubble.left" onPress={() => commentOnLine()}>
-              <NativeHeaderToolbar.Label>
+            <Toolbar.MenuAction icon="bubble.left" onPress={() => commentOnLine()}>
+              <Toolbar.Label>
                 {route.params.replacingDraftId ? "Move draft to this line" : "Add review comment"}
-              </NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
+              </Toolbar.Label>
+            </Toolbar.MenuAction>
           ) : null}
           {selectedRow && selectedFile ? (
-            <NativeHeaderToolbar.MenuAction
+            <Toolbar.MenuAction
               icon="document.on.document"
               onPress={() => void Clipboard.setStringAsync(selectedRow.content ?? "")}
             >
-              <NativeHeaderToolbar.Label>Copy line</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
+              <Toolbar.Label>Copy line</Toolbar.Label>
+            </Toolbar.MenuAction>
           ) : null}
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
+        </Toolbar.Menu>
+      </Toolbar>
       {route.params.replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
           Select a current line, then choose “Move draft to this line” from its menu.

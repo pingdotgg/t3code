@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -12,7 +13,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { Button } from "../../components/Button";
 import { GlassSurface } from "../../components/GlassSurface";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -146,13 +147,13 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
           />
         ) : null}
         {permissions.canResolve && thread ? (
-          <NativeHeaderToolbar placement="right">
-            <NativeHeaderToolbar.Button
+          <Toolbar placement="right">
+            <Toolbar.Button
               label={resolveLabel}
               disabled={busy || activity.isPending}
               onPress={() => void toggleResolved()}
             />
-          </NativeHeaderToolbar>
+          </Toolbar>
         ) : null}
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView

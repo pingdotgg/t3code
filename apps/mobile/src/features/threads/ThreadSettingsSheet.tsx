@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import * as Dialog from "../../components/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -60,11 +61,7 @@ import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { rememberModelOptions } from "../../state/use-model-option-memory";
-import {
-  NativeHeaderToolbar,
-  NativeStackScreenOptions,
-  nativeHeaderScrollEdgeEffects,
-} from "../../native/StackHeader";
+import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
@@ -1415,23 +1412,23 @@ function ThreadSettingsModelsScreen() {
           }}
         />
       </ScreenContent>
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="left">
+        <Toolbar.Button
           accessibilityLabel="Cancel thread settings"
           label="Cancel"
           onPress={presentation.onClose}
         />
-      </NativeHeaderToolbar>
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
+      </Toolbar>
+      <Toolbar placement="right">
+        <Toolbar.Button
           accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
           label={session.pendingModel ? "Save" : "Done"}
           onPress={commitAndClose}
         />
-      </NativeHeaderToolbar>
+      </Toolbar>
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.Menu
+        <Toolbar placement="bottom">
+          <Toolbar.Menu
             accessibilityLabel="Filter models"
             icon={
               hasCustomCatalogFilter
@@ -1441,40 +1438,40 @@ function ThreadSettingsModelsScreen() {
             separateBackground
             title="Model filters"
           >
-            <NativeHeaderToolbar.Menu title="Provider">
-              <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
+            <Toolbar.Menu title="Provider">
+              <Toolbar.Label>Provider</Toolbar.Label>
+              <Toolbar.MenuAction
                 isOn={session.providerFilter === null}
                 onPress={() => session.setProviderFilter(null)}
               >
                 All providers
-              </NativeHeaderToolbar.MenuAction>
-              <NativeHeaderToolbar.MenuAction
+              </Toolbar.MenuAction>
+              <Toolbar.MenuAction
                 isOn={session.providerFilter === FAVORITES_PROVIDER_FILTER}
                 onPress={() => session.setProviderFilter(FAVORITES_PROVIDER_FILTER)}
               >
                 Favorites
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
               {session.providerGroups.map((group) => (
-                <NativeHeaderToolbar.MenuAction
+                <Toolbar.MenuAction
                   key={group.providerKey}
                   isOn={session.providerFilter === group.providerKey}
                   onPress={() => session.setProviderFilter(group.providerKey)}
                 >
                   {group.providerLabel}
-                </NativeHeaderToolbar.MenuAction>
+                </Toolbar.MenuAction>
               ))}
-            </NativeHeaderToolbar.Menu>
+            </Toolbar.Menu>
             {session.hasLegacyModels ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 isOn={session.showLegacy}
                 onPress={() => session.setShowLegacy(!session.showLegacy)}
               >
                 Show legacy models
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
             ) : null}
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
+          </Toolbar.Menu>
+        </Toolbar>
       ) : null}
     </>
   );

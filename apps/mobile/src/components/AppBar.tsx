@@ -1,10 +1,11 @@
+import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { useId } from "react";
 import { Platform, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../native/StackHeader";
+import { NativeStackScreenOptions } from "../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
 import {
@@ -114,7 +115,7 @@ export function AppBar(props: AppBarProps) {
         }}
       />
       {layout.usesSplitView && (props.sidebar !== false || props.backInSplitView) ? (
-        <NativeHeaderToolbar placement="left">
+        <Toolbar placement="left">
           {props.backInSplitView && (props.backInSplitView.onPress || props.onBack) ? (
             <ScreenHeaderButton
               {...props.backInSplitView}
@@ -141,24 +142,24 @@ export function AppBar(props: AppBarProps) {
               }
             />
           ) : null}
-        </NativeHeaderToolbar>
+        </Toolbar>
       ) : null}
       {(props.actions?.length ||
         (!compactSearch && refresh) ||
         visibleMenus.length ||
         props.trailing) &&
       props.options?.unstable_headerRightItems === undefined ? (
-        <NativeHeaderToolbar placement="right">
+        <Toolbar placement="right">
           {props.actions?.map(({ loading, ...action }) =>
             loading ? (
-              <NativeHeaderToolbar.Custom key={action.accessibilityLabel}>
+              <Toolbar.Custom key={action.accessibilityLabel}>
                 <View
                   accessibilityLabel={action.accessibilityLabel}
                   className="size-9 items-center justify-center"
                 >
                   <AppActivityIndicator color={action.tintColor} />
                 </View>
-              </NativeHeaderToolbar.Custom>
+              </Toolbar.Custom>
             ) : (
               <ScreenHeaderButton
                 key={action.accessibilityLabel}
@@ -178,7 +179,7 @@ export function AppBar(props: AppBarProps) {
           ) : null}
           {visibleMenus.map(createNativeHeaderMenu)}
           {props.trailing}
-        </NativeHeaderToolbar>
+        </Toolbar>
       ) : null}
     </>
   );

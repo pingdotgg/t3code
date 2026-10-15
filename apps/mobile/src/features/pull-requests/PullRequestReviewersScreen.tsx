@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,7 +21,7 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { EmptyState } from "../../components/EmptyState";
 import { Button } from "../../components/Button";
 import { SymbolView } from "../../components/AppSymbol";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -140,13 +141,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   return (
     <View className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="left">
+        <Toolbar.Button
           icon="xmark"
           accessibilityLabel="Close request review"
           onPress={() => navigation.goBack()}
         />
-      </NativeHeaderToolbar>
+      </Toolbar>
       <NativeStackScreenOptions
         options={{
           title: "Request review",

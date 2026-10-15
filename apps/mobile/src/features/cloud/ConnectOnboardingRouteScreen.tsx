@@ -1,5 +1,6 @@
+import { Toolbar } from "../../components/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
@@ -99,9 +100,9 @@ function ConfiguredConnectOnboardingRouteScreen() {
           ]}
         />
       ) : (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
-        </NativeHeaderToolbar>
+        <Toolbar placement="right">
+          <Toolbar.Button icon="xmark" onPress={handleClose} separateBackground />
+        </Toolbar>
       )}
       <ScrollView
         nestedScrollEnabled

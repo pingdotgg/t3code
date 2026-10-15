@@ -1,6 +1,7 @@
+import { Toolbar } from "../../components/Toolbar";
 import * as Dialog from "../../components/Dialog";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -380,38 +381,38 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
           }
         />
       ) : null}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+      <Toolbar placement="right">
+        <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
           {renderedMode ? (
-            <NativeHeaderToolbar.Menu inline>
+            <Toolbar.Menu inline>
               {menuActions
                 .filter(({ inline }) => inline)
                 .map((action) => (
-                  <NativeHeaderToolbar.MenuAction
+                  <Toolbar.MenuAction
                     key={action.id}
                     icon={action.icon}
                     isOn={action.id === selectedAction}
                     onPress={action.onPress}
                   >
                     {action.title}
-                  </NativeHeaderToolbar.MenuAction>
+                  </Toolbar.MenuAction>
                 ))}
-            </NativeHeaderToolbar.Menu>
+            </Toolbar.Menu>
           ) : null}
           {menuActions
             .filter(({ inline }) => !inline)
             .map((action) => (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 key={action.id}
                 icon={action.icon}
                 destructive={"destructive" in action}
                 onPress={action.onPress}
               >
                 {action.title}
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
             ))}
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
+        </Toolbar.Menu>
+      </Toolbar>
       <AttachmentDocumentBody
         document={document}
         name={params.name}

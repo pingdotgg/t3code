@@ -1,3 +1,4 @@
+import { Toolbar } from "../../../components/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -17,7 +18,7 @@ import { ScreenScrollView } from "../../../components/ScreenScrollView";
 import { Menu } from "../../../components/Menu";
 import { IconButton } from "../../../components/IconButton";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "../PullRequestMarkdown";
 import { usePullRequestDiff, type PullRequestParams } from "../usePullRequestDiff";
@@ -162,21 +163,17 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           }
         />
       ) : null}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu
-          title="Guide options"
-          accessibilityLabel="Guide options"
-          icon="ellipsis"
-        >
-          <NativeHeaderToolbar.MenuAction
+      <Toolbar placement="right">
+        <Toolbar.Menu title="Guide options" accessibilityLabel="Guide options" icon="ellipsis">
+          <Toolbar.MenuAction
             icon="text.alignleft"
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <NativeHeaderToolbar.Label>Word wrap</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
+            <Toolbar.Label>Word wrap</Toolbar.Label>
+          </Toolbar.MenuAction>
+        </Toolbar.Menu>
+      </Toolbar>
       <PullRequestMarkdownRepository
         params={route.params}
         value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}

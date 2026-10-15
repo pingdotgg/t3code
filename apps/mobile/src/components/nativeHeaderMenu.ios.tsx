@@ -1,19 +1,15 @@
-import { NativeHeaderToolbar } from "../native/StackHeader";
+import { Toolbar } from "./Toolbar";
+
 import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
 
 function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
   return items.map((item) =>
     "items" in item ? (
-      <NativeHeaderToolbar.Menu
-        key={item.id}
-        title={item.title}
-        icon={item.icon}
-        inline={item.inline}
-      >
+      <Toolbar.Menu key={item.id} title={item.title} icon={item.icon} inline={item.inline}>
         {renderMenuItems(item.items)}
-      </NativeHeaderToolbar.Menu>
+      </Toolbar.Menu>
     ) : (
-      <NativeHeaderToolbar.MenuAction
+      <Toolbar.MenuAction
         key={item.id}
         icon={item.icon}
         subtitle={item.subtitle}
@@ -22,7 +18,7 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         onPress={item.onPress}
       >
         {item.title}
-      </NativeHeaderToolbar.MenuAction>
+      </Toolbar.MenuAction>
     ),
   );
 }
@@ -30,15 +26,15 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
 /** Returns direct native items for toolbar serialization, including nested menu data. */
 export function createNativeHeaderMenu(menu: AppBarMenu) {
   return (
-    <NativeHeaderToolbar.Menu
+    <Toolbar.Menu
       key={menu.title}
       title={menu.title}
       accessibilityLabel={menu.title}
       icon={typeof menu.icon === "string" ? menu.icon : menu.icon.ios}
       separateBackground={menu.separateBackground ?? true}
     >
-      {menu.status ? <NativeHeaderToolbar.Label>{menu.status}</NativeHeaderToolbar.Label> : null}
+      {menu.status ? <Toolbar.Label>{menu.status}</Toolbar.Label> : null}
       {renderMenuItems(menu.items)}
-    </NativeHeaderToolbar.Menu>
+    </Toolbar.Menu>
   );
 }

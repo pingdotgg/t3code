@@ -1,3 +1,4 @@
+import { NativeHeaderToolbar } from "../native/NativeHeaderToolbar";
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import { HorizontalFloatingToolbar, RNHostView } from "@expo/ui/jetpack-compose";
 import type { ToolbarProps } from "./Toolbar.types";
@@ -5,8 +6,9 @@ import type { ToolbarProps } from "./Toolbar.types";
 import { useControlTheme } from "./useControlTheme";
 
 /** Native toolbar surface; hosted RN controls retain their existing menus and accessibility. */
-export function Toolbar(props: ToolbarProps) {
+function ToolbarRoot(props: ToolbarProps) {
   const { colors } = useControlTheme();
+  if (props.placement) return <NativeHeaderToolbar {...props} />;
   return (
     <NativeThemeHost
       matchContents
@@ -24,3 +26,13 @@ export function Toolbar(props: ToolbarProps) {
     </NativeThemeHost>
   );
 }
+
+export const Toolbar = Object.assign(ToolbarRoot, {
+  Button: NativeHeaderToolbar.Button,
+  Custom: NativeHeaderToolbar.Custom,
+  Label: NativeHeaderToolbar.Label,
+  Menu: NativeHeaderToolbar.Menu,
+  MenuAction: NativeHeaderToolbar.MenuAction,
+  SearchBarSlot: NativeHeaderToolbar.SearchBarSlot,
+  Spacer: NativeHeaderToolbar.Spacer,
+});

@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/Toolbar";
 import * as Dialog from "../../components/Dialog";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { NavigationRow } from "../../components/NavigationRow";
@@ -23,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -593,9 +594,9 @@ export function BranchPickerScreen(props: {
         }}
       />
       {usesNativeMailSearchToolbar ? null : (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.SearchBarSlot />
-        </NativeHeaderToolbar>
+        <Toolbar placement="bottom">
+          <Toolbar.SearchBarSlot />
+        </Toolbar>
       )}
       {branchContent}
     </>

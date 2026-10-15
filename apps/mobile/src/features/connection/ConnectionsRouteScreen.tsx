@@ -1,5 +1,6 @@
+import { Toolbar } from "../../components/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
@@ -41,13 +42,13 @@ export function ConnectionsRouteScreen() {
           ]}
         />
       ) : (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button
+        <Toolbar placement="right">
+          <Toolbar.Button
             icon="plus"
             onPress={() => navigation.navigate("ConnectionsNew")}
             separateBackground
           />
-        </NativeHeaderToolbar>
+        </Toolbar>
       )}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
