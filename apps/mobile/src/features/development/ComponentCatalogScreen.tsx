@@ -1,3 +1,4 @@
+import { NativeAppBarExample } from "./NativeAppBarExample";
 import { Toast } from "../../components/Toast";
 import { Progress } from "../../components/Progress";
 import { useNavigation } from "@react-navigation/native";
@@ -136,6 +137,7 @@ export function ComponentCatalogScreen() {
               </View>
             </View>
             <View className="gap-3">
+              <NativeAppBarExample />
               <AppText className="text-lg font-t3-semibold">Buttons</AppText>
               <View className="flex-row flex-wrap gap-2">
                 <Button label="Primary" tone="primary" onPress={announceAction} />
