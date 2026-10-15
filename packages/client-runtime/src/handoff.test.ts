@@ -75,6 +75,7 @@ describe("handoff endpoints shared by web and mobile", () => {
 
 const projection = {
   runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+  visibleTurnItems: [{ item: { type: "user_message" } }],
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {
@@ -88,6 +89,18 @@ describe("pending context handoff", () => {
     ).toBe("second");
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+  });
+  it("stays hidden while the thread's timeline is empty", () => {
+    const empty = { ...projection, visibleTurnItems: [] };
+    expect(resolvePendingHandoff(empty, { instanceId: to, model: "first" }, [])).toBeNull();
+    // Paging can leave a window of only tool rows after the prompt.
+    const toolRowsOnly = {
+      ...projection,
+      visibleTurnItems: [{ item: { type: "command_execution" } }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(
+      resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [])?.to.model,
+    ).toBe("first");
   });
   it("only previews a same-provider model change when it needs a fresh native thread", () => {
     const providers = [
