@@ -44,6 +44,9 @@ const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // Every progress publish resends the provider list to each client, so the
 // installer's output is sampled rather than forwarded line by line.
 const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
+// The update has already landed; a slow sibling must not hold its result or lock.
+const SIBLING_REFRESH_CONCURRENCY = 4;
+const SIBLING_REFRESH_TIMEOUT = Duration.seconds(30);
 const UPDATE_PROGRESS_MAX_LENGTH = 200;
 // An installer may write for minutes without a line ending; only its tail matters.
 const UPDATE_PARTIAL_LINE_MAX_LENGTH = 4_096;
@@ -381,6 +384,38 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
+  // Other instances of this provider may run the install that was just
+  // updated, as several accounts often share one binary. Refresh them so they
+  // stop offering an update that already landed. A refresh only re-reads
+  // status, so instances with their own install keep their version.
+  const refreshOtherInstances = (
+    provider: ProviderDriverKind,
+    instanceId: ProviderInstanceId,
+  ): Effect.Effect<void> =>
+    providerRegistry.getProviders.pipe(
+      Effect.flatMap((providers) =>
+        Effect.forEach(
+          providers.filter(
+            (candidate) => candidate.driver === provider && candidate.instanceId !== instanceId,
+          ),
+          (sibling) => providerRegistry.refreshInstance(sibling.instanceId),
+          { concurrency: SIBLING_REFRESH_CONCURRENCY, discard: true },
+        ),
+      ),
+      Effect.timeoutOption(SIBLING_REFRESH_TIMEOUT),
+      Effect.flatMap((completed) =>
+        Option.isNone(completed)
+          ? Effect.logWarning("Provider refresh after an update timed out", { provider })
+          : Effect.void,
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Provider refresh after an update failed", {
+          provider,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
@@ -525,6 +560,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               verified,
               instanceId,
             );
+            yield* refreshOtherInstances(provider, instanceId);
             // "Succeeded" needs the provider to still be installed: an
             // installer that exits 0 and leaves the binary missing is not a
             // success. A missing version alone is not held against it, since
