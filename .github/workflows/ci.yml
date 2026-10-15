@@ -54,10 +54,10 @@ jobs:
         id: detect
         uses: ./.github/actions/ci-changes
 
-  # Lint, typecheck, and the desktop build each get a runner so they run side by
-  # side instead of one after another. Lint always runs: it formats every file,
-  # docs included. The `Check` job at the end of this file passes only when
-  # every other job passes or was skipped by `changes`.
+  # Lint and the desktop build each get a runner so they run side by side.
+  # Typecheck shares the build's install. Lint always runs: it formats every
+  # file, docs included. The `Check` job at the end of this file passes only
+  # when every other job passes or was skipped by `changes`.
   lint:
     name: Lint
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -99,38 +99,10 @@ jobs:
       - name: Check
         run: vp check
 
-  typecheck:
-    name: Typecheck
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.typecheck != 'false' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
-      - name: Typecheck
-        run: vpr typecheck
-
   build:
-    name: Build
+    name: Build and Typecheck
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    if: ${{ !cancelled() && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -143,9 +115,11 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - uses: ./.github/actions/setup-apt-mirrors
+        if: needs.changes.outputs.build != 'false'
 
       # Runs in the background while Vite+ installs; the step before the build waits for it.
       - name: Start installing browser secret helper build libraries
+        if: needs.changes.outputs.build != 'false'
         run: |
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
@@ -162,9 +136,24 @@ jobs:
           run-install: true
 
       - name: Ensure Electron runtime is installed
+        id: electron
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      # Runs in the background while the build runs, and reports in the last
+      # step: neither result hides the other.
+      - name: Start typecheck
+        id: typecheck
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && needs.changes.outputs.typecheck != 'false' }}
+        run: |
+          (
+            set +e
+            vpr typecheck
+            echo "$?" > "$RUNNER_TEMP/typecheck-status"
+          ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
+
       - name: Finish installing browser secret helper build libraries
+        id: apt
+        if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
         timeout-minutes: 5
         run: |
           until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
@@ -172,10 +161,21 @@ jobs:
           exit "$(cat "$RUNNER_TEMP/apt-status")"
 
       - name: Build desktop pipeline
+        id: build
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.apt.outcome == 'success' && needs.changes.outputs.build != 'false' }}
         run: vp run build:desktop
 
       - name: Verify preload bundle output
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
+
+      - name: Typecheck
+        if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          until test -s "$RUNNER_TEMP/typecheck-status"; do sleep 1; done
+          cat "$RUNNER_TEMP/typecheck.log"
+          exit "$(cat "$RUNNER_TEMP/typecheck-status")"
 
   # Everything except `t3` (apps/server) and the web app, which has its own job
   # below. `--parallel` drops the package dependency ordering that `vp run`
@@ -510,7 +510,6 @@ jobs:
       [
         changes,
         lint,
-        typecheck,
         build,
         test,
         test_web,
@@ -528,10 +527,12 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          # A job may skip only when `changes` said it was not needed. Gates are
-          # keyed by job name, except the macOS lint and the transfer report.
+          # A job may skip only when `changes` said every gate it represents was
+          # not needed. Gates are keyed by job name, except merged Build, the
+          # macOS lint, and the transfer report.
           echo "$RESULTS" | jq -e '.changes.outputs as $gates
-            | {mobile_native_static_analysis: "mobile_native", "transfer-report": "test_server"} as $renamed
+            | {build: ["build", "typecheck"], mobile_native_static_analysis: ["mobile_native"], "transfer-report": ["test_server"]} as $renamed
             | all(to_entries[];
                 .value.result == "success"
-                or (.value.result == "skipped" and $gates[$renamed[.key] // .key] == "false"))' > /dev/null
+                or (.value.result == "skipped"
+                  and (($renamed[.key] // [.key]) | all(.[]; $gates[.] == "false"))))' > /dev/null
