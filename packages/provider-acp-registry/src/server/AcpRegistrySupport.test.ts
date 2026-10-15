@@ -14,6 +14,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -209,6 +211,47 @@ describe("AcpRegistrySupport", () => {
         platformTarget: "darwin-aarch64",
       }),
     ).toBeUndefined();
+    expect(
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
+        agent: makeAgent({
+          binary: {
+            "windows-x86_64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-x64.exe",
+              args: ["acp"],
+            },
+          },
+        }),
+        preference: "auto",
+        platformTarget: "windows-aarch64",
+      }),
+    ).toMatchObject({
+      kind: "binary",
+      binaryTarget: { cmd: "./bin/example-agent-x64.exe" },
+    });
+    expect(
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
+        agent: makeAgent({
+          binary: {
+            "windows-aarch64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-arm64.exe",
+              args: ["acp"],
+            },
+            "windows-x86_64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-x64.exe",
+              args: ["acp"],
+            },
+          },
+        }),
+        preference: "auto",
+        platformTarget: "windows-aarch64",
+      }),
+    ).toMatchObject({
+      kind: "binary",
+      binaryTarget: { cmd: "./bin/example-agent-arm64.exe" },
+    });
   });
 
   it.effect("resolves a local command on the selected environment without the registry", () => {
@@ -779,6 +822,90 @@ describe("AcpRegistrySupport", () => {
       ),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Architecture, "x64"),
+    );
+  });
+
+  it.effect("prepares an x64 ZIP fallback on Windows ARM when PATH tar cannot read ZIP", () => {
+    const downloadUrl = "https://registry.test/agent-windows-x64.zip";
+    const agent = makeAgent({
+      binary: { "windows-x86_64": { archive: downloadUrl, cmd: "./agent.exe" } },
+      npx: { package: "@example/acp@1.2.3" },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-arm-zip-" });
+      const commands: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected pipeline");
+          commands.push(command.command);
+          // Simulate Git's GNU tar rejecting ZIP and System32 bsdtar listing/extracting it.
+          const supportsZip = command.command === "C:\\Windows\\System32\\tar.exe";
+          if (supportsZip && command.args[0] === "-xf") {
+            const outputDirectory = command.args[3];
+            if (!outputDirectory) return yield* Effect.die("Missing extraction directory");
+            yield* fileSystem.writeFileString(path.join(outputDirectory, "agent.exe"), "fixture");
+          }
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(supportsZip ? 0 : 1)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(new TextEncoder().encode(supportsZip ? "agent.exe\r\n" : "")),
+            stderr: Stream.make(
+              new TextEncoder().encode(supportsZip ? "" : "GNU tar cannot read ZIP"),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }).pipe(Effect.orDie),
+      );
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: path.join(cacheDir, "tools"),
+        registryUrl,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Architecture, "arm64"),
+        Effect.provideService(HostProcess.Environment, {
+          SystemRoot: "C:\\Windows",
+          PATH: "C:\\Program Files\\Git\\usr\\bin;C:\\Windows\\System32",
+        }),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "tar" ? "C:\\Program Files\\Git\\usr\\bin\\tar.exe" : command,
+        ),
+      );
+      yield* resolver.prepare({ agentId: agent.id });
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
+      expect(resolved.spawn.command).toBe(
+        yield* fileSystem.realPath(
+          path.join(cacheDir, "tools", agent.id, agent.version, "windows-x86_64", "agent.exe"),
+        ),
+      );
+      expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe("fixture");
+      expect(commands).toEqual([
+        "C:\\Windows\\System32\\tar.exe",
+        "C:\\Windows\\System32\\tar.exe",
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url === registryUrl
+                ? new Response(makeRegistry(agent))
+                : new Response("ZIP fixture"),
+            ),
+          ),
+        ),
+      ),
     );
   });
 
