@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Toast } from "../../components/Toast";
+import { MOBILE_MOTION } from "../../lib/designTokens";
 import { APP_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
@@ -46,8 +47,8 @@ export function GitActionProgressOverlay(props: {
 
   return (
     <Animated.View
-      entering={FadeIn.duration(200).reduceMotion(ReduceMotion.System)}
-      exiting={FadeOut.duration(150).reduceMotion(ReduceMotion.System)}
+      entering={FadeIn.duration(MOBILE_MOTION.enter).reduceMotion(ReduceMotion.System)}
+      exiting={FadeOut.duration(MOBILE_MOTION.exit).reduceMotion(ReduceMotion.System)}
       className="absolute inset-x-3 z-[100]"
       style={{ top: insets.top + APP_BAR_HEIGHT + 8 }}
       pointerEvents="box-none"

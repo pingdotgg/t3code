@@ -1,3 +1,4 @@
+import { MOBILE_SHAPE } from "../lib/designTokens";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
@@ -22,7 +23,7 @@ export function ListSection(props: {
             }
           >
             {props.titleIcon}
-            <Text className="shrink text-sm font-t3-medium text-foreground-muted">
+            <Text textRole="footnote" className="shrink font-t3-medium text-foreground-muted">
               {props.title}
             </Text>
           </View>
@@ -30,16 +31,18 @@ export function ListSection(props: {
         </View>
       ) : null}
       <View
-        className={
-          Platform.OS === "android"
-            ? "overflow-hidden rounded-[28px] bg-grouped-card"
-            : "overflow-hidden rounded-[24px] border-continuous bg-grouped-card"
-        }
+        className="overflow-hidden border-continuous bg-grouped-card"
+        style={{
+          borderRadius:
+            Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,
+        }}
       >
         {props.children}
       </View>
       {props.footer ? (
-        <Text className="px-4 text-sm text-foreground-muted">{props.footer}</Text>
+        <Text textRole="footnote" className="px-4 text-foreground-muted">
+          {props.footer}
+        </Text>
       ) : null}
     </View>
   );

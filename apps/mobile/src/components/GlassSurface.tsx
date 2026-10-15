@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { withUniwind } from "uniwind";
 
+import { MOBILE_SHAPE } from "../lib/designTokens";
 import { cn } from "../lib/cn";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { GlassBackdrop } from "./GlassBackdrop";
@@ -51,7 +52,7 @@ export function GlassSurface({
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
   const hasShadow = chrome !== "none" && Platform.OS !== "android";
   const surfaceStyle: ViewStyle = {
-    borderRadius: 32,
+    borderRadius: MOBILE_SHAPE.glass,
     overflow: "hidden",
     shadowColor: hasShadow ? "#000000" : "transparent",
     shadowOpacity: hasShadow ? (isDarkMode ? 0.22 : 0.08) : 0,

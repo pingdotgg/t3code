@@ -1,3 +1,4 @@
+import { MOBILE_SHAPE } from "../lib/designTokens";
 import { useEffect } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
 
@@ -23,7 +24,7 @@ export function Toast(props: ToastProps) {
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(props.message);
   }, [props.message]);
   return (
-    <GlassSurface className="p-3">
+    <GlassSurface className="p-3" style={{ borderRadius: MOBILE_SHAPE.toast }}>
       <View className="flex-row items-center gap-3">
         {props.busy ? (
           <AppActivityIndicator />
@@ -37,9 +38,13 @@ export function Toast(props: ToastProps) {
           />
         )}
         <View className="min-w-0 flex-1" accessibilityLiveRegion="polite">
-          <AppText className="text-sm font-t3-semibold">{props.message}</AppText>
+          <AppText textRole="footnote" className="font-t3-semibold">
+            {props.message}
+          </AppText>
           {props.description ? (
-            <AppText className="text-xs text-foreground-muted">{props.description}</AppText>
+            <AppText textRole="label" className="text-foreground-muted">
+              {props.description}
+            </AppText>
           ) : null}
         </View>
         {props.onDismiss ? (

@@ -7,18 +7,27 @@ import {
   type TextProps as RNTextProps,
 } from "react-native";
 
+import { MOBILE_TEXT_CLASSES } from "../lib/typography";
+
 import { cn } from "../lib/cn";
 
-export type AppTextProps = RNTextProps & { readonly className?: string };
+export type AppTextProps = RNTextProps & {
+  readonly className?: string;
+  readonly textRole?: keyof typeof MOBILE_TEXT_CLASSES;
+};
 
 /**
  * Thin wrapper around RN Text with default font-family and foreground color.
  * Uses Uniwind className — no manual style parsing.
  */
-export function AppText({ className, ...props }: AppTextProps) {
+export function AppText({ className, textRole, ...props }: AppTextProps) {
   return (
     <RNText
-      className={cn("font-sans text-foreground", className)}
+      className={cn(
+        "font-sans text-foreground",
+        textRole && MOBILE_TEXT_CLASSES[textRole],
+        className,
+      )}
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
       {...props}
     />

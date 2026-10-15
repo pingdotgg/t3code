@@ -47,22 +47,26 @@ export function ListRowLayout({
       ) : null}
       <View className="min-w-0 flex-1 gap-1">
         <AppText
-          className={
-            tone === "danger" ? "text-base text-danger-foreground" : "text-base text-foreground"
-          }
+          textRole="body"
+          className={tone === "danger" ? "text-danger-foreground" : "text-foreground"}
         >
           {label}
         </AppText>
         {description ? (
-          <AppText className="text-sm text-foreground-muted">{description}</AppText>
+          <AppText textRole="footnote" className="text-foreground-muted">
+            {description}
+          </AppText>
         ) : null}
         {detail && stackDetail ? (
-          <AppText className="text-sm text-foreground-muted">{detail}</AppText>
+          <AppText textRole="footnote" className="text-foreground-muted">
+            {detail}
+          </AppText>
         ) : null}
       </View>
       {detail && !stackDetail ? (
         <AppText
-          className="max-w-[40%] shrink text-right text-sm text-foreground-muted"
+          textRole="footnote"
+          className="max-w-[40%] shrink text-right text-foreground-muted"
           numberOfLines={1}
           ellipsizeMode="middle"
         >
