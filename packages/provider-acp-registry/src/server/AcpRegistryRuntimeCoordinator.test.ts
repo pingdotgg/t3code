@@ -136,13 +136,13 @@ describe("AcpRegistryRuntimeCoordinator", () => {
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
   );
 
-  it.effect("replays and replaces live configuration per provider instance", () =>
+  it.effect("replays live configuration and keeps each model's newest options per instance", () =>
     Effect.gen(function* () {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
       const firstSeen = yield* Deferred.make<void>();
       const replacementSeen = yield* Deferred.make<void>();
-      const received: Array<AcpRegistryLiveConfiguration> = [];
+      const received: Array<AcpRegistryRuntimeCoordinator.AcpRegistryLiveConfigurationState> = [];
       const first = {
         models: [{ id: "sonnet", name: "Sonnet", description: null }],
         currentModelId: "sonnet",
@@ -170,8 +170,18 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Deferred.await(replacementSeen);
       yield* Fiber.interrupt(consumer);
 
-      expect(received).toEqual([first, replacement]);
-      expect(yield* coordinator.getLiveConfiguration(instanceId)).toEqual(Option.some(replacement));
+      const accumulated = {
+        latest: replacement,
+        modelOptions: new Map([
+          ["sonnet", first.configOptions],
+          ["opus", replacement.configOptions],
+        ]),
+      };
+      expect(received).toEqual([
+        { latest: first, modelOptions: new Map([["sonnet", first.configOptions]]) },
+        accumulated,
+      ]);
+      expect(yield* coordinator.getLiveConfiguration(instanceId)).toEqual(Option.some(accumulated));
       yield* coordinator.clearLiveConfiguration(instanceId);
       expect(Option.isNone(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),

@@ -40,16 +40,19 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
+  ACP_REGISTRY_DEFAULT_MODEL_SLUG,
   type AcpRegistryAvailableCommands,
   type AcpRegistryConfigurationProbe,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  type AcpRegistryModelOptions,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
   listAcpRegistryProviders,
   logoutAcpRegistry,
   probeAcpRegistryConfiguration,
+  recordAcpRegistryModelOptions,
   setAcpRegistryProvider,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -87,6 +90,32 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   };
 };
 
+/**
+ * Gives each listed model the session options last observed for it. Models
+ * without an observation, including custom models, keep their capabilities.
+ */
+function withModelOptions(
+  models: ReadonlyArray<ServerProviderModel>,
+  modelOptions: AcpRegistryModelOptions,
+): ReadonlyArray<ServerProviderModel> {
+  return models.map((model) => {
+    const optionDescriptors = model.isCustom ? undefined : modelOptions.get(model.slug);
+    if (optionDescriptors === undefined) return model;
+    return {
+      ...model,
+      capabilities:
+        optionDescriptors.length === 0
+          ? EMPTY_CAPABILITIES
+          : createModelCapabilities({ optionDescriptors }),
+    };
+  });
+}
+
+/**
+ * Lists a session's models. Its config options describe only its current
+ * model, so every other model starts without options until a probe or live
+ * session observes it.
+ */
 function modelsFromDiscovery(
   discovery:
     | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
@@ -94,21 +123,15 @@ function modelsFromDiscovery(
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
-  // Discovered session config options and modes ride on every model so the
-  // composer's generic option controls can drive them per thread.
-  const capabilities =
-    discovery === undefined || discovery.configOptions.length === 0
-      ? EMPTY_CAPABILITIES
-      : createModelCapabilities({ optionDescriptors: discovery.configOptions });
   const builtInModels: ReadonlyArray<ServerProviderModel> =
     discovered.length === 0
       ? [
           {
-            slug: "default",
+            slug: ACP_REGISTRY_DEFAULT_MODEL_SLUG,
             name: "Default",
             isCustom: false,
             isDefault: true,
-            capabilities,
+            capabilities: EMPTY_CAPABILITIES,
           },
         ]
       : discovered.map((model) => ({
@@ -116,9 +139,12 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities,
+          capabilities: EMPTY_CAPABILITIES,
         }));
-  return providerModelsFromSettings(builtInModels, customModels, capabilities);
+  const models = providerModelsFromSettings(builtInModels, customModels, EMPTY_CAPABILITIES);
+  return discovery === undefined
+    ? models
+    : withModelOptions(models, recordAcpRegistryModelOptions(new Map(), discovery));
 }
 
 export function acpRegistrySnapshotReadiness(
@@ -260,16 +286,40 @@ export function applyAcpRegistryAvailableCommands(
   });
 }
 
+/** Gives each listed model the session options last observed for it. */
+export function applyAcpRegistryModelOptions(
+  provider: ServerProvider,
+  modelOptions: AcpRegistryModelOptions,
+): ServerProvider {
+  return { ...provider, models: withModelOptions(provider.models, modelOptions) };
+}
+
+/**
+ * Overlays live sessions on a snapshot. The newest session owns the model
+ * list; each model keeps the options its newest live session reported, or
+ * else the options the snapshot already knew for it.
+ */
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
-  configuration: AcpRegistryLiveConfiguration,
+  configuration: AcpRegistryRuntimeCoordinator.AcpRegistryLiveConfigurationState,
   customModels: ReadonlyArray<string>,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
+  const knownOptions = new Map(
+    provider.models.flatMap((model) => {
+      const optionDescriptors = model.capabilities?.optionDescriptors ?? [];
+      return model.isCustom || optionDescriptors.length === 0
+        ? []
+        : [[model.slug, optionDescriptors] as const];
+    }),
+  );
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: modelsFromDiscovery(configuration, customModels),
+    models: withModelOptions(
+      modelsFromDiscovery(configuration.latest, customModels),
+      new Map([...knownOptions, ...configuration.modelOptions]),
+    ),
   };
 }
 
@@ -533,16 +583,37 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           environment,
           processEnvironment,
         });
+      // `probedModelOptions` keeps the options each discovery probe observed
+      // for its session's model. Agents such as Devin start probes on the
+      // last used model, so successive probes can describe different models.
+      const enrichmentCache = yield* Ref.make<{
+        readonly generation: number;
+        readonly entry: {
+          readonly provider: ServerProvider;
+          readonly expiresAt: number;
+        } | null;
+        readonly probedModelOptions: AcpRegistryModelOptions;
+      }>({ generation: 0, entry: null, probedModelOptions: new Map() });
+      const liveSnapshotSemaphore = yield* Semaphore.make(1);
+      const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
+        generation: current.generation + 1,
+        entry: null,
+        probedModelOptions: new Map(),
+      }));
       const withLiveRuntimeState = (input: ServerProvider) =>
         Effect.gen(function* () {
           if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
-          const provider =
+          const authenticated =
             input.enabled &&
             input.installed &&
             input.auth.status === "unknown" &&
             (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
+          const provider = applyAcpRegistryModelOptions(
+            authenticated,
+            (yield* Ref.get(enrichmentCache)).probedModelOptions,
+          );
           return yield* Option.isNone(runtimeCoordinator)
             ? Effect.succeed(provider)
             : Effect.all({
@@ -569,29 +640,34 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
       );
-      const enrichProvider = checkAcpRegistryProviderStatus(
-        {
-          ...readinessInput,
-          cwd: host.paths.cwd,
-        },
-        probeAcpRegistryConfiguration,
-      ).pipe(
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(Crypto.Crypto, crypto),
-      );
-      const enrichmentCache = yield* Ref.make<{
-        readonly generation: number;
-        readonly entry: {
-          readonly provider: ServerProvider;
-          readonly expiresAt: number;
-        } | null;
-      }>({ generation: 0, entry: null });
-      const liveSnapshotSemaphore = yield* Semaphore.make(1);
-      const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
-        generation: current.generation + 1,
-        entry: null,
-      }));
+      /** Probes the agent, recording its observed model options unless `generation` was invalidated. */
+      const enrichProvider = (generation: number) =>
+        checkAcpRegistryProviderStatus(
+          {
+            ...readinessInput,
+            cwd: host.paths.cwd,
+          },
+          (input) =>
+            probeAcpRegistryConfiguration(input).pipe(
+              Effect.tap(({ probe }) =>
+                Ref.update(enrichmentCache, (current) =>
+                  current.generation === generation
+                    ? {
+                        ...current,
+                        probedModelOptions: recordAcpRegistryModelOptions(
+                          current.probedModelOptions,
+                          probe,
+                        ),
+                      }
+                    : current,
+                ),
+              ),
+            ),
+        ).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
       const enrichProviderCached = (baseSnapshot: ServerProvider) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
@@ -607,7 +683,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               generation: cacheState.generation,
             };
           }
-          const enriched = yield* enrichProvider;
+          const enriched = yield* enrichProvider(cacheState.generation);
           if (enriched.status === "ready") {
             yield* Ref.update(enrichmentCache, (current) =>
               current.generation === cacheState.generation

@@ -1,15 +1,23 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AcpRegistryOperationError,
+  ProviderInstanceId,
+  type ProviderOptionDescriptor,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { recordAcpRegistryModelOptions, type AcpRegistryLiveConfiguration } from "./probe.ts";
 import {
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
+  applyAcpRegistryModelOptions,
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
@@ -30,6 +38,77 @@ const noSessionManagement = {
   canDelete: false,
   canConfigureProviders: false,
 } as const;
+
+const WIDE_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const NARROW_LEVELS = ["low", "high", "max"];
+const thinking = (levels: ReadonlyArray<string>, currentValue: string) => ({
+  id: "thought_level",
+  label: "Thinking",
+  type: "select" as const,
+  options: levels.map((id) => ({ id, label: id })),
+  currentValue,
+});
+const wideThinking = thinking(WIDE_LEVELS, "medium");
+const narrowThinking = thinking(NARROW_LEVELS, "high");
+const models = [
+  { id: "opus", name: "Opus", description: null },
+  { id: "glm", name: "GLM", description: null },
+];
+
+function probedSnapshot(
+  currentModelId: string | null,
+  configOptions: ReadonlyArray<ProviderOptionDescriptor>,
+  settings: { readonly customModels?: ReadonlyArray<string> } = {},
+): ServerProvider {
+  return buildCheckedAcpRegistrySnapshot({
+    ...identity,
+    settings: decodeSettings({ agentId: "devin", ...settings }),
+    checkedAt: "2026-10-03T10:00:00.000Z",
+    inspection: { status: "ready", agentId: "devin", version: "1.0.0", distribution: "binary" },
+    probe: {
+      probe: {
+        instanceId: identity.instanceId,
+        ready: true,
+        icon: null,
+        authMethods: [],
+        models,
+        currentModelId,
+        configOptions,
+        sessionManagement: noSessionManagement,
+      },
+      slashCommands: [],
+      skills: [],
+    },
+  });
+}
+
+/** Thinking-level choice ids each model offers in the composer. */
+function thinkingChoices(provider: ServerProvider): Record<string, ReadonlyArray<string>> {
+  return Object.fromEntries(
+    provider.models.map((model) => [
+      model.slug,
+      (model.capabilities?.optionDescriptors ?? []).flatMap((descriptor) =>
+        descriptor.id === "thought_level" && descriptor.type === "select"
+          ? descriptor.options.map((choice) => choice.id)
+          : [],
+      ),
+    ]),
+  );
+}
+
+function thinkingCurrentValue(provider: ServerProvider, slug: string) {
+  const descriptor = provider.models
+    .find((model) => model.slug === slug)
+    ?.capabilities?.optionDescriptors?.find((candidate) => candidate.id === "thought_level");
+  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
+}
+
+/** The coordinator state after one live session reports `latest`. */
+function liveState(
+  latest: AcpRegistryLiveConfiguration,
+): AcpRegistryRuntimeCoordinator.AcpRegistryLiveConfigurationState {
+  return { latest, modelOptions: recordAcpRegistryModelOptions(new Map(), latest) };
+}
 
 function catalogWithInspection(
   inspection: AcpRegistrySupport.AcpRegistryInspection,
@@ -121,7 +200,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         snapshot,
-        { models: [], currentModelId: null, configOptions: [] },
+        liveState({ models: [], currentModelId: null, configOptions: [] }),
         [],
       ).auth.status,
     ).toBe("unknown");
@@ -164,17 +243,112 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         provider,
-        {
+        liveState({
           models: [{ id: "live-model", name: "Live model", description: null }],
           currentModelId: "live-model",
           configOptions: [],
-        },
+        }),
         [],
       ),
     ).toMatchObject({
       auth: { status: "unknown", canLogout: true },
       nativeSessions: { canList: true, canLoad: true, canResume: true },
       models: [{ slug: "live-model", isDefault: true }],
+    });
+  });
+
+  it("describes discovered session options only on the model they belong to", () => {
+    const snapshot = probedSnapshot("opus", [wideThinking], { customModels: ["custom-model"] });
+    expect(thinkingChoices(snapshot)).toEqual({
+      opus: WIDE_LEVELS,
+      glm: [],
+      "custom-model": [],
+    });
+
+    // A session whose current model is not one the agent lists describes no model.
+    expect(thinkingChoices(probedSnapshot(null, [wideThinking]))).toEqual({ opus: [], glm: [] });
+  });
+
+  it.effect("keeps each model's last observed options across live sessions and refreshes", () =>
+    Effect.gen(function* () {
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const otherInstance = ProviderInstanceId.make("acpRegistry_other");
+      const liveConfiguration = () =>
+        coordinator.getLiveConfiguration(identity.instanceId).pipe(Effect.map(Option.getOrThrow));
+
+      // A thread runs on Opus with Extra High selected, then another on GLM.
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+        models,
+        currentModelId: "opus",
+        configOptions: [{ ...wideThinking, currentValue: "xhigh" }],
+      });
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+        models,
+        currentModelId: "glm",
+        configOptions: [narrowThinking],
+      });
+      // Another instance's sessions never reach this one.
+      yield* coordinator.publishLiveConfiguration(otherInstance, {
+        models,
+        currentModelId: "opus",
+        configOptions: [narrowThinking],
+      });
+
+      const live = applyAcpRegistryLiveConfiguration(
+        probedSnapshot(null, []),
+        yield* liveConfiguration(),
+        [],
+      );
+      expect(thinkingChoices(live)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
+      expect(thinkingCurrentValue(live, "opus")).toBe("xhigh");
+
+      // A refresh probes Opus again; the newest GLM session must not replace its list.
+      const refreshed = applyAcpRegistryLiveConfiguration(
+        probedSnapshot("opus", [wideThinking]),
+        yield* liveConfiguration(),
+        [],
+      );
+      expect(thinkingChoices(refreshed)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
+
+      // A session on an unlisted model adds nothing and removes nothing.
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+        models,
+        currentModelId: null,
+        configOptions: [{ ...narrowThinking, id: "unrelated" }],
+      });
+      expect(
+        thinkingChoices(
+          applyAcpRegistryLiveConfiguration(
+            probedSnapshot("opus", [wideThinking]),
+            yield* liveConfiguration(),
+            [],
+          ),
+        ),
+      ).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
+
+  it("keeps a model's probed options when a later probe starts on another model", () => {
+    const firstProbe = probedSnapshot("opus", [wideThinking]);
+    const probed = recordAcpRegistryModelOptions(new Map(), {
+      models,
+      currentModelId: "opus",
+      configOptions: [wideThinking],
+    });
+    expect(thinkingChoices(applyAcpRegistryModelOptions(firstProbe, probed))).toEqual({
+      opus: WIDE_LEVELS,
+      glm: [],
+    });
+
+    const laterProbe = probedSnapshot("glm", [narrowThinking]);
+    const reprobed = recordAcpRegistryModelOptions(probed, {
+      models,
+      currentModelId: "glm",
+      configOptions: [narrowThinking],
+    });
+    expect(thinkingChoices(applyAcpRegistryModelOptions(laterProbe, reprobed))).toEqual({
+      opus: WIDE_LEVELS,
+      glm: NARROW_LEVELS,
     });
   });
 

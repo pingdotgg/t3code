@@ -15,16 +15,24 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from "./probe.ts";
+import {
+  recordAcpRegistryModelOptions,
+  type AcpRegistryAvailableCommands,
+  type AcpRegistryLiveConfiguration,
+  type AcpRegistryModelOptions,
+} from "./probe.ts";
 
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
   readonly commands: AcpRegistryAvailableCommands;
 }
 
-interface LiveConfigurationUpdate {
-  readonly instanceId: ProviderInstanceId;
-  readonly configuration: AcpRegistryLiveConfiguration;
+/** Live ACP session configuration observed for one provider instance. */
+export interface AcpRegistryLiveConfigurationState {
+  /** The newest session's configuration, which owns the advertised model list. */
+  readonly latest: AcpRegistryLiveConfiguration;
+  /** Option descriptors from the newest session seen on each model. */
+  readonly modelOptions: AcpRegistryModelOptions;
 }
 
 interface UrlAuthActionUpdate {
@@ -76,10 +84,10 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     ) => Effect.Effect<void>;
     readonly getLiveConfiguration: (
       instanceId: ProviderInstanceId,
-    ) => Effect.Effect<Option.Option<AcpRegistryLiveConfiguration>>;
+    ) => Effect.Effect<Option.Option<AcpRegistryLiveConfigurationState>>;
     readonly watchLiveConfiguration: (
       instanceId: ProviderInstanceId,
-      onUpdate: (configuration: AcpRegistryLiveConfiguration) => Effect.Effect<void>,
+      onUpdate: (configuration: AcpRegistryLiveConfigurationState) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
     readonly requestUrlAuthentication: (
       instanceId: ProviderInstanceId,
@@ -105,9 +113,9 @@ const make = Effect.gen(function* () {
   const availableCommandsByInstance = yield* Ref.make(
     new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
   );
-  const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
+  const liveConfigurationUpdates = yield* PubSub.unbounded<ProviderInstanceId>();
   const liveConfigurationByInstance = yield* Ref.make(
-    new Map<ProviderInstanceId, AcpRegistryLiveConfiguration>(),
+    new Map<ProviderInstanceId, AcpRegistryLiveConfigurationState>(),
   );
   const urlAuthActionUpdates = yield* PubSub.unbounded<UrlAuthActionUpdate>();
   const pendingUrlAuthActions = yield* Ref.make(
@@ -220,16 +228,14 @@ const make = Effect.gen(function* () {
   const publishLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["publishLiveConfiguration"] =
     (instanceId, configuration) =>
       Ref.update(liveConfigurationByInstance, (current) =>
-        new Map(current).set(instanceId, configuration),
-      ).pipe(
-        Effect.andThen(
-          PubSub.publish(liveConfigurationUpdates, {
-            instanceId,
+        new Map(current).set(instanceId, {
+          latest: configuration,
+          modelOptions: recordAcpRegistryModelOptions(
+            current.get(instanceId)?.modelOptions ?? new Map(),
             configuration,
-          }),
-        ),
-        Effect.asVoid,
-      );
+          ),
+        }),
+      ).pipe(Effect.andThen(PubSub.publish(liveConfigurationUpdates, instanceId)), Effect.asVoid);
 
   const getLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["getLiveConfiguration"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.getLiveConfiguration")(function* (instanceId) {
@@ -240,14 +246,19 @@ const make = Effect.gen(function* () {
     (instanceId, onUpdate) =>
       Effect.scoped(
         Effect.gen(function* () {
+          // Each notification re-reads the stored state, so concurrent
+          // publications cannot deliver an older accumulation last and a
+          // notification that lands after a clear delivers nothing.
           const subscription = yield* PubSub.subscribe(liveConfigurationUpdates);
-          const current = yield* getLiveConfiguration(instanceId);
-          if (Option.isSome(current)) {
-            yield* onUpdate(current.value);
-          }
+          const deliverCurrent = getLiveConfiguration(instanceId).pipe(
+            Effect.flatMap(
+              Option.match({ onNone: () => Effect.void, onSome: (current) => onUpdate(current) }),
+            ),
+          );
+          yield* deliverCurrent;
           yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter((update) => update.instanceId === instanceId),
-            Stream.runForEach((update) => onUpdate(update.configuration)),
+            Stream.filter((updatedInstanceId) => updatedInstanceId === instanceId),
+            Stream.runForEach(() => deliverCurrent),
           );
         }),
       );

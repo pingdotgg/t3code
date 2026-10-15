@@ -81,6 +81,10 @@ composer's model options menu like they do for built-in providers. Agents with t
 build modes follow T3 Code's Plan and Build toggle. Models and options that change while an agent
 is running update the picker without waiting for another provider probe.
 
+Agents report these options for the model a session is running, so each model shows the options
+it last reported. A model that has not run in a provider check or thread since the server started
+shows none until it does; until then the agent uses its own defaults.
+
 ## Commands and skills
 
 Slash commands the agent provides appear under **Provider** in the `/` menu while a session is

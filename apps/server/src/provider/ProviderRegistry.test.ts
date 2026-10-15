@@ -896,6 +896,51 @@ it.layer(
       );
     });
 
+    it("does not copy older ACP Registry model options onto a model the snapshot has not observed", () => {
+      const narrowThinking = createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("thought_level", "Thinking", [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High", isDefault: true },
+          ]),
+        ],
+      });
+      const cachedProvider = {
+        instanceId: ProviderInstanceId.make("acpRegistry_devin"),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "unknown" },
+        checkedAt: "2026-10-03T00:00:00.000Z",
+        version: "3000.11.3",
+        models: [
+          { slug: "opus", name: "Opus", isCustom: false, capabilities: narrowThinking },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: narrowThinking },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const probedProvider = {
+        ...cachedProvider,
+        checkedAt: "2026-10-03T00:01:00.000Z",
+        models: [
+          {
+            slug: "opus",
+            name: "Opus",
+            isCustom: false,
+            capabilities: createModelCapabilities({ optionDescriptors: [] }),
+          },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: narrowThinking },
+        ],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(cachedProvider, probedProvider).models,
+        [...probedProvider.models],
+      );
+    });
+
     it("drops stale OpenCode models missing from a successful refresh", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("opencode"),

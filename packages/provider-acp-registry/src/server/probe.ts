@@ -173,6 +173,33 @@ export interface AcpRegistryLiveConfiguration {
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
 }
 
+/** Model slug T3 lists for an ACP agent that advertises no models. */
+export const ACP_REGISTRY_DEFAULT_MODEL_SLUG = "default";
+
+/** Session option descriptors last observed for each model, keyed by model slug. */
+export type AcpRegistryModelOptions = ReadonlyMap<
+  string,
+  AcpRegistryLiveConfiguration["configOptions"]
+>;
+
+/**
+ * Records a session's option descriptors against the model they describe.
+ * ACP config options belong to the session's current model, so they are
+ * dropped when that model is not one the agent lists. Every option, modes
+ * included, is treated as model-specific: ACP marks none as independent of
+ * the model, and agents re-send the whole set after a model switch.
+ */
+export function recordAcpRegistryModelOptions(
+  known: AcpRegistryModelOptions,
+  configuration: Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">,
+): AcpRegistryModelOptions {
+  const slug =
+    configuration.models.length === 0
+      ? ACP_REGISTRY_DEFAULT_MODEL_SLUG
+      : configuration.currentModelId;
+  return slug === null ? known : new Map(known).set(slug, configuration.configOptions);
+}
+
 /** Normalizes volatile session configuration using the same bounds as discovery probes. */
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
