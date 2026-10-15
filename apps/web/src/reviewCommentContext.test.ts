@@ -1,3 +1,4 @@
+import { hydratePartialDiff } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -6,6 +7,7 @@ import {
   buildFileReviewComment,
   formatReviewCommentFence,
   inferReviewCommentFenceLanguage,
+  resolveDiffReviewPosition,
   restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
 
@@ -110,6 +112,58 @@ describe("review comment context parsing", () => {
       side: "deletions",
       end: 2,
       endSide: "additions",
+    });
+  });
+
+  it("anchors review comments only on lines inside the host's hunks", () => {
+    const oldLines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}\n`);
+    const newLines = [
+      ...oldLines.slice(0, 6),
+      ...Array.from({ length: 10 }, (_, index) => `new ${index + 1}\n`),
+      ...oldLines.slice(6),
+    ].map((line) => (line === "line 25\n" ? "line twenty-five\n" : line));
+    // What the host returns: new lines 4 to 19 and 32 to 38. The insertion shifts the new side,
+    // so new line 25 (old line 15) sits between the hunks while old line 25 is inside one.
+    const fileDiff = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -4,6 +4,16 @@",
+        " line 4",
+        " line 5",
+        " line 6",
+        ...Array.from({ length: 10 }, (_, index) => `+new ${index + 1}`),
+        " line 7",
+        " line 8",
+        " line 9",
+        "@@ -22,7 +32,7 @@",
+        " line 22",
+        " line 23",
+        " line 24",
+        "-line 25",
+        "+line twenty-five",
+        " line 26",
+        " line 27",
+        " line 28",
+      ].join("\n"),
+      "review-position-hunks",
+    )[0]!.files[0]!;
+    // Expanding the file loads both sides whole, so the gaps around the hunks become lines
+    // the viewer can select but the host will not anchor a comment to.
+    hydratePartialDiff("merge", fileDiff, {
+      oldFile: { name: "src/app.ts", contents: oldLines.join("") },
+      newFile: { name: "src/app.ts", contents: newLines.join("") },
+    });
+    expect(fileDiff.isPartial).toBe(false);
+
+    expect(resolveDiffReviewPosition(fileDiff, 1, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 25, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 33, "additions")).toEqual({
+      kind: "context",
+      oldLine: 23,
+      newLine: 33,
+      side: "right",
     });
   });
 });
