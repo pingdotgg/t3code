@@ -37,6 +37,16 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   failed: "bg-destructive",
 };
 
+function taskScheduleLine(task: ScheduledTask) {
+  const suffix =
+    task.enabled && task.nextRunAt !== null
+      ? ` · next ${relativeLabel(task.nextRunAt)}`
+      : task.enabled
+        ? ""
+        : " · paused";
+  return `${scheduleLabel(task.schedule)}${suffix}`;
+}
+
 /**
  * Thread details panel section listing the automations (scheduled tasks) bound
  * to this thread. Fed by the live scheduled-task subscription, so run status
@@ -170,19 +180,19 @@ export function ThreadAutomationsPanel(props: {
                 aria-hidden
               />
             </span>
-            <div className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground/80">
-                {task.title}
-              </span>
-              <p className="truncate text-2xs text-muted-foreground">
-                {scheduleLabel(task.schedule)}
-                {task.enabled && task.nextRunAt !== null
-                  ? ` · next ${relativeLabel(task.nextRunAt)}`
-                  : task.enabled
-                    ? ""
-                    : " · paused"}
-              </p>
-            </div>
+            {/* The narrow panel cuts both lines; hovering shows them in full. */}
+            <Tooltip>
+              <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
+                <span className="block truncate text-sm font-medium text-foreground/80">
+                  {task.title}
+                </span>
+                <p className="truncate text-2xs text-muted-foreground">{taskScheduleLine(task)}</p>
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                <p className="font-medium">{task.title}</p>
+                <p className="text-muted-foreground">{taskScheduleLine(task)}</p>
+              </TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
