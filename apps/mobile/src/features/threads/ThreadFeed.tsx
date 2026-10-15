@@ -1313,10 +1313,12 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             {intentBadge ? (
-              <View
-                accessible
-                accessibilityRole="text"
+              <Pressable
+                accessibilityRole="button"
                 accessibilityLabel={intentBadge.accessibilityLabel}
+                accessibilityHint="Explains this message's badge"
+                hitSlop={8}
+                onPress={() => Alert.alert("Message history", intentBadge.explanation)}
                 className={cn(
                   "rounded-full border px-1.5 py-0.5",
                   intentBadge.tone === "queued"
@@ -1334,7 +1336,7 @@ function renderFeedEntry(
                 >
                   {intentBadge.label}
                 </Text>
-              </View>
+              </Pressable>
             ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
