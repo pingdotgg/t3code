@@ -1,4 +1,4 @@
-import { listLoginShellCandidates } from "@t3tools/shared/shell";
+import { listLoginShellCandidates, setWindowsPath } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -386,7 +386,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     ]);
 
     if (Option.isSome(mergedPath)) {
-      config.env.PATH = mergedPath.value;
+      setWindowsPath(config.env, mergedPath.value);
     }
     if (!config.env.FNM_DIR && profile.FNM_DIR) {
       config.env.FNM_DIR = profile.FNM_DIR;

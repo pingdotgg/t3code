@@ -152,3 +152,19 @@ effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", 
     assert.equal(env.PATH, "C:\\Tools;C:\\Windows");
   }),
 );
+
+effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
+  Effect.gen(function* () {
+    const env: NodeJS.ProcessEnv = { Path: "C:\\Windows" };
+
+    yield* fixPath().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provideService(WindowsShellEnvironment, () => ({ PATH: "C:\\Tools" })),
+      Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+      Effect.provide(NodeServices.layer),
+    );
+
+    assert.deepEqual(env, { PATH: "C:\\Tools;C:\\Windows" });
+  }),
+);
