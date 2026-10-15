@@ -58,6 +58,7 @@ describe("orchestrator MCP contracts", () => {
       latestTerminalStatus: "completed",
       latestTerminalSummary: "Workspace inspected.",
       latestTerminalResultContextTransferId: "context-transfer-result-1",
+      hasPendingQuestion: false,
       waitTimedOut: false,
     });
 

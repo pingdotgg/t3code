@@ -30,6 +30,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   type ScheduledTask,
+  RuntimeRequestId,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
@@ -2721,6 +2722,66 @@ describe("orchestrator MCP toolkit", () => {
               )?.completionDelivery,
             ).toMatchObject({ state: "disposed" });
             yield* expectOffersToStay(0);
+
+            // A live question ends the wait and leaves completion delivery armed.
+            const questionWait = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              title: "Wait question",
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
+              mode: "wait",
+              timeoutMs: 30_000,
+              clientRequestId: "delegate-wait-question-1",
+            }).pipe(Effect.forkChild);
+            const question = (yield* waitForProjection(orchestrator, parentThreadId, (p) =>
+              p.subagents.some(
+                (task) => task.title === "Wait question" && task.childThreadId !== null,
+              ),
+            )).subagents.find((task) => task.title === "Wait question")!;
+            const asking = yield* waitForProjection(orchestrator, question.childThreadId!, (p) =>
+              p.providerTurns.some((turn) => turn.status === "running"),
+            );
+            const askedAt = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:wait-question:live"),
+                  type: "runtime-request.updated",
+                  threadId: question.childThreadId!,
+                  occurredAt: askedAt,
+                  payload: {
+                    id: RuntimeRequestId.make("request:wait-question"),
+                    nodeId: question.id,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: {
+                      type: "live",
+                      providerSessionId: asking.providerSessions[0]!.id,
+                    },
+                    createdAt: askedAt,
+                    resolvedAt: null,
+                  },
+                },
+              ],
+            });
+            expect((yield* Fiber.join(questionWait)).structuredContent).toMatchObject({
+              status: "running",
+              hasPendingQuestion: true,
+              waitTimedOut: false,
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === question.id,
+              )?.completionWake,
+            ).toBe("always");
+            yield* invoke("task_cancel", {
+              taskId: question.id,
+              clientRequestId: "cancel-wait-question-1",
+            });
+            yield* waitForProjection(orchestrator, parentThreadId, (p) =>
+              p.subagents.some((task) => task.id === question.id && task.status === "interrupted"),
+            );
 
             // The MCP tool cannot force the reverse interleaving (child
             // terminal before the upgrade lands), so dispatch the command
