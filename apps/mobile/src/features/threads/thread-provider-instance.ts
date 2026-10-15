@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
-  normalizeProviderAccentColor,
+  resolveProviderInstanceAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -33,7 +33,7 @@ export function resolveThreadProviderInstance(
   const entry = {
     driverKind: snapshot.driver,
     displayName: resolveProviderInstanceDisplayName(snapshot),
-    accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+    accentColor: resolveProviderInstanceAccentColor(snapshot),
   };
   return {
     ...entry,
