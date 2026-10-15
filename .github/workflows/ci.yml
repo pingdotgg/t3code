@@ -14,9 +14,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Skips jobs a pull request cannot affect: a web change does not run the
+  # server shards, a server change does not run the mobile tests, and the macOS
+  # lint (~6.7x a Linux minute) runs only for native mobile sources.
+  # .github/scripts/ci-changes.cjs maps changed files to workspace packages and
+  # their dependents. Pushes to main still run every Linux job. Detection fails
+  # open: if the diff cannot be resolved, everything runs.
+  changes:
+    name: Changes
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      typecheck: ${{ steps.detect.outputs.typecheck }}
+      build: ${{ steps.detect.outputs.build }}
+      test: ${{ steps.detect.outputs.test }}
+      test_packages: ${{ steps.detect.outputs.test_packages }}
+      test_web: ${{ steps.detect.outputs.test_web }}
+      test_server: ${{ steps.detect.outputs.test_server }}
+      rust: ${{ steps.detect.outputs.rust }}
+      release_smoke: ${{ steps.detect.outputs.release_smoke }}
+      mobile_native: ${{ steps.detect.outputs.mobile_native }}
+    steps:
+      # Only the package manifests the script reads to build the dependency graph.
+      # Depth 2 brings the base commit the change is diffed against.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            /pnpm-workspace.yaml
+            /.github/scripts/ci-changes.cjs
+            /.github/actions/ci-changes/
+            /*/package.json
+            /*/*/package.json
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Detect affected jobs
+        id: detect
+        uses: ./.github/actions/ci-changes
+
   # Lint, typecheck, and the desktop build each get a runner so they run side by
-  # side instead of one after another. The `Check` job at the end of this file
-  # passes only when every other job does.
+  # side instead of one after another. Lint always runs: it formats every file,
+  # docs included. The `Check` job at the end of this file passes only when
+  # every other job passes or was skipped by `changes`.
   lint:
     name: Lint
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -60,6 +101,8 @@ jobs:
 
   typecheck:
     name: Typecheck
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.typecheck != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -86,6 +129,8 @@ jobs:
 
   build:
     name: Build
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -140,6 +185,8 @@ jobs:
   # per runner is unchanged.
   test:
     name: Test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -197,13 +244,24 @@ jobs:
           cat "$RUNNER_TEMP/apt.log"
           exit "$(cat "$RUNNER_TEMP/apt-status")"
 
+      # `changes` lists the affected packages, or nothing when all of them are.
       - name: Test
-        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+        env:
+          TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
+        run: |
+          filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
+          if [[ -n "$TEST_PACKAGES" ]]; then
+            filters=()
+            for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
+          fi
+          vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
   test_web:
     name: Test Web
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -231,6 +289,8 @@ jobs:
   # isolation that flag buys is preserved exactly. One file at a time keeps
   # about 1.5 cores busy, so 4 vCPU runners lose nothing against 8. The shards
   # split files by recorded duration (apps/server/src/testUtils/weightedShardSequencer.ts).
+  # The shards are the longest jobs, so they gate themselves instead of waiting
+  # ~15s for `changes`: a shard the change cannot affect stops after checkout.
   test_server:
     name: Test Server ${{ matrix.shard }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -240,15 +300,22 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
     steps:
+      # Depth 2 brings the base commit the change is diffed against.
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 2
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
 
+      - name: Detect affected jobs
+        id: changes
+        uses: ./.github/actions/ci-changes
+
       - name: Setup Vite+
+        if: steps.changes.outputs.test_server != 'false'
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -259,9 +326,11 @@ jobs:
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
       - name: Install Chromium for server browser integration tests
+        if: steps.changes.outputs.test_server != 'false'
         run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
 
       - name: Test
+        if: steps.changes.outputs.test_server != 'false'
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
@@ -301,7 +370,8 @@ jobs:
 
   transfer-report:
     name: Transfer report artifact
-    needs: test_server
+    needs: [changes, test_server]
+    if: needs.changes.outputs.test_server != 'false'
     # On Blacksmith like every other job here: the GitHub-hosted queue is shared
     # with the PR bots and can leave this job waiting until it is abandoned,
     # which fails `Check` on an otherwise green run.
@@ -318,6 +388,8 @@ jobs:
   # for checks that take under 3s, on the critical path of every PR.
   rust:
     name: Rust
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -346,90 +418,10 @@ jobs:
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
 
-  # The static analysis below needs a macOS runner, which bills ~6.7x a Linux
-  # minute, so gate it on the native sources it actually lints instead of paying
-  # for it on every push. Detection is API-only (no checkout) and fails open: if
-  # the diff cannot be resolved, the lint runs.
-  mobile_native_changes:
-    name: Mobile Native Changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      changed: ${{ steps.detect.outputs.changed }}
-    steps:
-      - name: Detect mobile native changes
-        id: detect
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -uo pipefail
-
-          fail_open() {
-            echo "$* Running native static analysis."
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-
-          count_rows() {
-            printf '%s\n' "$1" | grep -c . || true
-          }
-
-          # One row per changed file, holding the new path and, for a rename,
-          # the path it replaced: renaming a matched file out of the matched
-          # paths removes a lint input just like editing it.
-          row='[.filename, (.previous_filename // empty)] | @tsv'
-
-          if [[ -n "${PR_NUMBER}" ]]; then
-            # The PR files endpoint stops at 3000 files and pagination cannot
-            # extend it, so cross-check against the count the PR itself reports.
-            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
-              || fail_open "Could not read the pull request."
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -lt "$expected" ]]; then
-              fail_open "GitHub listed only ${listed} of ${expected} changed files."
-            fi
-          else
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            # The compare endpoint reports at most 300 files and pagination does
-            # not extend that list, so a full list may be hiding native changes.
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -ge 300 ]]; then
-              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
-            fi
-          fi
-
-          paths=$(tr '\t' '\n' <<< "$rows")
-
-          # Sources scripts/mobile-native-static-check.ts lints, plus the tool
-          # and rule configuration that decides how it lints them, plus the
-          # root package.json that defines the lint:mobile command.
-          pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/ci\.yml$'
-
-          if grep -qE "$pattern" <<< "$paths"; then
-            echo "Native sources or lint configuration changed:"
-            grep -E "$pattern" <<< "$paths"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No mobile native sources or lint configuration changed."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    needs: mobile_native_changes
-    # Skip only on an explicit "no": a gate job that failed or errored leaves the
-    # output empty, and that must run the lint rather than silently skip it.
-    if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 10
     steps:
@@ -458,6 +450,8 @@ jobs:
 
   release_smoke:
     name: Release Smoke
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -491,6 +485,7 @@ jobs:
     if: ${{ always() }}
     needs:
       [
+        changes,
         lint,
         typecheck,
         build,
@@ -499,7 +494,6 @@ jobs:
         test_server,
         transfer-report,
         rust,
-        mobile_native_changes,
         mobile_native_static_analysis,
         release_smoke,
       ]
@@ -511,7 +505,10 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          # Only the macOS lint skips on purpose, when no native mobile code changed.
-          echo "$RESULTS" | jq -e 'all(to_entries[];
-            .value.result == "success"
-            or (.key == "mobile_native_static_analysis" and .value.result == "skipped"))' > /dev/null
+          # A job may skip only when `changes` said it was not needed. Gates are
+          # keyed by job name, except the macOS lint and the transfer report.
+          echo "$RESULTS" | jq -e '.changes.outputs as $gates
+            | {mobile_native_static_analysis: "mobile_native", "transfer-report": "test_server"} as $renamed
+            | all(to_entries[];
+                .value.result == "success"
+                or (.value.result == "skipped" and $gates[$renamed[.key] // .key] == "false"))' > /dev/null
