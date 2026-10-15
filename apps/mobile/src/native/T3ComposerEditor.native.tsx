@@ -98,6 +98,9 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteText?: (event: NativePasteTextEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerContentSizeChange?: (
+    event: NativeSyntheticEvent<{ readonly height: number }>,
+  ) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -295,6 +298,11 @@ export function ComposerEditor({
         textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
+        onComposerContentSizeChange={
+          props.onContentHeightChange
+            ? (event) => props.onContentHeightChange?.(event.nativeEvent.height)
+            : undefined
+        }
         onComposerChange={(event) => {
           const acknowledgedEventCount = acceptNativeEvent(
             event.nativeEvent.eventCount,

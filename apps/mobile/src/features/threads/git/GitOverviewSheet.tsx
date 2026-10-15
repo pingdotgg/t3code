@@ -30,7 +30,6 @@ import {
 } from "../../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../../components/AndroidAnchoredMenu";
 import { MaterialScreenContent } from "../../../components/MaterialScreenContent";
-import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { AppText as Text } from "../../../components/AppText";
 import {
   NativeStackScreenOptions,
@@ -68,7 +67,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
@@ -573,9 +571,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         />
       )}
 
-      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
-        {content}
-      </MaterialScreenContent>
+      <MaterialScreenContent>{content}</MaterialScreenContent>
     </View>
   );
 }

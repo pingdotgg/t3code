@@ -1,16 +1,12 @@
 import {
   flattenThemeColor,
-  themeColorWithAlpha,
   themeColorWithContrast,
   type MobileThemeVariables,
 } from "../../lib/mobileTheme";
 
-/** Both navigation positions keep a visible tonal selection against their actual surface. */
-export function androidWorkspaceNavigationColors(colors: MobileThemeVariables, rail: boolean) {
-  const header = flattenThemeColor(colors["--color-header"], colors["--color-screen"]);
-  const containerColor = rail
-    ? header
-    : flattenThemeColor(themeColorWithAlpha(colors["--color-header-foreground"], 0.05), header);
+/** Selection colors for the Chats/PRs switch, which sits on the header surface. */
+export function androidWorkspaceNavigationColors(colors: MobileThemeVariables) {
+  const containerColor = flattenThemeColor(colors["--color-header"], colors["--color-screen"]);
   const indicatorColor = themeColorWithContrast(
     flattenThemeColor(colors["--color-secondary"], containerColor),
     containerColor,

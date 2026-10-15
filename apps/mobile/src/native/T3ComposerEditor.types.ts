@@ -65,6 +65,8 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
+  /** Height of the laid-out text in dp, for hosts that size the editor to its content. */
+  readonly onContentHeightChange?: (height: number) => void;
   /**
    * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
    * hardware Return handling.

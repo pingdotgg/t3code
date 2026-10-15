@@ -425,7 +425,7 @@ function FilesToolbarBottomFade() {
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
-  const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { fileInspector, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
@@ -563,7 +563,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         onRefresh={entriesQuery.refresh}
         onBack={handleReturnToThread}
       />
-      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+      <MaterialScreenContent>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
           entries={entriesQuery.entries}

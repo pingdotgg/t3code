@@ -69,6 +69,10 @@ export interface ScreenHeaderProps {
     readonly onPress?: () => void;
   };
   readonly hideBottomBorder?: boolean;
+  /** Android: one title row with the subtitle inline. iOS ignores it. */
+  readonly compact?: boolean;
+  /** Android: hide the toolbar row, e.g. while reading thread history. iOS ignores it. */
+  readonly collapsed?: boolean;
   readonly trailing?: ReactNode;
   /** Search scenes use sheet colors on iOS and header colors on Android. */
   readonly matchSearchSurface?: boolean;

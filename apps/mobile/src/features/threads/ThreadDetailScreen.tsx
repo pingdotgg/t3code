@@ -96,7 +96,11 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
-import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import {
+  ANDROID_READING_MAX_WIDTH,
+  CHAT_CONTENT_MAX_WIDTH,
+  type LayoutVariant,
+} from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
@@ -218,6 +222,8 @@ export interface ThreadDetailScreenProps {
   readonly dispatchingMessageId: MessageId | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
+  /** True while the feed is scrolled away from its latest message. */
+  readonly onReadingHistoryChange?: (readingHistory: boolean) => void;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
@@ -493,7 +499,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
-  const floatingStatus = ((): FloatingWorkingStatus | null => {
+  const pillStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
       connectionState: props.connectionStateLabel,
@@ -561,6 +567,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     return null;
   })();
+  // The focused one-row composer of Android split view carries the timer itself,
+  // so the pill row stops taking feed height while the keyboard is up.
+  const composerShowsTimer =
+    Platform.OS === "android" &&
+    props.layoutVariant === "split" &&
+    composerFocused &&
+    pillStatus?.kind === "working";
+  const floatingStatus = composerShowsTimer ? null : pillStatus;
   const showWorkingControl = floatingStatus !== null;
   // Connection and working status occupy the same space. Keep the feed inset
   // stable when reconnecting hands off to syncing and then to a running turn.
@@ -843,7 +857,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
-  const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
+  const contentMaxWidth =
+    Platform.OS === "android"
+      ? ANDROID_READING_MAX_WIDTH
+      : isSplitLayout
+        ? CHAT_CONTENT_MAX_WIDTH
+        : undefined;
   const providerSubagentProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
   );
@@ -1091,6 +1110,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [freeze, scrollMessageToEnd]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
+  const onReadingHistoryChange = props.onReadingHistoryChange;
+  useEffect(() => {
+    onReadingHistoryChange?.(showScrollToEndButton);
+  }, [onReadingHistoryChange, showScrollToEndButton]);
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
@@ -1482,6 +1505,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                         onExpandedChange={setComposerExpanded}
+                        activeWorkStartedAt={
+                          composerShowsTimer && pillStatus?.kind === "working"
+                            ? pillStatus.startedAt
+                            : null
+                        }
                         onEditorFocusChange={handleComposerFocusChange}
                       />
                     </>

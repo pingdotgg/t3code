@@ -43,11 +43,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
           expanded={expanded}
           onPress={props.onStartNewTask}
           className="absolute right-5"
-          style={{
-            bottom: props.sidebar
-              ? Math.max(insets.bottom, 12) + 6
-              : Math.max(insets.bottom, 16) + 16,
-          }}
+          style={{ bottom: Math.max(insets.bottom, 16) + 16 }}
         />
       ) : null}
     </View>

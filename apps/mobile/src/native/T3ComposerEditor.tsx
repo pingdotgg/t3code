@@ -19,6 +19,7 @@ export function ComposerEditor({
   singleLineCentered: _singleLineCentered,
   enterBehavior: _enterBehavior,
   readOnly = false,
+  onContentHeightChange,
   ...props
 }: ComposerEditorProps) {
   const inputRef = useRef<TextInputInstance>(null);
@@ -45,6 +46,9 @@ export function ComposerEditor({
         editable={(props.editable ?? true) && !readOnly}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
+        onContentSizeChange={(event) =>
+          onContentHeightChange?.(event.nativeEvent.contentSize.height)
+        }
         multiline={props.multiline ?? true}
         placeholderTextColorClassName={"accent-placeholder"}
         className="text-foreground"

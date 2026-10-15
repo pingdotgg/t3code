@@ -111,11 +111,7 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function ThreadPane(props: { readonly children: ReactNode }) {
-  return (
-    <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
-      {props.children}
-    </View>
-  );
+  return <View className="flex-1 bg-screen android:bg-thread-canvas">{props.children}</View>;
 }
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
@@ -363,6 +359,8 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  // Android collapses the thread toolbar while the feed is scrolled back into history.
+  const [readingHistory, setReadingHistory] = useState(false);
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
@@ -1055,6 +1053,7 @@ function ThreadRouteContent(
           queuedMessages={composer.selectedThreadQueuedMessages}
           dispatchingMessageId={composer.dispatchingQueuedMessageId}
           layoutVariant={layout.variant}
+          onReadingHistoryChange={setReadingHistory}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
@@ -1098,6 +1097,7 @@ function ThreadRouteContent(
         onOpenGitInspector={handleOpenGitInspector}
         onOpenFilesInspector={handleOpenFilesInspector}
         onReturnToThread={props.onReturnToThread}
+        collapsed={Platform.OS === "android" && readingHistory}
       />
 
       {renderThreadRouteBody()}

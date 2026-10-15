@@ -104,6 +104,8 @@ export function WorkspaceConnectionTitle(props: {
   readonly statusOffset?: number;
   /** Space available beside the native header actions. */
   readonly maxWidth?: number;
+  /** Show only the status icon; the label stays as its accessibility label. */
+  readonly iconOnly?: boolean;
 }) {
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
@@ -147,13 +149,15 @@ export function WorkspaceConnectionTitle(props: {
             type="monochrome"
           />
         )}
-        <Text
-          className="font-t3-bold text-foreground-muted"
-          numberOfLines={1}
-          style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
-        >
-          {status.label}
-        </Text>
+        {props.iconOnly ? null : (
+          <Text
+            className="font-t3-bold text-foreground-muted"
+            numberOfLines={1}
+            style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
+          >
+            {status.label}
+          </Text>
+        )}
       </Pressable>
     </StatusFadeIn>
   );

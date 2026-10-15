@@ -223,7 +223,7 @@ export function ThreadFileNavigatorPane(props: {
           </View>
         ) : null}
       </View>
-      <MaterialScreenContent insetHorizontal>{fileTree}</MaterialScreenContent>
+      <MaterialScreenContent>{fileTree}</MaterialScreenContent>
     </View>
   );
 }

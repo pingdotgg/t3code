@@ -27,7 +27,6 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
@@ -54,7 +53,6 @@ export function useThreadQueuedCount(target: QueueTarget) {
 }
 
 export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const target = route.params;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -453,9 +451,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       <View collapsable={false} className="flex-1 bg-sheet">
         <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
         <AndroidSheetHeader title="Queued" onBack={() => navigation.goBack()} />
-        <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
-          {content}
-        </MaterialScreenContent>
+        <MaterialScreenContent>{content}</MaterialScreenContent>
       </View>
     </GestureHandlerRootView>
   );

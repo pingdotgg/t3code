@@ -8,6 +8,7 @@ import {
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  ANDROID_LIST_PANE_MIN_WIDTH,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
@@ -157,6 +158,15 @@ describe("deriveLayout", () => {
     expect(deriveLayout({ width: 720, height: 1_000 }).listPaneWidth).toBe(280);
     expect(deriveLayout({ width: 1_024, height: 768 }).listPaneWidth).toBe(328);
     expect(deriveLayout({ width: 1_600, height: 1_000 }).listPaneWidth).toBe(380);
+  });
+
+  it("gives the Android sidebar header room on narrow split screens only", () => {
+    const listPaneMinWidth = ANDROID_LIST_PANE_MIN_WIDTH;
+    // Pixel Fold's inner display: the default rule would give 280.
+    expect(deriveLayout({ width: 841, height: 701, listPaneMinWidth }).listPaneWidth).toBe(304);
+    // Wider screens already clear the minimum.
+    expect(deriveLayout({ width: 1_024, height: 768, listPaneMinWidth }).listPaneWidth).toBe(328);
+    expect(deriveLayout({ width: 1_600, height: 1_000, listPaneMinWidth }).listPaneWidth).toBe(380);
   });
 });
 

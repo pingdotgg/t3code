@@ -16,10 +16,13 @@ export function ThreadHeader(
     readonly onToggleInspector: () => void;
     readonly onOpenGitInspector: () => void;
     readonly onOpenFilesInspector: () => void;
+    /** Android: the feed is scrolled back into history, so the toolbar steps aside. */
+    readonly collapsed?: boolean;
   },
 ) {
   const returnToList = useWorkspaceListNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
+    useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
@@ -99,6 +102,8 @@ export function ThreadHeader(
         onBack={layout.usesSplitView ? undefined : returnToList}
         actions={androidHeaderActions}
         hideBottomBorder
+        compact={composerKeyboardActive}
+        collapsed={props.collapsed}
       />
       {native.fallback}
     </>

@@ -18,9 +18,15 @@ export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
 export const SPLIT_SIDEBAR_MIN_WIDTH = 280;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
+// Android's sidebar header holds the Chats/PRs switch and four 48dp actions on
+// one row at the default text size. It replaced an 80dp navigation rail.
+export const ANDROID_LIST_PANE_MIN_WIDTH = 304;
 
 export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
+// Android reading width for the thread feed, composer, and full-width thread list.
+// Phones are narrower; foldables in portrait and the keyboard-open split view are not.
+export const ANDROID_READING_MAX_WIDTH = 640;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
 
@@ -93,6 +99,8 @@ export function deriveLayout(input: {
   readonly width: number;
   readonly height: number;
   readonly nativeMetrics?: NativeLayoutMetrics | null;
+  /** Raises the sidebar's minimum width, e.g. ANDROID_LIST_PANE_MIN_WIDTH. */
+  readonly listPaneMinWidth?: number;
 }): Layout {
   const { width, height } = input;
   const metrics = input.nativeMetrics;
@@ -130,7 +138,11 @@ export function deriveLayout(input: {
     usesSplitView: true,
     listPaneWidth:
       division?.x ??
-      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+      clamp(
+        Math.round(width * 0.32),
+        Math.max(SPLIT_SIDEBAR_MIN_WIDTH, input.listPaneMinWidth ?? 0),
+        SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
+      ),
     ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };

@@ -2,13 +2,13 @@ import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useCallback, useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { AndroidWorkspaceTabSwitch } from "../workspace/AndroidWorkspaceTabSwitch";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 
-/** PR search shares the thread list's native Android header placement. */
+/** PR search shares the thread list's Android header placement, led by the Chats/PRs switch. */
 export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility?: () => void }) {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs()!;
@@ -36,6 +36,11 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
   }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+  const openEnvironments = () =>
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: { screen: "SettingsEnvironments" },
+    });
   useEffect(() => {
     if (!searching || !listFocused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -63,22 +68,10 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
         ) : (
-          <View className="min-w-0 flex-1 pl-3">
-            <WorkspaceConnectionTitle
-              grow
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel="T3 Code, Pull requests"
-                />
-              }
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                })
-              }
-            />
+          // Cancel the header's title inset so the switch lines up with the Chats header.
+          <View className="-ml-1 flex-row items-center">
+            <AndroidWorkspaceTabSwitch />
+            <WorkspaceConnectionTitle iconOnly brand={null} onPress={openEnvironments} />
           </View>
         )
       }

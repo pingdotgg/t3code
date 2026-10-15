@@ -12,8 +12,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
 import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
+import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { MaterialSearchField } from "../../components/MaterialSearchField";
@@ -22,8 +22,13 @@ import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
+import { AndroidWorkspaceTabSwitch } from "../workspace/AndroidWorkspaceTabSwitch";
 
-/** One toolbar height for the compact list and expanded sidebar, including search. */
+/**
+ * One toolbar height for the compact list and expanded sidebar, including search.
+ * Both lead with the Chats/PRs switch. The sidebar variant also keeps Filter and
+ * New thread in the header, so nothing floats over the list.
+ */
 export function MaterialThreadListToolbar(props: {
   readonly searchQuery: string;
   readonly onSearchQueryChange: (query: string) => void;
@@ -33,6 +38,8 @@ export function MaterialThreadListToolbar(props: {
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironments: () => void;
   readonly sidebar?: boolean;
+  /** Sidebar only: the header's New thread action. */
+  readonly onStartNewTask?: () => void;
   readonly onLayout?: (event: LayoutChangeEvent) => void;
   readonly onRequestVisibility?: () => void;
 }) {
@@ -105,7 +112,14 @@ export function MaterialThreadListToolbar(props: {
         }
         style={headerPadding}
       >
-        <View className="flex-row items-center gap-1" style={{ minHeight: toolbarHeight }}>
+        <View
+          className={
+            props.sidebar
+              ? "flex-row flex-wrap content-center items-center"
+              : "flex-row items-center gap-1"
+          }
+          style={{ minHeight: toolbarHeight }}
+        >
           {searching ? (
             <>
               <AndroidHeaderIconButton
@@ -115,14 +129,60 @@ export function MaterialThreadListToolbar(props: {
               />
               {searchField}
             </>
+          ) : props.sidebar ? (
+            <>
+              <View className="flex-row items-center">
+                <AndroidWorkspaceTabSwitch />
+                <WorkspaceConnectionTitle
+                  iconOnly
+                  brand={null}
+                  onPress={props.onOpenEnvironments}
+                />
+              </View>
+              {/* Wraps below the switch when large text leaves no room on one row. */}
+              <View className="ml-auto flex-row items-center">
+                <AndroidHeaderIconButton
+                  accessibilityLabel="Search threads"
+                  icon="magnifyingglass"
+                  onPress={openSearch}
+                />
+                {state.hasConnections ? (
+                  <AndroidAnchoredMenu
+                    actions={props.filterActions}
+                    onPressAction={props.onFilterAction}
+                  >
+                    {(open) => (
+                      <AndroidHeaderIconButton
+                        accessibilityLabel="Filter threads"
+                        icon={filterIcon}
+                        onPress={open}
+                      />
+                    )}
+                  </AndroidAnchoredMenu>
+                ) : null}
+                <AndroidHeaderIconButton
+                  accessibilityLabel="Open settings"
+                  icon="gearshape"
+                  onPress={props.onOpenSettings}
+                />
+                {state.hasConnections && props.onStartNewTask ? (
+                  <MaterialIconButton
+                    accessibilityLabel="New thread"
+                    icon="square.and.pencil"
+                    variant="primary"
+                    onPress={props.onStartNewTask}
+                  />
+                ) : null}
+              </View>
+            </>
           ) : (
             <>
-              {/* Match the visible inset of the trailing 48dp icon button. */}
-              <View className="min-w-0 flex-1 pl-4">
+              <View className="min-w-0 flex-1 flex-row items-center">
+                <AndroidWorkspaceTabSwitch />
                 <WorkspaceConnectionTitle
-                  grow
+                  iconOnly
+                  brand={null}
                   onPress={props.onOpenEnvironments}
-                  brand={<CompactBrandTitle allowFontScaling={false} />}
                 />
               </View>
               <AndroidHeaderIconButton
@@ -140,15 +200,10 @@ export function MaterialThreadListToolbar(props: {
         </View>
       </View>
       {/* Keep the filter above the New thread FAB at every text size. */}
-      {state.hasConnections ? (
+      {state.hasConnections && !props.sidebar ? (
         <View
           className="absolute right-5 z-[5]"
-          style={{
-            bottom:
-              (props.sidebar ? Math.max(insets.bottom, 12) + 6 : Math.max(insets.bottom, 16) + 16) +
-              fabSize +
-              8,
-          }}
+          style={{ bottom: Math.max(insets.bottom, 16) + 16 + fabSize + 8 }}
         >
           <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
             {(open) => (

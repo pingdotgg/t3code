@@ -439,7 +439,7 @@ function ReviewFileNavigator({
           </View>
         </View>
       )}
-      <MaterialScreenContent insetHorizontal>{fileList}</MaterialScreenContent>
+      <MaterialScreenContent>{fileList}</MaterialScreenContent>
     </View>
   );
 }
