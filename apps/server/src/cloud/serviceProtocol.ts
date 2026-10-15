@@ -31,6 +31,11 @@ export interface ServiceState {
   readonly update?: ServiceUpdateRecord;
 }
 
+export interface LegacyServiceState {
+  readonly protocol: 2;
+  readonly activeVersion: string;
+}
+
 /** Context is copied from launcher-owned state when a child is spawned. */
 export interface ServiceLauncherContext {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
@@ -174,6 +179,25 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
 export function parseServiceState(value: string): ServiceState | undefined {
   try {
     return decodeServiceState(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Accepts only the two-field state written by the protocol-2 installer. */
+export function parseLegacyServiceState(value: string): LegacyServiceState | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!isRecord(parsed)) return undefined;
+    const keys = Object.keys(parsed);
+    return keys.length === 2 &&
+      keys.includes("protocol") &&
+      keys.includes("activeVersion") &&
+      parsed.protocol === 2 &&
+      typeof parsed.activeVersion === "string" &&
+      isExactServiceVersion(parsed.activeVersion)
+      ? { protocol: 2, activeVersion: parsed.activeVersion }
+      : undefined;
   } catch {
     return undefined;
   }

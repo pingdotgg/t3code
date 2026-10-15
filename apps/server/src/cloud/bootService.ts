@@ -25,6 +25,7 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
+  parseLegacyServiceState,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
@@ -491,6 +492,15 @@ export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServic
   }
 }
 
+export class BootServiceMigrationRequiredError extends Schema.TaggedError<BootServiceMigrationRequiredError>()(
+  "BootServiceMigrationRequiredError",
+  {},
+) {
+  override get message(): string {
+    return "Cannot defer this install while the service state migration is pending. Start or restart the service first.";
+  }
+}
+
 export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootServiceDowngradeRefusedError>()(
   "BootServiceDowngradeRefusedError",
   {
@@ -509,6 +519,7 @@ export type BootServiceError =
   | BootServiceInstallError
   | BootServicePrerequisiteError
   | BootServiceUpdatePendingError
+  | BootServiceMigrationRequiredError
   | BootServiceDowngradeRefusedError;
 
 export interface BootServiceStatus {
@@ -755,6 +766,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    const start = options?.start !== false;
+    let deferredInstallUnitExists = false;
+    if (!start) {
+      deferredInstallUnitExists = yield* fs
+        .exists(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    }
+    // A deferred install leaves the launcher running, so it must not replace a
+    // protocol-2 state while startup is validating and migrating that state.
+    if (deferredInstallUnitExists) {
+      const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+      if (Option.isSome(previousStateText) && parseLegacyServiceState(previousStateText.value)) {
+        return yield* new BootServiceMigrationRequiredError();
+      }
+    }
+
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -827,7 +854,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // state file itself. That case is refused below, before anything is
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
-    const start = options?.start !== false;
     if (installed && start) {
       yield* runSteps(manager.stop);
     }
@@ -836,6 +862,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       if (installed) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (Option.isSome(previousStateText)) {
+          if (!start && parseLegacyServiceState(previousStateText.value)) {
+            return yield* new BootServiceMigrationRequiredError();
+          }
           if (serviceStateHasPendingUpdate(previousStateText.value)) {
             return yield* new BootServiceUpdatePendingError();
           }

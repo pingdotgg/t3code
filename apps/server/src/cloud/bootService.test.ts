@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -180,7 +181,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           input.args[0] === "--version"
             ? // The runtime under test reports the version of the directory it
               // was launched from, like the real executable.
-              `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+              `t3 v${/[\\/]versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
             : input.command === "loginctl" && input.args[0] === "show-user"
               ? `${control.linger}\n`
               : input.args[1] === "is-enabled"
@@ -513,6 +514,39 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* newer.restart).toBe(true);
       expect((yield* newer.status).problems).not.toContain("restart-pending");
       expect((yield* newer.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("install with start=false refuses a legacy state before writing anything", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const unitBefore = yield* fs.readFileString(plan.unitPath);
+      const legacyState = '{"protocol":2,"activeVersion":"1.2.3"}';
+      yield* fs.writeFileString(statePath, legacyState);
+      commands.length = 0;
+
+      const newer = yield* makeService(undefined, "1.2.4");
+      const result = yield* Effect.exit(newer.install({ start: false }));
+
+      expect(yield* fs.readFileString(statePath)).toBe(legacyState);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unitBefore);
+      expect(
+        yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+      ).toBe(false);
+      expect(commands).toEqual([]);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isSuccess(result)) return;
+      const reason = result.cause.reasons[0];
+      if (reason?._tag !== "Fail") {
+        expect.fail(`Expected a typed Fail cause, got: ${reason?._tag ?? "no reason"}`);
+      }
+      expect(reason.error).toMatchObject({
+        _tag: "BootServiceMigrationRequiredError",
+        message:
+          "Cannot defer this install while the service state migration is pending. Start or restart the service first.",
+      });
     }),
   );
 
