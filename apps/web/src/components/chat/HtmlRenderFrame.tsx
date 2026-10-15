@@ -109,6 +109,7 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
+            selectionBridge
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
@@ -146,7 +147,10 @@ export function HtmlRenderFrame(props: {
           ) : null}
         </>
       ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+        <p
+          data-html-render-error
+          className="flex size-full items-center justify-center text-muted-foreground text-xs"
+        >
           Unable to load {title}
         </p>
       ) : null}

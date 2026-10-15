@@ -9,11 +9,20 @@ export type AssistantTextSelector = {
 };
 
 /** Live DOM state for an open comment, never part of a saved citation. */
-export type AssistantCitationSourceAnchor = {
-  source: HTMLElement;
-  range: Range;
-  viewport: HTMLElement;
-};
+export type AssistantCitationSourceAnchor =
+  | {
+      source: HTMLElement;
+      range: Range;
+      viewport: HTMLElement;
+      htmlRender?: undefined;
+    }
+  | {
+      source: HTMLElement;
+      viewport: HTMLElement;
+      range: Pick<Range, "getClientRects" | "getBoundingClientRect">;
+      htmlRender: HTMLIFrameElement;
+      updateRange: (rect: { left: number; top: number; width: number; height: number }) => boolean;
+    };
 
 export function findAssistantCitationSourceAnchor(
   document: Document,
