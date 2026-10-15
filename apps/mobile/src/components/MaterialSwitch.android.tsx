@@ -1,8 +1,15 @@
 import { Host, Switch as ComposeSwitch } from "@expo/ui/jetpack-compose";
-import { View } from "react-native";
+import { View, type ViewProps } from "react-native";
 import type { ThemedSwitchProps } from "./MaterialSwitch.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+
+// Like RN's Switch, own the touch so a pressable row around the switch never takes it. Claimed on
+// the Compose Host because a React Native View holding the touch would cancel the native switch.
+const ownTouch: Pick<ViewProps, "onStartShouldSetResponder" | "onResponderTerminationRequest"> = {
+  onStartShouldSetResponder: () => true,
+  onResponderTerminationRequest: () => false,
+};
 
 /** Material's native switch, with the same palette and accessibility contract as our RN controls. */
 export function MaterialSwitch(props: ThemedSwitchProps) {
@@ -25,6 +32,7 @@ export function MaterialSwitch(props: ThemedSwitchProps) {
     >
       <View importantForAccessibility="no-hide-descendants">
         <Host
+          {...ownTouch}
           colorScheme={themeAppearance}
           ignoreSafeAreaKeyboardInsets
           style={{ width: 52, height: 48 }}
