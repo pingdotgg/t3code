@@ -7095,8 +7095,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               >
                                 <ComposerImageThumbnail
                                   file={image.file}
+                                  mode={image.source?.kind === "snap-shot" ? "snapshot" : "square"}
                                   alt={image.name}
-                                  className="h-full w-full object-cover"
+                                  className={
+                                    image.source?.kind === "snap-shot"
+                                      ? "h-full w-full object-contain"
+                                      : "h-full w-full object-cover"
+                                  }
                                   fallback={
                                     <span className="flex h-full items-center justify-center px-1 text-3xs text-secondary-label">
                                       {image.name}
