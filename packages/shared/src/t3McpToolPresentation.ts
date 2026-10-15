@@ -61,6 +61,14 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "list-issues"
+  | "read-issue"
+  | "create-issue"
+  | "comment-issue"
+  | "set-issue-state"
+  | "link-issue"
+  | "unlink-issue"
+  | "list-thread-issues"
   | "browser"
   | "device"
   | "html-preview"
@@ -121,6 +129,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  comment_on_issue: tool(
+    ["Comment on", "Commenting on", "Commented on", "an issue"],
+    "comment-issue",
+  ),
+  set_issue_state: tool(["Change", "Changing", "Changed", "an issue's state"], "set-issue-state"),
+  link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
+  unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
+  list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",

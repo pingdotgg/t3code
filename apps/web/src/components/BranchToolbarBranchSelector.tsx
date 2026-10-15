@@ -44,6 +44,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -629,6 +630,7 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
+  const linkedIssues = serverThread?.issues ?? [];
   const panelPrLabel =
     prNumber === undefined
       ? ""
@@ -819,6 +821,22 @@ export function BranchToolbarBranchSelector({
             openAriaLabel={prUrl ?? "Open pull request"}
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
+          />
+        ) : null}
+        {displayMode === "panel" ? (
+          <ThreadDetailsIssueRows
+            links={linkedIssues}
+            onOpenLink={(event, link) => {
+              event.stopPropagation();
+              useRightPanelStore.getState().openIssue(threadRef, {
+                projectId: link.projectId,
+                tracker: link.tracker,
+                host: link.host,
+                scope: link.scope,
+                key: link.key,
+                url: link.url,
+              });
+            }}
           />
         ) : null}
       </div>

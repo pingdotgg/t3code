@@ -311,6 +311,11 @@ allow it. An issue read through a project that does not own its repository is sh
 **New issue** files an issue on a project's tracker. Where the repository offers issue templates,
 pick one to start from its title, body, labels, and assignees.
 
+An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
+links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
+undoes it. Linked issues are listed in the thread's details beside its pull requests, with their
+last known state. Agents link the issues they work on with the `link_issue` tool.
+
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
 ## GitHub stacks

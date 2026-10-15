@@ -62,6 +62,7 @@ import {
   type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
   type EnvironmentId,
+  type IssueTrackerKind,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -290,6 +291,7 @@ import {
 } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
+import { IssueDetailPanel } from "./issue/IssueDetailPanel";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -11225,6 +11227,39 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
+      />
+    ) : renderedRightPanelSurface?.kind === "issue" && !pullRequestsCapabilityKnown ? (
+      <PullRequestDetailGhost />
+    ) : renderedRightPanelSurface?.kind === "issue" &&
+      serverConfig?.environment.capabilities.issues !== true ? (
+      <PullRequestsUnavailableState
+        title="Issues unavailable"
+        error="Update this environment's T3 Code server to browse issues."
+      />
+    ) : renderedRightPanelSurface?.kind === "issue" ? (
+      <IssueDetailPanel
+        key={renderedRightPanelSurface.id}
+        environmentId={
+          (renderedRightPanelSurface.environmentId as EnvironmentId | undefined) ??
+          activeThread.environmentId
+        }
+        reference={{
+          projectId: renderedRightPanelSurface.projectId as ProjectId,
+          tracker: renderedRightPanelSurface.tracker as IssueTrackerKind,
+          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
+          scope: renderedRightPanelSurface.scope,
+          key: renderedRightPanelSurface.key,
+        }}
+        threadRef={activeThreadRef}
+        onSelectPullRequest={(reference) => {
+          if (activeThreadRef)
+            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              ...(reference.host ? { host: reference.host } : {}),
+            });
+        }}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

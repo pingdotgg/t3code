@@ -24,7 +24,7 @@ export function issueTrackerPresentation(tracker: IssueTrackerKind | string) {
  * that stopped must not look like work that finished. The tracker's own state name is the label,
  * so a workflow tracker's "In Review" reads as itself.
  */
-function resolveIssueStatePresentation(state: IssueState) {
+export function resolveIssueStatePresentation(state: IssueState) {
   if (state.category === "open") {
     return {
       ...PULL_REQUEST_STATE_PRESENTATION.open,
