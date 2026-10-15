@@ -1810,6 +1810,20 @@ layer("ProviderEventIngestorV2", (it) => {
         }),
         [],
       );
+      assert.deepEqual(
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: {
+            type: "app_thread.created",
+            driver: CODEX_DRIVER,
+            appThread: { ...offered, title: "Recovered subagent" },
+            createOnly: true,
+          },
+        }),
+        [],
+      );
     }),
   );
 

@@ -12334,12 +12334,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           threadMessages(harness.events, member?.childThreadId).map((event) => event.message.text),
           ["Reply with exactly: A1"],
         );
-        assert.isFalse(
-          harness.events.some(
-            (event) =>
-              event.type === "app_thread.created" &&
-              event.appThread.id === coordinator?.childThreadId,
+        // T3 may have missed the launch, so the recovered coordinator's
+        // thread is created only if it does not exist yet.
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "app_thread.created" && event.appThread.id === coordinator?.childThreadId
+              ? [event.createOnly]
+              : [],
           ),
+          [true],
         );
       }).pipe(
         Effect.provide(
