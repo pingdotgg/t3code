@@ -9361,6 +9361,66 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      // The provider has finished; Stop cancels checkpoint work locally instead
+      // of asking a terminal provider turn to interrupt. Its atomic capture
+      // write checks the waiting status so late cleanup cannot revive this run.
+      if (run.status === "waiting" && !hasBackgroundWork) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: interruptRequestItem,
+        });
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...interruptRequestItem,
+            id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+            parentItemId: interruptRequestItem.id,
+            ordinal: interruptRequestItem.ordinal + 1,
+            type: "run_interrupt_result",
+            status: "interrupted",
+            title: "Interrupted",
+            message: "Checkpoint capture interrupted; this turn has no checkpoint to restore.",
+          },
+        });
+        yield* emitEvent({
+          type: "node.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...rootNode, status: "interrupted", completedAt: now },
+        });
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, status: "interrupted", completedAt: now },
+        });
+        yield* stopRemainingWork();
+        yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
+        return {
+          effectTypes: ["checkpoint.capture"],
+          reason: `Run ${run.id} was interrupted during checkpoint capture.`,
+        } satisfies {
+          readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+          readonly reason: string;
+        };
+      }
+
       if (
         providerTurn === undefined &&
         (run.status === "preparing" || run.status === "starting" || run.status === "running")

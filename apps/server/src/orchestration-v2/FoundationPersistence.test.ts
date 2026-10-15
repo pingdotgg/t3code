@@ -1547,136 +1547,145 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
-  it.effect("does not publish a stale provider start after an interrupt wins", () =>
-    Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:foundation-stale-provider-start");
-      const runId = RunId.make("run:foundation-stale-provider-start");
-      const attemptId = RunAttemptId.make("run-attempt:foundation-stale-provider-start");
-      const thread = makeThread(threadId, now);
-      const startingRun: OrchestrationV2Run = {
-        id: runId,
-        threadId,
-        ordinal: 1,
-        providerInstanceId,
-        modelSelection,
-        providerThreadId: null,
-        userMessageId: MessageId.make("message:foundation-stale-provider-start"),
-        rootNodeId: null,
-        activeAttemptId: attemptId,
-        status: "starting",
-        queuePosition: null,
-        requestedAt: now,
-        startedAt: null,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
-      yield* eventSink.write({
-        events: [
-          threadCreatedEvent({
-            id: "event:foundation-stale-provider-start:thread",
-            thread,
-            now,
-          }),
-          {
-            id: EventId.make("event:foundation-stale-provider-start:run"),
-            type: "run.created",
-            threadId,
-            runId,
-            providerInstanceId,
-            occurredAt: now,
-            payload: startingRun,
-          },
-        ],
-      });
-
-      const captureEffect = {
-        id: "effect:foundation-current-capture",
-        commandId: CommandId.make("command:foundation-current-capture"),
-        threadId,
-        request: {
-          type: "checkpoint.capture" as const,
-          runId,
-          scopeId: CheckpointScopeId.make("scope:foundation-current-capture"),
-        },
-      };
-      assert.isTrue(
-        (yield* eventSink.writeIfRunCurrent({
+  it.effect.each(["starting", "waiting"] as const)(
+    "does not publish stale work after an interrupt wins (%s)",
+    (status) =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:foundation-stale-provider-start");
+        const runId = RunId.make("run:foundation-stale-provider-start");
+        const attemptId =
+          status === "waiting"
+            ? null
+            : RunAttemptId.make("run-attempt:foundation-stale-provider-start");
+        const thread = makeThread(threadId, now);
+        const startingRun: OrchestrationV2Run = {
+          id: runId,
           threadId,
-          runId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:foundation-stale-provider-start"),
+          rootNodeId: null,
           activeAttemptId: attemptId,
-          expectedStatus: "starting",
-          events: [],
-          effects: [captureEffect],
-        })).committed,
-      );
-      assert.isTrue(Option.isSome(yield* outbox.get(captureEffect.id)));
-      yield* outbox.awaitAvailable;
-      const staleCaptureEffect = { ...captureEffect, id: "effect:foundation-stale-capture" };
-
-      const reachedPrecommitGap = yield* Deferred.make<void>();
-      const releaseStaleStart = yield* Deferred.make<void>();
-      const providerStartCount = yield* Ref.make(0);
-      const staleStartFiber = yield* Effect.gen(function* () {
-        yield* Deferred.succeed(reachedPrecommitGap, undefined);
-        yield* Deferred.await(releaseStaleStart);
-        const result = yield* eventSink.writeIfRunCurrent({
-          threadId,
-          runId,
-          activeAttemptId: attemptId,
-          expectedStatus: "starting",
-          effects: [staleCaptureEffect],
+          status,
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        yield* eventSink.write({
           events: [
+            threadCreatedEvent({
+              id: "event:foundation-stale-provider-start:thread",
+              thread,
+              now,
+            }),
             {
-              id: EventId.make("event:foundation-stale-provider-start:running"),
-              type: "run.updated",
+              id: EventId.make("event:foundation-stale-provider-start:run"),
+              type: "run.created",
               threadId,
               runId,
               providerInstanceId,
               occurredAt: now,
-              payload: { ...startingRun, status: "running", startedAt: now },
+              payload: startingRun,
             },
           ],
         });
-        if (result.committed) {
-          yield* Ref.update(providerStartCount, (count) => count + 1);
-        }
-        return result;
-      }).pipe(Effect.forkChild);
 
-      yield* Deferred.await(reachedPrecommitGap);
-      const interruptedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("event:foundation-stale-provider-start:cancelled"),
-            type: "run.updated",
+        const captureEffect = {
+          id: "effect:foundation-current-capture",
+          commandId: CommandId.make("command:foundation-current-capture"),
+          threadId,
+          request: {
+            type: "checkpoint.capture" as const,
+            runId,
+            scopeId: CheckpointScopeId.make("scope:foundation-current-capture"),
+          },
+        };
+        assert.isTrue(
+          (yield* eventSink.writeIfRunCurrent({
             threadId,
             runId,
-            providerInstanceId,
-            occurredAt: interruptedAt,
-            payload: {
-              ...startingRun,
-              status: "cancelled",
-              completedAt: interruptedAt,
-            },
-          },
-        ],
-      });
-      yield* Deferred.succeed(releaseStaleStart, undefined);
+            activeAttemptId: attemptId,
+            expectedStatus: status,
+            events: [],
+            effects: [captureEffect],
+          })).committed,
+        );
+        assert.isTrue(Option.isSome(yield* outbox.get(captureEffect.id)));
+        yield* outbox.awaitAvailable;
+        const staleCaptureEffect = { ...captureEffect, id: "effect:foundation-stale-capture" };
 
-      const staleResult = yield* Fiber.join(staleStartFiber);
-      assert.isFalse(staleResult.committed);
-      assert.isTrue(Option.isNone(yield* outbox.get(staleCaptureEffect.id)));
-      assert.deepEqual(staleResult.storedEvents, []);
-      assert.equal(yield* Ref.get(providerStartCount), 0);
-      const projection = yield* projectionStore.getThreadProjection(threadId);
-      assert.equal(projection.runs[0]?.status, "cancelled");
-    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+        const reachedPrecommitGap = yield* Deferred.make<void>();
+        const releaseStaleStart = yield* Deferred.make<void>();
+        const providerStartCount = yield* Ref.make(0);
+        const staleStartFiber = yield* Effect.gen(function* () {
+          yield* Deferred.succeed(reachedPrecommitGap, undefined);
+          yield* Deferred.await(releaseStaleStart);
+          const result = yield* eventSink.writeIfRunCurrent({
+            threadId,
+            runId,
+            activeAttemptId: attemptId,
+            expectedStatus: status,
+            effects: [staleCaptureEffect],
+            events: [
+              {
+                id: EventId.make("event:foundation-stale-provider-start:running"),
+                type: "run.updated",
+                threadId,
+                runId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...startingRun,
+                  status: status === "waiting" ? "completed" : "running",
+                  startedAt: now,
+                },
+              },
+            ],
+          });
+          if (result.committed) {
+            yield* Ref.update(providerStartCount, (count) => count + 1);
+          }
+          return result;
+        }).pipe(Effect.forkChild);
+
+        yield* Deferred.await(reachedPrecommitGap);
+        const interruptedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:foundation-stale-provider-start:cancelled"),
+              type: "run.updated",
+              threadId,
+              runId,
+              providerInstanceId,
+              occurredAt: interruptedAt,
+              payload: {
+                ...startingRun,
+                status: "cancelled",
+                completedAt: interruptedAt,
+              },
+            },
+          ],
+        });
+        yield* Deferred.succeed(releaseStaleStart, undefined);
+
+        const staleResult = yield* Fiber.join(staleStartFiber);
+        assert.isFalse(staleResult.committed);
+        assert.isTrue(Option.isNone(yield* outbox.get(staleCaptureEffect.id)));
+        assert.deepEqual(staleResult.storedEvents, []);
+        assert.equal(yield* Ref.get(providerStartCount), 0);
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.equal(projection.runs[0]?.status, "cancelled");
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("guards post-terminal provider-thread writes by attempt and run ordinal", () =>

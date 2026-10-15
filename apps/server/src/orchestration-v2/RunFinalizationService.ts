@@ -44,6 +44,7 @@ export class RunFinalizationService extends Context.Service<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
+      readonly willRetry?: boolean;
     }) => Effect.Effect<void, RunFinalizationError>;
   }
 >()("t3/orchestration-v2/RunFinalizationService") {}

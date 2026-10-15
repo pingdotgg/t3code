@@ -88,7 +88,7 @@ export interface EventSinkV2Shape {
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
     readonly runId: RunId;
-    readonly activeAttemptId: RunAttemptId;
+    readonly activeAttemptId: RunAttemptId | null;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;

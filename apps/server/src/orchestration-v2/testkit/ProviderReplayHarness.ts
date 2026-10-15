@@ -268,6 +268,8 @@ export function layerWithRegistry<Error>(
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly runEffectWorker?: boolean;
+    readonly checkpointServiceLayer?: Layer.Layer<CheckpointService.CheckpointServiceV2>;
+    readonly effectWorkerOptions?: EffectWorker.OrchestrationEffectWorkerOptions;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -340,9 +342,11 @@ export function layerWithRegistry<Error>(
     Layer.provide(layerVcsDriverRegistry),
     Layer.provide(NodeServices.layer),
   );
-  const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
-  );
+  const layerCheckpointServiceProvided =
+    options.checkpointServiceLayer ??
+    CheckpointService.layer.pipe(
+      Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+    );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(IdAllocator.layer),
   );
@@ -424,6 +428,7 @@ export function layerWithRegistry<Error>(
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
+        ThreadCommandExecutor.layer,
         layerStores,
       ),
     ),
@@ -460,6 +465,16 @@ export function layerWithRegistry<Error>(
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       return Layer.mock(ThreadManagementService.ThreadManagementService)({
         dispatch: orchestrator.dispatch,
+        stopDelegatedTasks: ({ threadId }) =>
+          orchestrator
+            .getThreadRecords(threadId, ["subagents"])
+            .pipe(
+              Effect.flatMap(({ subagents }) =>
+                subagents.some((task) => task.origin === "app_owned" && task.childThreadId !== null)
+                  ? Effect.die("Replay harness cannot stop app-owned child threads")
+                  : Effect.void,
+              ),
+            ),
         getThreadRecords: orchestrator.getThreadRecords,
         getThreadProjection: orchestrator.getThreadProjection,
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
@@ -494,7 +509,7 @@ export function layerWithRegistry<Error>(
       ),
     ),
   );
-  const layerEffectWorkerProvided = EffectWorker.layer.pipe(
+  const layerEffectWorkerProvided = EffectWorker.layerWithOptions(options.effectWorkerOptions).pipe(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(

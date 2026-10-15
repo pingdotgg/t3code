@@ -582,3 +582,45 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 });
+
+// Readiness is emitted after the child installs its SIGTERM handler; no timing
+// assumption about process startup is needed before timeout or cancellation.
+it.live.each(["timeout", "interrupt"] as const)(
+  "reaps an owned SIGTERM-resistant child on %s",
+  (mode) =>
+    Effect.gen(function* () {
+      let markReady!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      let childPid = 0;
+      const runner = yield* VcsProcess.VcsProcess;
+      const fiber = yield* runner
+        .run({
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          cwd: process.cwd(),
+          command: process.execPath,
+          args: [
+            "-e",
+            "process.on('SIGTERM', () => {}); console.log(process.pid); setInterval(() => {}, 1000)",
+          ],
+          timeoutMs: 2000,
+          onStdoutChunk: (chunk) => {
+            childPid = Number(Buffer.from(chunk).toString().trim());
+            markReady();
+          },
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => ready);
+      expect(childPid).toBeGreaterThan(0);
+      if (mode === "interrupt") yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        if (mode === "timeout")
+          expect(Cause.pretty(exit.cause)).toContain("VcsProcessTimeoutError");
+        else assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+      }
+      expect(() => process.kill(childPid, 0)).toThrow();
+    }).pipe(Effect.scoped, Effect.provide(layerLive)),
+);
