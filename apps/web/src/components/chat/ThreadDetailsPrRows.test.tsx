@@ -26,6 +26,7 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => watchCommand 
 vi.mock("~/lib/openPullRequestLink", () => ({
   parseChangeRequestUrl: () => null,
   findProjectOnChangeRequestHost: () => undefined,
+  findProjectForChangeRequest: () => undefined,
 }));
 
 import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";

@@ -88,6 +88,7 @@ export function ThreadDetailsPrRow({
   status,
   project,
   label,
+  referenceLabel = `#${number}`,
   openAriaLabel,
   onOpen,
   onActed,
@@ -101,6 +102,7 @@ export function ThreadDetailsPrRow({
   /** The thread's project, which is what the pull request is read through on the host. */
   project: EnvironmentProject | null;
   label: string;
+  referenceLabel?: string;
   openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   /** An action changed the pull request on the host, so the vcs status behind the row is stale. */
@@ -236,9 +238,17 @@ export function ThreadDetailsPrRow({
   // Everything the host reported, at a glance. The rows stay short; the tooltip is where the
   // rest of the answer lives — styled like the sidebar's thread tooltip, title above icon-led
   // detail rows, so the two read as one family.
+  const tooltipReferenceLabel = reference
+    ? `${reference.repository}#${number}`
+    : linkedReference
+      ? `${linkedReference.repository}#${number}`
+      : referenceLabel;
   const rowTooltip =
     detail === null || statePresentation === null ? (
-      <TooltipPopup side="top">{status?.tooltip ?? `Pull request #${number}`}</TooltipPopup>
+      <TooltipPopup side="top">
+        {status?.tooltip.replace(`#${number}`, tooltipReferenceLabel) ??
+          `Pull request ${tooltipReferenceLabel}`}
+      </TooltipPopup>
     ) : (
       <TooltipPopup
         side="top"
@@ -250,7 +260,7 @@ export function ThreadDetailsPrRow({
         <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
           <div className="flex min-w-0 items-baseline gap-1.5 text-xs leading-none">
             <span className="min-w-0 truncate font-medium text-foreground">{detail.title}</span>
-            <span className="shrink-0 text-muted-foreground">#{detail.number}</span>
+            <span className="shrink-0 text-muted-foreground">{tooltipReferenceLabel}</span>
           </div>
           <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
@@ -360,7 +370,7 @@ export function ThreadDetailsPrRow({
               size="sm"
               part={part}
               className="group/watch"
-              aria-label={`Stop watching #${number}`}
+              aria-label={`Stop watching ${referenceLabel}`}
               onClick={onStopWatching}
             />
           }
@@ -419,7 +429,7 @@ export function ThreadDetailsPrRow({
         <div className="pb-2">
           {openRow(detail.title, "row")}
           <div className="-mt-1 flex h-6 min-w-0 items-center gap-0.5 ps-9 pe-1 text-xs text-muted-foreground">
-            <span className="me-1 shrink-0 tabular-nums">#{number}</span>
+            <span className="me-1 shrink-0 tabular-nums">{referenceLabel}</span>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
                 checksState={checksRollup}
