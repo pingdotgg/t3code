@@ -81,6 +81,7 @@ import {
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
+import { capturePreviewPage } from "./PreviewCapture.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
 
@@ -138,7 +139,6 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
  */
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
-const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -623,16 +623,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const capture = Effect.gen(function* () {
       // Check after the retry delay, and again before accepting its result.
       yield* requireCurrentGuest;
-      const image = yield* Effect.tryPromise({
-        // An abort-signal parameter makes a stalled promise interruptible.
-        try: (_signal) => wc.capturePage(),
-        catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
-      }).pipe(
-        Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
-        Effect.catchTags({
-          TimeoutError: (cause) =>
-            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
-        }),
+      const image = yield* capturePreviewPage(tabId, wc).pipe(
+        Effect.mapError(
+          (error) =>
+            new PreviewOperationError({
+              ...errorContext,
+              cause: "cause" in error ? error.cause : error,
+            }),
+        ),
       );
       yield* requireCurrentGuest;
       return image;

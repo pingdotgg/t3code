@@ -357,7 +357,9 @@ const makeTestHostWebContents = (): TestHostWebContents => {
   return {
     id: 7,
     mainFrame: { frameTreeNodeId: 7 },
-    executeJavaScript: vi.fn(async () => true),
+    executeJavaScript: vi.fn(async (expression: string) =>
+      expression.includes(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER),
+    ),
     isDestroyed: () => false,
     session: {
       setDisplayMediaRequestHandler: vi.fn((next: TestDisplayMediaHandler) => {
@@ -2935,6 +2937,43 @@ describe("PreviewManager", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(capturePage).toHaveBeenCalledTimes(1);
         expect(writeFile).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("allows scaled capture setup to exceed one second", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toPNG: () => Buffer.from("scaled-png"),
+          toJPEG: () => Buffer.from("scaled-jpeg"),
+          toDataURL: () => "data:image/png;base64,cG5n",
+          getSize: () => ({ width: 100, height: 80 }),
+        };
+        const pending = Promise.withResolvers<void>();
+        const setupStarted = Promise.withResolvers<void>();
+        const host = makeTestHostWebContents();
+        host.executeJavaScript.mockImplementation(async (expression: string) => {
+          if (expression.includes("getComputedStyle")) return true;
+          if (expression.includes("frozen.decode")) {
+            setupStarted.resolve();
+            await pending.promise;
+          }
+          return undefined;
+        });
+        const capturePage = vi.fn(async () => image);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42, host));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const fiber = yield* manager.captureScreenshot("tab_1").pipe(Effect.forkChild);
+        yield* Effect.promise(() => setupStarted.promise);
+        yield* TestClock.adjust("2 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        pending.resolve();
+        const artifact = yield* Fiber.join(fiber);
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(writeFile).toHaveBeenCalledWith(artifact.path, image.toPNG());
+        expect(host.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("?.remove()"));
       }),
     ),
   );
