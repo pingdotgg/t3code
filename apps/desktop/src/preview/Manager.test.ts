@@ -2726,6 +2726,22 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not adopt a main window destroyed before setup finishes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const destroyedWindowOnce = vi.fn();
+        yield* manager.setMainWindow({
+          isDestroyed: () => true,
+          once: destroyedWindowOnce,
+          webContents: { setBackgroundThrottling: vi.fn() },
+        } as never);
+
+        // Its closed event already fired, so a listener would never release frame capture.
+        expect(destroyedWindowOnce).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("ignores close events from replaced main windows", () =>
     withManager((manager) =>
       Effect.gen(function* () {

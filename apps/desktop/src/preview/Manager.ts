@@ -1658,6 +1658,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
+        // Shutdown can destroy the window while the previous window's cleanup or this
+        // lock is pending; its closed event has then already fired, so it must not
+        // become the main window.
+        if (window.isDestroyed()) return [undefined, sessions] as const;
         if (sessions.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }

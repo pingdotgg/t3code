@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/con
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -80,6 +82,7 @@ type WindowTitleBarOptions = Pick<
 
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopState.DesktopState
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
@@ -323,6 +326,7 @@ function bindFirstRevealTrigger(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopState = yield* DesktopState.DesktopState;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
@@ -406,6 +410,8 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    // The reads above can wait; shutdown may have started meanwhile.
+    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -435,6 +441,11 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
+    // Quit may have begun while the window was being created.
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return yield* Effect.interrupt;
+    }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
@@ -528,6 +539,12 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
+    // Preview setup can wait for cleanup from the previous main window.
+    // Shutdown may have destroyed this window while that work was pending.
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return yield* Effect.interrupt;
+    }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -872,6 +889,7 @@ export const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* createWindow();
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
@@ -885,6 +903,21 @@ export const make = Effect.gen(function* () {
     }
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
+
+  // Window creation stops with an interrupt once shutdown starts. Callers that
+  // can go without the window get None for that case; other failures still fail.
+  const unlessShuttingDown = <A, E>(creation: Effect.Effect<A, E>) =>
+    creation.pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          if (Cause.hasInterruptsOnly(cause) && (yield* Ref.get(desktopState.quitting))) {
+            return Option.none<A>();
+          }
+          return yield* Effect.failCause(cause);
+        }),
+      ),
+    );
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
@@ -900,13 +933,15 @@ export const make = Effect.gen(function* () {
   });
 
   const createMainIfBackendReady = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
-    yield* createMain;
+    yield* unlessShuttingDown(createMain);
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     // Only when nothing is shown yet: no real window, no existing splash.
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
@@ -933,6 +968,12 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    // Quit may have begun while the splash was being created; destroy it
+    // instead of registering a window that outlives shutdown's destroyAll.
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return;
+    }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
@@ -960,8 +1001,11 @@ export const make = Effect.gen(function* () {
   ) {
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
-    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-    if (targetWindow.isDestroyed()) return;
+    const window = Option.isSome(existingWindow)
+      ? existingWindow
+      : yield* unlessShuttingDown(ensureMain);
+    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    const targetWindow = window.value;
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
     });
