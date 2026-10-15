@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderTurnId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -537,6 +538,78 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         watched: [],
       });
     }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
+);
+
+it.effect.each([
+  { ending: "cancelled", question: "resolved" },
+  { ending: "interrupted", question: "resolved" },
+  { ending: "completed", question: "pending" },
+  { ending: "failed", question: "pending" },
+] as const)(
+  "a $ending delegated task leaves its async question $question",
+  ({ ending, question }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make(`thread:stop-question-parent:${ending}`);
+      yield* createWatchingThread(parentThreadId, 20);
+      yield* send(parentThreadId, "first", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, `question task ${ending}`);
+      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(childThreadId)).nodes.find(
+          (node) => node.id === childRun.rootNodeId,
+        )?.runId,
+        childRun.id,
+      );
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("event:stop-question:request"),
+        type: "runtime-request.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:stop-question"),
+          nodeId: childRun.rootNodeId!,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      const request = Effect.map(
+        orchestrator.getThreadProjection(childThreadId),
+        (projection) => projection.runtimeRequests[0],
+      );
+
+      // While the task runs, its question stays open.
+      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      assert.equal((yield* request)?.status, "pending");
+      if (ending === "interrupted") {
+        // What task_cancel dispatches.
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-question-child"),
+          threadId: childThreadId,
+        });
+      } else {
+        yield* projections.apply({
+          id: EventId.make(`event:stop-question:${ending}`),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: { ...childRun, status: ending, startedAt: now, completedAt: now },
+        });
+      }
+      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      assert.equal((yield* request)?.status, question);
+      assert.equal((yield* request)?.decision, question === "resolved" ? "cancel" : undefined);
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
