@@ -1,6 +1,7 @@
+import * as Dialog from "./Dialog";
 import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, type ColorValue } from "react-native";
+import { Pressable, type ColorValue } from "react-native";
 
 import { tryCopyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
@@ -43,11 +44,11 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
           if (props.onCopy) await props.onCopy();
           else if (!(await tryCopyTextWithHaptic(props.text))) {
             // A refused clipboard write is the common failure, and silence reads as success.
-            Alert.alert("Could not copy", "Try again.");
+            Dialog.alert("Could not copy", "Try again.");
             return;
           }
         } catch {
-          Alert.alert("Could not copy", "Try again.");
+          Dialog.alert("Could not copy", "Try again.");
           return;
         }
         setCopied(true);

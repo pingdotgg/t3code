@@ -1,5 +1,6 @@
+import * as Dialog from "./Dialog";
 import type { ComposerContextRecord, EnvironmentId } from "@t3tools/contracts";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { useEffect, useId, useMemo, useState } from "react";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -82,7 +83,7 @@ export function ComposerContextAttachment(props: {
         });
       }
     } catch (cause) {
-      Alert.alert(
+      Dialog.alert(
         "Could not open attachment",
         cause instanceof Error ? cause.message : "Try again.",
       );

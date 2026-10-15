@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import {
   deviceToolVersionLabels,
   deviceToolUpdateOwnership,
@@ -9,7 +10,7 @@ import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Alert, AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
+import { AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -139,7 +140,7 @@ function DevicePreviewScreen({
         },
       });
       if (result._tag === "Failure") {
-        Alert.alert("Could not shut down device", String(Cause.squash(result.cause)));
+        Dialog.alert("Could not shut down device", String(Cause.squash(result.cause)));
       }
     } finally {
       setShuttingDown(false);
@@ -177,7 +178,7 @@ function DevicePreviewScreen({
       title: "Device tool versions",
       icon: "info.circle",
       onPress: () =>
-        Alert.alert(
+        Dialog.alert(
           "Device tool versions",
           deviceToolUpdateOwnership +
             "\n\n" +

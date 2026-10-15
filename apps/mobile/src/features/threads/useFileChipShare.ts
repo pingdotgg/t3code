@@ -1,8 +1,8 @@
+import * as Dialog from "../../components/Dialog";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { Alert } from "react-native";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { assetEnvironment } from "../../state/assets";
@@ -52,7 +52,7 @@ export function useFileChipShare(
       })()
         .catch((error: unknown) => {
           if (!request.signal.aborted) {
-            Alert.alert(
+            Dialog.alert(
               "Could not share file",
               error instanceof Error ? error.message : "Try again.",
             );

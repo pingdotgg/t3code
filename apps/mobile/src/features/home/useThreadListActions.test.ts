@@ -44,6 +44,8 @@ vi.mock("expo-haptics", () => ({
   ImpactFeedbackStyle: { Light: "light" },
 }));
 vi.mock("../../components/Dialog", () => ({
+  alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+    state.alerts.push({ title, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
