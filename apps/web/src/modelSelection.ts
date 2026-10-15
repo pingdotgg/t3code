@@ -337,6 +337,21 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+export function isModelSelectableForInstance(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+  model: string,
+): boolean {
+  const entry = deriveProviderInstanceEntries(providers).find(
+    (candidate) => candidate.instanceId === instanceId,
+  );
+  if (!entry) return false;
+  return getAppModelOptionsForInstance({ ...settings, providerModelPreferences: {} }, entry).some(
+    (option) => option.slug === model && !option.isUnavailable,
+  );
+}
+
 /**
  * Whether stored model options pick the opencode "plan" agent. Shared settings
  * pickers keep and show such a value even while this device's legacy plan

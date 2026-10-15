@@ -9,7 +9,10 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  isModelSelectableForInstance,
+} from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -111,15 +114,16 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         candidate.settings,
         candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
-        mergeEnvironmentSettings(candidate.settings, settings),
-        config.providers,
-      ).get(instanceId);
       if (
         !entry?.enabled ||
         !entry.isAvailable ||
         entry.driverKind !== sourceEntry?.driverKind ||
-        !options?.some((option) => option.slug === model && !option.isUnavailable)
+        !isModelSelectableForInstance(
+          mergeEnvironmentSettings(candidate.settings, settings),
+          config.providers,
+          instanceId,
+          model,
+        )
       ) {
         return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
       }

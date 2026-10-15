@@ -14,6 +14,7 @@ import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./pr
 import {
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
+  isModelSelectableForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
 } from "./modelSelection";
@@ -917,6 +918,36 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
   it("keeps a stored plan agent this device did not pick", () => {
     expect(resolveAppModelSelectionState(settings, [opencode])).toEqual(
       createModelSelection(instanceId, model, [{ id: "agent", value: "plan" }]),
+    );
+  });
+});
+
+describe("isModelSelectableForInstance", () => {
+  it("treats hidden models as selectable when validating a saved selection", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const providers = [
+      provider({ instanceId: "claudeAgent", models: ["claude-opus-4-6", "claude-opus-5-5"] }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerModelPreferences: {
+        [instanceId]: { hiddenModels: ["claude-opus-4-6"], modelOrder: [] },
+      },
+    };
+
+    expect(
+      getCustomModelOptionsByInstance(settings, providers)
+        .get(instanceId)
+        ?.some((option) => option.slug === "claude-opus-4-6"),
+    ).toBe(false);
+    expect(isModelSelectableForInstance(settings, providers, instanceId, "claude-opus-4-6")).toBe(
+      true,
+    );
+    expect(isModelSelectableForInstance(settings, providers, instanceId, "claude-opus-5-5")).toBe(
+      true,
+    );
+    expect(isModelSelectableForInstance(settings, providers, instanceId, "missing-model")).toBe(
+      false,
     );
   });
 });
