@@ -5,13 +5,16 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
+import { GraphQLClient, GraphQLClientError, GraphQLResolver } from "effect/graphql";
+import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as GitHubApi from "./GitHubApi.ts";
-import { aliasedGraphQlDocument } from "./githubGraphQl.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { decodePullRequestStacksJson, toCanWrite } from "./gitHubPullRequestJson.ts";
 import { cascadeRebaseStack } from "./githubStackRebase.ts";
+import { StackActionsGraphQLGroup } from "./stackActions.graphql.ts";
 
 const stackErrorIdentity = {
   repository: Schema.String,
@@ -104,28 +107,6 @@ const MergeResponse = Schema.Struct({
   }),
 });
 
-const decodeBranchAccess = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      data: Schema.Struct({
-        repository: Schema.NullOr(
-          Schema.Record(
-            Schema.String,
-            Schema.NullOr(
-              Schema.Struct({
-                headRepository: Schema.NullOr(
-                  Schema.Struct({ viewerPermission: Schema.NullOr(Schema.String) }),
-                ),
-                maintainerCanModify: Schema.Boolean,
-              }),
-            ),
-          ),
-        ),
-      }),
-    }),
-  ),
-);
-
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
 /** Remote-only updates: a stack rebase works in a scratch clone, never the environment's checkout. */
@@ -139,7 +120,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   action: PullRequestAction;
   mergeMethod?: PullRequestMergeMethod;
 }) {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const identity = {
     repository: input.repository,
     number: input.number,
@@ -189,31 +170,34 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     return yield* new GitHubStackUnsupportedError({ ...identity });
   if (input.action === "update-branch") {
     const [owner, name] = input.repository.split("/");
-    const permissions = yield* api.graphql({
-      host: input.host,
-      operation: "runGitHubStackAction",
-      allowReserve: true,
-      // `open` is non-empty here, so there is always a document.
-      ...aliasedGraphQlDocument({
-        operation: "query",
-        alias: "pr",
-        key: (layer) => layer.number,
-        items: open,
-        shared: { owner: ["String!", owner], name: ["String!", name] },
-        variables: (layer) => ({ number: ["Int!", layer.number] }),
-        field: ({ number }) =>
-          `pullRequest(number: ${number}) { headRepository { viewerPermission } maintainerCanModify }`,
-        within: (fields) => `repository(owner: $owner, name: $name) {\n${fields}\n}`,
-      })!,
-    });
-    const access = yield* decodeBranchAccess(permissions).pipe(
-      Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),
+    const client = yield* GraphQLClient.make(
+      StackActionsGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+    ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+    // One aliased request checks every layer; `open` is non-empty here.
+    const resolver = GraphQLResolver.aliased(client.PullRequestBranchAccess, {
+      batchKey: GitHubGraphQlClient.batchKey,
+    }).pipe(RequestResolver.batchN(open.length));
+    const access = yield* Effect.forEach(
+      open,
+      (layer) =>
+        GraphQLResolver.request({ owner: owner!, name: name!, number: layer.number }, resolver),
+      { concurrency: "unbounded" },
+    ).pipe(
+      GitHubGraphQlClient.call({
+        host: input.host,
+        operation: "runGitHubStackAction",
+        allowReserve: true,
+      }),
+      Effect.catchIf(
+        GraphQLClientError.isGraphQLClientError,
+        (cause) => new GitHubStackResponseInvalidError({ ...identity, cause }),
+      ),
     );
     // viewerCanUpdateBranch is false for an already-current layer, even if rebasing its parent
     // will make it stale. Check branch write access separately before touching any layer.
     if (
-      open.some((layer) => {
-        const pr = access.data.repository?.[`pr${layer.number}`];
+      access.some(({ repository }) => {
+        const pr = repository?.pullRequest;
         return (
           !pr?.headRepository ||
           (!pr.maintainerCanModify && !toCanWrite(pr.headRepository.viewerPermission))

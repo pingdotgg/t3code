@@ -7,7 +7,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PositiveInt, type PullRequestChecks } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import type { GitHubPullRequestDetail } from "./gitHubPullRequestJson.ts";
 import type { GitHubPullRequestApiError } from "./GitHubPullRequestApi.ts";
 import type { ProviderRepositoryRef } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -53,7 +54,7 @@ type Validator = { etag: string | undefined; next: boolean; body: string };
 const UNSUPPORTED_STATUSES = new Set([404, 405, 501]);
 
 export const makeChecksRevalidator = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const entries = yield* Cache.makeWith(
     (_key: string) =>
       Effect.sync(() => ({
@@ -76,7 +77,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
     >,
   ) =>
     Effect.gen(function* () {
-      const credential = yield* GitHubApi.PinnedGitHubCredential;
+      const credential = yield* GitHubRequestPolicy.PinnedGitHubCredential;
       if (credential === null) return yield* read;
       const key = `${credential.credentialFingerprint}\0${input.host}\0${input.repository}\0${input.number}`;
       const entry = yield* Cache.get(entries, key);
@@ -84,7 +85,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
         Effect.gen(function* () {
           if (!entry.supported) return yield* read;
           const fail = (status: number) =>
-            new GitHubApi.GitHubApiResponseError({
+            new GitHubRequestPolicy.GitHubApiResponseError({
               host: input.host,
               operation: "revalidateChecks",
               status,

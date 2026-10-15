@@ -1,23 +1,21 @@
 // Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
 // Numbers form a session with shared repository-permission caches. Browser and
 // service caches are excluded. Uses real GitHub reads, without a server or database.
-// Each GraphQL read asks for `rateLimit` here, so its cost is read off its own answer.
+// Requests are counted at the HTTP client. A GraphQL request's cost is how far it moved GitHub's
+// `x-ratelimit-used` for the `graphql` resource, which is approximate when anything else spends
+// the same token's quota while this runs.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
-import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerConfig from "../src/config.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
-import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as ServerSourceControlHost from "../src/sourceControl/ServerSourceControlHost.ts";
 import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
@@ -31,20 +29,49 @@ if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.tes
 
 type Read = { graphqlRequests: number; restRequests: number; cost: number };
 const reads: Read[] = [];
-const decodeCost = Schema.decodeUnknownOption(
+
+/** The `graphql` quota's use so far, and the window it counts in. */
+let graphqlUsed: { used: number; reset: string } | null = null;
+const decodeRateLimit = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
-      data: Schema.Struct({ rateLimit: Schema.Struct({ cost: Schema.Number }) }),
+      resources: Schema.Struct({
+        graphql: Schema.Struct({ used: Schema.Number, reset: Schema.Number }),
+      }),
     }),
   ),
 );
-/** The query with GitHub's own count of what it cost, for a read rather than a mutation. */
-function withRateLimit(query: string): string {
-  const end = query.lastIndexOf("}");
-  return query.trimStart().startsWith("mutation") || end === -1
-    ? query
-    : `${query.slice(0, end)}\n  rateLimit { cost }\n${query.slice(end)}`;
+
+/**
+ * What one GraphQL answer spent: how far it moved `used` past the highest value seen, so requests
+ * answered out of order still add up to the window's total. A new window starts from zero.
+ */
+function graphqlCost(headers: Readonly<Record<string, string | undefined>>): number {
+  const used = Number(headers["x-ratelimit-used"]);
+  const reset = headers["x-ratelimit-reset"] ?? "";
+  if (headers["x-ratelimit-resource"] !== "graphql" || !Number.isFinite(used)) return 0;
+  const previous = graphqlUsed?.reset === reset ? graphqlUsed.used : 0;
+  graphqlUsed = { used: Math.max(previous, used), reset };
+  return Math.max(0, used - previous);
 }
+
+/** The HTTP client the GitHub transports send through, recording each request as it is answered. */
+const measuredHttp = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    return HttpClient.tap(client, (response) =>
+      Effect.sync(() => {
+        const graphql = new URL(response.request.url).pathname.endsWith("/graphql");
+        reads.push({
+          graphqlRequests: graphql ? 1 : 0,
+          restRequests: graphql ? 0 : 1,
+          cost: graphql ? graphqlCost(response.headers) : 0,
+        });
+      }),
+    );
+  }),
+).pipe(Layer.provide(FetchHttpClient.layer));
 
 // The server's host port over default settings: gh's own account choice, no saved token.
 const sourceControlHost = ServerSourceControlHost.layer.pipe(
@@ -57,46 +84,9 @@ const sourceControlHost = ServerSourceControlHost.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const measuredApi = Layer.effect(
-  GitHubApi.GitHubApi,
-  Effect.gen(function* () {
-    const api = yield* GitHubApi.make;
-    return GitHubApi.GitHubApi.of({
-      ...api,
-      graphql: (input) =>
-        api.graphql({ ...input, query: withRateLimit(input.query) }).pipe(
-          Effect.tap((body) =>
-            Effect.sync(() =>
-              reads.push({
-                graphqlRequests: 1,
-                restRequests: 0,
-                cost: Option.match(decodeCost(body), {
-                  onNone: () => 0,
-                  onSome: (decoded) => decoded.data.rateLimit.cost,
-                }),
-              }),
-            ),
-          ),
-        ),
-      rest: (input) =>
-        api
-          .rest(input)
-          .pipe(
-            Effect.tap(() =>
-              Effect.sync(() => reads.push({ graphqlRequests: 0, restRequests: 1, cost: 0 })),
-            ),
-          ),
-    });
-  }),
-).pipe(
-  Layer.provide(GitHubCredentials.layer),
-  Layer.provide(GitHubQuota.layer),
-  Layer.provide(SourceControlRateLimit.layer),
-  Layer.provide(FetchHttpClient.layer),
-);
-
 const services = GitHubPullRequestApi.layer.pipe(
-  Layer.provideMerge(measuredApi),
+  Layer.provideMerge(GitHubRest.layerWithDependencies),
+  Layer.provideMerge(measuredHttp),
   Layer.provideMerge(sourceControlHost),
 );
 
@@ -108,6 +98,13 @@ for (const mode of ["detail", "preview"] as const) {
     Effect.scoped(
       Effect.gen(function* () {
         const provider = yield* GitHubPullRequestProvider.make;
+        // Where the `graphql` quota stands before the first read. `rate_limit` is free.
+        const api = yield* GitHubRest.GitHubRest;
+        const limits = decodeRateLimit(
+          (yield* api.rest({ host: "github.com", operation: "rateLimit", path: "rate_limit" }))
+            .body,
+        ).resources.graphql;
+        graphqlUsed = { used: limits.used, reset: String(limits.reset) };
         return yield* Effect.forEach(numbers.map(Number), (number) =>
           Effect.gen(function* () {
             const input = { cwd: process.cwd(), repository, host: "github.com", number };

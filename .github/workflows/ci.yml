@@ -52,6 +52,9 @@ jobs:
       - name: Check unused code
         run: vp run knip:check
 
+      - name: Check generated GitHub GraphQL operations
+        run: vp run --filter @t3tools/source-control-github generate --check
+
       - name: Check
         run: vp check
 

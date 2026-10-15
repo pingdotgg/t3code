@@ -1,0 +1,163 @@
+# Writes to a pull request and the remarks on it. None reads its answer back beyond what GitHub
+# requires a mutation to select.
+
+mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+    comment {
+      id
+    }
+  }
+}
+
+mutation AddReaction($subjectId: ID!, $content: ReactionContent!) {
+  addReaction(input: { subjectId: $subjectId, content: $content }) {
+    reaction {
+      content
+    }
+  }
+}
+
+mutation RemoveReaction($subjectId: ID!, $content: ReactionContent!) {
+  removeReaction(input: { subjectId: $subjectId, content: $content }) {
+    reaction {
+      content
+    }
+  }
+}
+
+mutation ResolveReviewThread($threadId: ID!) {
+  resolveReviewThread(input: { threadId: $threadId }) {
+    thread {
+      isResolved
+    }
+  }
+}
+
+mutation UnresolveReviewThread($threadId: ID!) {
+  unresolveReviewThread(input: { threadId: $threadId }) {
+    thread {
+      isResolved
+    }
+  }
+}
+
+# Rewrites the pull request's own words. Both are nullable so that one document serves a change to
+# the title, to the description, or to the two together: a variable the request does not send puts
+# no entry in the input at all, which leaves that field as it was rather than clearing it.
+mutation UpdatePullRequest($pullRequestId: ID!, $title: String, $body: String) {
+  updatePullRequest(input: { pullRequestId: $pullRequestId, title: $title, body: $body }) {
+    pullRequest {
+      id
+    }
+  }
+}
+
+# Creates a new pull request that reverses a merged pull request.
+mutation RevertPullRequest($pullRequestId: ID!) {
+  revertPullRequest(input: { pullRequestId: $pullRequestId }) {
+    revertPullRequest {
+      id
+    }
+  }
+}
+
+# The two comment mutations name their comment differently; the variable is spelled the same in
+# both, so a rewrite sends one set of variables whichever kind of remark it is.
+mutation UpdateIssueComment($commentId: ID!, $body: String!) {
+  updateIssueComment(input: { id: $commentId, body: $body }) {
+    issueComment {
+      id
+    }
+  }
+}
+
+mutation UpdateReviewComment($commentId: ID!, $body: String!) {
+  updatePullRequestReviewComment(input: { pullRequestReviewCommentId: $commentId, body: $body }) {
+    pullRequestReviewComment {
+      id
+    }
+  }
+}
+
+# Clears one file, or puts it back. GitHub has no bulk form of either mutation, so
+# `GraphQLResolver.aliased` repeats this under an alias per file and a burst of ticks is one
+# request; `$viewed` picks which of the two each alias runs.
+mutation SetFileViewed($pullRequestId: ID!, $path: String!, $viewed: Boolean!) {
+  markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) @include(if: $viewed) {
+    clientMutationId
+  }
+  unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) @skip(if: $viewed) {
+    clientMutationId
+  }
+}
+
+mutation MergePullRequest($input: MergePullRequestInput!) {
+  mergePullRequest(input: $input) {
+    clientMutationId
+  }
+}
+
+mutation EnablePullRequestAutoMerge($input: EnablePullRequestAutoMergeInput!) {
+  enablePullRequestAutoMerge(input: $input) {
+    clientMutationId
+  }
+}
+
+mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
+    clientMutationId
+  }
+}
+
+mutation UpdatePullRequestBranch(
+  $pullRequestId: ID!
+  $expectedHeadOid: GitObjectID!
+  $updateMethod: PullRequestBranchUpdateMethod!
+) {
+  updatePullRequestBranch(
+    input: {
+      pullRequestId: $pullRequestId
+      expectedHeadOid: $expectedHeadOid
+      updateMethod: $updateMethod
+    }
+  ) {
+    clientMutationId
+  }
+}
+
+mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+    clientMutationId
+  }
+}
+
+mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
+  convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+    clientMutationId
+  }
+}
+
+mutation ClosePullRequest($pullRequestId: ID!) {
+  closePullRequest(input: { pullRequestId: $pullRequestId }) {
+    clientMutationId
+  }
+}
+
+mutation ReopenPullRequest($pullRequestId: ID!) {
+  reopenPullRequest(input: { pullRequestId: $pullRequestId }) {
+    clientMutationId
+  }
+}
+
+mutation AddComment($subjectId: ID!, $body: String!) {
+  addComment(input: { subjectId: $subjectId, body: $body }) {
+    clientMutationId
+  }
+}
+
+# Deletes a branch only while it still points at `beforeOid`, which `refUpdates` carries.
+mutation DeletePullRequestBranch($input: UpdateRefsInput!) {
+  updateRefs(input: $input) {
+    clientMutationId
+  }
+}

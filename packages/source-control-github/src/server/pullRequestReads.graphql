@@ -1,0 +1,532 @@
+# Reads of one pull request, or of the repository it belongs to.
+
+# Resolves a listing's authors to avatars, which no listing field carries.
+query ActorAvatars($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on User {
+      login
+      avatarUrl
+    }
+    ... on Bot {
+      login
+      avatarUrl
+    }
+  }
+}
+
+# A check context of the head commit. `isRequired` is asked for on github.com only (`$required`):
+# an older Enterprise server may not know it, and an unknown field fails the whole read.
+fragment CheckContext on StatusCheckRollupContext {
+  ... on StatusContext {
+    context
+    state
+    targetUrl
+    createdAt
+    description
+    isRequired(pullRequestNumber: $number) @include(if: $required)
+  }
+  ... on CheckRun {
+    name
+    status
+    conclusion
+    startedAt
+    completedAt
+    detailsUrl
+    isRequired(pullRequestNumber: $number) @include(if: $required)
+    checkSuite {
+      workflowRun {
+        workflow {
+          name
+        }
+      }
+    }
+  }
+}
+
+# The detail of a pull request with the viewer's standing on it. Pull refs let the comparison
+# (`$headRef` is `refs/pull/<number>/head`) share this read without first resolving a fork branch.
+query PullRequestCore(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $headRef: String!
+  $required: Boolean!
+) {
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    viewerPermission
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      body
+      state
+      isDraft
+      mergeable
+      reviewDecision
+      additions
+      deletions
+      changedFiles
+      createdAt
+      updatedAt
+      mergedAt
+      closedAt
+      headRefName
+      baseRefName
+      headRefOid
+      isCrossRepository
+      headRepositoryOwner {
+        login
+      }
+      # The source branch's own repository and ref, which is what deleting the branch needs: write
+      # there, and a branch still to delete.
+      headRepository {
+        nameWithOwner
+        viewerPermission
+      }
+      headRef {
+        id
+      }
+      author {
+        login
+        avatarUrl
+        ... on User {
+          id
+          name
+        }
+      }
+      autoMergeRequest {
+        mergeMethod
+      }
+      viewerCanUpdate
+      viewerDidAuthor
+      viewerCanUpdateBranch
+      baseRef {
+        compare(headRef: $headRef) {
+          behindBy
+        }
+      }
+      reviewRequests(first: 100) {
+        nodes {
+          requestedReviewer {
+            ... on User {
+              login
+              name
+            }
+            ... on Bot {
+              login
+            }
+            # A team's name and avatar are nullable differently from a person's, so they travel
+            # under their own aliases. `combinedSlug` is the `org/slug` a reviewer row shows.
+            ... on Team {
+              slug
+              combinedSlug
+              teamName: name
+              teamAvatarUrl: avatarUrl
+            }
+          }
+        }
+      }
+      labels(first: 100) {
+        nodes {
+          name
+          color
+        }
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100) {
+                nodes {
+                  ...CheckContext
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# Every check context of the head commit, a page at a time, for a rollup past one page.
+query PullRequestCheckContexts(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $required: Boolean!
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100, after: $after) {
+                nodes {
+                  ...CheckContext
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query PullRequestPreview($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      state
+      isDraft
+      createdAt
+      author {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
+    }
+  }
+}
+
+# The conversation a pull request carries outside its review threads: who opened it, its issue
+# comments, its reviews and its newest commits. The two remark connections page independently, so
+# each is switched on only while it has more to give; the first read (`$head`) asks for everything.
+query PullRequestActivity(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $head: Boolean!
+  $withComments: Boolean!
+  $commentsAfter: String
+  $withReviews: Boolean!
+  $reviewsAfter: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      author @include(if: $head) {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
+      commits(last: 100) @include(if: $head) {
+        nodes {
+          commit {
+            oid
+            messageHeadline
+            committedDate
+            authors(first: 10) {
+              nodes {
+                name
+                email
+                user {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+      comments(first: 100, after: $commentsAfter) @include(if: $withComments) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          body
+          createdAt
+          lastEditedAt
+          url
+          author {
+            login
+            avatarUrl
+            ... on User {
+              name
+            }
+          }
+        }
+      }
+      reviews(first: 100, after: $reviewsAfter) @include(if: $withReviews) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          body
+          state
+          submittedAt
+          lastEditedAt
+          url
+          author {
+            login
+            avatarUrl
+            ... on User {
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# Open pull requests whose head branch has one name, from whichever repository it lives in.
+query PullRequestHeads($owner: String!, $name: String!, $head: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 100, after: $after, states: [OPEN], headRefName: $head) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        number
+        headRefOid
+        isCrossRepository
+        headRepositoryOwner {
+          login
+        }
+      }
+    }
+  }
+}
+
+# The pull request's own node id, which is what a mutation against the pull request itself is
+# addressed by. Read only when one is being written: the conversation carries an id for every
+# remark in it, and the pull request is the one subject nothing in it names.
+query PullRequestNodeId($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+    }
+  }
+}
+
+# Where a client-given subject actually hangs: the pull request itself, or the pull request an
+# issue comment, a review comment, or a review belongs to. Read before a mutation reaches it, so a
+# subject named for one pull request cannot write on another's behalf.
+query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjectId: ID!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+    }
+  }
+  node(id: $subjectId) {
+    id
+    ... on IssueComment {
+      pullRequest {
+        id
+      }
+    }
+    # Aliased apart: an issue comment's pull request is nullable, the other two are not.
+    ... on PullRequestReviewComment {
+      reviewCommentPullRequest: pullRequest {
+        id
+      }
+    }
+    ... on PullRequestReview {
+      reviewPullRequest: pullRequest {
+        id
+      }
+    }
+  }
+}
+
+# Core detail and write checks share one read of permissions and merge settings.
+query ViewerPermissions($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    viewerPermission
+    pullRequest(number: $number) {
+      viewerCanUpdate
+      viewerDidAuthor
+      headRepository {
+        viewerPermission
+      }
+    }
+  }
+}
+
+# Who a review may be asked of, and who it has already been asked of, in one read.
+#
+# `assignableUsers` is the list GitHub's own reviewer picker is built from (everyone with access to
+# the repository) rather than `collaborators`, which the REST API refuses to anyone without push
+# access and which would therefore be empty for exactly the reader most likely to be looking.
+#
+# Teams are asked for only where one has already been requested, so a request to a team can be
+# taken back. The teams a repository could newly be sent to live on the owning organization and
+# need `read:org`, which a repository-scoped token need not carry, and a query GitHub refuses
+# fails whole, taking the people down with the teams.
+query ReviewerCandidates($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    assignableUsers(first: 100) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+    pullRequest(number: $number) {
+      author {
+        login
+      }
+      reviewRequests(first: 100) {
+        nodes {
+          requestedReviewer {
+            ... on User {
+              login
+              name
+              avatarUrl
+            }
+            # Aliased apart from a person's: their nullability differs.
+            ... on Team {
+              slug
+              combinedSlug
+              teamName: name
+              teamAvatarUrl: avatarUrl
+            }
+            ... on Bot {
+              login
+              avatarUrl
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+        description
+      }
+    }
+    pullRequest(number: $number) {
+      labels(first: 100) {
+        nodes {
+          name
+        }
+      }
+    }
+  }
+}
+
+# Which files of a pull request the signed-in account has cleared. GraphQL only, since the REST
+# files endpoint the patch is read from carries no viewed state, so this is a second read rather
+# than a wider version of the first.
+query PullRequestFilesViewed($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          path
+          viewerViewedState
+        }
+      }
+    }
+  }
+}
+
+# What a merge that rewrites its message reads first: GitHub's own message for the method, and
+# whether a merge queue will choose its own instead.
+query PullRequestMergeMessage(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $method: PullRequestMergeMethod!
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isMergeQueueEnabled
+      headRefOid
+      viewerMergeBodyText(mergeType: $method)
+    }
+  }
+}
+
+# What `gh pr merge` and `gh pr update-branch` read before they act.
+query PullRequestActionState($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      headRefOid
+      isMergeQueueEnabled
+      mergeStateStatus
+      baseRef {
+        compare(headRef: $headRef) {
+          behindBy
+        }
+      }
+    }
+  }
+}
+
+# What deleting a closed or merged pull request's source branch reads first: the branch, the
+# commit it should still point at, and the repository it lives in.
+query PullRequestBranchToDelete($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      headRefName
+      baseRefName
+      headRefOid
+      headRepository {
+        id
+      }
+    }
+  }
+}
+
+# The source branch as its own repository holds it now, beside that repository's default branch,
+# so a branch that moved on or is the default is never deleted.
+query PullRequestSourceBranch($repositoryId: ID!, $ref: String!) {
+  node(id: $repositoryId) {
+    ... on Repository {
+      defaultBranchRef {
+        name
+      }
+      ref(qualifiedName: $ref) {
+        target {
+          oid
+        }
+      }
+    }
+  }
+}

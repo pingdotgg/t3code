@@ -1,0 +1,128 @@
+# One pull request per operation. `GraphQLResolver.aliased` repeats each under an alias per
+# pull request, so a batch is one request and a missing pull request fails only its own slice.
+# `stacks` is false off github.com: Enterprise Server has no pull request stacks.
+
+query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks: Boolean!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      state
+      isDraft
+      mergeable
+      reviewDecision
+      additions
+      deletions
+      changedFiles
+      updatedAt
+      mergedAt
+      closedAt
+      headRefName
+      baseRefName
+      author {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
+      latestReviews(first: 20) {
+        nodes {
+          state
+          author {
+            login
+          }
+        }
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              state
+            }
+          }
+        }
+      }
+      stack @include(if: $stacks) {
+        number
+        size
+        baseRefName
+      }
+      stackEntry @include(if: $stacks) {
+        position
+      }
+    }
+  }
+}
+
+query PullRequestStats($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      additions
+      deletions
+    }
+  }
+}
+
+query PullRequestStackMembership($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      stack {
+        number
+        size
+        baseRefName
+      }
+      stackEntry {
+        position
+      }
+    }
+  }
+}
+
+# What a pull request watch needs to notice. Comments come most recently updated first, since an
+# edit moves `updatedAt`, so an edit to an old comment on a long pull request is still in the page.
+# Reviews have no such order: an edit to a review older than the last hundred waits for the
+# watch's periodic full read, as do edits to comments inside review threads.
+query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      mergeable
+      headRefOid
+      comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        totalCount
+        nodes {
+          lastEditedAt
+        }
+      }
+      reviews(last: 100) {
+        totalCount
+        nodes {
+          lastEditedAt
+        }
+      }
+      reviewThreads {
+        totalCount
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts {
+                checkRunCountsByState {
+                  state
+                  count
+                }
+                statusContextCountsByState {
+                  state
+                  count
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

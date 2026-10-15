@@ -100,8 +100,7 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
     hostInfo.value.dev === nodeInfo.value.dev &&
     Option.isSome(hostInfo.value.ino) &&
     Option.isSome(nodeInfo.value.ino) &&
-    Number.isSafeInteger(hostInfo.value.ino.value) &&
-    hostInfo.value.ino.value > 0 &&
+    hostInfo.value.ino.value > 0n &&
     hostInfo.value.ino.value === nodeInfo.value.ino.value
   ) {
     return yield* new NodeRuntimeUnavailableError({ feature });

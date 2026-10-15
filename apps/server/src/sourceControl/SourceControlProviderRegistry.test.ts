@@ -12,6 +12,7 @@ import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -30,7 +31,8 @@ import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
@@ -63,7 +65,7 @@ function makeRegistry(input: {
     readonly url: string;
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
-  readonly githubApi?: Partial<GitHubApi.GitHubApi["Service"]>;
+  readonly githubApi?: Partial<GitHubRest.GitHubRest["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly forgejo?: Partial<ForgejoCli.ForgejoCli["Service"]>;
   readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
@@ -135,7 +137,13 @@ function makeRegistry(input: {
           ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
           : ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
-        Layer.mock(GitHubApi.GitHubApi)({
+        // The GitHub provider's GraphQL reads go through these; no test here makes one.
+        Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die(new Error("Unexpected GitHub GraphQL read"))),
+        ),
+        Layer.mock(GitHubRest.GitHubRest)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
           credential: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
           ...input.githubApi,

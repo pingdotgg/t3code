@@ -6,13 +6,15 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -34,6 +36,21 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         number: 7,
         title: "Pull request 7",
         url: "https://github.com/acme/web/pull/7",
+        body: "",
+        isDraft: false,
+        mergeable: "MERGEABLE",
+        reviewDecision: null,
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        mergedAt: null,
+        closedAt: null,
+        isCrossRepository: false,
+        headRepositoryOwner: null,
+        headRepository: null,
+        headRef: null,
+        author: null,
+        autoMergeRequest: null,
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
@@ -55,10 +72,19 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 
 /** One request the CLI made, as the transport received it. */
 type ApiCall =
-  | ({ readonly kind: "graphql" } & GitHubApi.GitHubGraphQlInput)
-  | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
+  | {
+      readonly kind: "graphql";
+      readonly partial?: boolean;
+      /** The generated operation's name, which the routes below match on. */
+      readonly operationName?: string;
+      readonly host: string;
+      readonly operation: string;
+      readonly query: string;
+      readonly variables?: Readonly<Record<string, unknown>>;
+    }
+  | ({ readonly kind: "rest" } & GitHubRest.GitHubRestInput);
 
-type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>;
+type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
@@ -68,40 +94,85 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
 
-/**
- * A transport that answers from the mocks above but spends the real GraphQL quota from each
- * answer's headers, the way GitHubApi does, so the reserve behaviour is still the module's to prove.
- */
-const mockApi = Layer.effect(
-  GitHubApi.GitHubApi,
-  Effect.gen(function* () {
-    const quota = yield* GitHubQuota.GitHubQuota;
-    return GitHubApi.GitHubApi.of({
-      graphql: (input) =>
-        SourceControlRateLimit.Interactive.pipe(
-          Effect.flatMap((interactive) =>
-            quota.admit(input.host, "graphql", {
-              allowReserve: input.allowReserve ?? interactive,
-            }),
-          ),
-          Effect.andThen(() =>
-            (input.query.includes("query PullRequestStackMemberships")
-              ? mockedStackMemberships
-              : mockedExecute)({ kind: "graphql", ...input }),
-          ),
-          Effect.tap((answer) => quota.observe(input.host, answer.headers)),
-          Effect.map((answer) => answer.body),
-        ),
-      rest: (input) => mockedExecute({ kind: "rest", ...input }),
-      credential: (host) => mockedCredential(host),
-    });
+/** The REST transport, answered from the mocks above. */
+const mockApi = Layer.succeed(
+  GitHubRest.GitHubRest,
+  GitHubRest.GitHubRest.of({
+    rest: (input) => mockedExecute({ kind: "rest", ...input }),
+    credential: (host) => mockedCredential(host),
   }),
+);
+
+/**
+ * The HTTP side of the generated GraphQL reads, answered from the same mocks: a request to a
+ * host's GraphQL endpoint is recorded as a `graphql` call, carrying the `partial` flag the batches
+ * read with, and answered with the mocked body, status and headers.
+ */
+const mockHttp = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.gen(function* () {
+      const host = new URL(request.url).hostname.replace(/^api\./, "");
+      const sent =
+        request.body._tag === "Uint8Array"
+          ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              readonly query: string;
+              readonly operationName: string;
+              readonly variables: Readonly<Record<string, unknown>>;
+            })
+          : { query: "", operationName: "", variables: {} };
+      const call: ApiCall = {
+        kind: "graphql",
+        host,
+        operation: "batch",
+        operationName: sent.operationName,
+        query: sent.query,
+        variables: sent.variables,
+        partial: true,
+      };
+      // A mocked failure with a status is what GitHub would have answered with it.
+      const answer = yield* (
+        sent.query.startsWith("query PullRequestStackMembership(")
+          ? mockedStackMemberships
+          : mockedExecute
+      )(call).pipe(
+        Effect.catchTags({
+          GitHubApiResponseError: (error) =>
+            Effect.succeed(output('{"message":"Bad gateway"}', false, false, {}, error.status)),
+        }),
+        Effect.orDie,
+      );
+      // A mutation mocked as `{}` is one whose answer the test does not read. GitHub always
+      // answers a mutation that ran with `data`, so it is sent as the null payload it selects.
+      const body =
+        answer.body === "{}" && sent.query.startsWith("mutation ")
+          ? encodeJson(mutationAnswer(sent.query))
+          : answer.body;
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(body, {
+          status: answer.status,
+          headers: { "content-type": "application/json", ...answer.headers },
+        }),
+      );
+    }),
+  ),
 );
 
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
     Layer.provideMerge(mockApi),
+    Layer.provideMerge(GitHubRequestPolicy.layer),
     Layer.provideMerge(GitHubQuota.layer),
+    Layer.provideMerge(SourceControlRateLimit.layer),
+    Layer.provideMerge(mockHttp),
+    Layer.provideMerge(
+      Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (host) =>
+          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(TestSourceControlHost.layer()),
     Layer.provide(NodeServices.layer),
@@ -114,8 +185,9 @@ function output(
   truncated = false,
   invalidUtf8 = false,
   headers: Readonly<Record<string, string>> = {},
-): GitHubApi.GitHubRestResponse {
-  return { status: 200, headers, body, truncated, invalidUtf8 };
+  status = 200,
+): GitHubRest.GitHubRestResponse {
+  return { status, headers, body, truncated, invalidUtf8 };
 }
 
 /** GitHub's GraphQL quota headers, leaving `remaining` of 5,000 until `resetAt`. */
@@ -127,6 +199,23 @@ function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
     "x-ratelimit-reset": String(Date.parse(resetAt) / 1000),
   };
 }
+
+/** What every listing row answers with, which a fixture overrides only where it matters. */
+const rowDefaults = {
+  author: null,
+  state: "OPEN",
+  isDraft: false,
+  mergeable: "UNKNOWN",
+  reviewDecision: null,
+  latestReviews: { nodes: [] },
+  mergedAt: null,
+  reviewRequests: { nodes: [] },
+  labels: { nodes: [] },
+  commits: { nodes: [] },
+};
+
+/** A connection's page info with no next page, as GitHub sends it: the cursor is always there. */
+const lastPage = { hasNextPage: false, endCursor: null };
 
 /**
  * Listing rows as GraphQL answers them. Overrides may use the flat shapes a test reads most
@@ -144,6 +233,7 @@ function rows(
       checks?: string;
     } & Record<string, unknown>;
     return {
+      ...rowDefaults,
       number,
       title: `Pull request ${number}`,
       url: `https://github.com/acme/web/pull/${number}`,
@@ -156,7 +246,12 @@ function rows(
         ? {}
         : {
             reviewRequests: {
-              nodes: reviewRequests.map((requestedReviewer) => ({ requestedReviewer })),
+              nodes: reviewRequests.map((requestedReviewer) => ({
+                requestedReviewer: {
+                  __typename: "slug" in requestedReviewer ? "Team" : "User",
+                  ...requestedReviewer,
+                },
+              })),
             },
           }),
       ...(checks === undefined
@@ -175,7 +270,7 @@ function pullRequests(
 ): string {
   return encodeJson({
     data: {
-      search: { pageInfo: { hasNextPage: false }, nodes: rows(count, firstNumber, overrides) },
+      search: { pageInfo: lastPage, nodes: rows(count, firstNumber, overrides) },
     },
   });
 }
@@ -190,7 +285,7 @@ function listedPullRequests(
     data: {
       repository: {
         pullRequests: {
-          pageInfo: { hasNextPage: false },
+          pageInfo: lastPage,
           nodes: rows(count, firstNumber, overrides),
         },
       },
@@ -221,7 +316,15 @@ function threadComments(
   return {
     totalCount,
     pageInfo: { hasNextPage: endCursor !== null, endCursor },
-    nodes: ids.map((id) => ({ id, body: id, createdAt: "2026-07-01T00:00:00Z" })),
+    nodes: ids.map((id) => ({
+      id,
+      author: null,
+      body: id,
+      createdAt: "2026-07-01T00:00:00Z",
+      lastEditedAt: null,
+      url: `https://github.com/acme/web/pull/7#discussion_${id}`,
+      reactionGroups: [],
+    })),
   };
 }
 
@@ -243,6 +346,7 @@ function reviewThreadsPage(
 ): string {
   return encodeJson({
     data: {
+      viewer: { login: "viewer" },
       repository: {
         pullRequest: {
           reviewThreads: {
@@ -250,6 +354,16 @@ function reviewThreadsPage(
             pageInfo: { hasNextPage: endCursor !== null, endCursor },
             nodes,
           },
+          viewerCanUpdate: true,
+          viewerDidAuthor: false,
+          author: null,
+          reactionGroups: [],
+          comments: { nodes: [] },
+          reviews: { nodes: [] },
+          reviewRequests: { nodes: [] },
+          latestReviews: { nodes: [] },
+          reviewDismissals: { pageInfo: lastPage, nodes: [] },
+          commits: { nodes: [] },
         },
       },
     },
@@ -264,8 +378,10 @@ function threadCommentsPage(
 ): string {
   return encodeJson({
     data: {
+      viewer: { login: "viewer" },
       repository: { pullRequest: { id: "PR_7" } },
       node: {
+        __typename: "PullRequestReviewThread",
         pullRequest: { id: pullRequestId },
         comments: threadComments(ids, endCursor, totalCount),
       },
@@ -274,7 +390,7 @@ function threadCommentsPage(
 }
 
 /** What GitHub answers for a pull request it will not serve a whole diff for. */
-const diffRefused = new GitHubApi.GitHubApiResponseError({
+const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   host: "github.com",
   operation: "getPullRequestDiff",
   status: 406,
@@ -315,10 +431,16 @@ function searchOfCall(index: number): string | undefined {
 /** One row as a search answers it, which is the listing's row one connection deeper. */
 function searchItem(number: number, repository: string, updatedAt: string) {
   return {
+    ...rowDefaults,
     number,
     title: `Pull request ${number}`,
     url: `https://github.com/${repository}/pull/${number}`,
-    author: { login: "octocat", avatarUrl: "https://avatars/octocat" },
+    author: {
+      __typename: "User",
+      login: "octocat",
+      avatarUrl: "https://avatars/octocat",
+      name: null,
+    },
     headRefName: "feat/page",
     baseRefName: "main",
     state: "OPEN",
@@ -327,38 +449,64 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt,
     repository: { nameWithOwner: repository },
-    reviewRequests: { nodes: [{ requestedReviewer: { login: "hubot" } }] },
+    reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "hubot" } }] },
     labels: { nodes: [{ name: "bug", color: "ff0000" }] },
   };
 }
 
 function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
-  return output(encodeJson({ data: { search: { pageInfo: { hasNextPage }, nodes } } }));
+  return output(
+    encodeJson({
+      data: {
+        search: { pageInfo: { hasNextPage, endCursor: hasNextPage ? "next" : null }, nodes },
+      },
+    }),
+  );
 }
 
 const searchQueryOfCall = searchOfCall;
 
+/** Whether a request is the GraphQL operation `needle` names, or its document or path holds it. */
+function matches(call: ApiCall, needle: string): boolean {
+  return call.kind === "graphql"
+    ? call.operationName === needle || call.query.includes(needle)
+    : call.path.includes(needle);
+}
+
 /**
- * Answers every request with the body of the first route whose needle its GraphQL document or
- * REST path contains, and anything unrouted with an empty object, which a mutation never reads.
+ * Answers every request with the body of the first route whose needle it matches, and any
+ * unrouted mutation with the empty payload each one selects, which nothing reads back.
  */
 function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
   mockedExecute.mockImplementation((call) => {
-    const target = call.kind === "graphql" ? call.query : call.path;
-    const match = routes.find(([needle]) => target.includes(needle));
-    return Effect.succeed(output(match === undefined ? "{}" : encodeJson(match[1])));
+    const match = routes.find(([needle]) => matches(call, needle));
+    return Effect.succeed(
+      output(
+        match !== undefined
+          ? encodeJson(match[1])
+          : call.kind === "graphql" && call.query.startsWith("mutation ")
+            ? encodeJson(mutationAnswer(call.query))
+            : "{}",
+      ),
+    );
   });
 }
 
-/** The variables of every GraphQL request whose document contains `needle`, in order. */
+/** What a mutation answers when nothing is asked of its payload: each root field, null. */
+function mutationAnswer(query: string) {
+  const root = /\)\{(\w+)(?:\(|\{|@)/.exec(query)?.[1];
+  return { data: root === undefined ? {} : { [root]: null } };
+}
+
+/** The variables of every GraphQL request `needle` matches, in order. */
 function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unknown>>> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
-    call.kind === "graphql" && call.query.includes(needle) ? [call.variables ?? {}] : [],
+    call.kind === "graphql" && matches(call, needle) ? [call.variables ?? {}] : [],
   );
 }
 
 /** Every REST request whose path contains `needle`, in order. */
-function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
+function restCallsTo(needle: string): ReadonlyArray<GitHubRest.GitHubRestInput> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "rest" && call.path.includes(needle) ? [call] : [],
   );
@@ -368,12 +516,25 @@ function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
  * The check that a client-given node hangs off the pull request it names. Routed before the node
  * id lookup, whose document it contains.
  */
-const SUBJECT_SCOPE_QUERY = "node(id: $subjectId)";
+const SUBJECT_SCOPE_QUERY = "PullRequestSubject";
 const subjectScope = (subjectId: string, pullRequestId: string) => ({
   data: {
     repository: { pullRequest: { id: pullRequestId } },
-    node: { id: subjectId, pullRequest: { id: pullRequestId } },
+    node: { __typename: "IssueComment", id: subjectId, pullRequest: { id: pullRequestId } },
   },
+});
+
+/** A check run as the `CheckContext` fragment answers it, with `fields` over the defaults. */
+const checkRun = (fields: Record<string, unknown>) => ({
+  __typename: "CheckRun",
+  name: "",
+  status: "COMPLETED",
+  conclusion: null,
+  startedAt: null,
+  completedAt: null,
+  detailsUrl: null,
+  checkSuite: { workflowRun: null },
+  ...fields,
 });
 
 /** One page of a head commit's check contexts, the read a rollup past one page is walked by. */
@@ -412,7 +573,7 @@ const crossRepositoryDetail = (headRefOid = "abc123") =>
     headRefName: "feat/page",
     headRefOid,
     isCrossRepository: true,
-    headRepositoryOwner: { login: "octocat" },
+    headRepositoryOwner: { __typename: "User", login: "octocat" },
   });
 
 /** Open pull requests on one head branch, every one of them from the same fork head. */
@@ -425,7 +586,7 @@ const heads = (numbers: ReadonlyArray<number>) => ({
           number,
           headRefOid: "abc123",
           isCrossRepository: true,
-          headRepositoryOwner: { login: "octocat" },
+          headRepositoryOwner: { __typename: "User", login: "octocat" },
         })),
       },
     },
@@ -453,7 +614,7 @@ function workflowApprovalRoutes(
           ? call.path.endsWith("/approve")
             ? ""
             : encodeJson(runsAnswer)
-          : call.query.includes("headRefName: $head")
+          : call.operationName === "PullRequestHeads"
             ? encodeJson(headsAnswer)
             : encodeJson(detail()),
       ),
@@ -462,7 +623,7 @@ function workflowApprovalRoutes(
 }
 
 /** The pull request node id lookup, which the layer caches for every test after the first. */
-const NODE_ID_QUERY = "pullRequest(number: $number) { id }";
+const NODE_ID_QUERY = "PullRequestNodeId";
 const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
 
 afterEach(() => {
@@ -499,17 +660,25 @@ it.effect(
             requests.push({ url: request.url, authorization: request.headers["authorization"] });
             const body = request.url.endsWith("/user")
               ? { id: 123, login: "same-account" }
-              : { data: { repository: { pullRequest: { id: "PR_1" } }, addComment: {} } };
-            return HttpClientResponse.fromWeb(request, new Response(encodeJson(body)));
+              : {
+                  data: {
+                    repository: { pullRequest: { id: "PR_1" } },
+                    addComment: { clientMutationId: null },
+                  },
+                };
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(encodeJson(body), { headers: { "content-type": "application/json" } }),
+            );
           }),
         ),
       );
       const cli = yield* GitHubPullRequestApi.make.pipe(
         Effect.provide(
-          GitHubApi.layer.pipe(
-            Layer.provide(Layer.mergeAll(credentials, http)),
-            Layer.provide(GitHubQuota.layer),
-            Layer.provide(SourceControlRateLimit.layer),
+          GitHubRest.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(SourceControlRateLimit.layer),
             Layer.merge(TestSourceControlHost.layer()),
             Layer.provideMerge(NodeServices.layer),
           ),
@@ -618,6 +787,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     isDraft: false,
                     createdAt: "2026-07-01T00:00:00Z",
                     author: {
+                      __typename: "User",
                       login: "octocat",
                       name: "Octo Cat",
                       avatarUrl: "https://github.example/avatar.png",
@@ -708,14 +878,21 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number,
         title: `Pull request ${number}`,
         url: `https://github.com/acme/web/pull/${number}`,
-        author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
+        author: {
+          __typename: "User",
+          login: "octocat",
+          name: "Octo Cat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+        },
         baseRefName: "main",
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
         mergeable: "MERGEABLE",
         reviewDecision: null,
-        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "reviewer" } }] },
+        latestReviews: {
+          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
+        },
         additions: 12,
         deletions: 3,
         changedFiles: 2,
@@ -728,7 +905,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             encodeJson({
-              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
+              data: {
+                _0_repository: { pullRequest: node(7) },
+                _1_repository: { pullRequest: node(8) },
+              },
             }),
           ),
         ),
@@ -774,13 +954,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "s0: repository(owner: $s0_owner, name: $s0_name) { pullRequest(number: $s0_number)",
+        "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
       );
       expect(varsAt(0)).toMatchObject({
-        s0_owner: "acme",
-        s0_name: "web",
-        s0_number: 7,
-        s1_number: 8,
+        _0_owner: "acme",
+        _0_name: "web",
+        _0_number: 7,
+        _0_stacks: true,
+        _1_number: 8,
       });
     }),
   );
@@ -800,7 +981,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             JSON.stringify({
-              data: { w0: { pullRequest: node(1) }, w1: { pullRequest: null } },
+              data: {
+                _0_repository: { pullRequest: node(1) },
+                _1_repository: { pullRequest: null },
+              },
             }),
           ),
         ),
@@ -826,58 +1010,82 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(eight).toBeNull();
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "w1: repository(owner: $w1_owner, name: $w1_name) { pullRequest(number: $w1_number)",
+        "_1_repository:repository(owner:$_1_owner name:$_1_name){pullRequest(number:$_1_number)",
       );
-      expect(varsAt(0)).toMatchObject({ w1_owner: "acme", w1_name: "web", w1_number: 8 });
+      expect(varsAt(0)).toMatchObject({ _1_owner: "acme", _1_name: "web", _1_number: 8 });
     }),
   );
 
-  it.effect("reads a pull request the batch said nothing about on its own", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
-        .mockReturnValueOnce(
+  it.effect(
+    "fails only the pull request GitHub cannot find, and answers the rest of its batch",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
               encodeJson({
                 data: {
-                  s0: {
+                  _0_repository: { pullRequest: null },
+                  _1_repository: {
                     pullRequest: {
-                      number: 7,
-                      title: "Reuse the summary",
-                      url: "https://github.com/acme/web/pull/7",
-                      author: { login: "octocat", name: "Octo Cat" },
+                      number: 8,
+                      title: "Still here",
+                      url: "https://github.com/acme/web/pull/8",
+                      author: null,
                       baseRefName: "main",
-                      headRefName: "feat/summary",
+                      headRefName: "feat/eight",
                       state: "OPEN",
                       isDraft: false,
                       mergeable: "MERGEABLE",
-                      reviewDecision: "APPROVED",
-                      additions: 12,
-                      deletions: 3,
-                      changedFiles: 2,
+                      reviewDecision: null,
+                      latestReviews: { nodes: [] },
+                      additions: 1,
+                      deletions: 1,
+                      changedFiles: 1,
                       updatedAt: "2026-08-24T12:34:56.000Z",
-                      commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+                      mergedAt: null,
+                      closedAt: null,
+                      commits: { nodes: [] },
+                      stack: null,
+                      stackEntry: null,
                     },
                   },
                 },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["_0_repository", "pullRequest"],
+                    message: "Could not resolve to a PullRequest with the number of 7.",
+                  },
+                ],
               }),
             ),
           ),
         );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-      const read = yield* cli
-        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
-        .pipe(Effect.forkChild);
-      yield* TestClock.adjust("10 millis");
-      const summary = yield* Fiber.join(read);
+        const reads = yield* Effect.forEach(
+          [7, 8],
+          (number) =>
+            cli
+              .getPullRequestSummary({
+                cwd: "/w",
+                repository: "acme/web",
+                host: "github.com",
+                number,
+              })
+              .pipe(Effect.result),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 millis");
+        const [seven, eight] = yield* Fiber.join(reads);
 
-      assert.strictEqual(summary.headBranch, "feat/summary");
-      assert.strictEqual(summary.checksState, "passing");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(varsAt(1)).toEqual({ owner: "acme", name: "web", number: 7 });
-    }),
+        expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
+        expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
+        // One request answered both; nothing was read again on its own.
+        expect(mockedExecute).toHaveBeenCalledOnce();
+        expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
+      }),
   );
 
   it.effect("reads the stack a pull request is in through the stacks preview, on its host", () =>
@@ -990,7 +1198,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiNotFoundError({
+          new GitHubRequestPolicy.GitHubApiNotFoundError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1013,7 +1221,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiAuthenticationError({
+          new GitHubRequestPolicy.GitHubApiAuthenticationError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1036,7 +1244,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("preserves transient stack failures instead of reporting no stack", () =>
     Effect.gen(function* () {
-      const failure = new GitHubApi.GitHubApiResponseError({
+      const failure = new GitHubRequestPolicy.GitHubApiResponseError({
         host: "github.com",
         operation: "getPullRequestStack",
         status: 503,
@@ -1094,7 +1302,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.isFalse(batch.truncated);
       expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.com" });
       expect(searchOfCall(0)).toBe("is:pr is:open sort:updated-desc repo:acme/web");
-      expect(queryAt(0)).toContain("first: 11");
+      expect(varsAt(0)["first"]).toBe(11);
     }),
   );
 
@@ -1153,7 +1361,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1179,7 +1387,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1204,7 +1412,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1419,13 +1627,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             encodeJson({
               data: {
-                s0: {
+                _0_repository: {
                   pullRequest: {
                     stack: { number: 3, size: 2, baseRefName: "main" },
                     stackEntry: { position: 1 },
                   },
                 },
-                s1: { pullRequest: { stack: null, stackEntry: null } },
+                _1_repository: { pullRequest: { stack: null, stackEntry: null } },
               },
             }),
           ),
@@ -1464,7 +1672,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedStackMemberships.mockImplementation((input) =>
         input.kind === "graphql" && Object.values(input.variables ?? {}).includes(26)
           ? Effect.fail(
-              new GitHubApi.GitHubApiResponseError({
+              new GitHubRequestPolicy.GitHubApiResponseError({
                 host: "github.com",
                 operation: "listPullRequestStackMemberships",
                 status: 502,
@@ -1473,14 +1681,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
           : Effect.succeed(
               output(
                 encodeJson({
-                  data: {
-                    s0: {
-                      pullRequest: {
-                        stack: { number: 3, size: 2, baseRefName: "main" },
-                        stackEntry: { position: 1 },
-                      },
-                    },
-                  },
+                  data: Object.fromEntries(
+                    Object.keys(input.kind === "graphql" ? (input.variables ?? {}) : {})
+                      .filter((name) => name.endsWith("_number"))
+                      .map((name, index) => [
+                        name.replace(/number$/, "repository"),
+                        {
+                          pullRequest:
+                            index === 0
+                              ? {
+                                  stack: { number: 3, size: 2, baseRefName: "main" },
+                                  stackEntry: { position: 1 },
+                                }
+                              : { stack: null, stackEntry: null },
+                        },
+                      ]),
+                  ),
                 }),
               ),
             ),
@@ -1534,11 +1750,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
         repository: "acme/web",
         number: index + 1,
       }));
-      mockedExecute.mockImplementation(() =>
-        // Every chunk answers for its first alias only, so a row GitHub said nothing about is
+      mockedExecute.mockImplementation((call) =>
+        // Every chunk finds only its first pull request, so a row GitHub had nothing for is
         // dropped rather than shown as a change of no size.
         Effect.succeed(
-          output(encodeJson({ data: { s0: { pullRequest: { additions: 4, deletions: 1 } } } })),
+          output(
+            encodeJson({
+              data: Object.fromEntries(
+                Object.keys(call.kind === "graphql" ? (call.variables ?? {}) : {})
+                  .filter((name) => name.endsWith("_number"))
+                  .map((name, index) => [
+                    name.replace(/number$/, "repository"),
+                    { pullRequest: index === 0 ? { additions: 4, deletions: 1 } : null },
+                  ]),
+              ),
+            }),
+          ),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -1555,8 +1782,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { repository: "acme/web", number: 1, additions: 4, deletions: 1 },
         { repository: "acme/web", number: 26, additions: 4, deletions: 1 },
       ]);
-      expect(queryAt(0)).toContain("s0: repository(owner: $s0_owner, name: $s0_name)");
-      expect(varsAt(0)).toMatchObject({ s0_owner: "acme", s0_name: "web", s24_number: 25 });
+      expect(queryAt(0)).toContain("_0_repository:repository(owner:$_0_owner name:$_0_name)");
+      expect(varsAt(0)).toMatchObject({ _0_owner: "acme", _0_name: "web", _24_number: 25 });
     }),
   );
 
@@ -1581,7 +1808,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1611,7 +1838,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1639,7 +1866,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1677,7 +1904,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1703,7 +1930,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1849,7 +2076,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1879,7 +2106,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1909,7 +2136,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -2074,8 +2301,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(batch.items.map((item) => item.number)).toEqual([4]);
-      expect(queryAt(1)).toContain("first: 3,");
-      expect(queryAt(2)).toContain("first: 6,");
+      expect(varsAt(1)["first"]).toBe(3);
+      expect(varsAt(2)["first"]).toBe(6);
       assert.isFalse(batch.truncated);
     }),
   );
@@ -2085,10 +2312,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
       // A repository with far more pull requests than the bound, none of them for this reader.
       let listed = 0;
       mockedExecute.mockImplementation((call) => {
-        if (call.kind !== "graphql" || !call.query.includes("pullRequests(")) {
+        if (call.kind !== "graphql" || call.operationName !== "PullRequestList") {
           return Effect.succeed(emptySearch());
         }
-        const first = Number(/first: (\d+)/.exec(call.query)?.[1]);
+        const first = Number(call.variables?.["first"]);
         const nodes = rows(first, listed + 1, () => ({
           reviewRequests: [{ login: "somebody-else" }],
         }));
@@ -2130,7 +2357,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -2265,7 +2492,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
     ({ basePermission, sourcePermission, headRef, expected, actionAllowed }) =>
       Effect.gen(function* () {
         const answer = coreResponse({
-          headRepository: sourcePermission === null ? null : { viewerPermission: sourcePermission },
+          headRepository:
+            sourcePermission === null
+              ? null
+              : { nameWithOwner: "acme/web", viewerPermission: sourcePermission },
           headRef,
         });
         answer.data.repository.viewerPermission = basePermission;
@@ -2276,19 +2506,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect((yield* cli.getPullRequestDetail(input)).viewerAccess.canDeleteBranch).toBe(
           expected,
         );
-        for (const [call] of mockedExecute.mock.calls) {
-          if (
-            call.kind === "graphql" &&
-            !call.query.includes("query PullRequestStackMemberships")
-          ) {
-            if (call.query.includes("$headRef: String!")) {
-              expect(call.query).toContain("headRepository { nameWithOwner viewerPermission }");
-              expect(call.query).toContain("headRef { id }");
-            } else {
-              expect(call.query).toContain("headRepository { viewerPermission }");
-            }
-          }
-        }
+        expect(variablesOf("ViewerPermissions")).toHaveLength(1);
+        expect(variablesOf("PullRequestCore")).toHaveLength(1);
       }),
   );
 
@@ -2310,7 +2529,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect(detail.headRepositoryNameWithOwner).toBe("contributor/web-fork");
       expect(detail.viewerPermissions.actions).toContain("delete-branch");
-      expect(queryAt(0)).toContain("headRepository { nameWithOwner viewerPermission }");
+      expect(queryAt(0)).toContain("headRepository{nameWithOwner viewerPermission}");
     }),
   );
 
@@ -2331,8 +2550,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
   const sourceBranch = (repository: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       node: {
+        __typename: "Repository",
         defaultBranchRef: { name: "main" },
-        ref: { target: { oid: "abc123" } },
+        ref: { target: { __typename: "Commit", oid: "abc123" } },
         ...repository,
       },
     },
@@ -2341,8 +2561,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect.each(["MERGED", "CLOSED"])("deletes the exact remote fork branch of a %s PR", (state) =>
     Effect.gen(function* () {
       route(
-        ["query PullRequestBranchToDelete", branchToDelete({ state })],
-        ["query PullRequestSourceBranch", sourceBranch()],
+        ["PullRequestBranchToDelete", branchToDelete({ state })],
+        ["PullRequestSourceBranch", sourceBranch()],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       yield* cli.runPullRequestAction({
@@ -2352,10 +2572,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
         action: "delete-branch",
       });
-      expect(variablesOf("query PullRequestBranchToDelete")).toEqual([
+      expect(variablesOf("PullRequestBranchToDelete")).toEqual([
         { owner: "acme", name: "web", number: 7 },
       ]);
-      expect(variablesOf("query PullRequestSourceBranch")).toEqual([
+      expect(variablesOf("PullRequestSourceBranch")).toEqual([
         { repositoryId: "FORK_REPO", ref: "refs/heads/feat/delete" },
       ]);
       expect(variablesOf("updateRefs(")).toEqual([
@@ -2391,15 +2611,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
     {
       description: "a changed branch",
       head: {},
-      source: { ref: { target: { oid: "new-commit" } } },
+      source: { ref: { target: { __typename: "Commit", oid: "new-commit" } } },
     },
     { description: "an unavailable source repository", head: {}, source: null },
   ])("refuses to delete $description", ({ head, source }) =>
     Effect.gen(function* () {
       route(
-        ["query PullRequestBranchToDelete", branchToDelete(head)],
+        ["PullRequestBranchToDelete", branchToDelete(head)],
         [
-          "query PullRequestSourceBranch",
+          "PullRequestSourceBranch",
           source === null ? { data: { node: null } } : sourceBranch(source),
         ],
       );
@@ -2421,8 +2641,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("accepts an already deleted source branch", () =>
     Effect.gen(function* () {
       route(
-        ["query PullRequestBranchToDelete", branchToDelete()],
-        ["query PullRequestSourceBranch", sourceBranch({ ref: null })],
+        ["PullRequestBranchToDelete", branchToDelete()],
+        ["PullRequestSourceBranch", sourceBranch({ ref: null })],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       yield* cli.runPullRequestAction({
@@ -2439,14 +2659,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("keeps the source branch when GitHub refuses deletion", () =>
     Effect.gen(function* () {
       route(
-        ["query PullRequestBranchToDelete", branchToDelete()],
-        ["query PullRequestSourceBranch", sourceBranch()],
+        ["PullRequestBranchToDelete", branchToDelete()],
+        ["PullRequestSourceBranch", sourceBranch()],
       );
       const answer = mockedExecute.getMockImplementation()!;
       mockedExecute.mockImplementation((call) =>
         call.kind === "graphql" && call.query.includes("updateRefs(")
           ? Effect.fail(
-              new GitHubApi.GitHubApiResponseError({
+              new GitHubRequestPolicy.GitHubApiResponseError({
                 host: call.host,
                 operation: call.operation,
                 status: 422,
@@ -2716,7 +2936,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 headRefName: "feat/page",
                 headRefOid: "abc123",
                 isCrossRepository: false,
-                headRepositoryOwner: { login: "acme" },
+                headRepositoryOwner: { __typename: "Organization", login: "acme" },
                 baseRefName: "main",
                 createdAt: "2026-07-01T00:00:00Z",
                 updatedAt: "2026-07-02T00:00:00Z",
@@ -2753,11 +2973,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       // Open pull requests on this head branch, and runs scoped to this exact head.
-      expect(variablesOf("headRefName: $head")[0]).toEqual({
+      // The first page sends no cursor at all, which reads from the start.
+      expect(variablesOf("PullRequestHeads")[0]).toEqual({
         owner: "acme",
         name: "web",
         head: "feat/page",
-        after: null,
       });
       expect(restCallsTo("actions/runs?")[0]?.path).toBe(
         "repos/acme/web/actions/runs?head_sha=abc123&branch=feat%2Fpage&event=pull_request&status=action_required&per_page=100&page=1",
@@ -3054,7 +3274,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -3082,17 +3302,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("asks a GitHub Enterprise host for its own review threads", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: { pullRequest: { reviewThreads: { totalCount: 0, nodes: [] } } },
-              },
-            }),
-          ),
-        ),
-      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       yield* cli.listReviewThreadComments({
@@ -3476,7 +3686,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             encodeJson({
               data: {
-                nodes: [{ login: "octocat", avatarUrl: "https://avatars/octocat" }],
+                nodes: [
+                  { __typename: "User", login: "octocat", avatarUrl: "https://avatars/octocat" },
+                ],
               },
             }),
           ),
@@ -3548,7 +3760,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiResponseError({
+          new GitHubRequestPolicy.GitHubApiResponseError({
             host: "github.com",
             operation: "getRoutingIdentity",
             status: 502,
@@ -3682,7 +3894,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 repository: { pullRequest: { id: "PR_thisOne" } },
                 // A comment on pull request #99 of a different repository, named as though it
                 // belonged to #7 here.
-                node: { id: "IC_99", pullRequest: { id: "PR_someOtherOne" } },
+                node: {
+                  __typename: "IssueComment",
+                  id: "IC_99",
+                  pullRequest: { id: "PR_someOtherOne" },
+                },
               },
             }),
           ),
@@ -3815,7 +4031,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson({
               data: {
                 repository: { pullRequest: { id: "PR_thisOne" } },
-                node: { id: "IC_99", pullRequest: { id: "PR_someOtherOne" } },
+                node: {
+                  __typename: "IssueComment",
+                  id: "IC_99",
+                  pullRequest: { id: "PR_someOtherOne" },
+                },
               },
             }),
           ),
@@ -3869,7 +4089,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson(
               coreResponse({
                 title: "Progressive detail",
-                author: { login: "octocat" },
+                author: {
+                  __typename: "User",
+                  id: "U_octocat",
+                  login: "octocat",
+                  name: null,
+                  avatarUrl: "https://a/o",
+                },
                 body: "Core body",
                 changedFiles: 2,
               }),
@@ -3884,7 +4110,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
               data: {
                 repository: {
                   pullRequest: {
-                    author: { __typename: "User", login: "octocat", avatarUrl: "https://a/o" },
+                    author: {
+                      __typename: "User",
+                      login: "octocat",
+                      avatarUrl: "https://a/o",
+                      name: null,
+                    },
                     commits: { nodes: [] },
                     comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
                     reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
@@ -3934,13 +4165,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 baseRef: null,
                 reviewRequests: {
                   nodes: [
-                    { requestedReviewer: { login: "reviewer" } },
+                    { requestedReviewer: { __typename: "User", login: "reviewer", name: null } },
                     {
                       requestedReviewer: {
+                        __typename: "Team",
                         slug: "maintainers",
                         combinedSlug: "octo/maintainers",
-                        name: "Maintainers",
-                        avatarUrl: "https://avatars.githubusercontent.com/t/1",
+                        teamName: "Maintainers",
+                        teamAvatarUrl: "https://avatars.githubusercontent.com/t/1",
                       },
                     },
                   ],
@@ -3953,20 +4185,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         statusCheckRollup: {
                           contexts: {
                             nodes: [
-                              {
-                                __typename: "CheckRun",
+                              checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
                                 checkSuite: { workflowRun: { workflow: { name: "linux" } } },
-                              },
-                              {
-                                __typename: "CheckRun",
+                              }),
+                              checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
                                 checkSuite: { workflowRun: { workflow: { name: "windows" } } },
-                              },
+                              }),
                             ],
                             pageInfo: { hasNextPage: false },
                           },
@@ -4017,7 +4247,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       commit: {
                         statusCheckRollup: {
                           contexts: {
-                            nodes: [{ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }],
+                            nodes: [
+                              checkRun({
+                                name: "first",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                              }),
+                            ],
                             pageInfo: { hasNextPage: true, endCursor: "c1" },
                           },
                         },
@@ -4035,8 +4271,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             checkContextsPage(
               [
-                { name: "first", status: "COMPLETED", conclusion: "SUCCESS" },
-                { name: "last", status: "COMPLETED", conclusion: "FAILURE" },
+                checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
+                checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
               ],
               null,
             ),
@@ -4054,7 +4290,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.checksState).toBe("failing");
       expect(detail.checksTruncated).toBe(false);
       // The whole rollup is walked from its start, so no check is counted twice or skipped.
-      expect(varsAt(1)).toMatchObject({ number: 7, after: null });
+      expect(varsAt(1)).toMatchObject({ number: 7 });
+      expect(varsAt(1)).not.toHaveProperty("after");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );
@@ -4192,8 +4429,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       // The first page asks from the beginning; the next carries on from where it stopped.
-      expect(varsAt(0)["cursor"]).toBeNull();
-      expect(varsAt(1)["cursor"]).toBe("Y3Vyc29yOjE");
+      expect(varsAt(0)["after"]).toBeNull();
+      expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
       assert.isFalse(conversation.truncated);
     }),
@@ -4280,7 +4517,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         name: "web",
         number: 7,
         threadId: "PRRT_1",
-        cursor: "Y3Vyc29yOjI",
+        after: "Y3Vyc29yOjI",
       });
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       expect(page.comments.map((comment) => comment.id)).toEqual(["c2", "c3"]);
@@ -4324,7 +4561,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4367,7 +4608,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   squashMergeAllowed: false,
                   rebaseMergeAllowed: true,
                   viewerPermission: "READ",
-                  pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                  pullRequest: {
+                    viewerCanUpdate: true,
+                    viewerDidAuthor: true,
+                    headRepository: null,
+                  },
                 },
               },
             }),
@@ -4411,7 +4656,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4431,7 +4680,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4526,11 +4779,26 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 repository: {
                   assignableUsers: {
                     pageInfo: { hasNextPage: false },
-                    nodes: [{ login: "bilal" }, { login: "octocat" }, { login: "hubot" }],
+                    nodes: ["bilal", "octocat", "hubot"].map((login) => ({
+                      login,
+                      name: null,
+                      avatarUrl: `https://avatars/${login}`,
+                    })),
                   },
                   pullRequest: {
-                    author: { login: "bilal" },
-                    reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] },
+                    author: { __typename: "User", login: "bilal" },
+                    reviewRequests: {
+                      nodes: [
+                        {
+                          requestedReviewer: {
+                            __typename: "User",
+                            login: "octocat",
+                            name: null,
+                            avatarUrl: "https://avatars/octocat",
+                          },
+                        },
+                      ],
+                    },
                   },
                 },
               },
@@ -4646,7 +4914,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
       // The first page asks from the start; each one after it carries the cursor before it.
       expect([varsAt(0)["after"], varsAt(1)["after"], varsAt(2)["after"]]).toEqual([
-        null,
+        undefined,
         "cursor-0",
         "cursor-1",
       ]);
@@ -4721,12 +4989,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       // One request to learn the pull request's node id, one for every press together.
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(queryAt(1)).toContain("f0: markFileAsViewed");
-      expect(queryAt(1)).toContain("f1: unmarkFileAsViewed");
+      expect(queryAt(1)).toContain("_0_markFileAsViewed:markFileAsViewed(");
+      expect(queryAt(1)).toContain("_1_unmarkFileAsViewed:unmarkFileAsViewed(");
+      // Each path travels as a variable, so none can be read as part of the document.
       expect(varsAt(1)).toEqual({
-        pullRequestId: "PR_1",
-        f0_path: "src/a.ts",
-        f1_path: "src/b.ts",
+        _0_pullRequestId: "PR_1",
+        _0_path: "src/a.ts",
+        _0_viewed: true,
+        _1_pullRequestId: "PR_1",
+        _1_path: "src/b.ts",
+        _1_viewed: false,
       });
     }),
   );
@@ -4772,11 +5044,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
       // One lookup, then a mutation per write, every one of them addressed by the id it answered.
       assert.strictEqual(mockedExecute.mock.calls.length, 4);
       expect(varsAt(0)).toEqual({ owner: "acme", name: "web", number: 24 });
-      expect([1, 2, 3].map((index) => varsAt(index)["pullRequestId"])).toEqual([
-        "PR_24",
-        "PR_24",
-        "PR_24",
-      ]);
+      expect(
+        [1, 2, 3].map(
+          (index) => varsAt(index)["pullRequestId"] ?? varsAt(index)["_0_pullRequestId"],
+        ),
+      ).toEqual(["PR_24", "PR_24", "PR_24"]);
     }),
   );
 
@@ -4806,7 +5078,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       yield* write();
 
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(varsAt(2)["pullRequestId"]).toEqual("PR_25");
+      expect(varsAt(2)["_0_pullRequestId"]).toEqual("PR_25");
     }),
   );
   it.effect("keeps the pull request being ticked through, not the one looked up first", () =>
@@ -4818,7 +5090,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const HOT = 9_000;
       const lookupsOf = new Map<number, number>();
       mockedExecute.mockImplementation((input) => {
-        if (input.kind !== "graphql" || !input.query.includes(NODE_ID_QUERY)) {
+        if (input.kind !== "graphql" || input.operationName !== NODE_ID_QUERY) {
           return Effect.succeed(output("{}"));
         }
         const number = Number(input.variables?.["number"]);
