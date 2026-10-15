@@ -21,6 +21,11 @@
  * So one mention anywhere in the prompt becomes a guaranteed invocation, and
  * the user's text on either side is kept in order.
  *
+ * A prompt the user already opened with a slash command (`/goal ... $shadow`)
+ * keeps that command: splitting it would move `/goal` out of the last block
+ * and run the skill instead. Its mentions are rewritten inline, so the
+ * command's arguments still name the skills.
+ *
  * @module provider/Drivers/ClaudeSkillDispatch
  */
 
@@ -31,6 +36,9 @@
  */
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+
+/** `/name` opening the prompt; a path such as `/tmp/x` is not a command. */
+const LEADING_SLASH_COMMAND_PATTERN = /^\/[a-zA-Z0-9][a-zA-Z0-9:_-]*(?=\s|$)/u;
 
 export interface ClaudeSkillDispatch {
   /** Text before the dispatched mention, or `undefined` when it opens the prompt. */
@@ -61,16 +69,24 @@ export function planClaudeSkillDispatch(
     return undefined;
   }
 
+  const withInlineSlashes = (text: string, inline: typeof mentions) =>
+    inline.reduceRight(
+      (result, mention) =>
+        `${result.slice(0, mention.start)}/${mention.name}${result.slice(mention.end)}`,
+      text,
+    );
+
+  if (LEADING_SLASH_COMMAND_PATTERN.test(prompt)) {
+    return {
+      leadingText: undefined,
+      commandText: withInlineSlashes(prompt, mentions).trimEnd(),
+      skillName: last.name,
+    };
+  }
+
   const leading = prompt.slice(0, last.start);
   const trailing = prompt.slice(last.end);
-  const leadingWithInlineSlashes = mentions
-    .slice(0, -1)
-    .reduceRight(
-      (text, mention) =>
-        `${text.slice(0, mention.start)}/${mention.name}${text.slice(mention.end)}`,
-      leading,
-    )
-    .trimEnd();
+  const leadingWithInlineSlashes = withInlineSlashes(leading, mentions.slice(0, -1)).trimEnd();
 
   return {
     leadingText: leadingWithInlineSlashes.length > 0 ? leadingWithInlineSlashes : undefined,
