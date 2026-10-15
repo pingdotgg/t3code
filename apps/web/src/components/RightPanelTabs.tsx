@@ -93,6 +93,7 @@ import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { issueDisplayLabel } from "./issue/issueDetail.logic";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -620,7 +621,7 @@ function surfaceTitle(
     case "pull-requests":
       return "Pull requests";
     case "issue":
-      return surface.key;
+      return issueDisplayLabel(surface.scope, surface.key);
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {

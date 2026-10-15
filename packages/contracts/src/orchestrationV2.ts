@@ -1766,12 +1766,17 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.marked-unread",
       "thread.metadata-updated",
       "thread.pull-request-synced",
-      "thread.issue-synced",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
     ]),
+    payload: OrchestrationV2AppThread,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.issue-synced"),
+    issueOperation: Schema.optional(Schema.Literals(["link", "unlink", "sync"])),
     payload: OrchestrationV2AppThread,
   }),
   Schema.Struct({
@@ -2593,13 +2598,18 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
-      "thread.issue-synced",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
     ]),
+    payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.issue-synced"),
+    issueOperation: Schema.optional(Schema.Literals(["link", "unlink", "sync"])),
     payload: OrchestrationV2AppThreadJson,
   }),
   Schema.Struct({
@@ -2910,6 +2920,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadIssueKey.fields,
     snapshot: ThreadIssueSnapshot,
+    linkedAt: Schema.optional(ThreadIssueLink.fields.linkedAt),
+    linkId: Schema.optional(Schema.NullOr(CommandId)),
   }),
   /** Start or stop the server watching a linked pull request for this thread's agent. */
   Schema.Struct({

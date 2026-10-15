@@ -938,6 +938,30 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps Forgejo mount tabs separate and owner case aliases in one tab", () => {
+    const upper = {
+      projectId: "project-a",
+      tracker: "forgejo",
+      host: "forge.example",
+      scope: "Root/Mount/acme/web",
+      key: "42",
+    };
+    const lower = { ...upper, scope: "Root/mount/acme/web" };
+    const store = useRightPanelStore.getState();
+    store.openIssue(refA, upper);
+    store.openIssue(refA, lower);
+    store.openIssue(refA, { ...upper, scope: "Root/Mount/ACME/WEB", host: "FORGE.EXAMPLE" });
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(
+      state.surfaces.map((surface) => (surface.kind === "issue" ? surface.scope : null)),
+    ).toEqual([upper.scope, lower.scope]);
+    store.closeSurface(refA, state.surfaces[0]!.id);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([state.surfaces[1]]);
+  });
+
   it("tracks one surface per pull request", () => {
     const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
     const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };

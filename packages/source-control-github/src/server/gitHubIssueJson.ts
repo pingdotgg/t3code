@@ -75,14 +75,21 @@ const RawIssueSchema = Schema.Struct({
     Schema.NullOr(Schema.Struct({ totalCount: Schema.optional(Schema.Int) })),
   ),
   assignees: nodes(RawActorSchema),
-  labels: nodes(RawLabelSchema),
+  labels: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.optional(Schema.NullOr(Schema.Array(Schema.NullOr(RawLabelSchema)))),
+        pageInfo: Schema.optional(Schema.NullOr(RawPageInfoSchema)),
+      }),
+    ),
+  ),
 });
 
 /** A row without its comment count, which the detail reads from its own comment page. */
 const ISSUE_ROW_BASE_FIELDS = `number title url state stateReason createdAt updatedAt closedAt
   author { login avatarUrl ... on User { name } }
   assignees(first: 20) { nodes { login name avatarUrl } }
-  labels(first: 20) { nodes { name color } }`;
+  labels(first: 20) { nodes { name color } pageInfo { hasNextPage } }`;
 
 const ISSUE_ROW_FIELDS = `${ISSUE_ROW_BASE_FIELDS}
   comments { totalCount }`;
@@ -100,14 +107,24 @@ export function issueSearchGraphQlQuery(rows: number): string {
 }`;
 }
 
-const RawSearchSchema = Schema.Struct({
-  data: Schema.Struct({
-    search: Schema.Struct({
-      pageInfo: Schema.optional(Schema.NullOr(RawPageInfoSchema)),
-      // Row by row, so a node that is not an issue is skipped rather than blanking the page.
-      nodes: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
-    }),
-  }),
+export function issueRepositoryGraphQlQuery(rows: number): string {
+  return `query($owner: String!, $name: String!, $cursor: String, $states: [IssueState!], $orderBy: IssueOrder!) {
+  repository(owner: $owner, name: $name) {
+    issues(first: ${Math.min(Math.max(Math.trunc(rows), 1), PAGE_SIZE)}, after: $cursor, states: $states, orderBy: $orderBy) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ${ISSUE_ROW_FIELDS} }
+    }
+  }
+}`;
+}
+
+const RawIssuePageSchema = Schema.Struct({
+  pageInfo: Schema.optional(Schema.NullOr(RawPageInfoSchema)),
+  nodes: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+});
+const RawSearchSchema = Schema.Struct({ data: Schema.Struct({ search: RawIssuePageSchema }) });
+const RawRepositoryIssuesSchema = Schema.Struct({
+  data: Schema.Struct({ repository: Schema.NullOr(Schema.Struct({ issues: RawIssuePageSchema })) }),
 });
 
 const RawReferenceSchema = Schema.Struct({
@@ -153,6 +170,7 @@ const RawCommentsSchema = Schema.Struct({
 });
 
 const RawViewerFieldsSchema = Schema.Struct({
+  locked: Schema.optional(Schema.Boolean),
   viewerCanUpdate: Schema.optional(Schema.Boolean),
 });
 
@@ -168,10 +186,12 @@ export const ISSUE_DETAIL_GRAPHQL_QUERY = `query($owner: String!, $name: String!
   viewer { login }
   repository(owner: $owner, name: $name) {
     viewerPermission
+    isArchived
     issue(number: $number) {
       ${ISSUE_ROW_BASE_FIELDS}
       body
       viewerCanUpdate
+      locked
       ${REACTION_GROUPS_FIELDS}
       comments(last: ${PAGE_SIZE}) {
         totalCount
@@ -182,6 +202,7 @@ export const ISSUE_DETAIL_GRAPHQL_QUERY = `query($owner: String!, $name: String!
         nodes { number title url state isDraft repository { nameWithOwner } }
       }
       timelineItems(last: ${PAGE_SIZE}, itemTypes: [CLOSED_EVENT, REOPENED_EVENT, LABELED_EVENT, UNLABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, RENAMED_TITLE_EVENT, CROSS_REFERENCED_EVENT]) {
+        pageInfo { hasPreviousPage }
         nodes {
           __typename
           ... on ClosedEvent { id createdAt actor { login avatarUrl } }
@@ -206,6 +227,7 @@ const RawDetailSchema = Schema.Struct({
     viewer: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
     repository: Schema.Struct({
       viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+      isArchived: Schema.optional(Schema.Boolean),
       /** Null for a number that names no issue the viewer can see. */
       issue: Schema.NullOr(
         Schema.Struct({
@@ -219,6 +241,7 @@ const RawDetailSchema = Schema.Struct({
           timelineItems: Schema.optional(
             Schema.NullOr(
               Schema.Struct({
+                pageInfo: Schema.optional(RawPageInfoSchema),
                 nodes: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
               }),
             ),
@@ -258,7 +281,8 @@ const RawCommentPageSchema = Schema.Struct({
 export const ISSUE_VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
-    issue(number: $number) { viewerCanUpdate }
+    isArchived
+    issue(number: $number) { viewerCanUpdate locked }
   }
 }`;
 
@@ -266,6 +290,7 @@ const RawViewerPermissionsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
       viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+      isArchived: Schema.optional(Schema.Boolean),
       issue: Schema.NullOr(RawViewerFieldsSchema),
     }),
   }),
@@ -331,6 +356,7 @@ const RawCandidatesSchema = Schema.Struct({
  */
 export const ISSUE_TEMPLATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
+    url
     issueTemplates {
       filename name about title body
       assignees(first: 25) { nodes { login } }
@@ -352,6 +378,7 @@ const RawTemplateSchema = Schema.Struct({
 const RawTemplatesSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
+      url: Schema.String,
       issueTemplates: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
     }),
   }),
@@ -360,6 +387,7 @@ const RawTemplatesSchema = Schema.Struct({
 const RawCreatedIssueSchema = Schema.Struct({ number: Schema.Int, html_url: Schema.String });
 
 const decodeSearch = decodeJsonResult(RawSearchSchema);
+const decodeRepositoryIssues = decodeJsonResult(RawRepositoryIssuesSchema);
 const decodeIssueRow = Schema.decodeUnknownExit(RawIssueSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
 const decodeCommentPage = decodeJsonResult(RawCommentPageSchema);
@@ -371,6 +399,15 @@ const decodeTemplates = decodeJsonResult(RawTemplatesSchema);
 const decodeTemplate = Schema.decodeUnknownExit(RawTemplateSchema);
 const decodeTimelineItem = Schema.decodeUnknownExit(RawTimelineItemSchema);
 const decodeCreatedIssue = decodeJsonResult(RawCreatedIssueSchema);
+const decodeRestIssueLabels = decodeJsonResult(
+  Schema.Struct({ labels: Schema.Array(RawLabelSchema) }),
+);
+export const decodeRestIssueMetadataJson = decodeJsonResult(
+  Schema.Struct({
+    labels: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
+    assignees: Schema.optional(Schema.Array(Schema.Struct({ login: Schema.String }))),
+  }),
+);
 const decodeViewerLogin = decodeJsonResult(
   Schema.Struct({ data: Schema.Struct({ viewer: Schema.Struct({ login: Schema.String }) }) }),
 );
@@ -436,6 +473,7 @@ function toSummary(raw: typeof RawIssueSchema.Type): TrackerIssueSummary {
     closedAt: trimmed(raw.closedAt),
     assignees: toActors(raw.assignees?.nodes),
     labels: toLabels(raw.labels?.nodes),
+    labelsTruncated: raw.labels?.pageInfo?.hasNextPage === true,
     commentCount: Math.max(0, raw.comments?.totalCount ?? 0),
   };
 }
@@ -450,15 +488,24 @@ export function decodeIssueSearchJson(
 ): Result.Result<GitHubIssueSearchPage, DecodeFailure> {
   const decoded = decodeSearch(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
-  const search = decoded.success.data.search;
-  const items = (search.nodes ?? []).flatMap((entry) => {
+  return Result.succeed(toIssuePage(decoded.success.data.search));
+}
+
+export function decodeRepositoryIssuesJson(raw: string) {
+  return Result.map(decodeRepositoryIssues(raw), ({ data }) =>
+    data.repository === null ? null : toIssuePage(data.repository.issues),
+  );
+}
+
+function toIssuePage(page: typeof RawIssuePageSchema.Type): GitHubIssueSearchPage {
+  const items = (page.nodes ?? []).flatMap((entry) => {
     const row = decodeIssueRow(entry);
     return Exit.isSuccess(row) ? [toSummary(row.value)] : [];
   });
-  return Result.succeed({
+  return {
     items,
-    nextCursor: search.pageInfo?.hasNextPage === true ? trimmed(search.pageInfo.endCursor) : null,
-  });
+    nextCursor: page.pageInfo?.hasNextPage === true ? trimmed(page.pageInfo.endCursor) : null,
+  };
 }
 
 function toPullRequestState(value: string | null | undefined): PullRequestState {
@@ -552,26 +599,23 @@ function previousCursorOf(pageInfo: typeof RawPageInfoSchema.Type | undefined): 
   return pageInfo?.hasPreviousPage === true ? trimmed(pageInfo.startCursor) : null;
 }
 
-/**
- * What the signed-in account may do. Closing and editing go by `viewerCanUpdate`, which GitHub
- * grants the author as well as anyone with write; labelling and assigning need the triage role
- * or better. Commenting is not gated: seeing the repository is enough to say something in it.
- * An install that reports nothing grants rather than withholds, so the host's own refusal says why.
- */
 function toViewerPermissions(raw: {
   readonly viewerPermission?: string | null | undefined;
+  readonly isArchived?: boolean | undefined;
   readonly issue: typeof RawViewerFieldsSchema.Type | null;
 }): IssueViewerPermissions {
-  const canUpdate = raw.issue?.viewerCanUpdate !== false;
-  const canTriage = ["ADMIN", "MAINTAIN", "WRITE", "TRIAGE"].includes(
-    raw.viewerPermission?.trim().toUpperCase() ?? "",
-  );
+  const writable = raw.isArchived !== true;
+  const role = raw.viewerPermission?.trim().toUpperCase();
+  const canUpdate = writable && raw.issue?.viewerCanUpdate !== false;
+  const canTriage = role == null || ["ADMIN", "MAINTAIN", "WRITE", "TRIAGE"].includes(role);
   return {
     setState: canUpdate,
-    comment: true,
+    comment:
+      writable &&
+      (raw.issue?.locked !== true || role == null || ["ADMIN", "MAINTAIN", "WRITE"].includes(role)),
     edit: canUpdate,
-    labels: canTriage,
-    assignees: canTriage,
+    labels: writable && canTriage,
+    assignees: writable && canTriage,
   };
 }
 
@@ -583,6 +627,7 @@ export interface GitHubIssueDetail extends TrackerIssueSummary {
   readonly comments: ReadonlyArray<IssueComment>;
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
+  readonly historyTruncated?: boolean;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
 }
 
@@ -624,14 +669,22 @@ export function decodeIssueDetailJson(
     viewer,
     viewerPermissions: toViewerPermissions({
       viewerPermission: repository.viewerPermission,
+      isArchived: repository.isArchived,
       issue,
     }),
     reactions: toReactions(issue.reactionGroups, viewer),
     comments: toComments(issue.comments, viewer),
     commentsCursor: previousCursorOf(issue.comments?.pageInfo),
     events,
+    historyTruncated: issue.timelineItems?.pageInfo?.hasPreviousPage === true,
     linkedPullRequests: [...links.values()],
   });
+}
+
+export function decodeRestIssueLabelsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<IssueLabel>, DecodeFailure> {
+  return Result.map(decodeRestIssueLabels(raw), (issue) => toLabels(issue.labels));
 }
 
 export function decodeIssueCommentsJson(
@@ -701,9 +754,13 @@ export function decodeIssueCandidatesJson(raw: string): Result.Result<
 /** A template that cannot be read is skipped: one malformed form must not take the others. */
 export function decodeIssueTemplatesJson(
   raw: string,
-): Result.Result<ReadonlyArray<IssueTemplate>, DecodeFailure> {
-  return Result.map(decodeTemplates(raw), ({ data }) =>
-    (data.repository.issueTemplates ?? []).flatMap((entry) => {
+): Result.Result<
+  { readonly templates: ReadonlyArray<IssueTemplate>; readonly repositoryUrl: string },
+  DecodeFailure
+> {
+  return Result.map(decodeTemplates(raw), ({ data }) => ({
+    repositoryUrl: data.repository.url,
+    templates: (data.repository.issueTemplates ?? []).flatMap((entry) => {
       const template = decodeTemplate(entry);
       if (Exit.isFailure(template)) return [];
       const key = trimmed(template.value.filename);
@@ -722,7 +779,7 @@ export function decodeIssueTemplatesJson(
         },
       ];
     }),
-  );
+  }));
 }
 
 export function decodeCreatedIssueJson(

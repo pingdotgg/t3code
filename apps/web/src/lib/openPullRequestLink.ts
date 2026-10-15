@@ -155,16 +155,12 @@ export function useOpenChangeRequestLink(
       const reads = (environmentId: string) =>
         serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
         true;
-      // Beside a thread the panel reads on that thread's environment, so a project from another
-      // one could not be read there whatever its remote says: two environments can hold the same
-      // repository, and handing the panel the wrong one's id opens a surface that never loads.
-      //
-      // The page has no such tie — it lists every server at once — so the link is resolved
-      // against all of them, the primary first where two hold the same repository.
-      const projects = resolvedThreadRef
-        ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-        : targetEnvironmentId
-          ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+      const projects = targetEnvironmentId
+        ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+        : resolvedThreadRef
+          ? allProjects.filter(
+              (project) => project.environmentId === resolvedThreadRef.environmentId,
+            )
           : allProjects
               .filter((project) => reads(project.environmentId))
               .toSorted(

@@ -21,6 +21,7 @@ import type {
   IssueReaction,
   IssueReactionContent,
   IssueSummary,
+  IssueState,
   IssueTemplateList,
   IssueTrackerKind,
   IssueTrackerScope,
@@ -83,14 +84,18 @@ export interface TrackerIssuePage {
 
 export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly body: string;
+  readonly bodyEditable?: boolean;
+  readonly states?: ReadonlyArray<IssueState>;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;
   readonly reactions?: ReadonlyArray<IssueReaction>;
+  readonly reactionsTruncated?: boolean;
   readonly comments: ReadonlyArray<IssueComment>;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+  readonly historyTruncated?: boolean;
 }
 
 export interface IssueTrackerApi {
@@ -121,7 +126,7 @@ export interface IssueTrackerApi {
 
   /** One page of older comments past a cursor `getIssue` or a previous page handed over. */
   readonly getComments: (
-    input: IssueTarget & { readonly cursor: string },
+    input: IssueTarget & { readonly cursor: string; readonly viewer?: string },
   ) => Effect.Effect<IssueCommentsPage, IssueTrackerError>;
 
   /**
@@ -139,6 +144,7 @@ export interface IssueTrackerApi {
       readonly body: string;
       readonly labels: ReadonlyArray<string>;
       readonly assignees: ReadonlyArray<string>;
+      readonly issueType?: string;
     },
   ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
 
@@ -168,10 +174,6 @@ export interface IssueTrackerApi {
     },
   ) => Effect.Effect<void, IssueTrackerError>;
 
-  /**
-   * Adds a reaction or takes it back. `subjectId` is a comment id as the detail carried it;
-   * absent means the issue itself. Only called when `capabilities.reactions` is true.
-   */
   readonly setReaction?: (
     input: IssueTarget & {
       readonly subjectId?: string | undefined;
@@ -182,7 +184,10 @@ export interface IssueTrackerApi {
 
   /** Only called when `capabilities.templates` is true. */
   readonly listTemplates?: (
-    input: IssueScopeTarget,
+    input: IssueScopeTarget & {
+      readonly metadataOnly?: boolean | undefined;
+      readonly templateKey?: string | undefined;
+    },
   ) => Effect.Effect<IssueTemplateList, IssueTrackerError>;
 
   /** Only called when `capabilities.labels` or `capabilities.assignees` is true. */
@@ -203,12 +208,20 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (
-    token: string,
-  ) => Effect.Effect<
-    { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
+  readonly probeCredential: (token: string) => Effect.Effect<
+    {
+      readonly account: string;
+      readonly scopes: ReadonlyArray<IssueTrackerScope>;
+      readonly host?: string;
+      readonly accountId?: string;
+      readonly scopesTruncated?: boolean;
+    },
     IssueTrackerError
   >;
+  readonly getScope?: (
+    token: string,
+    scope: string,
+  ) => Effect.Effect<IssueTrackerScope | null, IssueTrackerError>;
 }
 
 export function isStandaloneIssueTracker(api: IssueTrackerApi): api is StandaloneIssueTrackerApi {

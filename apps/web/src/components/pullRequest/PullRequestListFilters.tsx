@@ -98,11 +98,15 @@ export function PullRequestSearchInput({
   value,
   busy,
   onChange,
+  placeholder = "Search pull requests, or label:bug",
+  "aria-label": ariaLabel = "Search pull requests",
 }: {
   value: string;
   /** A search is on its way to the hosts, said where the typing is rather than over the list. */
   busy?: boolean;
   onChange: (value: string) => void;
+  placeholder?: string;
+  "aria-label"?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
@@ -119,8 +123,8 @@ export function PullRequestSearchInput({
           setDraft(event.currentTarget.value);
           onChange(event.currentTarget.value);
         }}
-        placeholder="Search pull requests, or label:bug"
-        aria-label="Search pull requests"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
       />
     </InputGroup>
   );

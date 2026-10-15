@@ -296,8 +296,8 @@ out from the matching organization and repository.
 
 ## Issues
 
-The Issues page lists the issues of every project whose remote is on a supported tracker
-(GitHub today), grouped per tracker account. Open it from the sidebar's utility row or with
+The Issues page lists issues from each project's GitHub, GitLab, Azure DevOps, or Forgejo/Gitea
+repository, grouped by tracker. Open it from the sidebar's utility row or with
 **Open issues** in the command palette. Filter by open or closed, by your involvement
 (assigned, opened by you, mentioning you), and by tracker; the search box asks the tracker
 itself where it can search. Press **Load more** at the end of a group to read further back.
@@ -307,6 +307,11 @@ requests, labels, assignees, and reactions. Linked pull requests open in the sam
 comment, edit the title and description, change labels and assignees, react, and close or
 reopen (with a close reason where the tracker records one) when the tracker and your account
 allow it. An issue read through a project that does not own its repository is shown read-only.
+
+For Linear or Jira Cloud, connect an account under **Settings → Source control → Issue trackers**,
+then bind a project to a Linear team or Jira project. Jira needs your site URL, account email,
+and a standard API token. Credentials stay on the environment that owns the project. A standalone
+tracker can be used beside the repository's tracker or with a project that has no remote.
 
 **New issue** files an issue on a project's tracker. Where the repository offers issue templates,
 pick one to start from its title, body, labels, and assignees.

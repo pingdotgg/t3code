@@ -130,6 +130,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pullRequestsSetLabels]: "pull-requests",
   [WS_METHODS.issuesList]: "issues",
   [WS_METHODS.issuesDetail]: "issues",
+  [WS_METHODS.issuesResolveUrl]: "issues",
   [WS_METHODS.issuesComments]: "issues",
   [WS_METHODS.issuesTemplates]: "issues",
   [WS_METHODS.issuesCandidates]: "issues",

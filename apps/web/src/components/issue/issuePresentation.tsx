@@ -15,7 +15,7 @@ export function issueTrackerPresentation(tracker: IssueTrackerKind | string) {
   if (sourceControlClients.find(tracker) !== undefined) {
     return getSourceControlPresentationForKind(tracker);
   }
-  return { providerName: tracker, Icon: TicketIcon };
+  return { providerName: tracker.charAt(0).toUpperCase() + tracker.slice(1), Icon: TicketIcon };
 }
 
 /**

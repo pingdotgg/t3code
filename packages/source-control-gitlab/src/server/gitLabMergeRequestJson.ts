@@ -854,7 +854,7 @@ const decodeAwardEmojiPage = decodeJsonResult(RawAwardEmojiPageSchema);
  * is left out of `actors` — the page names them "You" instead, and leaving it in would name them
  * twice — but `count` still counts them along with everyone else.
  */
-function toReactions(
+export function toReactions(
   nodes: Schema.Schema.Type<typeof RawAwardEmojiNodesSchema>,
   viewer: string | null,
 ): ReadonlyArray<PullRequestReaction> {

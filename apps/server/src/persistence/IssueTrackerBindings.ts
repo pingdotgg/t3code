@@ -16,6 +16,7 @@ const BindingRow = Schema.Struct({
   projectId: ProjectId,
   tracker: IssueTrackerKind,
   scope: Schema.String,
+  host: Schema.NullOr(Schema.String),
 });
 
 /**
@@ -58,7 +59,7 @@ const make = Effect.gen(function* () {
     Result: BindingRow,
     execute: () =>
       sql`
-        SELECT project_id AS "projectId", tracker AS "tracker", scope AS "scope"
+        SELECT project_id AS "projectId", tracker AS "tracker", scope AS "scope", host
         FROM issue_tracker_bindings
       `,
   });
@@ -68,7 +69,17 @@ const make = Effect.gen(function* () {
       Effect.map(
         (rows) =>
           new Map(
-            rows.map((row) => [row.projectId, { tracker: row.tracker, scope: row.scope }] as const),
+            rows.map(
+              (row) =>
+                [
+                  row.projectId,
+                  {
+                    tracker: row.tracker,
+                    scope: row.scope,
+                    ...(row.host === null ? {} : { host: row.host }),
+                  },
+                ] as const,
+            ),
           ),
       ),
       Effect.mapError(toSqlOrDecodeError("listIssueTrackerBindings", "IssueTrackerBinding")),
@@ -77,10 +88,10 @@ const make = Effect.gen(function* () {
       (input.binding === null
         ? sql`DELETE FROM issue_tracker_bindings WHERE project_id = ${input.projectId}`
         : sql`
-            INSERT INTO issue_tracker_bindings (project_id, tracker, scope, updated_at)
-            VALUES (${input.projectId}, ${input.binding.tracker}, ${input.binding.scope}, ${input.updatedAt})
+            INSERT INTO issue_tracker_bindings (project_id, tracker, scope, host, updated_at)
+            VALUES (${input.projectId}, ${input.binding.tracker}, ${input.binding.scope}, ${input.binding.host ?? null}, ${input.updatedAt})
             ON CONFLICT (project_id)
-            DO UPDATE SET tracker = excluded.tracker, scope = excluded.scope, updated_at = excluded.updated_at
+            DO UPDATE SET tracker = excluded.tracker, scope = excluded.scope, host = excluded.host, updated_at = excluded.updated_at
           `
       ).pipe(
         Effect.asVoid,

@@ -204,9 +204,12 @@ export function applyOrchestrationV2ProjectionEvent(
   switch (event.type) {
     case "thread.pull-request-link-updated":
       return {
-        ...base,
+        ...projection,
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
+    case "thread.pull-request-synced":
+    case "thread.issue-synced":
+      return { ...base, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -221,8 +224,6 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.pin-reordered":
     case "thread.active-reordered":
     case "thread.metadata-updated":
-    case "thread.pull-request-synced":
-    case "thread.issue-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":

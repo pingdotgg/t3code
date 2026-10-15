@@ -15,6 +15,7 @@ vi.mock("../../hooks/useT3ProjectFileScripts", () => ({
 vi.mock("../BranchToolbar", () => ({
   BranchToolbar: () => null,
 }));
+vi.mock("../../state/entities", () => ({ useThreadShell: () => null }));
 vi.mock("../ProjectScriptsControl", () => ({
   default: (props: unknown) => {
     testState.projectScriptsControl(props);

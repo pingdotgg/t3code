@@ -46,6 +46,7 @@ const Fields = Schema.Struct({
   "System.CommentCount": Schema.optional(Schema.NullOr(Schema.Int)),
   "System.Title": Schema.optional(Schema.NullOr(Schema.String)),
   "System.State": Schema.optional(Schema.NullOr(Schema.String)),
+  "System.WorkItemType": Schema.optional(Schema.NullOr(Schema.String)),
   "System.CreatedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "System.ChangedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "Microsoft.VSTS.Common.ClosedDate": Schema.optional(Schema.NullOr(Schema.String)),
@@ -66,7 +67,9 @@ const WorkItem = Schema.Struct({
 });
 
 const decodeWorkItemEntry = Schema.decodeUnknownExit(WorkItem);
-const decodeUnknownList = decodeJsonResult(Schema.NullOr(Schema.Array(Schema.Unknown)));
+const decodeWorkItemsPage = decodeJsonResult(
+  Schema.Struct({ value: Schema.Array(Schema.Unknown) }),
+);
 const decodeWorkItem = decodeJsonResult(WorkItem);
 
 type DecodeFailure =
@@ -87,8 +90,16 @@ function browserUrl(
   project: string | null,
 ): string | null {
   if (apiUrl === null || apiUrl === undefined || project === null) return null;
-  const match = /^(https?:\/\/[^/]+\/[^/]+)\/(?:[^/]+\/)?_apis\/wit\/workItems\//i.exec(apiUrl);
-  return match === null ? null : `${match[1]}/${encodeURIComponent(project)}/_workitems/edit/${id}`;
+  const url = URL.parse(apiUrl);
+  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) return null;
+  const match = (
+    url.hostname.endsWith(".visualstudio.com")
+      ? /^\/(DefaultCollection\/)?(?:[^/]+\/)?_apis\/wit\/workItems\//i
+      : /^\/([^/]+\/)(?:[^/]+\/)?_apis\/wit\/workItems\//i
+  ).exec(url.pathname);
+  return match === null
+    ? null
+    : `${url.origin}/${match[1] ?? ""}${encodeURIComponent(project)}/_workitems/edit/${id}`;
 }
 
 function toActor(value: typeof IdentityValue.Type | undefined): IssueActor | null {
@@ -118,6 +129,7 @@ function toLabels(tags: string | null | undefined): ReadonlyArray<IssueLabel> {
 
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
+  readonly workItemType: string | null;
   readonly project: string | null;
   readonly relations: ReadonlyArray<typeof Relation.Type>;
 }
@@ -148,6 +160,7 @@ function toWorkItem(raw: typeof WorkItem.Type): AzureDevOpsWorkItem | null {
     labels: toLabels(fields["System.Tags"]),
     commentCount: Math.max(0, fields["System.CommentCount"] ?? 0),
     body: fields["System.Description"] ?? "",
+    workItemType: trimmed(fields["System.WorkItemType"]),
     project,
     relations: raw.relations ?? [],
   };
@@ -157,8 +170,8 @@ function toWorkItem(raw: typeof WorkItem.Type): AzureDevOpsWorkItem | null {
 export function decodeWorkItemsJson(
   raw: string,
 ): Result.Result<ReadonlyArray<AzureDevOpsWorkItem>, DecodeFailure> {
-  return Result.map(decodeUnknownList(raw.trim().length === 0 ? "[]" : raw), (rows) =>
-    (rows ?? []).flatMap((entry) => {
+  return Result.map(decodeWorkItemsPage(raw), (page) =>
+    page.value.flatMap((entry) => {
       const item = decodeWorkItemEntry(entry);
       if (Exit.isFailure(item)) return [];
       return toWorkItem(item.value) ?? [];
@@ -279,26 +292,28 @@ function identityLogin(value: unknown): string | null {
   return Exit.isSuccess(decoded) ? (toActor(decoded.value)?.login ?? null) : null;
 }
 
-/**
- * The timeline, read out of each revision's field changes. Azure reads `9999-01-01` as the changed
- * date of the newest revision, so the revision's own date is what every event carries.
- */
 export function decodeUpdatesJson(
   raw: string,
-): Result.Result<ReadonlyArray<IssueEvent>, DecodeFailure> {
-  return Result.map(decodeUpdatesPage(raw), (page) =>
-    (page.value ?? []).flatMap((entry) => {
+): Result.Result<
+  { readonly events: ReadonlyArray<IssueEvent>; readonly rawCount: number },
+  DecodeFailure
+> {
+  return Result.map(decodeUpdatesPage(raw), (page) => ({
+    rawCount: page.value?.length ?? 0,
+    events: (page.value ?? []).flatMap((entry) => {
       const update = decodeUpdateEntry(entry);
       if (Exit.isFailure(update) || update.value.id === 1) return [];
       const { id, revisedBy, revisedDate } = update.value;
       const fields = update.value.fields ?? {};
+      const changedAt = fields["System.ChangedDate"]?.newValue;
+      const createdAt = typeof changedAt === "string" ? changedAt : revisedDate;
       const events: IssueEvent[] = [];
       const add = (kind: IssueEvent["kind"], detail: string | null) =>
         events.push({
           id: `update-${id}-${events.length}`,
           kind,
           actor: toActor(revisedBy),
-          createdAt: revisedDate,
+          createdAt,
           detail,
         });
       const state = fields["System.State"];
@@ -338,7 +353,7 @@ export function decodeUpdatesJson(
       }
       return events;
     }),
-  );
+  }));
 }
 
 /** A relation that links a pull request, as Azure spells it: `vstfs:///Git/PullRequestId/{project}/{repo}/{id}`. */

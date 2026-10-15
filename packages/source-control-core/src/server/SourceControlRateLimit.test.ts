@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { IssueTrackerKind, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -6,6 +6,26 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 const github = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
+
+it.effect("isolates standalone tracker rate limits by tracker and verified credential", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const jira = { provider: IssueTrackerKind.make("jira"), host: "tracker.example" };
+    yield* limits
+      .recordRateLimit({ ...jira, lease: 0 })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    yield* limits
+      .check(jira)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "second"));
+    yield* limits
+      .check({ provider: IssueTrackerKind.make("linear"), host: jira.host })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    const error = yield* limits
+      .check(jira)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"), Effect.flip);
+    assert.equal(error.provider, jira.provider);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
 
 it.effect("isolates cooldowns for verified credentials on the same host", () =>
   Effect.gen(function* () {

@@ -228,13 +228,18 @@ export const make = Effect.gen(function* () {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
+        const tempPath = yield* fileSystem.makeTempFileScoped({
+          directory: serverConfig.secretsDir,
+          prefix: `${name}.`,
+        });
+        const file = yield* fileSystem.open(tempPath, {
+          flag: "w",
           mode: 0o600,
         });
+        yield* fileSystem.chmod(tempPath, 0o600);
         yield* file.writeAll(value);
         yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
+        yield* fileSystem.link(tempPath, secretPath);
       }),
     ).pipe(
       Effect.mapError(

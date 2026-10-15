@@ -1,7 +1,9 @@
 import {
+  IssueOperationError,
   threadIssueKeysEqual,
   type IssueDetail,
   type IssueRef,
+  type IssueTrackerKind,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
@@ -11,7 +13,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as IssueService from "../../../issue/IssueService.ts";
-import { resolveGitHostBinding } from "../../../issue/IssueService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -21,6 +22,7 @@ import {
   IssueLinkFailedError,
   IssueProjectNotFoundError,
   IssueProjectRequiredError,
+  IssueSourceSelectionError,
   IssuesToolkit,
   IssueTargetIncompleteError,
   type IssueTargetInput,
@@ -36,7 +38,6 @@ interface ResolvedTarget extends IssueRef {
   readonly writable: boolean;
 }
 
-/** What the tools report from a thread shell; exported so the shape is testable without a layer. */
 function listThreadIssues(
   thread: Pick<OrchestrationV2ThreadShell, "issues">,
 ): ListThreadIssuesResult {
@@ -93,16 +94,38 @@ const make = Effect.gen(function* () {
   const requireProject = Effect.fn("IssuesToolkit.requireProject")(function* (
     requested: ProjectId | undefined,
   ) {
+    yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
     const project = yield* projects
       .getShell(projectId)
       .pipe(Effect.mapError((cause) => new IssueLinkFailedError({ cause })));
-    const binding = Option.isSome(project) ? resolveGitHostBinding(project.value) : null;
-    if (Option.isNone(project) || binding === null) {
+    if (Option.isNone(project)) {
       return yield* new IssueProjectNotFoundError({ projectId });
     }
-    return { project: project.value, binding };
+    return { project: project.value };
+  });
+
+  const requireSource = Effect.fn("IssuesToolkit.requireSource")(function* (
+    requestedProject: ProjectId | undefined,
+    requestedTracker: IssueTrackerKind | undefined,
+  ) {
+    const { project } = yield* requireProject(requestedProject);
+    const sources = yield* issues.sources(project.id);
+    if (sources.length === 0)
+      return yield* new IssueProjectNotFoundError({ projectId: project.id });
+    const matches =
+      requestedTracker === undefined
+        ? sources
+        : sources.filter((source) => source.tracker === requestedTracker);
+    const binding = matches.length === 1 ? matches[0] : undefined;
+    if (binding === undefined)
+      return yield* new IssueSourceSelectionError({
+        projectId: project.id,
+        ...(requestedTracker === undefined ? {} : { tracker: requestedTracker }),
+        sources,
+      });
+    return { project, binding };
   });
 
   /**
@@ -113,13 +136,14 @@ const make = Effect.gen(function* () {
   const resolveTarget = Effect.fn("IssuesToolkit.resolveTarget")(function* (
     input: IssueTargetInput,
   ) {
+    yield* McpInvocationContext.requireMcpCapability("issues");
     if (input.url !== undefined) {
       const preferred = input.projectId ?? (yield* callerThread())?.projectId;
       const resolved = yield* issues.resolveUrl(input.url, preferred);
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();
-    const { project, binding } = yield* requireProject(input.projectId);
+    const { project, binding } = yield* requireSource(input.projectId, input.tracker);
     return {
       projectId: project.id,
       tracker: binding.tracker,
@@ -131,7 +155,10 @@ const make = Effect.gen(function* () {
     } satisfies ResolvedTarget;
   });
 
-  const identityOf = (target: ResolvedTarget, detail?: Pick<IssueDetail, "url">) => ({
+  const identityOf = (
+    target: Omit<ResolvedTarget, "writable">,
+    detail?: Pick<IssueDetail, "url">,
+  ) => ({
     projectId: target.projectId,
     tracker: target.tracker,
     host: target.host,
@@ -189,6 +216,10 @@ const make = Effect.gen(function* () {
             author: entry.author?.login ?? null,
             assignees: entry.assignees.map((actor) => actor.login),
             labels: entry.labels.map((label) => label.name),
+            labelDetails: entry.labels,
+            ...(entry.labelsTruncated === undefined
+              ? {}
+              : { labelsTruncated: entry.labelsTruncated }),
             updatedAt: entry.updatedAt,
             commentCount: entry.commentCount,
           })),
@@ -211,13 +242,20 @@ const make = Effect.gen(function* () {
           state: detail.state,
           writable: detail.writable,
           capabilities: detail.capabilities,
+          ...(detail.states === undefined ? {} : { states: detail.states }),
+          viewer: detail.viewer,
           author: detail.author?.login ?? null,
           assignees: detail.assignees.map((actor) => actor.login),
           labels: detail.labels.map((label) => label.name),
+          labelDetails: detail.labels,
+          ...(detail.labelsTruncated === undefined
+            ? {}
+            : { labelsTruncated: detail.labelsTruncated }),
           createdAt: detail.createdAt,
           updatedAt: detail.updatedAt,
           closedAt: detail.closedAt,
           body: detail.body,
+          ...(detail.bodyEditable === undefined ? {} : { bodyEditable: detail.bodyEditable }),
           comments: detail.comments.map((comment) => ({
             id: comment.id,
             author: comment.author?.login ?? null,
@@ -225,6 +263,7 @@ const make = Effect.gen(function* () {
             createdAt: comment.createdAt,
           })),
           commentsTruncated: detail.commentsCursor !== null,
+          commentsCursor: detail.commentsCursor,
           linkedPullRequests: detail.linkedPullRequests.map((pullRequest) => ({
             url: pullRequest.url,
             title: pullRequest.title,
@@ -234,9 +273,31 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
+    read_issue_comments: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        if (input.tracker !== undefined && input.scope !== undefined && input.key !== undefined) {
+          const { project } = yield* requireProject(input.projectId);
+          return yield* issues.comments({
+            projectId: project.id,
+            tracker: input.tracker,
+            ...(input.host === undefined ? {} : { host: input.host }),
+            scope: input.scope,
+            key: input.key,
+            cursor: input.cursor,
+            ...(input.viewer === undefined ? {} : { viewer: input.viewer }),
+          });
+        }
+        const target = yield* resolveTarget(input);
+        return yield* issues.comments({
+          ...refOf(target),
+          cursor: input.cursor,
+          ...(input.viewer === undefined ? {} : { viewer: input.viewer }),
+        });
+      }),
+    ),
     create_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
-        const { project, binding } = yield* requireProject(input.projectId);
+        const { project, binding } = yield* requireSource(input.projectId, input.tracker);
         const created = yield* issues.create({
           projectId: project.id,
           ...binding,
@@ -244,14 +305,19 @@ const make = Effect.gen(function* () {
           body: input.body ?? "",
           labels: input.labels ?? [],
           assignees: input.assignees ?? [],
+          ...(input.issueType === undefined ? {} : { issueType: input.issueType }),
         });
         return {
           projectId: project.id,
           ...binding,
-          key: created.key,
-          url: created.url,
-          displayKey: created.displayKey,
+          ...created,
         };
+      }),
+    ),
+    read_issue_candidates: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { project, binding } = yield* requireSource(input.projectId, input.tracker);
+        return yield* issues.candidates({ projectId: project.id, ...binding });
       }),
     ),
     comment_on_issue: McpToolAccess.writesWithCapability((input) =>
@@ -289,14 +355,31 @@ const make = Effect.gen(function* () {
     unlink_issue: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(input.threadId);
-        const target = yield* resolveTarget({
-          ...input,
-          projectId: input.projectId ?? thread.projectId,
-        });
-        const existing = (thread.issues ?? []).find((link) => threadIssueKeysEqual(link, target));
+        const matches = (thread.issues ?? []).filter((link) =>
+          input.url !== undefined
+            ? link.url === input.url
+            : input.key !== undefined &&
+              threadIssueKeysEqual(link, { ...link, key: input.key }) &&
+              link.projectId === (input.projectId ?? thread.projectId) &&
+              (input.tracker === undefined || link.tracker === input.tracker),
+        );
+        if (matches.length > 1)
+          return yield* new IssueOperationError({
+            operation: "unlink",
+            detail:
+              "Multiple saved issue links match. Pass projectId, tracker and key, or a unique url from list_thread_issues.",
+          });
+        const target =
+          matches[0] ??
+          (yield* resolveTarget({
+            ...input,
+            projectId: input.projectId ?? thread.projectId,
+          }));
+        const existing =
+          matches[0] ?? (thread.issues ?? []).find((link) => threadIssueKeysEqual(link, target));
         if (existing === undefined) return { ...identityOf(target), wasLinked: false };
         const { wasLinked } = yield* threadIssues
-          .unlink({ threadId: thread.id, key: target })
+          .unlink({ threadId: thread.id, key: existing })
           .pipe(Effect.catchCause(linkFailure));
         return { ...identityOf(target), url: existing.url, wasLinked };
       }),

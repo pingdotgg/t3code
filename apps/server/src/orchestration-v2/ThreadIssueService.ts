@@ -12,6 +12,7 @@
  */
 import {
   CommandId,
+  IssueOperationError,
   threadIssueKeysEqual,
   threadIssueRefOf,
   type IssueRef,
@@ -24,6 +25,7 @@ import {
   type ThreadIssueSnapshot,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { parseIssueUrl } from "@t3tools/shared/issueUrl";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -80,12 +82,42 @@ function sameSnapshot(left: ThreadIssueSnapshot | null, right: ThreadIssueSnapsh
     left.title === right.title &&
     left.state.category === right.state.category &&
     left.state.name === right.state.name &&
-    left.state.closeReason === right.state.closeReason
+    left.state.closeReason === right.state.closeReason &&
+    left.syncedAt === right.syncedAt
   );
 }
 
 function isStale(link: ThreadIssueLink, nowMs: number): boolean {
   return link.snapshot === null || nowMs - Date.parse(link.snapshot.syncedAt) > STALE_AFTER_MS;
+}
+
+function sameLinearIssueUrl(leftUrl: string, rightUrl: string, key: ThreadIssueKey): boolean {
+  const left = parseIssueUrl(leftUrl);
+  const right = parseIssueUrl(rightUrl);
+  const legacyScope = !key.scope.includes("/");
+  return (
+    left !== null &&
+    right !== null &&
+    left.tracker === "linear" &&
+    right.tracker === "linear" &&
+    threadIssueKeysEqual(
+      {
+        ...left,
+        tracker: key.tracker,
+        scope: legacyScope ? left.scope.slice(left.scope.lastIndexOf("/") + 1) : left.scope,
+      },
+      key,
+    ) &&
+    threadIssueKeysEqual(
+      {
+        ...right,
+        tracker: key.tracker,
+        scope: legacyScope ? right.scope.slice(right.scope.lastIndexOf("/") + 1) : right.scope,
+      },
+      key,
+    ) &&
+    left.workspace === right.workspace
+  );
 }
 
 const make = Effect.gen(function* () {
@@ -107,6 +139,13 @@ const make = Effect.gen(function* () {
     link: ThreadIssueLink,
   ) {
     const detail = yield* issues.detail(threadIssueRefOf(link));
+    if (link.tracker === "linear" && !sameLinearIssueUrl(link.url, detail.url, link)) {
+      return yield* new IssueOperationError({
+        operation: "detail",
+        reason: "not-found",
+        detail: "The saved Linear URL does not match the issue returned by the configured tracker.",
+      });
+    }
     const now = yield* DateTime.now;
     const snapshot: ThreadIssueSnapshot = {
       displayKey: detail.displayKey,
@@ -124,6 +163,8 @@ const make = Effect.gen(function* () {
       scope: link.scope,
       key: link.key,
       snapshot,
+      linkedAt: link.linkedAt,
+      linkId: link.linkId ?? null,
     });
   });
 
@@ -160,7 +201,18 @@ const make = Effect.gen(function* () {
   const link: ThreadIssueService["Service"]["link"] = (input) =>
     Effect.gen(function* () {
       const thread = yield* shellOf(input.threadId);
-      if (thread?.issues?.some((existing) => threadIssueKeysEqual(existing, input.ref))) {
+      const existing = thread?.issues?.find((issue) => threadIssueKeysEqual(issue, input.ref));
+      if (existing !== undefined) {
+        if (
+          input.ref.tracker === "linear" &&
+          !sameLinearIssueUrl(existing.url, input.url, input.ref)
+        ) {
+          return yield* new Orchestrator.OrchestratorCommandRejectedError({
+            commandId: yield* commandId("link", input.threadId),
+            commandType: "thread.issue.link",
+            cause: new Error("Unlink the existing Linear issue before linking a different issue."),
+          });
+        }
         return { alreadyLinked: true };
       }
       yield* orchestrator.dispatch({
@@ -204,7 +256,8 @@ const make = Effect.gen(function* () {
     switch (event.type) {
       // A link made from a client (web dispatches the command directly) has no snapshot yet.
       case "thread.issue-synced":
-        return (event.payload.issues ?? []).some((link) => link.snapshot === null)
+        return event.issueOperation === "link" &&
+          (event.payload.issues ?? []).some((link) => link.snapshot === null)
           ? worker.enqueue({ threadId: event.threadId, staleOnly: true })
           : Effect.void;
       case "thread.visited":

@@ -13,12 +13,14 @@ import {
   ContextTransferId,
   EventId,
   IssueTrackerKind,
+  IssueOperationError,
   MessageId,
   NodeId,
   RuntimeRequestId,
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type ThreadIssueSnapshot,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -31,7 +33,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -69,6 +73,8 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as IssueService from "../issue/IssueService.ts";
+import * as ThreadIssueService from "./ThreadIssueService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
@@ -2125,6 +2131,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("retains multiple pull requests and dismissed stack members through rebuilds", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       const threadId = ThreadId.make("runtime-multiple-pull-requests");
       yield* orchestrator.dispatch({
@@ -2158,6 +2165,41 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         linked?.pullRequests?.map(({ host, repository, number }) => ({ host, repository, number })),
         [1, 2].map((number) => ({ host: "github.com", repository: "pingdotgg/t3code", number })),
       );
+      const initialProjection = yield* orchestrator.getThreadProjection(threadId);
+      yield* TestClock.adjust("1 minute");
+      const refreshedAt = DateTime.formatIso(yield* DateTime.now);
+      const pullRequestSnapshot = {
+        state: "open" as const,
+        title: "Pull request",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: refreshedAt,
+      };
+      const synchronized = yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("multi-pr-snapshot-sync"),
+        threadId,
+        ...key,
+        number: 1,
+        snapshot: pullRequestSnapshot,
+        stack: null,
+      });
+      assert.equal(synchronized.storedEvents[0]?.event.type, "thread.pull-request-link-updated");
+      const persisted = yield* projections.getThread(threadId);
+      assert.deepEqual(persisted.pullRequests?.[0]?.snapshot, pullRequestSnapshot);
+      assert.deepEqual(persisted.updatedAt, linked?.updatedAt);
+      const projected = ProjectionStore.applyToProjection(
+        initialProjection,
+        synchronized.storedEvents[0]!.event,
+      );
+      assert.deepEqual(projected.thread.pullRequests?.[0]?.snapshot, pullRequestSnapshot);
+      assert.deepEqual(projected.updatedAt, linked?.updatedAt);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.updatedAt,
+        linked?.updatedAt,
+      );
       yield* orchestrator.dispatch({
         type: "thread.pull-request.unlink",
         commandId: CommandId.make("multi-pr-dismiss"),
@@ -2165,6 +2207,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         number: 2,
       });
+      assert.deepEqual((yield* projections.getThread(threadId)).updatedAt, yield* DateTime.now);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.unlink",
         commandId: CommandId.make("multi-pr-unlink"),
@@ -2213,9 +2256,102 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["link", "sync"] as const)(
+    "refreshes an empty issue snapshot only for a link event: %s",
+    (issueOperation) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`issue-refresh-${issueOperation}`);
+        const projectId = ProjectId.make("issue-refresh-project");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`issue-refresh-create-${issueOperation}`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId,
+          title: "Issue refresh",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.issue.link",
+          commandId: CommandId.make(`issue-refresh-link-${issueOperation}`),
+          threadId,
+          projectId,
+          tracker: IssueTrackerKind.make("github"),
+          host: "github.com",
+          scope: "pingdotgg/t3code",
+          key: "1",
+          url: "https://github.com/pingdotgg/t3code/issues/1",
+          source: "manual",
+        });
+        const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        const handled = yield* Deferred.make<void>();
+        let reads = 0;
+        const dependencies = Layer.mergeAll(
+          Layer.succeed(
+            Orchestrator.OrchestratorV2,
+            Orchestrator.OrchestratorV2.of({
+              ...orchestrator,
+              streamDomainEvents: Stream.concat(
+                Stream.make({
+                  id: EventId.make(`issue-refresh-event-${issueOperation}`),
+                  type: "thread.issue-synced" as const,
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: thread,
+                  issueOperation,
+                }),
+                Stream.fromEffect(Deferred.succeed(handled, undefined)),
+              ).pipe(Stream.filter((event) => typeof event !== "boolean")),
+            }),
+          ),
+          Layer.mock(IssueService.IssueService)({
+            detail: () =>
+              Effect.sync(() => {
+                reads++;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new IssueOperationError({
+                      operation: "detail",
+                      detail: "Tracker unavailable.",
+                    }),
+                  ),
+                ),
+              ),
+          }),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const context = yield* Layer.build(
+              ThreadIssueService.layer.pipe(Layer.provide(dependencies)),
+            );
+            const service = Context.get(context, ThreadIssueService.ThreadIssueService);
+            yield* service.start();
+            yield* Deferred.await(handled);
+            yield* service.drain;
+            assert.equal(reads, issueOperation === "link" ? 1 : 0);
+          }),
+        );
+      }),
+  );
+
   it.effect("links an issue, syncs its snapshot, and unlinks it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const threadId = ThreadId.make("runtime-issue-links");
       const projectId = ProjectId.make("issue-link-project");
@@ -2297,6 +2433,164 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(synced?.issues?.[0]?.snapshot, snapshot);
       // A snapshot write is server bookkeeping, not thread activity.
       assert.deepEqual(synced?.updatedAt, linked?.updatedAt);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          let reads = 0;
+          let nonce = 0;
+          let pauseRead = false;
+          let nativeSnapshot: ThreadIssueSnapshot = snapshot;
+          const readStarted = yield* Deferred.make<void>();
+          const releaseRead = yield* Deferred.make<void>();
+          const context = yield* Layer.build(
+            Layer.mergeAll(
+              Layer.mock(IssueService.IssueService)({
+                detail: () =>
+                  Effect.sync(() => {
+                    reads++;
+                    return {
+                      ...key,
+                      projectId,
+                      projectTitle: "Issue project",
+                      displayKey: nativeSnapshot.displayKey,
+                      title: nativeSnapshot.title,
+                      state: nativeSnapshot.state,
+                      url: "https://github.com/pingdotgg/t3code/issues/42",
+                      author: null,
+                      createdAt: snapshot.syncedAt,
+                      updatedAt: snapshot.syncedAt,
+                      closedAt: null,
+                      assignees: [],
+                      labels: [],
+                      commentCount: 0,
+                      writable: true,
+                      capabilities: {
+                        create: false,
+                        edit: false,
+                        comment: false,
+                        labels: false,
+                        assignees: false,
+                        reactions: false,
+                        templates: false,
+                        linkedPullRequests: false,
+                        events: false,
+                        search: false,
+                        states: [snapshot.state],
+                        closeReasons: [],
+                      },
+                      viewerPermissions: {
+                        setState: false,
+                        comment: false,
+                        edit: false,
+                        labels: false,
+                        assignees: false,
+                      },
+                      viewer: null,
+                      body: "",
+                      comments: [],
+                      commentsCursor: null,
+                      events: [],
+                      linkedPullRequests: [],
+                    };
+                  }).pipe(
+                    Effect.tap(() =>
+                      pauseRead
+                        ? Deferred.succeed(readStarted, undefined).pipe(
+                            Effect.andThen(Deferred.await(releaseRead)),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+              }),
+              Layer.succeed(
+                Crypto.Crypto,
+                Crypto.make({
+                  randomBytes: (size) => new Uint8Array(size).fill(++nonce),
+                  digest: (_algorithm, data) => Effect.succeed(data),
+                }),
+              ),
+            ),
+          );
+          const serviceContext = yield* Layer.build(ThreadIssueService.layer).pipe(
+            Effect.provide(context),
+          );
+          const service = Context.get(serviceContext, ThreadIssueService.ThreadIssueService);
+          const initialProjection = yield* orchestrator.getThreadProjection(threadId);
+          const refreshedAt = "2026-09-17T00:06:00.000Z";
+          yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(refreshedAt)));
+          yield* service.refresh(threadId, { staleOnly: true });
+          yield* service.drain;
+          const refreshed = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(refreshed.thread.issues?.[0]?.snapshot, {
+            ...snapshot,
+            syncedAt: refreshedAt,
+          });
+          assert.deepEqual((yield* projections.getThread(threadId)).updatedAt, linked?.updatedAt);
+          const projected = ProjectionStore.applyToProjection(initialProjection, {
+            id: EventId.make("issue-refresh-projection"),
+            type: "thread.issue-synced",
+            threadId,
+            occurredAt: DateTime.makeUnsafe(refreshedAt),
+            payload: refreshed.thread,
+          });
+          assert.deepEqual(
+            projected.thread.issues?.[0]?.snapshot,
+            refreshed.thread.issues?.[0]?.snapshot,
+          );
+          assert.deepEqual(projected.updatedAt, linked?.updatedAt);
+          assert.deepEqual(
+            (yield* orchestrator.getThreadShell(threadId))?.updatedAt,
+            linked?.updatedAt,
+          );
+          yield* TestClock.adjust("4 minutes");
+          yield* service.refresh(threadId, { staleOnly: true });
+          yield* service.drain;
+          assert.equal(reads, 1);
+          const ref = { ...key, projectId };
+          const url = "https://github.com/pingdotgg/t3code/issues/42";
+          yield* service.unlink({ threadId, key });
+          yield* service.link({ threadId, ref, url, source: "agent" });
+          yield* service.drain;
+          const captured = (yield* orchestrator.getThreadShell(threadId))!.issues![0]!;
+          nativeSnapshot = { ...snapshot, title: "Outdated open title" };
+          pauseRead = true;
+          yield* service.refresh(threadId);
+          yield* Deferred.await(readStarted);
+          yield* service.unlink({ threadId, key });
+          yield* service.link({ threadId, ref, url, source: "agent" });
+          pauseRead = false;
+          const closedState = { category: "closed" as const, name: "closed" };
+          const nativeClosedSnapshot = {
+            ...snapshot,
+            title: "Relinked closed issue",
+            state: closedState,
+            syncedAt: DateTime.formatIso(yield* DateTime.now),
+          };
+          nativeSnapshot = nativeClosedSnapshot;
+          const detail = yield* Context.get(context, IssueService.IssueService).detail(ref);
+          const relinked = (yield* orchestrator.getThreadShell(threadId))!.issues![0]!;
+          assert.equal(relinked.linkedAt, captured.linkedAt);
+          assert.notEqual(relinked.linkId, captured.linkId);
+          yield* orchestrator.dispatch({
+            type: "thread.issue-link.sync",
+            commandId: CommandId.make("issue-relinked-closed-sync"),
+            threadId,
+            ...key,
+            linkedAt: relinked.linkedAt,
+            linkId: relinked.linkId ?? null,
+            snapshot: {
+              ...nativeClosedSnapshot,
+              displayKey: detail.displayKey,
+              title: detail.title,
+              state: detail.state,
+            },
+          });
+          yield* Deferred.succeed(releaseRead, undefined);
+          yield* service.drain;
+          const current = (yield* orchestrator.getThreadProjection(threadId)).thread.issues![0]!;
+          assert.deepEqual(current.snapshot, nativeClosedSnapshot);
+          assert.equal(reads, 4);
+        }),
+      );
       yield* orchestrator.dispatch({
         type: "thread.issue.unlink",
         commandId: CommandId.make("issue-unlink"),
@@ -2306,6 +2600,244 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.deepEqual((yield* orchestrator.getThreadShell(threadId))?.issues, []);
       assert.deepEqual((yield* orchestrator.getThreadProjection(threadId)).thread.issues, []);
+      assert.deepEqual((yield* projections.getThread(threadId)).updatedAt, yield* DateTime.now);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "changed workspace",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-b/issue/ENG-1/new-title",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "changed issue key",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-2/new-title",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "invalid saved URL",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/team/ENG",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "invalid native URL",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/team/ENG",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "saved URL key mismatch",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-2/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "changed title",
+      scope: "eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: true,
+      alreadyLinked: true,
+    },
+    {
+      name: "canonical workspace mismatch",
+      scope: "workspace-b/eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: false,
+      alreadyLinked: false,
+    },
+    {
+      name: "canonical changed title",
+      scope: "workspace-a/eng",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: true,
+      alreadyLinked: true,
+    },
+    {
+      name: "lowercase legacy key",
+      scope: "eng",
+      key: "eng-1",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: true,
+      alreadyLinked: true,
+    },
+    {
+      name: "lowercase canonical key",
+      scope: "workspace-a/eng",
+      key: "eng-1",
+      savedUrl: "https://linear.app/workspace-a/issue/ENG-1/old-title",
+      nativeUrl: "https://linear.app/workspace-a/issue/ENG-1/new-title",
+      refreshes: true,
+      alreadyLinked: true,
+    },
+  ])("checks saved Linear issue identity: $name", (testCase) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`runtime-linear-link-${testCase.name}`);
+      const projectId = ProjectId.make(`linear-link-project-${testCase.name}`);
+      const ref = {
+        tracker: IssueTrackerKind.make("linear"),
+        host: "linear.app",
+        scope: testCase.scope,
+        key: testCase.key ?? "ENG-1",
+        projectId,
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`linear-link-create-${testCase.name}`),
+        threadId,
+        projectId,
+        title: "Linear issue links",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.issue.link",
+        commandId: CommandId.make(`linear-link-${testCase.name}`),
+        threadId,
+        ...ref,
+        url: testCase.savedUrl,
+        source: "manual",
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          let reads = 0;
+          const context = yield* Layer.build(
+            Layer.mergeAll(
+              Layer.mock(IssueService.IssueService)({
+                detail: () =>
+                  Effect.sync(() => {
+                    reads++;
+                    return {
+                      ...ref,
+                      projectTitle: "Linear project",
+                      displayKey: "ENG-1",
+                      title: "Current issue title",
+                      state: { category: "open" as const, name: "Open" },
+                      url: testCase.nativeUrl,
+                      author: null,
+                      createdAt: "2026-10-01T00:00:00.000Z",
+                      updatedAt: "2026-10-01T00:00:00.000Z",
+                      closedAt: null,
+                      assignees: [],
+                      labels: [],
+                      commentCount: 0,
+                      writable: true,
+                      capabilities: {
+                        create: false,
+                        edit: false,
+                        comment: false,
+                        labels: false,
+                        assignees: false,
+                        reactions: false,
+                        templates: false,
+                        linkedPullRequests: false,
+                        events: false,
+                        search: false,
+                        states: [],
+                        closeReasons: [],
+                      },
+                      viewerPermissions: {
+                        setState: false,
+                        comment: false,
+                        edit: false,
+                        labels: false,
+                        assignees: false,
+                      },
+                      viewer: null,
+                      body: "",
+                      comments: [],
+                      commentsCursor: null,
+                      events: [],
+                      linkedPullRequests: [],
+                    };
+                  }),
+              }),
+              Layer.succeed(
+                Crypto.Crypto,
+                Crypto.make({
+                  randomBytes: (size) => new Uint8Array(size).fill(1),
+                  digest: (_algorithm, data) => Effect.succeed(data),
+                }),
+              ),
+            ),
+          );
+          const serviceContext = yield* Layer.build(ThreadIssueService.layer).pipe(
+            Effect.provide(context),
+          );
+          const service = Context.get(serviceContext, ThreadIssueService.ThreadIssueService);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const duplicate = yield* service
+            .link({ threadId, ref, url: testCase.nativeUrl, source: "manual" })
+            .pipe(Effect.result);
+          if (testCase.alreadyLinked) {
+            assert.equal(duplicate._tag, "Success");
+            if (duplicate._tag === "Success") {
+              assert.deepEqual(duplicate.success, { alreadyLinked: true });
+            }
+          } else {
+            assert.equal(duplicate._tag, "Failure");
+            if (duplicate._tag === "Failure") {
+              assert.instanceOf(duplicate.failure, Orchestrator.OrchestratorCommandRejectedError);
+              if (duplicate.failure._tag === "OrchestratorCommandRejectedError") {
+                assert.deepEqual(
+                  duplicate.failure.cause,
+                  new Error("Unlink the existing Linear issue before linking a different issue."),
+                );
+              }
+            }
+          }
+          yield* orchestrator.dispatch({
+            type: "thread.issue.link",
+            commandId: CommandId.make(`linear-link-duplicate-${testCase.name}`),
+            threadId,
+            ...ref,
+            key: ref.key.toUpperCase(),
+            url: testCase.savedUrl,
+            source: "agent",
+          });
+          assert.equal((yield* orchestrator.getThreadShell(threadId))?.issues?.length, 1);
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+          assert.equal(reads, 0);
+          yield* service.refresh(threadId);
+          yield* service.drain;
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(reads, 1);
+          if (testCase.refreshes) {
+            assert.equal(after.thread.issues?.[0]?.snapshot?.title, "Current issue title");
+          } else {
+            assert.deepEqual(after, before);
+          }
+          assert.equal(after.thread.issues?.[0]?.url, testCase.savedUrl);
+          assert.deepEqual(
+            yield* service.unlink({ threadId, key: { ...ref, key: ref.key.toUpperCase() } }),
+            { wasLinked: true },
+          );
+          assert.deepEqual((yield* orchestrator.getThreadShell(threadId))?.issues, []);
+        }),
+      );
     }),
   );
 

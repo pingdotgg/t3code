@@ -1,0 +1,35 @@
+{
+  "name": "@t3tools/issue-tracker-jira",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/JiraApi": {
+      "types": "./src/server/JiraApi.ts",
+      "import": "./src/server/JiraApi.ts"
+    },
+    "./server/JiraIssueTracker": {
+      "types": "./src/server/JiraIssueTracker.ts",
+      "import": "./src/server/JiraIssueTracker.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

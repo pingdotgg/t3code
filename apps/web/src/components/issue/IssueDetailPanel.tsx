@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AuthOrchestrationOperateScope, threadIssueKeysEqual } from "@t3tools/contracts";
 import type {
@@ -13,7 +13,7 @@ import type {
   IssueReaction,
   IssueReactionContent,
   IssueRef,
-  PullRequestRef,
+  IssueState,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -35,6 +35,7 @@ import { issueEnvironment } from "~/state/issues";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { serverEnvironment } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -60,9 +61,9 @@ import {
   PullRequestMetaLine,
   PullRequestStateGlyph,
 } from "../pullRequest/pullRequestPresentation";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   applyPendingPullRequestReactions,
-  PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
@@ -73,6 +74,27 @@ import {
   IssueStateGlyph,
   issueTrackerPresentation,
 } from "./issuePresentation";
+import {
+  appendOlderIssueComments,
+  issueAssigneeId,
+  issueCommentsView,
+  issueAssigneeOptions,
+  issueDisplayLabel,
+  issueLabelOptions,
+  issueLabelId,
+  issuePickerIds,
+  heldIssuePicker,
+  nextIssueLabels,
+  issueSupportsReactions,
+  offeredIssueReactionContents,
+  retainUnacknowledgedIssueReactions,
+  isIssueAssignee,
+  linkedPullRequestTarget,
+  nextIssueAssignees,
+  type IssueLinkedPullRequestTarget,
+  type IssueOlderComments,
+  type IssuePickerConfirmed,
+} from "./issueDetail.logic";
 
 /**
  * Links or unlinks the issue to the thread it is shown beside. Dispatches the orchestration
@@ -148,40 +170,86 @@ function writeBlockReason(detail: IssueDetail, canWrite: boolean): string | null
   return null;
 }
 
+function IssueTruncatedNote({
+  text,
+  url,
+  providerName,
+}: {
+  text: string;
+  url: string;
+  providerName: string;
+}) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      {text}{" "}
+      <InlineButton
+        tone="muted"
+        render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+      >
+        View on {providerName}
+      </InlineButton>
+    </p>
+  );
+}
+
 const REACTION_PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 /** The pull-request reaction bar's shape, routed to the issue tracker instead of the host. */
-function IssueReactionBar({
+export function IssueReactionBar({
   reactions,
   canReact,
+  contents,
   subjectId,
+  viewer,
   environmentId,
   reference,
 }: {
   reactions: ReadonlyArray<IssueReaction>;
   canReact: boolean;
+  contents: ReadonlyArray<IssueReactionContent> | undefined;
   subjectId?: string | undefined;
+  viewer: string | null;
   environmentId: EnvironmentId;
   reference: IssueRef;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pending, setPending] = useState<ReadonlyMap<IssueReactionContent, boolean>>(new Map());
+  const [pending, setPending] = useState({
+    native: reactions,
+    values: new Map<IssueReactionContent, boolean>() as ReadonlyMap<IssueReactionContent, boolean>,
+  });
+  const [busy, setBusy] = useState<ReadonlySet<IssueReactionContent>>(new Set());
   const react = useAtomCommand(issueEnvironment.react, { reportFailure: false });
-  const shown = applyPendingPullRequestReactions(reactions, pending);
+  const values =
+    pending.native === reactions
+      ? pending.values
+      : retainUnacknowledgedIssueReactions(reactions, viewer === null ? new Map() : pending.values);
+  if (pending.native !== reactions) setPending({ native: reactions, values });
+  const shown = applyPendingPullRequestReactions(reactions, values);
+  const offered = offeredIssueReactionContents(contents);
 
   const toggle = async (content: IssueReactionContent, reacted: boolean) => {
-    setPending((current) => new Map([...current, [content, reacted]]));
+    if (!canReact || !offered.includes(content) || busy.has(content)) return;
+    setBusy((current) => new Set([...current, content]));
+    setPending({ native: reactions, values: new Map([...values, [content, reacted]]) });
     const result = await react({
       environmentId,
       input: { ...reference, ...(subjectId === undefined ? {} : { subjectId }), content, reacted },
     });
-    setPending((current) => {
-      const next = new Map(current);
+    setBusy((current) => {
+      const next = new Set(current);
       next.delete(content);
       return next;
     });
     if (result._tag === "Failure") {
+      setPending((current) => {
+        if (viewer === null && current.native !== reactions) return current;
+        const next = new Map(current.values);
+        const previous = values.get(content);
+        if (previous === undefined) next.delete(content);
+        else next.set(content, previous);
+        return { native: current.native, values: next };
+      });
       toastManager.add({ type: "error", title: "The reaction could not be saved" });
     }
   };
@@ -197,13 +265,17 @@ function IssueReactionBar({
                 type="button"
                 aria-pressed={reaction.viewerHasReacted}
                 aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
-                disabled={!canReact}
+                disabled={
+                  !canReact || !offered.includes(reaction.content) || busy.has(reaction.content)
+                }
                 className={cn(
                   REACTION_PILL_CLASS,
                   reaction.viewerHasReacted
                     ? "border-primary/60 bg-primary/10 text-foreground"
                     : "border-border/70 bg-muted/40 text-muted-foreground",
-                  canReact ? "hover:border-primary/60" : "cursor-default",
+                  canReact && offered.includes(reaction.content)
+                    ? "hover:border-primary/60"
+                    : "cursor-default",
                 )}
                 onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
               />
@@ -215,7 +287,7 @@ function IssueReactionBar({
           <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
         </Tooltip>
       ))}
-      {canReact ? (
+      {canReact && offered.length > 0 ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
             render={
@@ -233,7 +305,7 @@ function IssueReactionBar({
           </PopoverTrigger>
           <PopoverPopup align="start" side="top" padding="compact">
             <div className="flex items-center gap-0.5">
-              {PULL_REQUEST_REACTION_ORDER.map((content) => {
+              {offered.map((content) => {
                 const reacted =
                   shown.find((reaction) => reaction.content === content)?.viewerHasReacted ?? false;
                 return (
@@ -241,6 +313,7 @@ function IssueReactionBar({
                     key={content}
                     type="button"
                     aria-pressed={reacted}
+                    disabled={busy.has(content)}
                     aria-label={pullRequestReactionName(content)}
                     className={cn(
                       "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -264,42 +337,41 @@ function IssueReactionBar({
 }
 
 /** Label and assignee pickers read the scope's candidates once, when they open. */
-function IssueLabelPicker({
+export function IssueLabelPicker({
   environmentId,
   reference,
   detail,
   allowed,
   disabledReason,
+  onUpdated,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  onUpdated: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState<IssuePickerConfirmed | null>(null);
   const candidatesQuery = useEnvironmentQuery(
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const applied = new Set(detail.labels.map((label) => label.name));
-  const candidates = useMemo(() => {
-    const needle = query.toLowerCase();
-    return (candidatesQuery.data?.labels ?? []).filter(
-      (label) =>
-        needle.length === 0 ||
-        label.name.toLowerCase().includes(needle) ||
-        (label.description ?? "").toLowerCase().includes(needle),
-    );
-  }, [candidatesQuery.data, query]);
+  const held = heldIssuePicker(detail, "labels", confirmed, environmentId);
+  if (held !== confirmed) setConfirmed(held);
+  const selectedIds = issuePickerIds(detail, "labels", held, environmentId);
+  const applied = new Set(selectedIds);
+  const candidates = useMemo(
+    () => issueLabelOptions(detail.labels, candidatesQuery.data?.labels ?? [], query),
+    [detail.labels, candidatesQuery.data, query],
+  );
   const toggle = async (candidate: IssueLabelCandidate) => {
     if (pending !== null) return;
-    setPending(candidate.name);
-    const labels = applied.has(candidate.name)
-      ? detail.labels.filter((label) => label.name !== candidate.name).map((label) => label.name)
-      : [...applied, candidate.name];
+    setPending(issueLabelId(candidate));
+    const labels = nextIssueLabels(selectedIds, issueLabelId(candidate));
     const result = await update({ environmentId, input: { ...reference, labels } });
     setPending(null);
     if (result._tag === "Failure") {
@@ -308,7 +380,10 @@ function IssueLabelPicker({
         title: "Could not change labels",
         description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
       });
+      return;
     }
+    setConfirmed({ base: detail, ids: labels, environmentId, kind: "labels" });
+    onUpdated?.();
   };
   return (
     <PullRequestCandidatePicker
@@ -329,7 +404,7 @@ function IssueLabelPicker({
       errorLabel="The labels could not be read."
       truncated={candidatesQuery.data?.truncated === true}
       truncatedLabel="More labels exist than are listed here."
-      candidateKey={(candidate) => candidate.name}
+      candidateKey={(candidate) => issueLabelId(candidate)}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
     >
@@ -348,7 +423,7 @@ function IssueLabelPicker({
                 <span className="text-muted-foreground"> · {candidate.description}</span>
               ) : null}
             </span>
-            {applied.has(candidate.name) ? (
+            {applied.has(issueLabelId(candidate)) ? (
               <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
             ) : null}
           </>
@@ -358,43 +433,44 @@ function IssueLabelPicker({
   );
 }
 
-function IssueAssigneePicker({
+export function IssueAssigneePicker({
   environmentId,
   reference,
   detail,
   allowed,
   disabledReason,
+  onUpdated,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  onUpdated: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState<IssuePickerConfirmed | null>(null);
   const candidatesQuery = useEnvironmentQuery(
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const assigned = new Set(detail.assignees.map((actor) => actor.login.toLowerCase()));
-  const candidates = useMemo(() => {
-    const needle = query.toLowerCase();
-    return (candidatesQuery.data?.assignees ?? []).filter(
-      (candidate) =>
-        needle.length === 0 ||
-        candidate.login.toLowerCase().includes(needle) ||
-        (candidate.name ?? "").toLowerCase().includes(needle),
-    );
-  }, [candidatesQuery.data, query]);
+  const held = heldIssuePicker(detail, "assignees", confirmed, environmentId);
+  if (held !== confirmed) setConfirmed(held);
+  const selectedIds = issuePickerIds(detail, "assignees", held, environmentId);
+  const candidates = useMemo(
+    () => issueAssigneeOptions(detail.assignees, candidatesQuery.data?.assignees ?? [], query),
+    [detail.assignees, candidatesQuery.data, query],
+  );
   const toggle = async (candidate: IssueAssigneeCandidate) => {
     if (pending !== null) return;
     setPending(candidate.id);
-    const login = candidate.login.toLowerCase();
-    const assignees = assigned.has(login)
-      ? detail.assignees.filter((actor) => actor.login.toLowerCase() !== login).map((a) => a.login)
-      : [...detail.assignees.map((actor) => actor.login), candidate.id];
+    const assignees = nextIssueAssignees(
+      selectedIds,
+      candidate.id,
+      detail.capabilities.maxAssignees,
+    );
     const result = await update({ environmentId, input: { ...reference, assignees } });
     setPending(null);
     if (result._tag === "Failure") {
@@ -403,7 +479,10 @@ function IssueAssigneePicker({
         title: "Could not change assignees",
         description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
       });
+      return;
     }
+    setConfirmed({ base: detail, ids: assignees, environmentId, kind: "assignees" });
+    onUpdated?.();
   };
   return (
     <PullRequestCandidatePicker
@@ -431,7 +510,7 @@ function IssueAssigneePicker({
       {(candidate) => (
         <>
           <PullRequestActorLabel actor={candidate} tooltip={false} className="min-w-0 flex-1" />
-          {assigned.has(candidate.login.toLowerCase()) ? (
+          {isIssueAssignee(selectedIds, candidate.id) ? (
             <CheckIcon aria-label="Assigned" className="size-3.5 shrink-0" />
           ) : null}
         </>
@@ -478,7 +557,14 @@ function LinkedPullRequestRow({
 }) {
   const body = (
     <>
-      <PullRequestStateGlyph state={link.state} isDraft={link.isDraft} />
+      {link.state === null ? (
+        <PullRequestGlyph.pullRequest
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground"
+        />
+      ) : (
+        <PullRequestStateGlyph state={link.state} isDraft={link.isDraft} />
+      )}
       <span className="min-w-0 flex-1 truncate text-sm">{link.title}</span>
       <span className="shrink-0 font-mono text-xs text-muted-foreground">
         {link.repository}#{link.number}
@@ -506,12 +592,14 @@ export function IssueDetailPanel({
   reference,
   threadRef = null,
   onSelectPullRequest,
+  onUpdated,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   threadRef?: ScopedThreadRef | null;
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
-  onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
+  onSelectPullRequest?: ((target: IssueLinkedPullRequestTarget) => void) | undefined;
+  onUpdated?: (() => void) | undefined;
 }) {
   const detailQuery = useEnvironmentQuery(
     issueEnvironment.detail({ environmentId, input: reference }),
@@ -519,15 +607,12 @@ export function IssueDetailPanel({
   const detail = detailQuery.data;
   const canWrite = useAtomValue(issueEnvironment.comment.permissionAtom(environmentId));
   const projects = useProjects();
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const cwd =
     projects.find((p) => p.environmentId === environmentId && p.id === reference.projectId)
       ?.workspaceRoot ?? "";
 
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
+  const [older, setOlder] = useState<IssueOlderComments | null>(null);
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const [loadingOlder, setLoadingOlder] = useState(false);
   const comment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
@@ -553,10 +638,7 @@ export function IssueDetailPanel({
     return <PullRequestDetailGhost />;
   }
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = older?.seed === detail.commentsCursor ? older.cursor : detail.commentsCursor;
-  const comments = prependIssueComments(detail.comments, olderComments);
+  const { comments, cursor: nextCursor, held: heldComments } = issueCommentsView(detail, older);
   const timeline: ReadonlyArray<TimelineItem> = [
     ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
@@ -567,13 +649,26 @@ export function IssueDetailPanel({
     blocked === null && capability && permission;
   const canComment = may(detail.capabilities.comment, detail.viewerPermissions.comment);
   const canEdit = may(detail.capabilities.edit, detail.viewerPermissions.edit);
+  const canEditBody = canEdit && detail.bodyEditable !== false;
   const canLabel = may(detail.capabilities.labels, detail.viewerPermissions.labels);
   const canAssign = may(detail.capabilities.assignees, detail.viewerPermissions.assignees);
   const canReact = blocked === null && detail.capabilities.reactions;
-  const canSetState = may(detail.capabilities.states.length > 0, detail.viewerPermissions.setState);
+  const canReactToComment = blocked === null && issueSupportsReactions(detail.capabilities, true);
+  const states = detail.states ?? detail.capabilities.states;
+  const canSetState = may(states.length > 0, detail.viewerPermissions.setState);
   const tracker = issueTrackerPresentation(detail.tracker);
-  const otherStates = detail.capabilities.states.filter(
-    (state) => state.category !== detail.state.category || state.name !== detail.state.name,
+  const reactionOwner = `${environmentId}\u0000${issueEntryKey(detail)}\u0000${detail.viewer ?? ""}`;
+  const isCurrentState = (state: IssueState) =>
+    state.category === detail.state.category &&
+    (state.name === detail.state.name || state.name === state.category);
+  const closeReasonsFor = (state: IssueState) =>
+    state.category === "closed"
+      ? detail.capabilities.closeReasons.filter(
+          (reason) => !isCurrentState(state) || reason !== detail.state.closeReason,
+        )
+      : [];
+  const otherStates = states.filter(
+    (state) => !isCurrentState(state) || closeReasonsFor(state).length > 0,
   );
   const closingStates = otherStates.filter((state) => state.category === "closed");
   const openingStates = otherStates.filter((state) => state.category === "open");
@@ -583,18 +678,18 @@ export function IssueDetailPanel({
     setLoadingOlder(true);
     const result = await loadComments({
       environmentId,
-      input: { ...reference, cursor: nextCursor },
+      input: {
+        ...reference,
+        cursor: nextCursor,
+        ...(detail.viewer === null ? {} : { viewer: detail.viewer }),
+      },
     });
     setLoadingOlder(false);
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: "Older comments could not be read" });
       return;
     }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
+    setOlder(appendOlderIssueComments(detail, heldComments, result.value));
   };
 
   const submitComment = async () => {
@@ -612,6 +707,7 @@ export function IssueDetailPanel({
       return;
     }
     setDraft("");
+    onUpdated?.();
   };
 
   const save = async (patch: { title?: string; body?: string }) => {
@@ -627,6 +723,7 @@ export function IssueDetailPanel({
       return;
     }
     setEditing(null);
+    onUpdated?.();
   };
 
   const moveTo = async (state: string, closeReason?: string) => {
@@ -643,7 +740,9 @@ export function IssueDetailPanel({
         title: "The state could not be changed",
         description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
       });
+      return;
     }
+    onUpdated?.();
   };
 
   const stateControl: ReactNode = canSetState ? (
@@ -680,7 +779,7 @@ export function IssueDetailPanel({
           <MenuPopup align="end">
             {otherStates.flatMap((state) =>
               state.category === "closed" && detail.capabilities.closeReasons.length > 0
-                ? detail.capabilities.closeReasons.map((reason) => (
+                ? closeReasonsFor(state).map((reason) => (
                     <MenuItem
                       key={`${state.name}:${reason}`}
                       onClick={() => void moveTo(state.name, reason)}
@@ -711,12 +810,9 @@ export function IssueDetailPanel({
         <div className="flex flex-col gap-4 px-4 pt-3 pb-4">
           <PullRequestDetailTitleRow className="gap-2">
             <IssueStateGlyph state={detail.state} />
-            <span className="shrink-0 font-mono text-xs text-muted-foreground">
-              {detail.displayKey}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
               <tracker.Icon aria-hidden className="mr-1 inline size-3 align-[-2px]" />
-              {detail.scope}
+              {issueDisplayLabel(detail.scope, detail.displayKey)}
             </span>
             {stateControl}
             {threadRef ? (
@@ -763,7 +859,9 @@ export function IssueDetailPanel({
                 disabled={saving}
                 onChange={(event) => setTitleDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditing(null);
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  setEditing(null);
                 }}
               />
               <Button type="submit" size="sm" disabled={saving}>
@@ -807,23 +905,36 @@ export function IssueDetailPanel({
 
           <div className="flex flex-wrap items-center gap-1.5">
             {detail.labels.map((label) => (
-              <PullRequestLabelChip key={label.name} label={label} />
+              <PullRequestLabelChip key={issueLabelId(label)} label={label} />
             ))}
             {detail.capabilities.labels ? (
               <IssueLabelPicker
                 environmentId={environmentId}
                 reference={reference}
                 detail={detail}
-                allowed={canLabel}
-                disabledReason={blocked ?? "Changing labels needs triage access on this tracker."}
+                allowed={canLabel && detail.labelsTruncated !== true}
+                disabledReason={
+                  blocked ??
+                  (detail.labelsTruncated === true
+                    ? `Not every label is shown here, so change them on ${tracker.providerName}.`
+                    : "Changing labels needs triage access on this tracker.")
+                }
+                onUpdated={onUpdated}
               />
             ) : null}
           </div>
+          {detail.labelsTruncated === true ? (
+            <IssueTruncatedNote
+              text="Not every label is shown here."
+              url={detail.url}
+              providerName={tracker.providerName}
+            />
+          ) : null}
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="shrink-0">Assignees</span>
             {detail.assignees.length === 0 ? <span>none</span> : null}
             {detail.assignees.map((actor) => (
-              <PullRequestActorLabel key={actor.login} actor={actor} />
+              <PullRequestActorLabel key={issueAssigneeId(actor)} actor={actor} />
             ))}
             {detail.capabilities.assignees ? (
               <IssueAssigneePicker
@@ -834,6 +945,7 @@ export function IssueDetailPanel({
                 disabledReason={
                   blocked ?? "Changing assignees needs triage access on this tracker."
                 }
+                onUpdated={onUpdated}
               />
             ) : null}
           </div>
@@ -841,14 +953,22 @@ export function IssueDetailPanel({
           <section className="group flex flex-col gap-2 rounded-lg border border-border/60 p-3">
             <div className="flex items-start gap-1">
               <span className="min-w-0 flex-1 text-xs text-muted-foreground">Description</span>
-              {canEdit && editing !== "body" ? (
+              {canEditBody && editing !== "body" ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
                   onClick={() => setEditing("body")}
                 />
               ) : null}
+              {canEdit && !canEditBody ? (
+                <InlineButton
+                  tone="muted"
+                  render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
+                >
+                  Edit description on {tracker.providerName}
+                </InlineButton>
+              ) : null}
             </div>
-            {editing === "body" ? (
+            {editing === "body" && canEditBody ? (
               <PullRequestMarkdownEditor
                 value={detail.body}
                 cwd={cwd}
@@ -872,10 +992,20 @@ export function IssueDetailPanel({
             )}
             {detail.reactions !== undefined ? (
               <IssueReactionBar
+                key={reactionOwner}
                 reactions={detail.reactions}
                 canReact={canReact}
+                contents={detail.capabilities.reactionContents}
+                viewer={detail.viewer}
                 environmentId={environmentId}
                 reference={reference}
+              />
+            ) : null}
+            {detail.reactionsTruncated === true ? (
+              <IssueTruncatedNote
+                text="Reaction details are limited."
+                url={detail.url}
+                providerName={tracker.providerName}
               />
             ) : null}
           </section>
@@ -883,33 +1013,41 @@ export function IssueDetailPanel({
           {detail.linkedPullRequests.length > 0 ? (
             <section className="flex flex-col gap-1">
               <h3 className="text-xs text-muted-foreground">Linked pull requests</h3>
-              {detail.linkedPullRequests.map((link) => (
-                <LinkedPullRequestRow
-                  key={`${link.repository}#${link.number}`}
-                  link={link}
-                  onSelect={
-                    onSelectPullRequest
-                      ? () =>
-                          onSelectPullRequest({
-                            projectId: reference.projectId,
-                            ...(reference.host === undefined ? {} : { host: reference.host }),
-                            repository: link.repository,
-                            number: link.number,
-                          })
-                      : null
-                  }
-                />
-              ))}
+              {detail.linkedPullRequests.map((link) => {
+                const target = linkedPullRequestTarget(
+                  link,
+                  reference,
+                  environmentId,
+                  projects,
+                  serverConfig?.environment.capabilities,
+                );
+                return (
+                  <LinkedPullRequestRow
+                    key={link.url}
+                    link={link}
+                    onSelect={
+                      onSelectPullRequest && target ? () => onSelectPullRequest(target) : null
+                    }
+                  />
+                );
+              })}
             </section>
           ) : null}
 
           <section className="flex flex-col gap-3">
             <h3 className="text-xs text-muted-foreground">
               Activity
-              {detail.commentCount > 0
+              {detail.commentCount !== null && detail.commentCount > 0
                 ? ` · ${detail.commentCount} ${detail.commentCount === 1 ? "comment" : "comments"}`
                 : ""}
             </h3>
+            {detail.historyTruncated === true ? (
+              <IssueTruncatedNote
+                text="Some older activity is not shown here."
+                url={detail.url}
+                providerName={tracker.providerName}
+              />
+            ) : null}
             {nextCursor !== null ? (
               <Button
                 size="sm"
@@ -951,13 +1089,24 @@ export function IssueDetailPanel({
                     environmentId={environmentId}
                     threadRef={threadRef}
                   />
-                  {item.comment.reactions !== undefined ? (
+                  {item.comment.reactions !== undefined ||
+                  issueSupportsReactions(detail.capabilities, true) ? (
                     <IssueReactionBar
-                      reactions={item.comment.reactions}
-                      canReact={canReact}
+                      key={reactionOwner}
+                      reactions={item.comment.reactions ?? []}
+                      canReact={canReactToComment}
+                      contents={detail.capabilities.reactionContents}
                       subjectId={item.comment.id}
+                      viewer={detail.viewer}
                       environmentId={environmentId}
                       reference={reference}
+                    />
+                  ) : null}
+                  {item.comment.reactionsTruncated === true ? (
+                    <IssueTruncatedNote
+                      text="Reaction details are limited."
+                      url={item.comment.url ?? detail.url}
+                      providerName={tracker.providerName}
                     />
                   ) : null}
                 </article>
@@ -992,6 +1141,10 @@ export function IssueDetailPanel({
             disabled={!canComment || submitting}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (event.key === "Escape" && draft.length > 0) {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
                 void submitComment();

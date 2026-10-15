@@ -1,6 +1,23 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentId,
+  IssueResolvedUrl,
+  ProjectId,
+  ThreadId,
+  type AuthEnvironmentScope,
+  type AuthSessionState,
+  type ServerConfig,
+} from "@t3tools/contracts";
+import type {
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+} from "@t3tools/client-runtime/connection";
+import type { RpcSession } from "@t3tools/client-runtime/rpc";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
@@ -10,15 +27,101 @@ import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
+import { ISSUES_PANEL_REF, useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
+import { PullRequestMarkdown } from "./pullRequest/PullRequestMarkdown";
+import { PullRequestCommentBody } from "./pullRequest/PullRequestCommentBody";
+import { PullRequestMarkdownEditor } from "./pullRequest/PullRequestMarkdownEditor";
+import { ChatViewIssuePanel } from "./ChatViewIssuePanel";
+
+vi.mock("./issue/IssueDetailPanel", () => ({
+  IssueDetailPanel: ({ environmentId }: { environmentId: EnvironmentId }) => (
+    <h2>Issue on {environmentId}</h2>
+  ),
+}));
+vi.mock("./pullRequest/PullRequestsUnavailableState", () => ({
+  PullRequestsUnavailableState: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+vi.mock("./pullRequest/PullRequestGhosts", () => ({
+  PullRequestDetailGhost: () => <h2>Loading issue</h2>,
+}));
+
+const issueLinks = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  enabled: false,
+}));
+
+vi.mock("../connection/runtime", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const Layer = await import("effect/Layer");
+  const Option = await import("effect/Option");
+  const SubscriptionRef = await import("effect/SubscriptionRef");
+  const services = await import("@t3tools/client-runtime/connection");
+  const decodeResolved = Schema.decodeUnknownEffect(IssueResolvedUrl);
+  return {
+    connectionAtomRuntime: Atom.runtime(
+      Layer.succeed(
+        services.EnvironmentRegistry.EnvironmentRegistry,
+        services.EnvironmentRegistry.EnvironmentRegistry.of({
+          run: <A, E, R>(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
+            Effect.gen(function* () {
+              const client = {
+                "issues.resolveUrl": (input: Record<string, unknown>) =>
+                  Effect.sync(() => issueLinks.resolve({ environmentId, input })).pipe(
+                    Effect.andThen(decodeResolved),
+                  ),
+              } as unknown as RpcSession["client"];
+              const session = yield* SubscriptionRef.make(Option.some({ client } as RpcSession));
+              return yield* Effect.provideService(
+                effect,
+                services.EnvironmentSupervisor.EnvironmentSupervisor,
+                {
+                  target: { environmentId },
+                  session,
+                } as EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+              );
+            }),
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+      ),
+    ),
+  };
+});
+vi.mock("@t3tools/client-runtime/state/session", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@t3tools/client-runtime/state/session")>();
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    ...original,
+    createEnvironmentSessionAtoms: () => ({
+      sessionStateAtom: Atom.family(() =>
+        Atom.make(
+          AsyncResult.success({
+            authenticated: true,
+            auth: {
+              policy: "remote-reachable",
+              bootstrapMethods: [],
+              sessionMethods: [],
+              sessionCookieName: "test",
+            },
+            scopes: AuthStandardClientScopes,
+            permissions: AuthStandardClientScopes,
+          } satisfies AuthSessionState),
+        ),
+      ),
+    }),
+  };
+});
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => null,
+}));
 vi.mock("./chat/MermaidDiagram", () => ({
   // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
   MermaidDiagram: () => <svg aria-label="Diagram" />,
@@ -48,7 +151,6 @@ vi.mock("./ui/tooltip", async () => {
   };
 });
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../state/session")>();
   const { AuthStandardClientScopes } = await import("@t3tools/contracts");
@@ -63,9 +165,15 @@ vi.mock("../state/session", async (importOriginal) => {
   };
 });
 vi.mock("../state/entities", () => ({
-  readThreadShell: () => null,
+  readEnvironmentSupportsServerBrowser: () => false,
+  readThreadShell: () => (issueLinks.enabled ? { projectId: "project-a" } : null),
   useProjects: () => [],
-  useServerConfigs: () => new Map(),
+  useServerConfigs: () =>
+    new Map(
+      issueLinks.enabled
+        ? ["env-a", "env-b"].map((id) => [id, { environment: { capabilities: { issues: true } } }])
+        : [],
+    ),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -94,6 +202,153 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("pull request Markdown issue destinations", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("env-a"),
+    threadId: ThreadId.make("thread"),
+  };
+  const url = "https://github.com/example/repo/issues/7";
+  const text = `[Issue](${url})`;
+  let element: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  async function showPanel(
+    surface: RightPanelSurface,
+    sourceIssues: boolean | null,
+    destinationIssues: boolean | null = true,
+  ) {
+    const config = (issues: boolean | null) =>
+      issues === null ? null : ({ environment: { capabilities: { issues } } } as ServerConfig);
+    await act(async () =>
+      root.render(
+        <ChatViewIssuePanel
+          surface={surface as Extract<RightPanelSurface, { kind: "issue" }>}
+          threadRef={threadRef}
+          environmentById={
+            new Map([
+              [threadRef.environmentId, { serverConfig: config(sourceIssues) }],
+              [EnvironmentId.make("env-b"), { serverConfig: config(destinationIssues) }],
+            ])
+          }
+        />,
+      ),
+    );
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    issueLinks.enabled = true;
+    issueLinks.resolve.mockReset().mockReturnValue({
+      projectId: ProjectId.make("resolved-project"),
+      tracker: "github",
+      host: "github.com",
+      scope: "example/repo",
+      key: "7",
+      writable: true,
+    });
+    useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+    element = document.createElement("div");
+    document.body.append(element);
+    root = createRoot(element);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    element.remove();
+    useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+    issueLinks.enabled = false;
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["body", false],
+    ["comment", null],
+    ["editor preview", true],
+    ["same environment", true],
+    ["standalone", true],
+  ] as const)(
+    "opens an issue from the %s in its source environment and existing panel",
+    async (surface, sourceIssues) => {
+      const environmentId =
+        surface === "same environment" ? threadRef.environmentId : EnvironmentId.make("env-b");
+      const props = {
+        cwd: "/repo",
+        text,
+        environmentId,
+        threadRef: surface === "standalone" ? null : threadRef,
+      };
+      await act(async () => {
+        root.render(
+          <AppAtomRegistryProvider>
+            {surface === "editor preview" ? (
+              <PullRequestMarkdownEditor
+                {...props}
+                value={text}
+                label="Description"
+                saving={false}
+                onSave={vi.fn()}
+                onCancel={vi.fn()}
+              />
+            ) : surface === "comment" ? (
+              <PullRequestCommentBody {...props} />
+            ) : (
+              <PullRequestMarkdown {...props} />
+            )}
+          </AppAtomRegistryProvider>,
+        );
+      });
+      if (surface === "editor preview") {
+        const preview = [...element.querySelectorAll("button")].find(
+          (button) => button.textContent === "Preview",
+        );
+        expect(preview).toBeDefined();
+        await act(async () => preview!.click());
+      }
+      const link = element.querySelector<HTMLAnchorElement>(`a[href="${url}"]`);
+      expect(link).not.toBeNull();
+      const opened = new Promise<void>((resolve) => {
+        const unsubscribe = useRightPanelStore.subscribe(() => {
+          unsubscribe();
+          resolve();
+        });
+      });
+      await act(async () => {
+        link!.click();
+        await opened;
+      });
+      expect(issueLinks.resolve).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        input: { url, ...(surface === "same environment" ? { projectId: "project-a" } : {}) },
+      });
+      const panelRef = surface === "standalone" ? ISSUES_PANEL_REF : threadRef;
+      const panels = useRightPanelStore.getState().byThreadKey;
+      expect(Object.keys(panels)).toEqual([scopedThreadKey(panelRef)]);
+      expect(panels[scopedThreadKey(panelRef)]?.surfaces).toEqual([
+        expect.objectContaining({
+          kind: "issue",
+          ...(panelRef.environmentId === environmentId ? {} : { environmentId }),
+          projectId: "resolved-project",
+          tracker: "github",
+          host: "github.com",
+          scope: "example/repo",
+          key: "7",
+          url,
+        }),
+      ]);
+      if (surface !== "standalone") {
+        const issue = panels[scopedThreadKey(panelRef)]!.surfaces[0]!;
+        await showPanel(issue, sourceIssues);
+        expect(element.querySelector("h2")?.textContent).toBe(`Issue on ${environmentId}`);
+        if (surface === "body") {
+          await showPanel(issue, true, false);
+          expect(element.querySelector("h2")?.textContent).toBe("Issues unavailable");
+          await showPanel(issue, true, null);
+          expect(element.querySelector("h2")?.textContent).toBe("Loading issue");
+        }
+      }
+    },
+  );
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(

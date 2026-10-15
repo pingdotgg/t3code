@@ -1,9 +1,11 @@
-import { threadIssueKeyOf, type ThreadIssueLink } from "@t3tools/contracts";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { threadIssueKeyOf, type ScopedThreadRef } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { useThreadShell } from "../../state/entities";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { issueDisplayLabel } from "../issue/issueDetail.logic";
 import { IssueGlyph, resolveIssueStatePresentation } from "../issue/issuePresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
@@ -17,13 +19,8 @@ import {
  * key, title and state, so no tracker read happens on render. Until the first snapshot lands the
  * row shows what the link itself carries.
  */
-export function ThreadDetailsIssueRows({
-  links,
-  onOpenLink,
-}: {
-  links: ReadonlyArray<ThreadIssueLink>;
-  onOpenLink: (event: ReactMouseEvent<HTMLElement>, link: ThreadIssueLink) => void;
-}) {
+export function ThreadDetailsIssueRows({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const links = useThreadShell(threadRef)?.issues ?? [];
   if (links.length === 0) return null;
   return (
     <>
@@ -32,7 +29,7 @@ export function ThreadDetailsIssueRows({
           link.snapshot === null ? null : resolveIssueStatePresentation(link.snapshot.state);
         const label =
           link.snapshot === null
-            ? `${link.scope}#${link.key}`
+            ? issueDisplayLabel(link.scope, link.key)
             : `${link.snapshot.displayKey}: ${link.snapshot.title}`;
         return (
           <Tooltip key={threadIssueKeyOf(link)}>
@@ -41,7 +38,17 @@ export function ThreadDetailsIssueRows({
                 <ThreadDetailsControl
                   part="row"
                   aria-label={link.url}
-                  onClick={(event) => onOpenLink(event, link)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    useRightPanelStore.getState().openIssue(threadRef, {
+                      projectId: link.projectId,
+                      tracker: link.tracker,
+                      host: link.host,
+                      scope: link.scope,
+                      key: link.key,
+                      url: link.url,
+                    });
+                  }}
                 />
               }
             >

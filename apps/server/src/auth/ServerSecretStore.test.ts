@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
@@ -98,52 +98,6 @@ const layerRemoveFailureSecretStore = () =>
     Layer.provideMerge(layerRemoveFailureFileSystem),
   );
 
-const layerConcurrentReadMissFileSystem = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const readCountRef = yield* Ref.make(0);
-    const readBarrier = yield* Deferred.make<void>();
-
-    return {
-      ...fileSystem,
-      readFile: (path) =>
-        /[\\/]session-signing-key\.bin$/.test(String(path))
-          ? Ref.updateAndGet(readCountRef, (count) => count + 1).pipe(
-              Effect.flatMap((count) => {
-                if (count > 2) {
-                  return fileSystem.readFile(path);
-                }
-                return Effect.gen(function* () {
-                  if (count === 2) {
-                    yield* Deferred.succeed(readBarrier, void 0);
-                  }
-                  yield* Deferred.await(readBarrier);
-                  return yield* Effect.failCause(
-                    Cause.fail(
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFile",
-                        pathOrDescriptor: String(path),
-                        description: "Secret file does not exist yet.",
-                      }),
-                    ),
-                  );
-                });
-              }),
-            )
-          : fileSystem.readFile(path),
-    } satisfies FileSystem.FileSystem;
-  }),
-).pipe(Layer.provide(NodeServices.layer));
-
-const layerConcurrentCreateSecretStore = () =>
-  ServerSecretStore.layer.pipe(
-    Layer.provide(layerServerConfig()),
-    Layer.provideMerge(layerConcurrentReadMissFileSystem),
-  );
-
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
   it.effect("returns Option.none when a secret file does not exist", () =>
     Effect.gen(function* () {
@@ -168,21 +122,74 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
   it.effect("returns the persisted secret when concurrent creators race", () =>
     Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const [first, second] = yield* Effect.all(
-        [
-          secretStore.getOrCreateRandom("session-signing-key", 32),
-          secretStore.getOrCreateRandom("session-signing-key", 32),
-        ],
-        { concurrency: "unbounded" },
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const writeStarted = yield* Deferred.make<void>();
+      const releaseWrite = yield* Deferred.make<void>();
+      const secretPath = path.join(config.secretsDir, "session-signing-key.bin");
+      const tempPrefix = path.join(config.secretsDir, "session-signing-key.");
+      let pauseNextWrite = true;
+      const secretStore = yield* ServerSecretStore.make.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          open: (filePath, options) =>
+            fileSystem.open(filePath, options).pipe(
+              Effect.map((file) =>
+                filePath === secretPath || filePath.startsWith(tempPrefix)
+                  ? {
+                      ...file,
+                      sync: file.sync,
+                      writeAll: (bytes) =>
+                        Effect.gen(function* () {
+                          if (pauseNextWrite) {
+                            pauseNextWrite = false;
+                            yield* Deferred.succeed(writeStarted, void 0);
+                            yield* Deferred.await(releaseWrite);
+                          }
+                          yield* file.writeAll(bytes);
+                        }),
+                    }
+                  : file,
+              ),
+            ),
+        }),
       );
+      const firstCreator = yield* secretStore
+        .getOrCreateRandom("session-signing-key", 32)
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(writeStarted);
+      const second = yield* secretStore.getOrCreateRandom("session-signing-key", 32);
+      yield* Deferred.succeed(releaseWrite, void 0);
+      const first = yield* Fiber.join(firstCreator);
       const persisted = yield* secretStore.get("session-signing-key");
       const persistedBytes = Option.getOrThrow(persisted);
 
+      assert.lengthOf(persistedBytes, 32);
       assert.deepEqual(Array.from(first), Array.from(persistedBytes));
       assert.deepEqual(Array.from(second), Array.from(persistedBytes));
-    }).pipe(Effect.provide(layerConcurrentCreateSecretStore())),
+      assert.deepEqual(yield* fileSystem.readDirectory(config.secretsDir), [
+        "session-signing-key.bin",
+      ]);
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
+  it.effect("keeps an existing secret and removes unpublished files after a create collision", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const value = Uint8Array.from([1, 2, 3]);
+      yield* secretStore.create("existing-secret", value);
+
+      const error = yield* secretStore
+        .create("existing-secret", Uint8Array.from([4]))
+        .pipe(Effect.flip);
+
+      assert.isTrue(ServerSecretStore.isSecretAlreadyExistsError(error));
+      assert.deepEqual(Option.getOrThrow(yield* secretStore.get("existing-secret")), value);
+      assert.deepEqual(yield* fileSystem.readDirectory(config.secretsDir), ["existing-secret.bin"]);
+    }).pipe(Effect.provide(ServerSecretStore.layer.pipe(Layer.provideMerge(layerServerConfig())))),
   );
 
   it.effect("uses restrictive permissions for the secret directory and files", () =>

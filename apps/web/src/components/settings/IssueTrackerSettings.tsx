@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState, type ElementType } from "react";
+import { useState, type ChangeEvent, type ElementType } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
@@ -16,9 +16,15 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { LinearIcon } from "../Icons";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
+import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
+import {
+  connectFailureMessage,
+  connectionFailureDetail,
+  packCredential,
+} from "./IssueTrackerSettings.logic";
 import { SecretInput } from "./SecretInput";
 import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -48,6 +54,18 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
         <div className="grid gap-3 px-4 py-3">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-8 w-full" />
+        </div>
+      </SettingsSection>
+    );
+  }
+  if (query.data === null && query.error !== null) {
+    return (
+      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+          <p className="text-xs text-destructive">{query.error}</p>
+          <Button size="xs" variant="outline" onClick={query.refresh}>
+            Retry
+          </Button>
         </div>
       </SettingsSection>
     );
@@ -82,7 +100,10 @@ function TrackerRow({
   const connect = useAtomCommand(issueTrackerEnvironment.connect, {
     label: `connect ${tracker.displayName}`,
   });
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const fields = tracker.credential.fields;
+  const packed = packCredential(fields, draft);
+  const inputId = `issue-tracker-${tracker.tracker}-${environmentId}`;
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -95,11 +116,10 @@ function TrackerRow({
         input: { tracker: tracker.tracker, token },
       });
       if (result._tag === "Success") {
-        setDraft("");
+        setDraft({});
         return;
       }
-      const error = squashAtomCommandFailure(result);
-      setFailure(error instanceof Error ? error.message : "The request failed.");
+      setFailure(connectFailureMessage(squashAtomCommandFailure(result)));
     } finally {
       setBusy(false);
     }
@@ -108,7 +128,7 @@ function TrackerRow({
   const status = !tracker.connected ? (
     <Badge variant="outline">Not connected</Badge>
   ) : tracker.account === null ? (
-    <Badge variant="destructive">Credential rejected</Badge>
+    <Badge variant="destructive">Not verified</Badge>
   ) : (
     <Badge variant="secondary">Connected as {tracker.account}</Badge>
   );
@@ -140,13 +160,13 @@ function TrackerRow({
           className="grid gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (draft.trim()) void submit(draft.trim());
+            if (packed !== null) void submit(packed);
           }}
         >
           {/* Locked while saving: a successful save clears the draft, which would drop mid-request edits. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="grid gap-1.5">
-              <Label htmlFor={`issue-tracker-${tracker.tracker}-${environmentId}`}>
+              <Label htmlFor={fields === undefined ? inputId : undefined}>
                 {tracker.credential.label}
                 {tracker.credential.helpUrl ? (
                   <>
@@ -166,15 +186,38 @@ function TrackerRow({
                   </>
                 ) : null}
               </Label>
+              {fields?.map((field) => {
+                const id = `${inputId}-${field.key}`;
+                const props = {
+                  id,
+                  size: "sm" as const,
+                  required: true,
+                  value: draft[field.key] ?? "",
+                  onChange: (event: ChangeEvent<HTMLInputElement>) =>
+                    setDraft((current) => ({ ...current, [field.key]: event.target.value })),
+                };
+                return (
+                  <div key={field.key} className="grid gap-1">
+                    <Label htmlFor={id}>{field.label}</Label>
+                    {field.secret ? (
+                      <SecretInput {...props} configured={tracker.connected} />
+                    ) : (
+                      <Input {...props} autoComplete="off" spellCheck={false} />
+                    )}
+                  </div>
+                );
+              })}
               <div className="flex gap-2">
-                <SecretInput
-                  id={`issue-tracker-${tracker.tracker}-${environmentId}`}
-                  size="sm"
-                  configured={tracker.connected}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-                <Button type="submit" size="sm" disabled={!draft.trim()}>
+                {fields === undefined ? (
+                  <SecretInput
+                    id={inputId}
+                    size="sm"
+                    configured={tracker.connected}
+                    value={draft[""] ?? ""}
+                    onChange={(event) => setDraft({ "": event.target.value })}
+                  />
+                ) : null}
+                <Button type="submit" size="sm" disabled={packed === null}>
                   {tracker.connected ? "Replace" : "Connect"}
                 </Button>
               </div>
@@ -212,7 +255,9 @@ function ProjectBindings({
     label: `bind project to ${tracker.displayName}`,
   });
   const [pending, setPending] = useState<ProjectId | null>(null);
-  if (projects.length === 0 || tracker.scopes.length === 0) return null;
+  if (projects.length === 0 || (tracker.scopes.length === 0 && !tracker.scopesTruncated)) {
+    return null;
+  }
 
   const change = async (projectId: ProjectId, scope: string) => {
     setPending(projectId);
@@ -234,6 +279,9 @@ function ProjectBindings({
       <p className="text-xs text-muted-foreground">
         Pick the {tracker.displayName} {tracker.scopeNoun} whose issues each project lists beside
         its repository's own.
+        {tracker.scopesTruncated
+          ? ` Only the first ${tracker.scopes.length} are listed; enter a ${tracker.scopeNoun} key to bind another.`
+          : null}
       </p>
       <ul className="grid gap-1.5">
         {projects.map((project) => {
@@ -241,7 +289,7 @@ function ProjectBindings({
           // A project bound to another tracker keeps that binding; this picker shows it unbound.
           const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
           return (
-            <li key={project.id} className="flex items-center justify-between gap-3">
+            <li key={project.id} className="flex flex-wrap items-center justify-between gap-3">
               <span className="min-w-0 truncate text-sm">{project.title}</span>
               <Select
                 value={value}
@@ -270,10 +318,87 @@ function ProjectBindings({
                   ))}
                 </SelectPopup>
               </Select>
+              {tracker.scopesTruncated ? (
+                <ScopeKeyForm
+                  environmentId={environmentId}
+                  tracker={tracker}
+                  projectId={project.id}
+                  projectTitle={project.title}
+                  disabled={disabled || pending === project.id}
+                />
+              ) : null}
             </li>
           );
         })}
       </ul>
     </div>
+  );
+}
+
+function ScopeKeyForm({
+  environmentId,
+  tracker,
+  projectId,
+  projectTitle,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly tracker: IssueTrackerConnection;
+  readonly projectId: ProjectId;
+  readonly projectTitle: string;
+  readonly disabled: boolean;
+}) {
+  const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
+    label: `bind project to ${tracker.displayName}`,
+    reportFailure: false,
+  });
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const submit = async (scope: string) => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const result = await bind({
+        environmentId,
+        input: { projectId, binding: { tracker: tracker.tracker, scope } },
+      });
+      if (result._tag === "Success") {
+        setKey("");
+        return;
+      }
+      setFailure(connectionFailureDetail(squashAtomCommandFailure(result)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="grid basis-full gap-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (key.trim()) void submit(key.trim());
+      }}
+    >
+      <fieldset disabled={disabled || busy} className="flex justify-end gap-2">
+        <Input
+          aria-label={`${tracker.displayName} ${tracker.scopeNoun} key for ${projectTitle}`}
+          className="w-48"
+          size="sm"
+          required
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={`${tracker.scopeNoun} key`}
+          value={key}
+          onChange={(event) => setKey(event.target.value)}
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={!key.trim()}>
+          Bind
+        </Button>
+      </fieldset>
+      {failure ? <p className="text-right text-xs text-destructive">{failure}</p> : null}
+    </form>
   );
 }

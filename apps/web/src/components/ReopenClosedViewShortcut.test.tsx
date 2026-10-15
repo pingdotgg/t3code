@@ -61,7 +61,11 @@ vi.mock("../modelPickerVisibility", () => ({ isModelPickerOpen: () => false }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 
 import { useClosedViewStore } from "../closedViewStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  ISSUES_PANEL_REF,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
@@ -157,6 +161,54 @@ describe("root reopen shortcut", () => {
     ).toBe("diff");
     expect(state.navigate).toHaveBeenCalledWith({ to: "/$environmentId/$threadId", params: ref });
     expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
+  it.each([
+    {
+      environmentId: "remote",
+      projectId: "project-b",
+      tracker: "forgejo",
+      host: "code.example.com",
+      scope: "Mount/Team/Repo",
+      key: "42",
+    },
+    {
+      environmentId: "remote",
+      projectId: "project-b",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "workspace/ENG",
+      key: "ENG-7",
+    },
+  ])("restores the closed $tracker issue's selection on the issues page", async (issue) => {
+    const panels = useRightPanelStore.getState();
+    panels.openIssue(ISSUES_PANEL_REF, { ...issue, url: "https://code.example.com/issue" });
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      ISSUES_PANEL_REF,
+    ).surfaces[0]!;
+    panels.closeSurface(ISSUES_PANEL_REF, surface.id);
+    await render();
+    await act(() => {
+      press();
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ISSUES_PANEL_REF)
+        .activeSurfaceId,
+    ).toBe(surface.id);
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/issues",
+      search: {
+        who: "all",
+        status: "open",
+        selectedEnvironmentId: issue.environmentId,
+        selectedProjectId: issue.projectId,
+        selectedHost: issue.host,
+        tracker: issue.tracker,
+        scope: issue.scope,
+        key: issue.key,
+      },
+    });
   });
 
   it("leaves native shortcuts alone without history or while the palette is open", async () => {

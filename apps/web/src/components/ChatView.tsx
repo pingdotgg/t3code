@@ -62,7 +62,6 @@ import {
   type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
   type EnvironmentId,
-  type IssueTrackerKind,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -287,10 +286,8 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
-import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
-import { IssueDetailPanel } from "./issue/IssueDetailPanel";
-import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import { ChatViewPullRequestPanel } from "./ChatViewPullRequestPanel";
+import { ChatViewIssuePanel } from "./ChatViewIssuePanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -11166,26 +11163,23 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
-      <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
-      <PullRequestsUnavailableState
-        title="Pull requests unavailable"
-        error="Update this environment's T3 Code server to browse pull requests."
-      />
     ) : renderedRightPanelSurface?.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
       // would be the same action twice. The thread context also drops the checkout button, so it
       // is only right for the thread's own pull request, whose branch is already under the
       // reader's feet. A link the agent wrote can open any other one here, and that one has to be
       // checkable out like it is anywhere else.
-      <PullRequestDetailPanel
+      <ChatViewPullRequestPanel
+        environmentById={environmentById}
         getShortcutContext={getShortcutContext}
         shortcutsEnabled={
           rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
         }
-        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
-        environmentId={activeThread.environmentId}
+        key={renderedRightPanelSurface.id}
+        environmentId={
+          (renderedRightPanelSurface.environmentId as EnvironmentId | undefined) ??
+          activeThread.environmentId
+        }
         onSelectPullRequest={(reference) => {
           if (activeThreadRef)
             useRightPanelStore.getState().openPullRequest(activeThreadRef, {
@@ -11193,6 +11187,9 @@ export default function ChatView(props: ChatViewProps) {
               repository: reference.repository,
               number: reference.number,
               ...(reference.host ? { host: reference.host } : {}),
+              ...(renderedRightPanelSurface.environmentId === undefined
+                ? {}
+                : { environmentId: renderedRightPanelSurface.environmentId }),
             });
         }}
         threadRef={activeThreadRef}
@@ -11219,38 +11216,12 @@ export default function ChatView(props: ChatViewProps) {
             : undefined
         }
       />
-    ) : renderedRightPanelSurface?.kind === "issue" && !pullRequestsCapabilityKnown ? (
-      <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "issue" &&
-      serverConfig?.environment.capabilities.issues !== true ? (
-      <PullRequestsUnavailableState
-        title="Issues unavailable"
-        error="Update this environment's T3 Code server to browse issues."
-      />
     ) : renderedRightPanelSurface?.kind === "issue" ? (
-      <IssueDetailPanel
+      <ChatViewIssuePanel
         key={renderedRightPanelSurface.id}
-        environmentId={
-          (renderedRightPanelSurface.environmentId as EnvironmentId | undefined) ??
-          activeThread.environmentId
-        }
-        reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
-          tracker: renderedRightPanelSurface.tracker as IssueTrackerKind,
-          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-          scope: renderedRightPanelSurface.scope,
-          key: renderedRightPanelSurface.key,
-        }}
+        surface={renderedRightPanelSurface}
+        environmentById={environmentById}
         threadRef={activeThreadRef}
-        onSelectPullRequest={(reference) => {
-          if (activeThreadRef)
-            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-        }}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

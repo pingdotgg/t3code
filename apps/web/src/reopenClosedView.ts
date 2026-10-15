@@ -2,6 +2,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
+import type { IssueListPreferences } from "./components/issue/issueListPreferences";
 import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
 import {
@@ -94,6 +95,27 @@ export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
         }
       : {}),
   } as S & PullRequestListPreferences;
+}
+
+export function issuesSearchForRestore(
+  preferences: IssueListPreferences,
+  selected: RightPanelSurface | null,
+) {
+  return {
+    ...preferences,
+    ...(selected?.kind === "issue"
+      ? {
+          ...(selected.environmentId === undefined
+            ? {}
+            : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
+          selectedProjectId: selected.projectId as ProjectId,
+          ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
+          tracker: selected.tracker,
+          scope: selected.scope,
+          key: selected.key,
+        }
+      : {}),
+  };
 }
 
 export async function reopenClosedView(

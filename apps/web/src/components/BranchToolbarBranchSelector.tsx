@@ -630,7 +630,6 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
-  const linkedIssues = serverThread?.issues ?? [];
   const panelPrLabel =
     prNumber === undefined
       ? ""
@@ -823,22 +822,7 @@ export function BranchToolbarBranchSelector({
             onActed={() => branchStatusQuery.refresh()}
           />
         ) : null}
-        {displayMode === "panel" ? (
-          <ThreadDetailsIssueRows
-            links={linkedIssues}
-            onOpenLink={(event, link) => {
-              event.stopPropagation();
-              useRightPanelStore.getState().openIssue(threadRef, {
-                projectId: link.projectId,
-                tracker: link.tracker,
-                host: link.host,
-                scope: link.scope,
-                key: link.key,
-                url: link.url,
-              });
-            }}
-          />
-        ) : null}
+        {displayMode === "panel" ? <ThreadDetailsIssueRows threadRef={threadRef} /> : null}
       </div>
     </BranchPicker>
   );

@@ -10,6 +10,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
@@ -19,8 +20,10 @@ import {
   IssueTrackerError,
   type IssueTrackerApi,
 } from "@t3tools/issue-tracker-core/server/IssueTracker";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   ADD_REACTION_GRAPHQL_MUTATION,
   gitHubReactionContent,
@@ -32,8 +35,11 @@ import {
   decodeIssueCommentScopeJson,
   decodeIssueCommentsJson,
   decodeIssueDetailJson,
+  decodeRestIssueLabelsJson,
+  decodeRestIssueMetadataJson,
   decodeIssueNodeIdJson,
   decodeIssueSearchJson,
+  decodeRepositoryIssuesJson,
   decodeIssueTemplatesJson,
   decodeIssueViewerPermissionsJson,
   decodeViewerLoginJson,
@@ -45,10 +51,12 @@ import {
   ISSUE_TEMPLATES_GRAPHQL_QUERY,
   ISSUE_VIEWER_PERMISSIONS_GRAPHQL_QUERY,
   issueSearchGraphQlQuery,
+  issueRepositoryGraphQlQuery,
   SEARCH_MAX_ROWS,
 } from "./gitHubIssueJson.ts";
 
 const KIND = IssueTrackerKind.make("github");
+const MAX_ASSIGNEES = 10;
 
 const CAPABILITIES: IssueCapabilities = {
   create: true,
@@ -56,11 +64,13 @@ const CAPABILITIES: IssueCapabilities = {
   comment: true,
   labels: true,
   assignees: true,
+  maxAssignees: MAX_ASSIGNEES,
   reactions: true,
   templates: true,
   linkedPullRequests: true,
   events: true,
   search: true,
+  involvements: ["all", "assigned", "authored", "mentioned"],
   states: [
     { category: "open", name: "open" },
     { category: "closed", name: "closed" },
@@ -70,6 +80,37 @@ const CAPABILITIES: IssueCapabilities = {
 
 /** Where a repository configures the rest of its issue chooser, as GitHub spells the path. */
 const TEMPLATE_CONFIG_PATH = ".github/ISSUE_TEMPLATE/config.yml";
+
+function skippedMetadata(
+  requested: {
+    readonly labels?: ReadonlyArray<string> | undefined;
+    readonly assignees?: ReadonlyArray<string> | undefined;
+  },
+  response: GitHubApi.GitHubRestResponse,
+): ReadonlyArray<string> {
+  const decoded = decodeRestIssueMetadataJson(response.body);
+  const actual =
+    !response.truncated && !response.invalidUtf8 && Result.isSuccess(decoded)
+      ? decoded.success
+      : undefined;
+  const fields = [
+    ["labels", requested.labels, actual?.labels?.map((label) => label.name)],
+    ["assignees", requested.assignees, actual?.assignees?.map((assignee) => assignee.login)],
+  ] as const;
+  return fields.flatMap(([name, expected, saved]) => {
+    if (expected === undefined) return [];
+    if (saved === undefined) return [name];
+    const wanted = new Set(expected.map((value) => value.toLowerCase()));
+    const received = new Set(saved.map((value) => value.toLowerCase()));
+    return wanted.size === received.size && [...wanted].every((value) => received.has(value))
+      ? []
+      : [name];
+  });
+}
+
+const decodeTemplateConfig = Schema.decodeUnknownResult(
+  fromYaml(Schema.Struct({ blank_issues_enabled: Schema.optionalKey(Schema.Boolean) })),
+);
 
 /** What a repository selector may hold before it goes into a search query as itself. */
 const SEARCH_REPOSITORY = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -179,6 +220,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
         detail: "GitHub could not find the requested issue.",
       });
 
+    const validateAssignees = (assignees: ReadonlyArray<string> | undefined, operation: string) =>
+      (assignees?.length ?? 0) > MAX_ASSIGNEES
+        ? Effect.fail(
+            new IssueTrackerError({
+              tracker: KIND,
+              operation,
+              reason: "failed",
+              detail: "GitHub issues support at most 10 assignees.",
+            }),
+          )
+        : Effect.void;
+
     /** A GraphQL read whose answer is decoded, reporting a failure against the read that made it. */
     const graphqlRead = <A>(input: {
       readonly host: string;
@@ -235,13 +288,35 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
     const patchIssue = (
       input: { readonly host: string; readonly scope: string; readonly key: string },
       operation: string,
-      body: Record<string, unknown>,
+      body: {
+        readonly title?: string;
+        readonly body?: string;
+        readonly labels?: ReadonlyArray<string>;
+        readonly assignees?: ReadonlyArray<string>;
+        readonly state?: string;
+        readonly state_reason?: string;
+      },
     ) =>
       restIssue(input, operation).pipe(
+        Effect.tap(() => validateAssignees(body.assignees, operation)),
         Effect.flatMap(({ path }) =>
-          api
-            .rest({ host: input.host, operation, method: "PATCH", path, body })
-            .pipe(Effect.asVoid, Effect.mapError(fail(operation))),
+          api.rest({ host: input.host, operation, method: "PATCH", path, body }).pipe(
+            Effect.mapError(fail(operation)),
+            Effect.flatMap((response) => {
+              if (body.labels === undefined && body.assignees === undefined) return Effect.void;
+              const skipped = skippedMetadata(body, response);
+              return skipped.length === 0
+                ? Effect.void
+                : Effect.fail(
+                    new IssueTrackerError({
+                      tracker: KIND,
+                      operation,
+                      reason: "failed",
+                      detail: `GitHub did not save the requested ${skipped.join(" and ")}.`,
+                    }),
+                  );
+            }),
+          ),
         ),
       );
 
@@ -306,6 +381,25 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
             }),
           );
         }
+        if (!input.query?.trim() && input.involvement === "all") {
+          return graphqlRead({
+            host: input.host,
+            operation: "listIssues",
+            query: issueRepositoryGraphQlQuery(input.limit),
+            variables: {
+              ...parseRepository(input.scope),
+              ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+              states: input.state === "all" ? ["OPEN", "CLOSED"] : [input.state.toUpperCase()],
+              orderBy: { field: "UPDATED_AT", direction: "DESC" },
+            },
+            decode: decodeRepositoryIssuesJson,
+          }).pipe(
+            Effect.filterOrFail(
+              (page) => page !== null,
+              () => notFound("listIssues"),
+            ),
+          );
+        }
         return graphqlRead({
           host: input.host,
           operation: "listIssues",
@@ -320,18 +414,34 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
 
       getIssue: (input) =>
         restIssue(input, "getIssue").pipe(
-          Effect.flatMap(({ owner, name, number }) =>
+          Effect.flatMap(({ owner, name, number, path }) =>
             graphqlRead({
               host: input.host,
               operation: "getIssue",
               query: ISSUE_DETAIL_GRAPHQL_QUERY,
               variables: { owner, name, number },
               decode: decodeIssueDetailJson,
-            }),
-          ),
-          Effect.filterOrFail(
-            (detail) => detail !== null,
-            () => notFound("getIssue"),
+            }).pipe(
+              Effect.filterOrFail(
+                (detail) => detail !== null,
+                () => notFound("getIssue"),
+              ),
+              Effect.flatMap((detail) =>
+                api.rest({ host: input.host, operation: "getIssue", path }).pipe(
+                  Effect.mapError(fail("getIssue")),
+                  Effect.flatMap((response) => {
+                    const labels = decodeRestIssueLabelsJson(response.body);
+                    return !response.truncated && !response.invalidUtf8 && Result.isSuccess(labels)
+                      ? Effect.succeed({
+                          ...detail,
+                          labels: labels.success,
+                          labelsTruncated: false,
+                        })
+                      : Effect.fail(unreadable("getIssue", response));
+                  }),
+                ),
+              ),
+            ),
           ),
         ),
 
@@ -359,37 +469,51 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
               decode: decodeIssueViewerPermissionsJson,
             }),
           ),
+          Effect.provideService(SourceControlRateLimit.Interactive, true),
         ),
 
-      create: (input) => {
-        const { owner, name } = parseRepository(input.scope);
-        return api
-          .rest({
-            host: input.host,
-            operation: "create",
-            method: "POST",
-            path: `repos/${owner}/${name}/issues`,
-            body: {
-              title: input.title,
-              body: input.body,
-              labels: input.labels,
-              assignees: input.assignees,
-            },
-          })
-          .pipe(
-            Effect.mapError(fail("create")),
-            Effect.flatMap((response) => {
-              const decoded = decodeCreatedIssueJson(response.body);
-              return Result.isSuccess(decoded)
-                ? Effect.succeed({
-                    key: String(decoded.success.number),
-                    displayKey: `#${decoded.success.number}`,
-                    url: decoded.success.url,
-                  })
-                : Effect.fail(unreadable("create", decoded.failure));
-            }),
-          );
-      },
+      create: (input) =>
+        Effect.gen(function* () {
+          yield* validateAssignees(input.assignees, "create");
+          const { owner, name } = parseRepository(input.scope);
+          return yield* api
+            .rest({
+              host: input.host,
+              operation: "create",
+              method: "POST",
+              path: `repos/${owner}/${name}/issues`,
+              body: {
+                title: input.title,
+                body: input.body,
+                labels: input.labels,
+                assignees: input.assignees,
+              },
+            })
+            .pipe(
+              Effect.mapError(fail("create")),
+              Effect.flatMap((response) => {
+                const decoded = decodeCreatedIssueJson(response.body);
+                return Result.isSuccess(decoded)
+                  ? Effect.succeed({
+                      key: String(decoded.success.number),
+                      displayKey: `#${decoded.success.number}`,
+                      url: decoded.success.url,
+                      warnings: skippedMetadata(
+                        {
+                          labels: input.labels.length === 0 ? undefined : input.labels,
+                          assignees: input.assignees.length === 0 ? undefined : input.assignees,
+                        },
+                        response,
+                      ).map(
+                        (field) =>
+                          `The issue was created, but GitHub did not save the requested ${field}.`,
+                      ),
+                    })
+                  : Effect.fail(unreadable("create", decoded.failure));
+              }),
+              Effect.provideService(SourceControlRateLimit.Interactive, true),
+            );
+        }),
 
       comment: (input) =>
         restIssue(input, "comment").pipe(
@@ -404,6 +528,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
               })
               .pipe(Effect.asVoid, Effect.mapError(fail("comment"))),
           ),
+          Effect.provideService(SourceControlRateLimit.Interactive, true),
         ),
 
       update: (input) =>
@@ -412,7 +537,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
           ...(input.body === undefined ? {} : { body: input.body }),
           ...(input.labels === undefined ? {} : { labels: input.labels }),
           ...(input.assignees === undefined ? {} : { assignees: input.assignees }),
-        }),
+        }).pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
 
       setState: (input) =>
         patchIssue(input, "setState", {
@@ -420,7 +545,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
           ...(input.state === "closed" && input.closeReason !== undefined
             ? { state_reason: CLOSE_REASON[input.closeReason] }
             : {}),
-        }),
+        }).pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
 
       setReaction: (input) =>
         (input.subjectId === undefined
@@ -451,6 +576,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
               variables: { subjectId, content: gitHubReactionContent(input.content) },
             }),
           ),
+          Effect.provideService(SourceControlRateLimit.Interactive, true),
         ),
 
       listTemplates: (input) => {
@@ -474,9 +600,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
                 path: `repos/${owner}/${name}/contents/${TEMPLATE_CONFIG_PATH}`,
               })
               .pipe(
-                Effect.map(
-                  (response) => !/^\s*blank_issues_enabled\s*:\s*false\s*$/m.test(response.body),
-                ),
+                Effect.map((response) => {
+                  const config = decodeTemplateConfig(response.body);
+                  return !Result.isSuccess(config) || config.success.blank_issues_enabled !== false;
+                }),
                 Effect.catch((error) =>
                   error._tag === "GitHubApiRateLimitError" ||
                   error._tag === "SourceControlRateLimitPausedError"
@@ -487,7 +614,19 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitHubApi.GitHubApi> = 
           ],
           { concurrency: 2 },
         ).pipe(
-          Effect.map(([templates, blankIssuesEnabled]) => ({ templates, blankIssuesEnabled })),
+          Effect.map(([{ templates, repositoryUrl }, blankIssuesEnabled]) => ({
+            templates,
+            blankIssuesEnabled,
+            externalTemplates: blankIssuesEnabled
+              ? []
+              : [
+                  {
+                    name: "GitHub issue templates",
+                    about: "Choose a template or form on GitHub.",
+                    url: `${repositoryUrl}/issues/new/choose`,
+                  },
+                ],
+          })),
         );
       },
 

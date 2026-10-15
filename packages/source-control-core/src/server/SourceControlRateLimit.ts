@@ -7,6 +7,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
   SourceControlProviderKind as SourceControlProviderKindSchema,
+  IssueTrackerKind as IssueTrackerKindSchema,
+  type IssueTrackerKind,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
 
@@ -31,7 +33,7 @@ export const Interactive = Context.Reference<boolean>(
 );
 
 interface RateLimitKey {
-  readonly provider: SourceControlProviderKind;
+  readonly provider: SourceControlProviderKind | IssueTrackerKind;
   readonly host: string;
 }
 
@@ -48,7 +50,7 @@ interface RateLimitEntry {
 export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(
   "SourceControlRateLimitPausedError",
   {
-    provider: SourceControlProviderKindSchema,
+    provider: Schema.Union([SourceControlProviderKindSchema, IssueTrackerKindSchema]),
     host: Schema.String,
     retryAt: Schema.Number,
   },

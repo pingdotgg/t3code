@@ -131,6 +131,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
   read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  read_issue_comments: tool(["Read", "Reading", "Read", "older issue comments"], "read-issue"),
+  read_issue_candidates: tool(["Read", "Reading", "Read", "issue choices"], "read-issue"),
   create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
   comment_on_issue: tool(
     ["Comment on", "Commenting on", "Commented on", "an issue"],

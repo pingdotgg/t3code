@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueState,
   type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueViewerPermissions,
@@ -51,13 +52,16 @@ const CAPABILITIES: IssueCapabilities = {
   comment: true,
   labels: true,
   assignees: true,
-  // On comments only; a work item itself takes none, and `setReaction` says so.
-  reactions: true,
+  maxAssignees: 1,
+  reactions: false,
+  commentReactions: true,
+  reactionContents: ["thumbs-up", "thumbs-down", "heart", "hooray", "laugh", "confused"],
   // Azure has no issue templates. Its work item types are picked here, not by the reader.
   templates: false,
   linkedPullRequests: true,
   events: true,
   search: true,
+  involvements: ["all", "assigned", "authored"],
   states: [
     { category: "open", name: "New" },
     { category: "open", name: "To Do" },
@@ -93,6 +97,7 @@ const CREATE_TYPES = ["Issue", "Bug", "Task", "User Story", "Product Backlog Ite
 
 const LIST_FIELDS = [
   "System.Id",
+  "System.WorkItemType",
   "System.Title",
   "System.State",
   "System.CreatedDate",
@@ -111,13 +116,22 @@ const decodeWiql = Schema.decodeUnknownResult(
     workItems: Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ id: Schema.Int })))),
   }),
 );
-const decodeTypes = Schema.decodeUnknownResult(
+const WorkItemStates = Schema.Array(
   Schema.Struct({
-    value: Schema.Array(
-      Schema.Struct({ name: Schema.String, isDisabled: Schema.optional(Schema.Boolean) }),
-    ),
+    name: Schema.String,
+    category: Schema.Literals(["Proposed", "InProgress", "Resolved", "Completed", "Removed"]),
   }),
 );
+const WorkItemTypes = Schema.Struct({
+  value: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      isDisabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      states: Schema.optional(Schema.NullOr(WorkItemStates)),
+    }),
+  ),
+});
+const decodeTypes = Schema.decodeUnknownResult(WorkItemTypes);
 const decodeTags = Schema.decodeUnknownResult(
   Schema.Struct({ value: Schema.Array(Schema.Struct({ name: Schema.String })) }),
 );
@@ -174,16 +188,11 @@ function involvementClause(involvement: IssueInvolvement): string {
   }
 }
 
-function stateClause(state: "all" | "open" | "closed"): string {
-  const closed = "('Closed', 'Completed', 'Done', 'Removed', 'Resolved')";
-  switch (state) {
-    case "open":
-      return ` AND [System.State] NOT IN ${closed}`;
-    case "closed":
-      return ` AND [System.State] IN ${closed}`;
-    case "all":
-      return "";
-  }
+function nativeStates(rows: typeof WorkItemStates.Type): ReadonlyArray<IssueState> {
+  return rows.map((state) => ({
+    name: state.name,
+    category: state.category === "Completed" || state.category === "Removed" ? "closed" : "open",
+  }));
 }
 
 /** `<iso changed date>|<id>` of the last row handed over, which is where the next page starts. */
@@ -326,6 +335,7 @@ export const make: Effect.Effect<
     readonly operation: string;
     readonly args: ReadonlyArray<string>;
     readonly body: unknown;
+    readonly mediaType?: string;
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -338,7 +348,13 @@ export const make: Effect.Effect<
         return yield* run({
           cwd: input.cwd,
           operation: input.operation,
-          args: [...input.args, "--in-file", file, "--media-type", "application/json"],
+          args: [
+            ...input.args,
+            "--in-file",
+            file,
+            "--media-type",
+            input.mediaType ?? "application/json",
+          ],
         });
       }),
     );
@@ -347,6 +363,7 @@ export const make: Effect.Effect<
     readonly cwd: string;
     readonly operation: string;
     readonly organization: string;
+    readonly project: string;
     readonly number: number;
   }): Effect.Effect<AzureDevOpsWorkItem, IssueTrackerError> =>
     read({
@@ -371,19 +388,56 @@ export const make: Effect.Effect<
         (item) => item !== null,
         () => notFound(input.operation),
       ),
+      Effect.flatMap((item) => {
+        if (item.project?.toLowerCase() === input.project.toLowerCase())
+          return Effect.succeed(item);
+        if (!/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(input.project))
+          return Effect.fail(notFound(input.operation));
+        return read({
+          cwd: input.cwd,
+          operation: input.operation,
+          args: [
+            "devops",
+            "project",
+            "show",
+            "--organization",
+            input.organization,
+            "--project",
+            input.project,
+          ],
+          decode: decodeAs(
+            Schema.decodeUnknownResult(Schema.Struct({ id: Schema.String, name: Schema.String })),
+          ),
+        }).pipe(
+          Effect.filterOrFail(
+            (project) =>
+              project.id.toLowerCase() === input.project.toLowerCase() &&
+              project.name.toLowerCase() === item.project?.toLowerCase(),
+            () => notFound(input.operation),
+          ),
+          Effect.as(item),
+        );
+      }),
     );
 
   /** The work item as `az` addresses it, or a not-found for a key that names no id. */
   const target = (
     operation: string,
-    input: { readonly host: string; readonly scope: string; readonly key: string },
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly scope: string;
+      readonly key: string;
+    },
   ) =>
     scoped(operation, input).pipe(
       Effect.flatMap((scope) => {
         const number = parseNumber(input.key);
         return number === null
           ? Effect.fail(notFound(operation))
-          : Effect.succeed({ ...scope, number });
+          : workItem({ ...scope, number, cwd: input.cwd, operation }).pipe(
+              Effect.map((item) => ({ ...scope, number, item })),
+            );
       }),
     );
 
@@ -504,6 +558,81 @@ export const make: Effect.Effect<
     return fields.length === 0 ? [] : ["--fields", ...fields];
   };
 
+  const workflows = (
+    input: { readonly cwd: string; readonly organization: string; readonly project: string },
+    type: string,
+  ) =>
+    read({
+      cwd: input.cwd,
+      operation: "getStates",
+      args: invokeArgs({
+        ...input,
+        resource: "workitemtypestates",
+        route: [`type=${type}`],
+        apiVersion: "7.1-preview",
+        query: ["api-version=7.1-preview.1"],
+      }),
+      decode: decodeAs(
+        Schema.decodeUnknownResult(
+          Schema.Struct({
+            value: WorkItemStates,
+          }),
+        ),
+      ),
+    }).pipe(Effect.map((page) => nativeStates(page.value)));
+
+  const workItemTypes = (input: {
+    readonly cwd: string;
+    readonly organization: string;
+    readonly project: string;
+  }) =>
+    read({
+      cwd: input.cwd,
+      operation: "getStates",
+      args: [
+        ...invokeArgs({ ...input, resource: "workitemtypes" }),
+        "--query",
+        "{value: value[].{name: name, isDisabled: isDisabled, states: states[].{name: name, category: category}}}",
+      ],
+      decode: decodeAs(decodeTypes),
+    });
+
+  const itemWorkflow = (
+    input: { readonly cwd: string; readonly organization: string; readonly project: string },
+    item: AzureDevOpsWorkItem,
+  ): Effect.Effect<
+    { readonly item: AzureDevOpsWorkItem; readonly states: ReadonlyArray<IssueState> },
+    IssueTrackerError
+  > =>
+    item.workItemType === null
+      ? Effect.succeed({ item, states: CAPABILITIES.states })
+      : workflows(input, item.workItemType).pipe(
+          Effect.flatMap((states) => {
+            const state = states.find((state) => state.name === item.state.name);
+            return state === undefined
+              ? Effect.fail(
+                  refused("getStates", "The work item state is absent from its workflow."),
+                )
+              : Effect.succeed({ item: { ...item, state }, states });
+          }),
+        );
+
+  const itemsWorkflow = (
+    items: ReadonlyArray<AzureDevOpsWorkItem>,
+    types: typeof WorkItemTypes.Type | undefined,
+  ) => {
+    const states = new Map(
+      types?.value.map((type) => [type.name, nativeStates(type.states ?? [])] as const),
+    );
+    return Effect.forEach(items, (item) => {
+      if (item.workItemType === null) return Effect.succeed(item);
+      const state = states.get(item.workItemType)?.find((state) => state.name === item.state.name);
+      return state === undefined
+        ? Effect.fail(refused("getStates", "The work item state is absent from its workflow."))
+        : Effect.succeed({ ...item, state });
+    });
+  };
+
   return {
     kind: KIND,
     capabilities: CAPABILITIES,
@@ -536,116 +665,133 @@ export const make: Effect.Effect<
         ),
       ),
 
-    listIssues: (input) => {
-      const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
-      if (cursor === null) {
-        return Effect.fail(
-          refused("listIssues", "The cursor was not one Azure DevOps handed out."),
-        );
-      }
-      const limit = Math.min(Math.max(input.limit, 1), PAGE_SIZE);
-      const text = input.query?.trim() ?? "";
-      return scoped("listIssues", input).pipe(
-        Effect.flatMap((scope) =>
-          invokeWithBody({
-            cwd: input.cwd,
-            operation: "listIssues",
-            args: invokeArgs({
-              ...scope,
-              resource: "wiql",
-              method: "POST",
-              // One more than the page, which is how a next page reveals itself.
-              query: ["timePrecision=true", `$top=${limit + 1}`],
-            }),
-            body: {
-              query:
-                `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = ${quoted(scope.project)}` +
-                stateClause(input.state) +
-                involvementClause(input.involvement) +
-                (text.length === 0 ? "" : ` AND [System.Title] CONTAINS ${quoted(text)}`) +
-                (cursor === undefined
-                  ? ""
-                  : ` AND ([System.ChangedDate] < ${quoted(cursor.changedAt)} OR ([System.ChangedDate] = ${quoted(cursor.changedAt)} AND [System.Id] < ${cursor.id}))`) +
-                " ORDER BY [System.ChangedDate] DESC, [System.Id] DESC",
-            },
-          }).pipe(
-            Effect.flatMap((raw) => {
-              const decoded = decodeAs(decodeWiql)(raw);
-              return Result.isSuccess(decoded)
-                ? Effect.succeed(decoded.success.workItems ?? [])
-                : Effect.fail(unreadable("listIssues", decoded.failure));
-            }),
-            Effect.flatMap((ids) =>
-              ids.length === 0
-                ? Effect.succeed({ items: [], nextCursor: null })
-                : read({
-                    cwd: input.cwd,
-                    operation: "listIssues",
-                    args: invokeArgs({
-                      ...scope,
-                      resource: "workitems",
-                      query: [
-                        `ids=${ids
-                          .slice(0, limit)
-                          .map((row) => row.id)
-                          .join(",")}`,
-                        `fields=${LIST_FIELDS.join(",")}`,
-                      ],
-                    }),
-                    decode: decodeWorkItemsJson,
-                  }).pipe(
-                    Effect.map((items) => {
-                      const last = items.at(-1);
-                      return {
-                        items,
-                        nextCursor:
-                          ids.length > limit && last !== undefined
-                            ? `${last.updatedAt}|${last.key}`
-                            : null,
-                      };
-                    }),
-                  ),
-            ),
-          ),
-        ),
-      );
-    },
+    listIssues: (input) =>
+      Effect.gen(function* () {
+        if (input.involvement === "mentioned")
+          return yield* refused("listIssues", "Azure DevOps does not support a mentioned filter.");
+        const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
+        if (cursor === null) {
+          return yield* refused("listIssues", "The cursor was not one Azure DevOps handed out.");
+        }
+        const limit = Math.min(Math.max(input.limit, 1), PAGE_SIZE);
+        const text = input.query?.trim() ?? "";
+        const scope = yield* scoped("listIssues", input);
+        let types: typeof WorkItemTypes.Type | undefined;
+        let stateFilter = "";
+        if (input.state !== "all") {
+          types = yield* workItemTypes({ ...scope, cwd: input.cwd });
+          const enabled = types.value.filter((type) => !type.isDisabled);
+          if (enabled.some((type) => type.states === undefined || type.states === null))
+            return yield* refused(
+              "getStates",
+              "Azure returned no workflow states for a work item type.",
+            );
+          const filters = enabled.flatMap((type) => {
+            const states = nativeStates(type.states ?? []).filter(
+              (state) => state.category === input.state,
+            );
+            return states.length === 0
+              ? []
+              : [
+                  `([System.WorkItemType] = ${quoted(type.name)} AND [System.State] IN (${states.map((state) => quoted(state.name)).join(",")}))`,
+                ];
+          });
+          if (filters.length === 0) return { items: [], nextCursor: null };
+          stateFilter = ` AND (${filters.join(" OR ")})`;
+        }
+        const raw = yield* invokeWithBody({
+          cwd: input.cwd,
+          operation: "listIssues",
+          args: invokeArgs({
+            ...scope,
+            resource: "wiql",
+            method: "POST",
+            // One more than the page, which is how a next page reveals itself.
+            query: ["timePrecision=true", `$top=${limit + 1}`],
+          }),
+          body: {
+            query:
+              `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = ${quoted(scope.project)}` +
+              stateFilter +
+              involvementClause(input.involvement) +
+              (text.length === 0 ? "" : ` AND [System.Title] CONTAINS ${quoted(text)}`) +
+              (cursor === undefined
+                ? ""
+                : ` AND ([System.ChangedDate] < ${quoted(cursor.changedAt)} OR ([System.ChangedDate] = ${quoted(cursor.changedAt)} AND [System.Id] < ${cursor.id}))`) +
+              " ORDER BY [System.ChangedDate] DESC, [System.Id] DESC",
+          },
+        });
+        const decoded = decodeAs(decodeWiql)(raw);
+        if (Result.isFailure(decoded)) return yield* unreadable("listIssues", decoded.failure);
+        const ids = decoded.success.workItems ?? [];
+        if (ids.length === 0) return { items: [], nextCursor: null };
+        const rows = yield* read({
+          cwd: input.cwd,
+          operation: "listIssues",
+          args: invokeArgs({
+            ...scope,
+            resource: "workitems",
+            query: [
+              `ids=${ids
+                .slice(0, limit)
+                .map((row) => row.id)
+                .join(",")}`,
+              `fields=${LIST_FIELDS.join(",")}`,
+            ],
+          }),
+          decode: decodeWorkItemsJson,
+        });
+        const indexed = new Map(rows.map((item) => [item.key, item]));
+        const ordered = ids.slice(0, limit).flatMap(({ id }) => indexed.get(String(id)) ?? []);
+        if (types === undefined && ordered.some((item) => item.workItemType !== null))
+          types = yield* workItemTypes({ ...scope, cwd: input.cwd });
+        const items = yield* itemsWorkflow(ordered, types);
+        const last = items.at(-1);
+        return {
+          items,
+          nextCursor:
+            ids.length > limit && last !== undefined ? `${last.updatedAt}|${last.key}` : null,
+        };
+      }),
 
     getIssue: (input) =>
       target("getIssue", input).pipe(
         Effect.flatMap((scope) =>
-          workItem({ ...scope, cwd: input.cwd, operation: "getIssue" }).pipe(
-            Effect.flatMap((item) =>
-              Effect.all(
-                [
-                  comments({ ...scope, cwd: input.cwd, operation: "getIssue" }),
-                  read({
-                    cwd: input.cwd,
-                    operation: "getIssue",
-                    args: invokeArgs({
-                      ...scope,
-                      resource: "updates",
-                      route: [`id=${scope.number}`],
-                      query: [`$top=${PAGE_SIZE}`],
-                    }),
-                    decode: decodeUpdatesJson,
-                  }),
-                  linkedPullRequests({ cwd: input.cwd, organization: scope.organization, item }),
-                ],
-                { concurrency: 3 },
-              ).pipe(
-                Effect.map(([conversation, events, links]) => ({
-                  ...item,
-                  // Nothing cheap names the viewer here; the service already read it per host.
-                  viewer: null,
-                  viewerPermissions: VIEWER_PERMISSIONS,
-                  comments: conversation.comments,
-                  commentsCursor: conversation.nextCursor,
-                  events,
-                  linkedPullRequests: links,
-                })),
-              ),
-            ),
+          Effect.all(
+            [
+              comments({ ...scope, cwd: input.cwd, operation: "getIssue" }),
+              read({
+                cwd: input.cwd,
+                operation: "getIssue",
+                args: invokeArgs({
+                  ...scope,
+                  resource: "updates",
+                  route: [`id=${scope.number}`],
+                  query: [`$top=${PAGE_SIZE}`],
+                }),
+                decode: decodeUpdatesJson,
+              }),
+              itemWorkflow({ ...scope, cwd: input.cwd }, scope.item),
+              linkedPullRequests({
+                cwd: input.cwd,
+                organization: scope.organization,
+                item: scope.item,
+              }),
+            ],
+            { concurrency: 3 },
+          ).pipe(
+            Effect.map(([conversation, updates, workflow, links]) => ({
+              ...workflow.item,
+              states: workflow.states,
+              // Nothing cheap names the viewer here; the service already read it per host.
+              viewer: null,
+              viewerPermissions: VIEWER_PERMISSIONS,
+              comments: conversation.comments,
+              commentsCursor: conversation.nextCursor,
+              events: updates.events,
+              historyTruncated: updates.rawCount >= PAGE_SIZE,
+              linkedPullRequests: links,
+            })),
           ),
         ),
       ),
@@ -733,18 +879,45 @@ export const make: Effect.Effect<
 
     update: (input) =>
       target("update", input).pipe(
-        Effect.flatMap((scope) =>
-          update({
-            ...scope,
+        Effect.flatMap((scope) => {
+          if (input.body === undefined)
+            return update({
+              ...scope,
+              cwd: input.cwd,
+              operation: "update",
+              args: [
+                ...(input.title === undefined ? [] : ["--title", input.title]),
+                ...fieldArgs(input),
+              ],
+            });
+          const fields = {
+            ...(input.title === undefined ? {} : { "System.Title": input.title }),
+            "System.Description": input.body,
+            ...(input.labels === undefined ? {} : { "System.Tags": input.labels.join("; ") }),
+            ...(input.assignees === undefined
+              ? {}
+              : { "System.AssignedTo": input.assignees[0] ?? "" }),
+          };
+          return invokeWithBody({
             cwd: input.cwd,
             operation: "update",
-            args: [
-              ...(input.title === undefined ? [] : ["--title", input.title]),
-              ...(input.body === undefined ? [] : ["--description", input.body]),
-              ...fieldArgs(input),
+            args: invokeArgs({
+              ...scope,
+              resource: "workitems",
+              route: [`id=${scope.number}`],
+              method: "PATCH",
+            }),
+            mediaType: "application/json-patch+json",
+            body: [
+              ...Object.entries(fields).map(([field, value]) => ({
+                op: "add",
+                path: `/fields/${field}`,
+                value,
+              })),
+              { op: "add", path: "/multilineFieldsFormat/System.Description", value: "Markdown" },
             ],
-          }),
-        ),
+          }).pipe(Effect.asVoid);
+        }),
       ),
 
     setState: (input) =>

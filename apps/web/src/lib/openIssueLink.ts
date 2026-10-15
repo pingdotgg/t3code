@@ -1,111 +1,137 @@
-import type { EnvironmentId, IssueRef, ScopedThreadRef } from "@t3tools/contracts";
 import { pullRequestHostOf, SourceControlProviderKind } from "@t3tools/contracts";
-import { parseIssueUrl, type IssueLink } from "@t3tools/shared/issueUrl";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { parseIssueUrl } from "@t3tools/shared/issueUrl";
+import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback } from "react";
 
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import {
+  canOpenLinksInApp,
+  resolveBrowserLinkTargetPreference,
+} from "../browser/browserLinkTarget";
+import { useOpenLink } from "../browser/useOpenLink";
+import { readIssueListPreferences } from "../components/issue/issueListPreferences";
+import { toastManager } from "../components/ui/toast";
+import { readLocalApi } from "../localApi";
+import { ISSUES_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
+import { readThreadShell, useProjects, useServerConfigs } from "../state/entities";
+import { issueEnvironment } from "../state/issues";
+import { useAtomCommand } from "../state/use-atom-command";
 
-import { useRightPanelStore } from "../rightPanelStore";
-import { useProjects, useServerConfigs } from "../state/entities";
-
-/** The host and scope a project's git-host tracker is bound to, the way the server resolves it. */
-function projectIssueBinding(project: EnvironmentProject): {
-  readonly tracker: string;
-  readonly host: string;
-  readonly scope: string;
-} | null {
-  const identity = project.repositoryIdentity;
-  const scope = sourceControlRepositorySelector(identity);
-  const kind = identity?.provider;
-  if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
-  return {
-    tracker: kind,
-    host: pullRequestHostOf(identity, SourceControlProviderKind.make(kind)),
-    scope: scope.toLowerCase(),
-  };
+async function openUnresolvedLink(url: string): Promise<void> {
+  if (window.desktopBridge) return readLocalApi()?.shell.openExternal(url);
+  const opened = window.open("", "_blank");
+  if (!opened) throw new Error("The browser blocked the link.");
+  opened.opener = null;
+  opened.location.href = url;
 }
 
-/**
- * The reference an issue link resolves to, and the project it is read through: the project whose
- * tracker binding is that host and scope, else any project on the same tracker and host lending
- * its credentials for a read-only view. The same rule as the server's `IssueService.resolveUrl`,
- * applied here so a lookalike hostname matches no project and stays an ordinary link.
- */
-function resolveIssueLinkTarget(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: IssueLink,
-  preferredProjectId?: string,
-): { readonly project: EnvironmentProject; readonly ref: IssueRef } | null {
-  const bound = projects.flatMap((project) => {
-    const binding = projectIssueBinding(project);
-    return binding === null || binding.tracker !== link.tracker || binding.host !== link.host
-      ? []
-      : [{ project, binding }];
-  });
-  const preferFirst = (candidates: typeof bound) =>
-    candidates.find((candidate) => candidate.project.id === preferredProjectId) ?? candidates[0];
-  const own = preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope));
-  const lender = own ?? preferFirst(bound);
-  if (lender === undefined) return null;
-  return {
-    project: lender.project,
-    ref: {
-      projectId: lender.project.id,
-      tracker: lender.binding.tracker as IssueRef["tracker"],
-      host: lender.binding.host,
-      scope: own === undefined ? link.scope : lender.binding.scope,
-      key: link.key,
-    },
-  };
-}
-
-/**
- * Opens an issue link beside the thread, and says whether it did. Anything else — a host no
- * project here is on, a link that merely looks like one — is left alone for the caller to handle
- * as the ordinary link it is. Mirrors `useOpenChangeRequestLink`: a reader following a link the
- * agent wrote is reading the thread, and should still be reading it afterwards.
- */
 export function useOpenIssueLink(
   threadRef?: ScopedThreadRef,
   panelRef?: ScopedThreadRef,
 ): (
   event: Pick<
     MouseEvent<HTMLElement>,
-    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"
   >,
   targetUrl: string,
   targetEnvironmentId?: EnvironmentId,
 ) => boolean {
-  const allProjects = useProjects();
+  const navigate = useNavigate();
   const serverConfigs = useServerConfigs();
+  const projects = useProjects();
+  const openLink = useOpenLink(threadRef);
+  const resolveUrl = useAtomCommand(issueEnvironment.resolveUrl, { reportFailure: false });
   return useCallback(
     (event, targetUrl, targetEnvironmentId) => {
-      if (event.metaKey || event.ctrlKey) return false;
-      const resolvedPanelRef = panelRef ?? threadRef;
-      const environmentId = resolvedPanelRef?.environmentId ?? targetEnvironmentId;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+      const resolvedPanelRef = threadRef ?? (panelRef && ISSUES_PANEL_REF);
+      const environmentId = targetEnvironmentId ?? threadRef?.environmentId;
       if (resolvedPanelRef === undefined || environmentId === undefined) return false;
       if (serverConfigs.get(environmentId)?.environment.capabilities.issues !== true) return false;
-      const parsed = parseIssueUrl(targetUrl);
-      if (parsed === null) return false;
-      const target = resolveIssueLinkTarget(
-        allProjects.filter((project) => project.environmentId === environmentId),
-        parsed,
-      );
-      if (target === null) return false;
+      const candidate =
+        parseIssueUrl(targetUrl) !== null ||
+        projects.some((project) => {
+          const identity = project.repositoryIdentity;
+          const tracker = identity?.provider;
+          if (
+            project.environmentId !== environmentId ||
+            tracker === undefined ||
+            tracker === "unknown"
+          )
+            return false;
+          const kind = SourceControlProviderKind.make(tracker);
+          let host = pullRequestHostOf(identity, kind);
+          if (tracker === "forgejo" && identity?.webUrl !== undefined) {
+            host = pullRequestHostOf(
+              { canonicalKey: host, locator: { remoteUrl: identity.webUrl } },
+              kind,
+            );
+          }
+          return parseIssueUrl(targetUrl, { tracker, host }) !== null;
+        });
+      if (!candidate) return false;
       event.preventDefault();
       event.stopPropagation();
-      useRightPanelStore.getState().openIssue(resolvedPanelRef, {
-        ...(resolvedPanelRef.environmentId === environmentId ? {} : { environmentId }),
-        projectId: target.ref.projectId,
-        tracker: target.ref.tracker,
-        ...(target.ref.host === undefined ? {} : { host: target.ref.host }),
-        scope: target.ref.scope,
-        key: target.ref.key,
-        url: targetUrl,
-      });
+      const projectId =
+        threadRef?.environmentId === environmentId
+          ? readThreadShell(threadRef)?.projectId
+          : undefined;
+      void resolveUrl({
+        environmentId,
+        input: {
+          url: targetUrl,
+          ...(projectId === undefined ? {} : { projectId }),
+        },
+      })
+        .then(async (result) => {
+          if (result._tag === "Failure") {
+            return canOpenLinksInApp(threadRef) &&
+              (await resolveBrowserLinkTargetPreference()) === "app"
+              ? openLink(targetUrl)
+              : openUnresolvedLink(targetUrl);
+          }
+          const reference = result.value;
+          useRightPanelStore.getState().openIssue(resolvedPanelRef, {
+            ...(resolvedPanelRef.environmentId === environmentId ? {} : { environmentId }),
+            projectId: reference.projectId,
+            tracker: reference.tracker,
+            host: reference.host,
+            scope: reference.scope,
+            key: reference.key,
+            url: targetUrl,
+          });
+          if (threadRef === undefined) {
+            await navigate({
+              to: "/issues",
+              search: {
+                ...readIssueListPreferences(),
+                selectedEnvironmentId: environmentId,
+                selectedProjectId: reference.projectId,
+                ...(reference.host === undefined ? {} : { selectedHost: reference.host }),
+                tracker: reference.tracker,
+                scope: reference.scope,
+                key: reference.key,
+              },
+            });
+          }
+        })
+        .catch(() => {
+          const id = toastManager.add({
+            type: "error",
+            title: "The link could not be opened",
+            description: targetUrl,
+            actionProps: {
+              children: "Open link",
+              onClick: () =>
+                void openUnresolvedLink(targetUrl).then(
+                  () => toastManager.close(id),
+                  () => undefined,
+                ),
+            },
+          });
+        });
       return true;
     },
-    [allProjects, panelRef, serverConfigs, threadRef],
+    [navigate, openLink, panelRef, projects, resolveUrl, serverConfigs, threadRef],
   );
 }

@@ -356,6 +356,7 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 // instance the listing reads through.
 const layerIssueService = Layer.merge(IssueService.layer, IssueTrackerConnections.layer).pipe(
   Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)),
+  Layer.provide(SourceControlRateLimit.layer),
 );
 
 // One instance serves MCP link calls and refreshes snapshots on thread events.

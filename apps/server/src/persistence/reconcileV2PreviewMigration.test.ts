@@ -44,6 +44,7 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "IssueTrackerBindings"],
+        [64, "IssueTrackerBindingHost"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -130,6 +131,7 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "IssueTrackerBindings"],
+        [64, "IssueTrackerBindingHost"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -219,3 +219,27 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+it("labels issue tabs the way their tracker does beside pull request tabs", async () => {
+  const issue = (tracker: string, scope: string, key: string) =>
+    ({ id: `issue:${key}`, kind: "issue", projectId: "p", tracker, scope, key }) as const;
+  await renderPanel({
+    surfaces: [
+      issue("forgejo", "Mount/acme/web", "42"),
+      issue("linear", "ENG", "ENG-12"),
+      issue("jira", "PROJ", "PROJ-3"),
+      {
+        id: "pull-request:p:acme/api:7",
+        kind: "pull-request",
+        projectId: "p",
+        repository: "acme/api",
+        number: 7,
+      },
+    ],
+  });
+  expect(
+    [...container.querySelectorAll('[aria-label^="Close "]')].map((button) =>
+      button.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Close Mount/acme/web#42", "Close ENG-12", "Close PROJ-3", "Close #7"]);
+});
