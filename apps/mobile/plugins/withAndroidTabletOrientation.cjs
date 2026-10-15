@@ -1,12 +1,16 @@
-const { withMainActivity } = require("expo/config-plugins");
+const { AndroidConfig, withAndroidManifest, withMainActivity } = require("expo/config-plugins");
 
 // The top-level `orientation: "portrait"` writes android:screenOrientation="portrait"
 // into the manifest, which locks every Android device — including tablets — to
 // portrait. iOS doesn't have this problem: iPads must support all orientations
 // because the app is multitasking-capable, so only iPhones end up portrait-only.
-// Mirror that split on Android: keep the manifest lock for phones and lift it at
-// runtime on tablets (smallest width >= 600dp, the standard tablet breakpoint),
-// since requestedOrientation set at runtime overrides the manifest value.
+// Mirror that split on Android by choosing the lock at runtime: portrait on phones,
+// free rotation on tablets (smallest width >= 600dp, the standard tablet breakpoint).
+// The manifest itself must stay unlocked. A tablet launched in landscape against a
+// portrait manifest starts letterboxed in a portrait-shaped window, and lifting the
+// lock in onCreate does not resize it until the user rotates the device. The lock is
+// applied before super.onCreate so phones request portrait before the activity's
+// content is created.
 // FULL_USER allows all four orientations while still respecting the user's
 // auto-rotate lock, matching iPad behavior. Foldables change
 // smallestScreenWidthDp on fold/unfold without recreating the activity
@@ -31,21 +35,39 @@ const ORIENTATION_METHODS = `
   }
 `;
 
-const ORIENTATION_ON_CREATE_CALL = `
-    applyTabletOrientation()`;
+const ORIENTATION_ON_CREATE_CALL = `applyTabletOrientation()
+    `;
 
-function insertAfter(contents, anchor, insertion, description) {
+function findAnchor(contents, anchor, description) {
   const index = contents.indexOf(anchor);
   if (index === -1) {
     throw new Error(
       `withAndroidTabletOrientation: could not find ${description} in MainActivity — the Expo template changed; update the plugin anchors.`,
     );
   }
-  const end = index + anchor.length;
+  return index;
+}
+
+function insertBefore(contents, anchor, insertion, description) {
+  const index = findAnchor(contents, anchor, description);
+  return contents.slice(0, index) + insertion + contents.slice(index);
+}
+
+function insertAfter(contents, anchor, insertion, description) {
+  const end = findAnchor(contents, anchor, description) + anchor.length;
   return contents.slice(0, end) + insertion + contents.slice(end);
 }
 
+function withUnlockedManifestOrientation(config) {
+  return withAndroidManifest(config, (nextConfig) => {
+    const mainActivity = AndroidConfig.Manifest.getMainActivityOrThrow(nextConfig.modResults);
+    delete mainActivity.$["android:screenOrientation"];
+    return nextConfig;
+  });
+}
+
 module.exports = function withAndroidTabletOrientation(config) {
+  config = withUnlockedManifestOrientation(config);
   return withMainActivity(config, (nextConfig) => {
     let contents = nextConfig.modResults.contents;
     if (nextConfig.modResults.language !== "kt") {
@@ -67,7 +89,7 @@ module.exports = function withAndroidTabletOrientation(config) {
       ORIENTATION_METHODS,
       "the MainActivity class declaration",
     );
-    contents = insertAfter(
+    contents = insertBefore(
       contents,
       "super.onCreate(null)",
       ORIENTATION_ON_CREATE_CALL,
