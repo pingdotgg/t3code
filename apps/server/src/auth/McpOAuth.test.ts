@@ -451,6 +451,13 @@ it.live(
         const readOnlyResponse = yield* approveWith(readOnly.credential);
         expect(readOnlyResponse.status).toBe(400);
         expect(readOnlyResponse.message).toContain("cannot grant this access");
+        const readOnlyFull = yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access: "full-access",
+          code: readOnly.credential,
+        });
+        expect(readOnlyFull.status).toBe(400);
+        expect(readOnlyFull.message).toContain("cannot grant this access");
         const operator = yield* auth.issuePairingCredential({
           scopes: ["orchestration:read", "orchestration:operate"],
         });
@@ -460,13 +467,14 @@ it.live(
           code: operator.credential,
         });
         expect(operatorFull.status).toBe(400);
+        expect(operatorFull.message).toContain("cannot grant this access");
+        expect((yield* approveWith(operator.credential)).status).toBe(200);
 
-        // A read-only code can approve read-only access.
-        const readOnlyCode = yield* auth.issuePairingCredential({ scopes: ["orchestration:read"] });
+        // Retry the rejected code with read-only access and finish the OAuth exchange.
         const readOnlyApproval = yield* decide(handler, params, {
           _tag: "pairing-code",
           access: "read-only",
-          code: readOnlyCode.credential,
+          code: readOnly.credential,
         });
         expect(readOnlyApproval.status).toBe(200);
         const readOnlyToken = yield* handler(
