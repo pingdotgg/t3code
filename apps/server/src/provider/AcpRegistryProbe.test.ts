@@ -196,6 +196,56 @@ describe("ACP Registry probe", () => {
     expect(result.currentModelId).toBe("sonnet");
   });
 
+  it("lists models from the first model-category select, the option model selection writes", () => {
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        configOptions: [
+          { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+          {
+            id: "provider",
+            name: "Provider",
+            category: "model",
+            type: "select",
+            currentValue: "pi",
+            options: [
+              {
+                groupId: "hosted",
+                name: "Hosted",
+                options: [
+                  { value: "gateway", name: "Gateway" },
+                  { value: "codex", name: "Codex" },
+                ],
+              },
+              { groupId: "local", name: "Local", options: [{ value: "pi", name: "Pi" }] },
+            ],
+          },
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5.5",
+            options: [
+              { value: "claude-opus-5.5", name: "Claude Opus 5.5" },
+              { value: "claude-haiku-5.5", name: "Claude Haiku 5.5" },
+            ],
+          },
+        ],
+      },
+      modelConfigId: "provider",
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+    expect(result.models).toEqual([
+      { id: "gateway", name: "Gateway", description: null },
+      { id: "codex", name: "Codex", description: null },
+      { id: "pi", name: "Pi", description: null },
+    ]);
+    expect(result.currentModelId).toBe("pi");
+  });
+
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {
     const result = acpRegistryProbeResult(instanceId, {
       sessionId: "probe-session",

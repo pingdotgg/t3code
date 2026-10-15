@@ -389,15 +389,28 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+type AcpSelectConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
+/**
+ * Finds the config option that selects the session's model: the first
+ * `category: "model"` select. ACP breaks ties between options of one category
+ * by array order, and only a select can hold a model id. Model discovery, the
+ * current model, and `setModel` writes all use this one option.
+ */
+export function findModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): AcpSelectConfigOption | undefined {
+  return configOptions?.find(
+    (option): option is AcpSelectConfigOption =>
+      option.category === "model" && option.type === "select" && option.id.trim().length > 0,
+  );
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
-  const configOptions = sessionResponse.configOptions;
-  if (!configOptions) return undefined;
-  for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
-      return opt.id.trim();
-    }
-  }
-  return undefined;
+  return findModelConfigOption(sessionResponse.configOptions)?.id.trim();
 }
 
 export function findSessionConfigOption(

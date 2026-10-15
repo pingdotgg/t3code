@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -141,7 +143,7 @@ describe("AcpRegistryAdapterV2", () => {
     });
   });
 
-  describe("the agent's own mode picker", () => {
+  describe("applying a stored selection to a scripted agent", () => {
     type Frame = Record<string, unknown>;
     const outbound = (method: string, params: unknown = "<any>"): Frame => ({
       type: "expect_outbound",
@@ -151,6 +153,8 @@ describe("AcpRegistryAdapterV2", () => {
       type: "emit_inbound",
       frame: { kind: "response", method, result },
     });
+    const assertOpened = (opened: Exit.Exit<void, unknown>) =>
+      assert.isTrue(Exit.isSuccess(opened));
     const permissionModeOption = (currentValue: string) => ({
       id: "permission-mode",
       name: "Permission mode",
@@ -162,11 +166,12 @@ describe("AcpRegistryAdapterV2", () => {
 
     // A scripted ACP v1 agent: initialize, session/new answered with `setup`,
     // then the frames T3 must send (and the agent's answers) to apply the
-    // user's stored pick from the agent's mode picker.
-    const openWithStoredModePick = Effect.fn("openWithStoredModePick")(function* (input: {
+    // user's stored model selection. Returns how the session open ended.
+    const openWithStoredSelection = Effect.fn("openWithStoredSelection")(function* (input: {
       readonly setup: unknown;
-      readonly modeFrames: ReadonlyArray<Frame>;
-      readonly storedModePick: string;
+      readonly selectionFrames: ReadonlyArray<Frame>;
+      readonly model?: string;
+      readonly storedModePick?: string;
     }) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -190,7 +195,7 @@ describe("AcpRegistryAdapterV2", () => {
             }),
             outbound("session/new"),
             answer("session/new", { sessionId: "agent-session", ...(input.setup as object) }),
-            ...input.modeFrames,
+            ...input.selectionFrames,
           ] as never,
         },
         ACP_REGISTRY_PROVIDER,
@@ -214,14 +219,16 @@ describe("AcpRegistryAdapterV2", () => {
           fileSystem,
         }),
       }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
-      yield* adapter
+      const opened = yield* adapter
         .openSession({
           threadId: ThreadId.make("thread-acp-registry-mode-pick"),
           providerSessionId: ProviderSessionId.make("provider-session-mode-pick"),
           modelSelection: {
             instanceId,
-            model: "default",
-            options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }],
+            model: input.model ?? "default",
+            ...(input.storedModePick === undefined
+              ? {}
+              : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
           },
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "approval-required",
@@ -229,32 +236,34 @@ describe("AcpRegistryAdapterV2", () => {
             cwd: replayDir,
           }),
         })
-        .pipe(Effect.scoped);
-      // Closing the session stops the agent, which writes its replay status in
-      // the same tick as its last answer. The script must be consumed exactly.
+        .pipe(Effect.asVoid, Effect.scoped, Effect.exit);
+      // Closing the session stops the agent. It records its replay status before
+      // sending each answer, so the status is final once T3 has read the last
+      // one. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      return opened;
     });
 
     it.effect("switches an agent that only advertises modes with session/set_mode", () =>
-      openWithStoredModePick({
+      openWithStoredSelection({
         setup: {
           modes: {
             currentModeId: "default",
             availableModes: ["default", "autoEdit"].map((id) => ({ id, name: id })),
           },
         },
-        modeFrames: [
+        selectionFrames: [
           outbound("session/set_mode", { sessionId: "agent-session", modeId: "autoEdit" }),
           answer("session/set_mode", {}),
         ],
         storedModePick: "autoEdit",
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.map(assertOpened), Effect.provide(layerTest), Effect.scoped),
     );
 
     it.effect("switches a mode config option under its own id", () =>
-      openWithStoredModePick({
+      openWithStoredSelection({
         setup: { configOptions: [permissionModeOption("ask")] },
-        modeFrames: [
+        selectionFrames: [
           outbound("session/set_config_option", {
             sessionId: "agent-session",
             configId: "permission-mode",
@@ -263,6 +272,76 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
+      }).pipe(Effect.map(assertOpened), Effect.provide(layerTest), Effect.scoped),
+    );
+
+    // Two `category: "model"` selects, as fx and Cline advertise: ACP breaks the
+    // tie by array order, so `provider` is the model option. The boolean before
+    // it cannot hold a model id.
+    const competingModelOptions = (provider: string) => [
+      { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+      {
+        id: "provider",
+        name: "Provider",
+        category: "model",
+        type: "select",
+        currentValue: provider,
+        options: [
+          {
+            group: "hosted",
+            name: "Hosted",
+            options: ["gateway", "codex"].map((value) => ({ value, name: value })),
+          },
+          { group: "local", name: "Local", options: [{ value: "pi", name: "pi" }] },
+        ],
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "claude-opus-5.5",
+        options: ["claude-opus-5.5", "claude-haiku-5.5"].map((value) => ({ value, name: value })),
+      },
+    ];
+
+    it.effect(
+      "writes a model to the first model-category select, the option the picker lists",
+      () =>
+        openWithStoredSelection({
+          setup: { configOptions: competingModelOptions("pi") },
+          selectionFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "provider",
+              value: "codex",
+            }),
+            answer("session/set_config_option", { configOptions: competingModelOptions("codex") }),
+          ],
+          model: "codex",
+        }).pipe(Effect.map(assertOpened), Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("rejects a model the model option does not offer without sending it", () =>
+      Effect.gen(function* () {
+        const opened = yield* openWithStoredSelection({
+          setup: { configOptions: competingModelOptions("pi") },
+          selectionFrames: [],
+          model: "claude-haiku-5.5",
+        });
+        assert.isTrue(Exit.isFailure(opened));
+        const failure = Exit.isFailure(opened) ? Cause.squash(opened.cause) : undefined;
+        assert.instanceOf(failure, ProviderAdapter.ProviderAdapterOpenSessionError);
+        const rejection = failure instanceof Error ? failure.cause : undefined;
+        assert.instanceOf(rejection, EffectAcpErrors.AcpRequestError);
+        assert.deepInclude(rejection, {
+          code: -32602,
+          data: {
+            configId: "provider",
+            allowedValues: ["gateway", "codex", "pi"],
+            receivedValue: "claude-haiku-5.5",
+          },
+        });
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
