@@ -4,6 +4,7 @@ import {
   formatComposerContextHref,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
+import { enrichedMarkdownWithMath } from "../lib/enrichedMarkdownMath";
 import { markdownWithHtml } from "../lib/markdownDocument";
 import { useCallback, useMemo, useState } from "react";
 import { ActionSheetIOS, Platform, Share, StyleSheet, View } from "react-native";
@@ -59,6 +60,15 @@ function enrichedStyle(
   };
   return {
     paragraph: body,
+    math: {
+      fontSize: style.fontSize,
+      color: style.color,
+      backgroundColor: "transparent",
+      padding: 8,
+      marginTop: 4,
+      marginBottom: 12,
+    },
+    inlineMath: { color: style.color },
     h1: heading(1),
     h2: heading(2),
     h3: heading(3),
@@ -140,8 +150,11 @@ function enrichedStyle(
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource } = props;
-  const markdown = useMemo(() => markdownWithHtml(props.markdown), [props.markdown]);
-  const { themeAppearance } = useAppearancePreferences();
+  const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+  const markdown = useMemo(() => {
+    const source = markdownWithHtml(props.markdown);
+    return mathRenderingEnabled ? enrichedMarkdownWithMath(source) : source;
+  }, [props.markdown, mathRenderingEnabled]);
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
   const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
     setDocumentAssets((previous) =>
@@ -322,7 +335,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           selectionColor={props.textStyle.selectionColor}
           selectionHandleColor={props.textStyle.selectionHandleColor}
           md4cFlags={{
-            latexMath: false,
+            latexMath: mathRenderingEnabled,
             hardSoftBreaks: props.preserveSoftBreaks ?? false,
             admonitions: true,
           }}

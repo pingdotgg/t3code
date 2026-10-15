@@ -16,6 +16,8 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { serializeTableElementToCsv, chatMarkdownClipboardPayload } from "../markdown-clipboard";
+import { captureAssistantTextSelection } from "../lib/assistantTextSelection";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -24,13 +26,16 @@ vi.mock("./chat/MermaidDiagram", () => ({
   MermaidDiagram: () => <svg aria-label="Diagram" />,
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
   const settings = actual.getClientSettings();
   return {
     ...actual,
-    useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
+    useClientSettings: (select?: (value: typeof settings) => unknown) => {
+      const value = { ...settings, ...settingsOverrides };
+      return select ? select(value) : value;
+    },
   };
 });
 vi.mock("./ui/tooltip", async () => {
@@ -540,6 +545,159 @@ describe("ChatMarkdown streaming", () => {
       expect(mounted.root.findAllByType("input")[1]!.props.checked).toBe(true);
     } finally {
       await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown math", () => {
+  const renderMath = async (
+    text: string,
+    options: Partial<ComponentProps<typeof ChatMarkdown>> = {},
+  ) => {
+    settingsOverrides.mathRenderingEnabled = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    host.setAttribute("data-assistant-citation-source", "assistant");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<ChatMarkdown cwd="/tmp/project" text={text} {...options} />);
+      await import("./chat/MathTypeset");
+    });
+    return {
+      host,
+      async close() {
+        await act(async () => root.unmount());
+        host.remove();
+        settingsOverrides.mathRenderingEnabled = false;
+        vi.unstubAllGlobals();
+      },
+    };
+  };
+
+  it("renders table formulas and exports their TeX instead of duplicate glyph text", async () => {
+    const rendered = await renderMath(
+      "| Name | Formula |\n| --- | --- |\n| Norm | $|x|$ and \\(\\|y\\|\\) |\n| Price | $5 and $10 |",
+    );
+    try {
+      const table = rendered.host.querySelector("table")!;
+      expect([...table.rows].map((row) => row.cells.length)).toEqual([2, 2, 2]);
+      expect(table.querySelectorAll(".katex")).toHaveLength(2);
+      expect(serializeTableElementToCsv(table)).toBe(
+        "Name,Formula\nNorm,\\(|x|\\) and \\(|y|\\)\nPrice,$5 and $10",
+      );
+      const glyph = table.querySelector(".katex-mathml mi")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(glyph, 0);
+      range.setEnd(glyph, 1);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const payload = chatMarkdownClipboardPayload(selection)!;
+      expect(payload.text).toBe("\\(|x|\\)");
+      expect(payload.html).toContain("\\(|x|\\)");
+      expect(payload.html).not.toContain("katex");
+      expect(captureAssistantTextSelection(rendered.host, selection)?.selector.text).toBe(
+        "\\(|x|\\)",
+      );
+    } finally {
+      await rendered.close();
+    }
+  });
+
+  it("renders explicit math fences and keeps unfinished streamed fences readable", async () => {
+    const rendered = await renderMath("```math\nx_i^2\n```\n\n`$literal$`\n\n$unfinished");
+    try {
+      expect(rendered.host.querySelectorAll(".katex")).toHaveLength(1);
+      expect(rendered.host.textContent).toContain("$literal$");
+      expect(rendered.host.textContent).toContain("$unfinished");
+    } finally {
+      await rendered.close();
+    }
+    const streamed = await renderMath("```math\nx_i^2", { isStreaming: true });
+    try {
+      expect(streamed.host.querySelector(".katex")).toBeNull();
+      expect(streamed.host.textContent).toContain("x_i^2");
+    } finally {
+      await streamed.close();
+    }
+  });
+
+  it("shows unsupported TeX as source and keeps active TeX commands inert", async () => {
+    const rendered = await renderMath(
+      "\\(\\notACommand{x}\\) and \\(\\href{https://example.com}{x}\\)",
+    );
+    try {
+      expect(rendered.host.textContent).toContain("\\(\\notACommand{x}\\)");
+      expect(rendered.host.querySelector('a[href="https://example.com"]')).toBeNull();
+    } finally {
+      await rendered.close();
+    }
+  });
+
+  it("typesets only when enabled, keeping prices and task offsets intact", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const text = "Area $\\pi r^2$ costs $5 and $10.\n\n\\[\nE = mc^2\n\\]\n\n- [ ] check \\(x\\)";
+    const renderers: ReactTestRenderer[] = [];
+    const render = async (parseRawHtml: boolean) => {
+      await act(async () => {
+        renderers.push(
+          create(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={parseRawHtml} />),
+        );
+      });
+      const renderer = renderers.at(-1)!;
+      return {
+        formulas: renderer.root
+          .findAll((node) => node.type === "span" && node.props["data-markdown-math"] !== undefined)
+          .map((formula) => formula.props["data-markdown-copy"]),
+        markerOffset: Number(renderer.root.findByType("li").props["data-task-marker-offset"]),
+      };
+    };
+
+    try {
+      expect((await render(true)).formulas).toEqual([]);
+      // Raw HTML carrying the math classes stays code while the setting is off.
+      await act(async () => {
+        renderers.push(
+          create(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              text={'<code class="language-math math-inline">x</code>'}
+            />,
+          ),
+        );
+      });
+      expect(
+        renderers.at(-1)!.root.findAll((node) => node.props["data-markdown-math"] !== undefined),
+      ).toEqual([]);
+      settingsOverrides.mathRenderingEnabled = true;
+      // Both the sanitized raw-HTML pipeline and the literal one keep the math classes.
+      for (const parseRawHtml of [true, false]) {
+        const { formulas, markerOffset } = await render(parseRawHtml);
+        expect(formulas).toEqual(["\\(\\pi r^2\\)", "\\[\nE = mc^2\n\\]\n\n", "\\(x\\)"]);
+        expect(setMarkdownTaskChecked(text, markerOffset, true)).toBe(
+          text.replace("- [ ]", "- [x]"),
+        );
+      }
+      // List indentation recovery parses blocks again; they still typeset.
+      const recovered = await act(async () =>
+        create(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={"-       intro\n\n        $$\n        x^2\n        $$"}
+          />,
+        ),
+      );
+      renderers.push(recovered);
+      expect(
+        recovered.root
+          .findAll((node) => node.type === "span" && node.props["data-markdown-math"] !== undefined)
+          .map((formula) => formula.props["data-markdown-copy"]),
+      ).toEqual(["\\[\nx^2\n\\]\n\n"]);
+    } finally {
+      settingsOverrides.mathRenderingEnabled = false;
+      await act(async () => renderers.forEach((renderer) => renderer.unmount()));
       vi.unstubAllGlobals();
     }
   });

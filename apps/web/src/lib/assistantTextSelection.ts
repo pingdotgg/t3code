@@ -1,5 +1,7 @@
 import { ASSISTANT_CITATION_CONTEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 
+import { mathWrapperOf } from "../markdown-clipboard";
+
 export type AssistantTextSelector = {
   readonly text: string;
   readonly start: number;
@@ -128,14 +130,17 @@ export function findAssistantCitationText(
   return match ?? (quoteCount === 1 ? onlyQuote : null);
 }
 
-type TextChunk = { node: Text; start: number; end: number };
+/** A text node, or a whole rendered formula standing for its TeX. */
+type TextChunk = { node: Text | Element; start: number; end: number };
+
+const isText = (node: Node): node is Text => node.nodeType === 3;
 
 /**
  * Uses DOM text order, with a line break between HTML blocks and at <br>.
  * Inline markup, including code and links, contributes its displayed text.
- * Controls and subtrees marked hidden/aria-hidden do not contribute. No layout
- * reads, CSS-generated content, or soft-wrap line breaks enter the stream, so
- * reflow cannot move it.
+ * Controls and subtrees marked hidden/aria-hidden do not contribute. A rendered
+ * formula contributes its TeX as one unit. No layout reads, CSS-generated
+ * content, or soft-wrap line breaks enter the stream, so reflow cannot move it.
  */
 function readAssistantText(root: HTMLElement) {
   const parts: string[] = [];
@@ -143,18 +148,21 @@ function readAssistantText(root: HTMLElement) {
   let length = 0;
   let separator = false;
 
+  const append = (node: Text | Element, text: string) => {
+    if (separator && length > 0) {
+      parts.push("\n");
+      length += 1;
+    }
+    separator = false;
+    chunks.push({ node, start: length, end: length + text.length });
+    parts.push(text);
+    length += text.length;
+  };
+
   const visit = (node: Node) => {
     if (node.nodeType === 3) {
       const text = node as Text;
-      if (text.length === 0) return;
-      if (separator && length > 0) {
-        parts.push("\n");
-        length += 1;
-      }
-      separator = false;
-      chunks.push({ node: text, start: length, end: length + text.length });
-      parts.push(text.data);
-      length += text.length;
+      if (text.length > 0) append(text, text.data);
       return;
     }
     if (node.nodeType !== 1) return;
@@ -162,7 +170,11 @@ function readAssistantText(root: HTMLElement) {
     if (element.matches(EXCLUDED_SELECTOR)) return;
     const block = element.matches(BLOCK_SELECTOR);
     if (block || element.tagName === "BR") separator = true;
-    for (const child of element.childNodes) visit(child);
+    if (element.matches("[data-markdown-math]")) {
+      append(element, element.getAttribute("data-markdown-copy")?.trim() ?? "");
+    } else {
+      for (const child of element.childNodes) visit(child);
+    }
     if (block) separator = true;
   };
 
@@ -190,7 +202,7 @@ function isUsableRange(root: HTMLElement, range: Range): boolean {
 }
 
 function isUnselectable(text: Text): boolean {
-  const element = text.parentElement;
+  const element = mathWrapperOf(text.parentElement) ?? text.parentElement;
   const view = element?.ownerDocument?.defaultView;
   return !!element && !!view && view.getComputedStyle(element).userSelect === "none";
 }
@@ -231,8 +243,13 @@ export function captureAssistantTextSelection(
 
   // Paragraph selection can end at the next block's offset 0 or a parent
   // boundary. Validate the text actually selected, not that empty endpoint.
-  range.setStart(first, first === range.startContainer ? range.startOffset : 0);
-  range.setEnd(last, last === range.endContainer ? range.endOffset : last.length);
+  // An endpoint inside a formula's glyphs takes in the whole formula.
+  const startFormula = mathWrapperOf(first.parentElement);
+  const endFormula = mathWrapperOf(last.parentElement);
+  if (startFormula) range.setStartBefore(startFormula);
+  else range.setStart(first, first === range.startContainer ? range.startOffset : 0);
+  if (endFormula) range.setEndAfter(endFormula);
+  else range.setEnd(last, last === range.endContainer ? range.endOffset : last.length);
   if (!isUsableRange(source, range)) return null;
 
   const stream = readAssistantText(source);
@@ -241,7 +258,7 @@ export function captureAssistantTextSelection(
   for (const chunk of stream.chunks) {
     if (!range.intersectsNode(chunk.node)) continue;
     const start = range.startContainer === chunk.node ? range.startOffset : 0;
-    const end = range.endContainer === chunk.node ? range.endOffset : chunk.node.length;
+    const end = range.endContainer === chunk.node ? range.endOffset : chunk.end - chunk.start;
     if (start === end) continue;
     rawStart ??= chunk.start + start;
     rawEnd = chunk.start + end;
@@ -284,7 +301,10 @@ export function resolveAssistantCitationRange(
   if (first === undefined || last === undefined) return null;
 
   const range = root.ownerDocument.createRange();
-  range.setStart(first.node, Math.max(0, start - first.start));
-  range.setEnd(last.node, Math.min(last.node.length, end - last.start));
+  // A match that touches a formula covers the formula as rendered.
+  if (isText(first.node)) range.setStart(first.node, Math.max(0, start - first.start));
+  else range.setStartBefore(first.node);
+  if (isText(last.node)) range.setEnd(last.node, Math.min(last.node.length, end - last.start));
+  else range.setEndAfter(last.node);
   return isUsableRange(root, range) ? range : null;
 }

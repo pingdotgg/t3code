@@ -21,6 +21,7 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
+import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -229,6 +230,7 @@ function matchMedia() {
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
+let remarkThoughtPreview: typeof import("./MessagesTimeline").remarkThoughtPreview;
 
 const ElementStub = class ElementStub {};
 function stubDomGlobals() {
@@ -272,7 +274,8 @@ beforeEach(stubDomGlobals);
 // Cold transformation of the full chat dependency graph needs extra time on slower CI workers.
 beforeAll(async () => {
   Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
-  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline, resolvePreviewAnnotationImage, remarkThoughtPreview } =
+    await import("./MessagesTimeline"));
 }, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -2826,6 +2829,23 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
+  });
+
+  it("keeps formulas while flattening compact reasoning previews", () => {
+    const tree = parseMarkdownWithMath("## Reasoning\n\nUse **norm** $|x|$ and \\[x^2\\]");
+    remarkThoughtPreview("Reasoning")(tree);
+    expect(tree.children.map((node) => node.type)).toEqual([
+      "text",
+      "inlineMath",
+      "text",
+      "inlineMath",
+    ]);
+    expect(tree.children.map((node) => ("value" in node ? node.value : null))).toEqual([
+      "Reasoning Use norm ",
+      "|x|",
+      " and ",
+      "x^2",
+    ]);
   });
 
   it.each([

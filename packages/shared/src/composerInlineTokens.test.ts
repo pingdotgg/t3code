@@ -190,4 +190,11 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
   });
+
+  it("keeps skill and mention sources inside TeX out of the context chip list", () => {
+    const source = "\\[\\text{use $browser and @README.md here}\\] then $real-skill ";
+    expect(collectComposerInlineTokens(source).map((token) => token.source)).toEqual([
+      "$real-skill",
+    ]);
+  });
 });

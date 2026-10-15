@@ -1786,6 +1786,61 @@ code {
   margin: 0.65rem 0;
 }
 
+/* Wide equations keep their overflow inside the surrounding prose. */
+.chat-markdown-math-inline {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.chat-markdown-math-display {
+  display: block;
+  margin: 0.65rem 0;
+}
+
+.chat-markdown-math-viewport {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0.15em;
+}
+
+.chat-markdown-math-viewport::-webkit-scrollbar {
+  height: 8px;
+}
+
+.chat-markdown-math-viewport::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-clip: content-box;
+}
+
+.chat-markdown-math-content {
+  display: inline-block;
+  width: max-content;
+}
+
+.chat-markdown-math-display .chat-markdown-math-content {
+  min-width: 100%;
+}
+
+.chat-markdown-math-display .katex-display {
+  margin: 0;
+}
+
+.chat-markdown-math-source {
+  white-space: pre-wrap;
+}
+
+.chat-markdown-math-viewport:focus-visible {
+  outline: 1px solid var(--contrast-border);
+  outline-offset: 2px;
+}
+
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -2072,6 +2127,18 @@ code {
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
+}
+
+/* Formula cells keep their natural width and scroll with the table. */
+.chat-markdown .chat-markdown-table-container td:has([data-markdown-math]) {
+  max-width: none;
+  overflow: visible;
+}
+
+.chat-markdown .chat-markdown-table-container [data-markdown-math],
+.chat-markdown .chat-markdown-table-container .chat-markdown-math-viewport {
+  max-width: none;
+  overflow: visible;
 }
 
 :root {

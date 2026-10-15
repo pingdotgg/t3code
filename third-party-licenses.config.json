@@ -147,9 +147,49 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
+    },
+    {
+      "bundles": ["ios", "android", "mobile"],
+      "license": "MIT",
+      "name": "RaTeX",
+      "version": "0.1.14",
+      "sourceUrl": "https://github.com/erweixin/RaTeX/tree/v0.1.14",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) erweixin"]
+        }
+      ]
+    },
+    {
+      "bundles": ["ios", "android", "mobile", "web", "desktop"],
+      "license": "OFL-1.1",
+      "name": "KaTeX mathematical fonts",
+      "sourceUrl": "https://github.com/KaTeX/KaTeX",
+      "generatedNotices": [
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)",
+            "Copyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>)"
+          ],
+          "preamble": [
+            "Unmodified KaTeX_* mathematical fonts. Reserved Font Names include KaTeX_Main, KaTeX_Math, KaTeX_AMS, and KaTeX_Caligraphic."
+          ]
+        }
+      ]
     }
   ],
   "packageOverrides": [
+    {
+      "name": "remark-math",
+      "version": "6.0.0",
+      "sourceUrl": "https://github.com/remarkjs/remark-math/blob/main/license",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Junyoung Choi <fluke8259@gmail.com>"]
+      }
+    },
     {
       "name": "@bufbuild/protobuf",
       "version": "1.10.0",

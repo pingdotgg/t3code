@@ -1,3 +1,5 @@
+import { markdownMathRanges } from "./markdownMath.ts";
+
 export type ComposerInlineToken =
   | {
       readonly type: "mention";
@@ -149,5 +151,12 @@ export function collectComposerInlineTokens(
     }
   }
 
-  return [...matches].sort((left, right) => left.start - right.start);
+  // TeX can contain literal skill and file tokens, especially inside \text{}.
+  // They remain formula source rather than becoming composer context chips.
+  const math = matches.length > 0 ? markdownMathRanges(text) : [];
+  return matches
+    .filter(
+      (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
+    )
+    .sort((left, right) => left.start - right.start);
 }

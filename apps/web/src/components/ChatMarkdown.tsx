@@ -108,11 +108,13 @@ import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { mathKind, mayContainMath, remarkChatMath } from "@t3tools/shared/markdownMath";
 import {
   artifactTemplateFromHastProperties,
   renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { MarkdownMath } from "./chat/MarkdownMath";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -215,6 +217,8 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
+  /** Compact markdown transforms remove blocks before rendering inside a label. */
+  inline?: boolean;
   text: string;
   cwd: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
@@ -404,6 +408,22 @@ function orderedListGutterStyle(
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 2}ch` };
+}
+
+const CHAT_MARKDOWN_MATH_REMARK_PLUGINS = [remarkChatMath, ...CHAT_MARKDOWN_REMARK_PLUGINS];
+
+const CHAT_MARKDOWN_MATH_REMARK_PLUGINS_WITH_BREAKS = [
+  remarkChatMath,
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+];
+
+function chatMarkdownRemarkPlugins(lineBreaks: boolean, math: boolean) {
+  if (math) {
+    return lineBreaks
+      ? CHAT_MARKDOWN_MATH_REMARK_PLUGINS_WITH_BREAKS
+      : CHAT_MARKDOWN_MATH_REMARK_PLUGINS;
+  }
+  return lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS;
 }
 
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -2340,7 +2360,7 @@ function useChatMarkdownState({
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
-  const markdownRef = useRef<HTMLDivElement>(null);
+  const markdownRef = useRef<HTMLElement>(null);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
   useEffect(() => {
@@ -2494,7 +2514,7 @@ function useChatMarkdownState({
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
-  const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+  const handleCopy = useCallback((event: ReactClipboardEvent<HTMLElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
     const payload = chatMarkdownClipboardPayload(selection);
@@ -3364,6 +3384,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
+    const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
     const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
       ChatMarkdownRendererContext,
     );
@@ -3373,6 +3394,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
 
     const language = extractFenceLanguage(codeBlock.className);
+    if (mathEnabled && language === "math" && (!isStreaming || isClosedCodeFence(node, text))) {
+      return <MarkdownMath tex={codeBlock.code} display />;
+    }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary
@@ -3429,9 +3453,23 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const MarkdownCodeOrMath: NonNullable<Components["code"]> = (props) => {
+  const math = mathKind(props.className);
+  if (!math) return CHAT_MARKDOWN_COMPONENTS.code(props);
+  return <MarkdownMath tex={nodeToPlainText(props.children)} display={math === "display"} />;
+};
+
+// Only messages parsed with math enabled can typeset, so raw HTML carrying the
+// math classes stays an ordinary code element while the setting is off.
+const CHAT_MARKDOWN_MATH_COMPONENTS = {
+  ...CHAT_MARKDOWN_COMPONENTS,
+  code: MarkdownCodeOrMath,
+} satisfies Components;
+
 function ChatMarkdown({
   text,
   className,
+  inline = false,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
@@ -3449,21 +3487,30 @@ function ChatMarkdown({
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  const math =
+    useClientSettings((settings) => settings.mathRenderingEnabled) && mayContainMath(text);
+  const Root = inline ? "span" : "div";
+  const bindMarkdownRef = useCallback(
+    (node: HTMLElement | null) => {
+      markdownRef.current = node;
+    },
+    [markdownRef],
+  );
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...chatMarkdownRemarkPlugins(lineBreaks, math),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [extraRemarkPlugins, incrementalParsing, lineBreaks, math],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
   // complete source token instead of dropping it from the rendered message.
   return (
-    <div
-      ref={markdownRef}
+    <Root
+      ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)] [overflow-wrap:anywhere] [word-break:break-word]",
         className,
@@ -3481,7 +3528,7 @@ function ChatMarkdown({
               : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
           }
           skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
+          components={math ? CHAT_MARKDOWN_MATH_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
           {text}
@@ -3493,7 +3540,7 @@ function ChatMarkdown({
           onClose={() => setLocalMediaPreview(null)}
         />
       ) : null}
-    </div>
+    </Root>
   );
 }
 
