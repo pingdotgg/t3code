@@ -3522,6 +3522,36 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("asks GraphQL who the account is when it may not read /user", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubApi.GitHubApiResponseError({
+              host: "github.app-installation.test",
+              operation: "getRoutingIdentity",
+              status: 403,
+              githubErrors: ["Resource not accessible by integration"],
+            }),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"databaseId":789,"login":"acme-app[bot]"}}}')),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      expect(
+        yield* cli.getRoutingIdentity({ cwd: "/w", host: "github.app-installation.test" }),
+      ).toEqual({ accountId: "789", viewer: "acme-app[bot]" });
+      expect(callAt(0)).toMatchObject({ kind: "rest", path: "user" });
+      expect(callAt(1)).toMatchObject({
+        kind: "graphql",
+        host: "github.app-installation.test",
+        operation: "getRoutingIdentity",
+      });
+    }),
+  );
+
   it.effect("reuses verified credentials offline and refuses an unverified replacement", () =>
     Effect.gen(function* () {
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
