@@ -50,12 +50,9 @@ export function PullRequestSavedViewsMenu({
   const [editor, setEditor] = useState<{ id?: string; name: string } | null>(null);
   const inputId = useId();
   const errorId = useId();
-  const explicitlySelectedView = views.find((view) => view.id === selectedId);
-  const matchingView =
-    explicitlySelectedView && pullRequestViewMatches(explicitlySelectedView, preferences)
-      ? explicitlySelectedView
-      : views.find((view) => pullRequestViewMatches(view, preferences));
-  const selectedView = matchingView ?? explicitlySelectedView;
+  const selectedView =
+    views.find((view) => view.id === selectedId) ??
+    views.find((view) => pullRequestViewMatches(view, preferences));
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, preferences);
   const nameError = editor ? pullRequestViewNameError(editor.name, views, editor.id) : null;
 
@@ -135,7 +132,7 @@ export function PullRequestSavedViewsMenu({
                   />
                 }
               >
-                {matchingView?.id === view.id ? (
+                {selectedView?.id === view.id && !modified ? (
                   <CheckIcon aria-hidden />
                 ) : (
                   <BookmarkIcon aria-hidden />

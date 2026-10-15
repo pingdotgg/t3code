@@ -156,3 +156,29 @@ it("keeps the explicitly chosen view selected when two views have identical filt
   await choose("Delete view");
   expect(storedViews().map((view) => view.id)).toEqual(["first"]);
 });
+
+it("keeps the selected view as the update target when edits match another view", async () => {
+  const other = {
+    id: "other",
+    name: "Other queue",
+    preferences: { ...reviewing, checks: "passing" },
+  } as const;
+  localStorage.setItem(
+    PULL_REQUEST_SAVED_VIEWS_KEY,
+    JSON.stringify([{ id: "reviewing", name: "Review queue", preferences: reviewing }, other]),
+  );
+  await render();
+  await openMenu();
+  await choose("Review queue");
+  await render(other.preferences);
+  expect(container.textContent).toContain("Review queue*");
+  await openMenu();
+  await choose("Update saved view");
+  expect(storedViews()).toEqual([
+    { id: "reviewing", name: "Review queue", preferences: other.preferences },
+    other,
+  ]);
+  await openMenu();
+  await choose("Other queue");
+  expect(container.textContent).toContain("Other queue");
+});

@@ -20,12 +20,9 @@ export function PullRequestSavedViewsMenu({
   const { views, ready, update } = usePullRequestSavedViews();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const explicitlySelected = views.find((view) => view.id === selectedId);
-  const matchingView =
-    explicitlySelected && pullRequestViewMatches(explicitlySelected, scope)
-      ? explicitlySelected
-      : views.find((view) => pullRequestViewMatches(view, scope));
-  const selectedView = matchingView ?? explicitlySelected;
+  const selectedView =
+    views.find((view) => view.id === selectedId) ??
+    views.find((view) => pullRequestViewMatches(view, scope));
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
 
   async function applyView(view: PullRequestSavedView) {
@@ -87,7 +84,7 @@ export function PullRequestSavedViewsMenu({
     ...views.map((view) => ({
       id: `apply:${view.id}`,
       title: view.name,
-      state: matchingView?.id === view.id ? ("on" as const) : ("off" as const),
+      state: selectedView?.id === view.id && !modified ? ("on" as const) : ("off" as const),
     })),
     { id: "save", title: "Save current view…" },
     ...(selectedView

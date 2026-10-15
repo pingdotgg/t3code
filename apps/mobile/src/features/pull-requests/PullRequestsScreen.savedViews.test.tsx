@@ -21,6 +21,14 @@ const fixture = vi.hoisted(() => ({
   scroll: vi.fn(),
   alert: vi.fn(),
   views: [] as ReadonlyArray<PullRequestSavedView>,
+  updateViews:
+    vi.fn<
+      (
+        transform: (
+          current: ReadonlyArray<PullRequestSavedView>,
+        ) => ReadonlyArray<PullRequestSavedView>,
+      ) => Promise<void>
+    >(),
   configs: new Map<string, never>(),
   list: { entries: [], data: { viewers: {}, localSearchHosts: new Set(), errors: [] } },
 }));
@@ -71,13 +79,26 @@ vi.mock("./PullRequestListFilters", () => ({
 }));
 vi.mock("../workspace/ListFilterMenu", () => ({
   ListFilterMenu: (props: Parameters<typeof ListFilterMenu>[0]) => (
-    <button
-      aria-label={props.accessibilityLabel}
-      disabled={props.actions.every((action) => action.attributes?.disabled)}
-      onClick={() => props.onSelect("apply:review")}
-    >
-      {props.label}
-    </button>
+    <div>
+      <button
+        aria-label={props.accessibilityLabel}
+        disabled={props.actions.every((action) => action.attributes?.disabled)}
+        onClick={() => props.onSelect("apply:review")}
+      >
+        {props.label}
+      </button>
+      {props.actions
+        .filter((action) => action.id !== "apply:review")
+        .map((action) => (
+          <button
+            key={action.id}
+            disabled={action.attributes?.disabled}
+            onClick={() => props.onSelect(action.id!)}
+          >
+            {action.title}
+          </button>
+        ))}
+    </div>
   ),
 }));
 vi.mock("./usePullRequestList", () => ({ usePullRequestList: () => fixture.list }));
@@ -93,7 +114,11 @@ vi.mock("./usePullRequestListControls", () => ({
     controlsFor: () => fixture.controls,
     applyView: fixture.applyView,
   }),
-  usePullRequestSavedViews: () => ({ views: fixture.views, ready: true, update: vi.fn() }),
+  usePullRequestSavedViews: () => ({
+    views: fixture.views,
+    ready: true,
+    update: fixture.updateViews,
+  }),
 }));
 
 import { PullRequestsScreen } from "./PullRequestsScreen";
@@ -124,6 +149,9 @@ beforeEach(async () => {
   fixture.controls = { involvement: "authored", state: "closed", filters: {}, sort: "updated" };
   fixture.views = [view];
   fixture.applyView.mockReset();
+  fixture.updateViews.mockReset().mockImplementation(async (transform) => {
+    fixture.views = transform(fixture.views);
+  });
   fixture.alert.mockReset();
   fixture.scroll.mockReset();
   container = document.createElement("div");
@@ -205,3 +233,44 @@ it.each(["", "saved query"])(
     expect(menu().disabled).toBe(false);
   },
 );
+
+it("keeps the selected view as the update target when edits match another view", async () => {
+  const other: PullRequestSavedView = {
+    ...view,
+    id: "other",
+    name: "Other queue",
+    controls: { ...view.controls, filters: { checks: "passing" } },
+  };
+  fixture.views = [view, other];
+  fixture.applyView.mockImplementation(async (saved) => {
+    fixture.controls = saved.controls;
+  });
+  await act(() =>
+    renderer.render(
+      <WorkspaceTabsProvider>
+        <Scene />
+      </WorkspaceTabsProvider>,
+    ),
+  );
+  await act(() => menu().click());
+  fixture.controls = other.controls;
+  await act(() =>
+    renderer.render(
+      <WorkspaceTabsProvider>
+        <Scene />
+      </WorkspaceTabsProvider>,
+    ),
+  );
+  expect(menu().textContent).toBe("Review queue *");
+  const update = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Update saved view",
+  );
+  expect(update).toBeDefined();
+  await act(() => update!.click());
+  expect(fixture.views).toEqual([{ ...view, controls: other.controls }, other]);
+  const selectOther = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Other queue",
+  );
+  await act(() => selectOther!.click());
+  expect(menu().textContent).toBe("Other queue");
+});
