@@ -304,6 +304,8 @@ export interface ThreadFeedProps {
   readonly anchorMessageId: MessageId | null;
   readonly submittedMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
+  /** Composer padding the open keyboard covers; the list lifts by the keyboard height less this. */
+  readonly keyboardOffset: number;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
@@ -2671,6 +2673,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // content rest below the transparent header rather than at frame top.
             contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+            keyboardOffset={props.keyboardOffset}
             // UIKit's automatic behavior adds the safe-area bottom on top of the
             // raw contentInset the keyboard integration writes. The detail screen
             // under-reports the composer inset by this amount (see
