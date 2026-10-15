@@ -296,6 +296,28 @@ and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
 variable. The Vercel project's root directory must be `apps/marketing`.
 Git deployments remain disabled in `apps/marketing/vercel.ts`.
 
+## Mobile TestFlight and store releases
+
+Merges to main publish compatible OTAs and build iOS prereleases with the `testflight`
+profile at version `3.0.0`. Build numbers increment automatically. The committed app
+version remains the App Store release version; Android keeps using that version.
+
+To release iOS, dispatch **Mobile EAS Production** with `mode=build`,
+`profile=production`, `platform=ios`, and the intended version, such as `2.0.1`.
+The workflow commits and pushes the version before building and uploading it.
+Select that build in App Store Connect for App Store review.
+
+To force a TestFlight rebuild, select `profile=testflight`, `platform=ios`, and
+leave the version blank. Submit the first `3.0.0` build for external beta review
+in App Store Connect. Later builds may still require review; uploads alone do
+not guarantee external approval. TestFlight builds expire after 90 days.
+
+Both release and TestFlight binaries receive compatible production-channel OTAs,
+separated by their major-version fingerprints. Manual `mode=update` uses the
+selected profile's version. Before releasing `3.0.0` to the App Store, advance
+`build.testflight.env.T3CODE_MOBILE_VERSION` in `apps/mobile/eas.json` to the next
+unreleased major and get its first beta build approved.
+
 ## Android APK mirror
 
 `.github/workflows/mobile-android-apk.yml` checks Google Play hourly and publishes the newest

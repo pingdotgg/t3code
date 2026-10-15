@@ -49,6 +49,12 @@
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },
+    "testflight": {
+      "extends": "production",
+      "env": {
+        "T3CODE_MOBILE_VERSION": "3.0.0"
+      }
+    },
     "v2-preview": {
       "extends": "production",
       "distribution": "store",
@@ -72,6 +78,9 @@
     }
   },
   "submit": {
+    "testflight": {
+      "extends": "production"
+    },
     "v2-preview": {
       "extends": "production",
       "android": {
