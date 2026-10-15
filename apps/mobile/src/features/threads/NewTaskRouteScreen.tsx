@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { NavigationRow } from "../../components/NavigationRow";
 import { AppBar } from "../../components/AppBar";
@@ -16,7 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
 import { ScreenContent } from "../../components/ScreenContent";
@@ -211,7 +212,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
-        Alert.alert(
+        Dialog.alert(
           "Could not change project",
           error instanceof Error
             ? error.message
@@ -247,7 +248,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          Alert.alert(
+          Dialog.alert(
             "Could not start without a project",
             error instanceof Error
               ? error.message

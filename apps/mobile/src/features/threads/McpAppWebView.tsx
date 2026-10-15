@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
@@ -21,7 +22,7 @@ import * as Predicate from "effect/Predicate";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -81,7 +82,7 @@ const commandFailure = (result: {
 
 const confirm = (title: string, message: string, action: string) =>
   new Promise<boolean>((resolve) => {
-    Alert.alert(
+    Dialog.alert(
       title,
       message,
       [

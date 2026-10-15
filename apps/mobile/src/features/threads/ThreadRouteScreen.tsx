@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
@@ -26,7 +27,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
@@ -835,7 +836,7 @@ function ThreadRouteContent(
     try {
       await recoverFailedThreadDraft(creation);
     } catch (error) {
-      Alert.alert(
+      Dialog.alert(
         "Could not restore draft",
         error instanceof Error ? error.message : String(error),
       );

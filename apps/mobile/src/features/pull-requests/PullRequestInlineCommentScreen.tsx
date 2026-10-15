@@ -1,6 +1,7 @@
+import * as Dialog from "../../components/Dialog";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { Button } from "../../components/Button";
@@ -128,7 +129,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         <Button
           label="Delete draft"
           onPress={() =>
-            Alert.alert("Delete this draft?", "Your other review comments will be kept.", [
+            Dialog.alert("Delete this draft?", "Your other review comments will be kept.", [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Delete",

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
@@ -62,7 +63,6 @@ import {
   useState,
 } from "react";
 import {
-  Alert,
   AppState,
   Keyboard,
   Platform,
@@ -1053,7 +1053,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         composerEditorRef.current?.focus();
       }
     } catch (error) {
-      Alert.alert(
+      Dialog.alert(
         "Could not edit message",
         error instanceof Error ? error.message : "Please try again.",
       );

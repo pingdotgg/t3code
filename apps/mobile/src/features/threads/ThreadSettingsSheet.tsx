@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
@@ -36,15 +37,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  Alert,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -559,7 +552,7 @@ function ThreadSettingsSessionProvider(
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
-        Alert.alert(
+        Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
         );
@@ -1007,7 +1000,7 @@ function ThreadSettingsMainContent(props: {
     void refreshProviderCatalog(session.environmentId).then((result) => {
       setIsRefreshingProviders(false);
       const error = providerCatalogRefreshError(result);
-      if (error) Alert.alert("Could not refresh models", error);
+      if (error) Dialog.alert("Could not refresh models", error);
     });
   }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
   const catalogItems = useThreadSettingsCatalogItems(session);

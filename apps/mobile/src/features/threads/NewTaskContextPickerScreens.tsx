@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { NavigationRow } from "../../components/NavigationRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -12,7 +13,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -313,7 +314,7 @@ export function NewTaskBranchPickerRouteScreen() {
         if (result._tag === "Failure") {
           if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
-            Alert.alert(
+            Dialog.alert(
               "Could not switch branch",
               error instanceof Error ? error.message : "The branch could not be checked out.",
             );

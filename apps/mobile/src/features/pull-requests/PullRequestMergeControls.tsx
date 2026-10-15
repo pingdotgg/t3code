@@ -1,9 +1,10 @@
+import * as Dialog from "../../components/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { Menu } from "../../components/Menu";
@@ -125,7 +126,7 @@ export function PullRequestMergeControls(props: {
       });
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
     } catch (cause) {
-      Alert.alert(
+      Dialog.alert(
         "Couldn't complete the merge action",
         cause instanceof Error ? cause.message : "Try again.",
       );
@@ -155,7 +156,7 @@ export function PullRequestMergeControls(props: {
           : action === "disable-auto-merge"
             ? "Stop the provider from automatically merging this pull request."
             : `Merge #${pr.number} into ${pr.baseBranch} using ${method}.`;
-    Alert.alert(title, message, [
+    Dialog.alert(title, message, [
       { text: "Cancel", style: "cancel" },
       {
         text: action === "merge" ? label : title.replace("?", ""),

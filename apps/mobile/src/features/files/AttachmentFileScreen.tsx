@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -5,7 +6,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -228,7 +229,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     pendingNativeError.current = null;
     if (nativeViewer === null) {
       // A file this screen renders itself: an explicit viewer failure is worth a word.
-      if (message) Alert.alert("Could not open document", message);
+      if (message) Dialog.alert("Could not open document", message);
       return;
     }
     if (message) {

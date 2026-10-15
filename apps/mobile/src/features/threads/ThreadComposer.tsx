@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -33,7 +34,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { Alert, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -486,7 +487,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
     onShowUsageLimits(report);
     if (!report) {
-      Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
     }
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
@@ -999,7 +1000,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     } else if (!wouldExceedInputLimit) {
                       insertPaste();
                     } else {
-                      Alert.alert(
+                      Dialog.alert(
                         wouldExceedInputLimit
                           ? "Pasted text is too large for this message"
                           : "Could not attach pasted text",
