@@ -4,21 +4,48 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
   IssueTrackerKind,
+  type IssueTrackerProjectBinding,
   type OrchestrationProjectShell,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
   type IssueTrackerApi,
+  type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
 } from "@t3tools/issue-tracker-core/server/IssueTracker";
 
+import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as IssueService from "./IssueService.ts";
 import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
 
 const GITHUB = IssueTrackerKind.make("github");
+const LINEAR = IssueTrackerKind.make("linear");
+
+/** A standalone tracker shaped like Linear: its own host, team keys for scopes, `ENG-1` keys. */
+function fakeStandaloneTracker(
+  overrides: Partial<IssueTrackerApi> = {},
+): StandaloneIssueTrackerApi {
+  return {
+    ...fakeTracker({
+      getViewer: () => Effect.succeed("usr_julius"),
+      getIssue: (input) =>
+        Effect.succeed({ ...issue(input.key), displayKey: input.key, viewer: "usr_julius" }),
+      ...overrides,
+    }),
+    kind: LINEAR,
+    standalone: {
+      tracker: LINEAR,
+      displayName: "Linear",
+      host: "linear.app",
+      scopeNoun: "team",
+      credential: { label: "Personal API key", helpUrl: null },
+    },
+    probeCredential: () => Effect.succeed({ account: "julius", scopes: [] }),
+  };
+}
 
 function project(input: {
   readonly id: string;
@@ -111,10 +138,21 @@ function fakeTracker(overrides: Partial<IssueTrackerApi> = {}): IssueTrackerApi 
 function makeService(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly trackers: ReadonlyArray<IssueTrackerApi>;
+  readonly bindings?: Record<string, IssueTrackerProjectBinding>;
 }) {
   return IssueService.make.pipe(
     Effect.provide(
       Layer.mergeAll(
+        Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
+          list: Effect.succeed(
+            new Map(
+              Object.entries(input.bindings ?? {}).map(([id, binding]) => [
+                id as ProjectId,
+                binding,
+              ]),
+            ),
+          ),
+        }),
         Layer.succeed(
           IssueTrackerRegistry.IssueTrackerRegistry,
           IssueTrackerRegistry.fromTrackers(input.trackers),
@@ -283,6 +321,80 @@ describe("IssueService", () => {
       });
       expect(listed).toEqual(["acme/web"]);
       expect(next.errors).toEqual([]);
+    }),
+  );
+});
+
+describe("IssueService with a standalone tracker", () => {
+  it.effect("lists a bound project's standalone scope beside its git host and serves both", () =>
+    Effect.gen(function* () {
+      const listed: string[] = [];
+      const record = (tracker: IssueTrackerKind): Partial<IssueTrackerApi> => ({
+        listIssues: (input) =>
+          Effect.sync(() => {
+            listed.push(`${tracker} ${input.host} ${input.scope}`);
+            return { items: [issue(tracker === LINEAR ? "ENG-1" : "1")], nextCursor: null };
+          }),
+      });
+      const projects = [project({ id: "web", repository: "acme/web" }), project({ id: "notes" })];
+      const trackers = [fakeTracker(record(GITHUB)), fakeStandaloneTracker(record(LINEAR))];
+      const bound = yield* makeService({
+        projects,
+        trackers,
+        bindings: { ["web" as ProjectId]: { tracker: LINEAR, scope: "ENG" } },
+      });
+
+      const result = yield* bound.list({ state: "open" });
+      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(result.entries.map((entry) => [entry.tracker, entry.scope, entry.key]).sort()).toEqual(
+        [
+          ["github", "acme/web", "1"],
+          ["linear", "ENG", "ENG-1"],
+        ],
+      );
+      expect(result.trackers.map((tracker) => [tracker.tracker, tracker.host]).sort()).toEqual([
+        ["github", "github.com"],
+        ["linear", "linear.app"],
+      ]);
+      // A reference picks the project's tracker by kind; both are the project's own, so writable.
+      const linearRef = {
+        projectId: "web" as ProjectId,
+        tracker: LINEAR,
+        scope: "ENG",
+        key: "ENG-1",
+      };
+      expect(yield* bound.detail(linearRef)).toMatchObject({ host: "linear.app", writable: true });
+      expect(
+        yield* bound.detail({
+          projectId: "web" as ProjectId,
+          tracker: GITHUB,
+          scope: "acme/web",
+          key: "1",
+        }),
+      ).toMatchObject({ host: "github.com", writable: true });
+
+      // Unbound, the standalone scope is gone and its references are unsupported.
+      listed.length = 0;
+      const unbound = yield* makeService({ projects, trackers });
+      const after = yield* unbound.list({ state: "open" });
+      expect(listed).toEqual(["github github.com acme/web"]);
+      expect(after.trackers.map((tracker) => tracker.tracker)).toEqual(["github"]);
+      const refused = yield* Effect.flip(unbound.detail(linearRef));
+      expect(refused).toMatchObject({
+        _tag: "IssueUnavailableError",
+        reason: "tracker-unsupported",
+      });
+
+      // A project with no remote at all can still be bound, and then has only the standalone one.
+      const standaloneOnly = yield* makeService({
+        projects,
+        trackers,
+        bindings: { ["notes" as ProjectId]: { tracker: LINEAR, scope: "OPS" } },
+      });
+      const notes = yield* standaloneOnly.list({ state: "open", projectId: "notes" as ProjectId });
+      expect(notes.entries.map((entry) => [entry.projectId, entry.scope])).toEqual([
+        ["notes", "OPS"],
+      ]);
     }),
   );
 });

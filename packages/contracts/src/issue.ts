@@ -392,8 +392,19 @@ export const IssueTemplate = Schema.Struct({
 });
 export type IssueTemplate = typeof IssueTemplate.Type;
 
+/** A starting point only the tracker's own site can render: Linear's form and rich templates. */
+export const IssueExternalTemplate = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  about: Schema.String,
+  /** Opens the exact template on the tracker, ready to fill in. */
+  url: TrimmedNonEmptyString,
+});
+export type IssueExternalTemplate = typeof IssueExternalTemplate.Type;
+
 export const IssueTemplateList = Schema.Struct({
   templates: Schema.Array(IssueTemplate),
+  /** Absent from a tracker whose every template is body-shaped. */
+  externalTemplates: Schema.optional(Schema.Array(IssueExternalTemplate)),
   /** False where the scope's config forbids an issue filed from nothing. */
   blankIssuesEnabled: Schema.Boolean,
 });
@@ -533,4 +544,99 @@ export function threadIssueRefOf(link: ThreadIssueLink): IssueRef {
     scope: link.scope,
     key: link.key,
   };
+}
+
+/**
+ * A tracker that is not a git host: it is reached with its own credential rather than a
+ * checkout's, and a project opts into it by binding one of the tracker's scopes. Everything a
+ * client needs to draw the connect flow for any such tracker without knowing which one it is.
+ */
+export const StandaloneIssueTrackerDescriptor = Schema.Struct({
+  tracker: IssueTrackerKind,
+  displayName: TrimmedNonEmptyString,
+  /** Where the tracker is served from; what `IssueRef.host` carries for its issues. */
+  host: TrimmedNonEmptyString,
+  /** What the tracker calls its container, in the singular: "team" on Linear, "project" on Jira. */
+  scopeNoun: TrimmedNonEmptyString,
+  credential: Schema.Struct({
+    /** What the tracker calls the credential: "Personal API key", "API token". */
+    label: TrimmedNonEmptyString,
+    /** Where to mint one, or null when the tracker has no stable page for it. */
+    helpUrl: Schema.NullOr(TrimmedNonEmptyString),
+  }),
+});
+export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
+
+/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+export const IssueTrackerProjectBinding = Schema.Struct({
+  tracker: IssueTrackerKind,
+  scope: TrimmedNonEmptyString,
+});
+export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+/** One container the connected account can read, offered when a project is bound. */
+export const IssueTrackerScope = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type IssueTrackerScope = typeof IssueTrackerScope.Type;
+
+/**
+ * A standalone tracker as the settings page sees it: the descriptor, whether a credential is
+ * stored and still works, and the scopes it can reach. `scopes` is empty until connected.
+ */
+export const IssueTrackerConnection = Schema.Struct({
+  ...StandaloneIssueTrackerDescriptor.fields,
+  /** A credential is stored. It may still be rejected, which `account` being null reports. */
+  connected: Schema.Boolean,
+  /** Who the credential signs in as, or null when there is none or it was refused. */
+  account: Schema.NullOr(TrimmedNonEmptyString),
+  /** Why a stored credential did not work, when it did not. */
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+  scopes: Schema.Array(IssueTrackerScope),
+});
+export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
+
+export const IssueTrackerConnectionList = Schema.Struct({
+  trackers: Schema.Array(IssueTrackerConnection),
+  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
+});
+export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
+
+/** A credential for one standalone tracker; `null` disconnects it and unbinds its projects. */
+export const IssueTrackerConnectInput = Schema.Struct({
+  tracker: IssueTrackerKind,
+  token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+});
+export type IssueTrackerConnectInput = typeof IssueTrackerConnectInput.Type;
+
+export const IssueTrackerBindProjectInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Null unbinds. */
+  binding: Schema.NullOr(IssueTrackerProjectBinding),
+});
+export type IssueTrackerBindProjectInput = typeof IssueTrackerBindProjectInput.Type;
+
+/**
+ * A standalone tracker the connect flow could not reach or that refused the credential, or a
+ * binding that could not be saved.
+ */
+export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTrackerConnectionError>()(
+  "IssueTrackerConnectionError",
+  {
+    tracker: IssueTrackerKind,
+    reason: Schema.Literals(["unknown-tracker", "rejected", "failed"]),
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+  { httpApiStatus: 502 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 502 });
+  }
+
+  override get message(): string {
+    return `${this.tracker} connection failed: ${this.detail}`;
+  }
 }

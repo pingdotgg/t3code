@@ -259,6 +259,10 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/issue-trackers": {
+      "types": "./src/state/issueTrackers.ts",
+      "default": "./src/state/issueTrackers.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"

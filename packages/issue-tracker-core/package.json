@@ -10,6 +10,10 @@
     "./server/IssueTracker": {
       "types": "./src/server/IssueTracker.ts",
       "import": "./src/server/IssueTracker.ts"
+    },
+    "./server/IssueTrackerHost": {
+      "types": "./src/server/IssueTrackerHost.ts",
+      "import": "./src/server/IssueTrackerHost.ts"
     }
   },
   "scripts": {

@@ -148,6 +148,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("treats a standalone tracker credential as a setting", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.issueTrackersList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [WS_METHODS.issueTrackersConnect, WS_METHODS.issueTrackersBindProject]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+    }
+  });
+
   it("requires source control writes to start, retry, or cancel project clones", () => {
     for (const method of [
       WS_METHODS.projectCloneStart,

@@ -23,7 +23,9 @@ import type {
   IssueSummary,
   IssueTemplateList,
   IssueTrackerKind,
+  IssueTrackerScope,
   IssueViewerPermissions,
+  StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
 import { IssueTrackerKind as IssueTrackerKindSchema } from "@t3tools/contracts";
 
@@ -187,4 +189,28 @@ export interface IssueTrackerApi {
   readonly listCandidates?: (
     input: IssueScopeTarget,
   ) => Effect.Effect<IssueCandidates, IssueTrackerError>;
+}
+
+/**
+ * A tracker reached with its own credential rather than a checkout's: Linear, Jira. The server
+ * stores one credential per kind and offers the connect flow from `standalone`; a project reads
+ * the tracker by binding one of the scopes `probeCredential` lists. The `cwd` on every target is
+ * then only the project's root, which such a tracker ignores.
+ */
+export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
+  readonly standalone: StandaloneIssueTrackerDescriptor;
+  /**
+   * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
+   * a credential before it is stored, and on the stored one to report connection status.
+   */
+  readonly probeCredential: (
+    token: string,
+  ) => Effect.Effect<
+    { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
+    IssueTrackerError
+  >;
+}
+
+export function isStandaloneIssueTracker(api: IssueTrackerApi): api is StandaloneIssueTrackerApi {
+  return "standalone" in api;
 }

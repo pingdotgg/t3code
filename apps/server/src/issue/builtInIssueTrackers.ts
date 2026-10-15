@@ -4,8 +4,9 @@
  * kind with no driver shows up as unsupported rather than missing: Bitbucket is one, since its
  * issue tracker is retired on bitbucket.org.
  *
- * The services these drivers need are the same ones `sourceControl/builtInDrivers.ts` provides,
- * so the server reuses that layer rather than building a second `GitHubApi`.
+ * The services the git-host drivers need are the same ones `sourceControl/builtInDrivers.ts`
+ * provides, so the server reuses that layer rather than building a second `GitHubApi`. A
+ * standalone tracker needs only the HttpClient and `IssueTrackerHost` for its stored credential.
  *
  * @module issue/builtInIssueTrackers
  */
@@ -14,12 +15,14 @@ import * as ForgejoIssueTrackerDriver from "@t3tools/source-control-forgejo/serv
 import * as GitHubIssueTrackerDriver from "@t3tools/source-control-github/server/issueTrackerDriver";
 import * as GitLabIssueTrackerDriver from "@t3tools/source-control-gitlab/server/issueTrackerDriver";
 import type { IssueTrackerDriver } from "@t3tools/issue-tracker-core/server/driver";
+import * as LinearIssueTrackerDriver from "@t3tools/issue-tracker-linear/server/issueTrackerDriver";
 
 const drivers = [
   GitHubIssueTrackerDriver.driver,
   GitLabIssueTrackerDriver.driver,
   AzureDevOpsIssueTrackerDriver.driver,
   ForgejoIssueTrackerDriver.driver,
+  LinearIssueTrackerDriver.driver,
 ];
 
 export type BuiltInIssueTrackersEnv =

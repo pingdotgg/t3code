@@ -812,6 +812,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
+    id: "issue-trackers",
+    title: "Issue trackers",
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: ["linear jira issues tracker team api key connect bind project"],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
