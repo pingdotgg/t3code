@@ -1,5 +1,5 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { use, useCallback, useEffect, useRef } from "react";
+import { use, useCallback, useEffect, useEffectEvent, useRef } from "react";
 import { useNavigation, type ParamListBase } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Platform } from "react-native";
@@ -29,6 +29,18 @@ export function HomeHeader(props: HomeHeaderProps) {
   const showsCompactCompose = Platform.OS === "ios" && Platform.isPad && !layout.usesSplitView;
   const searchBarRef = useRef<SearchBarCommands>(null);
   const focusAfterReveal = useRef(false);
+  const usesDuoWorkspace = Platform.OS === "ios" && !Platform.isPad && primaryColumn !== null;
+  const restoreSearchText = useEffectEvent(() => {
+    searchBarRef.current?.setText(props.searchQuery);
+  });
+  // UIKit swaps search fields when the Duo header changes modes. Restore the
+  // current filter without reapplying text on each keystroke.
+  const previousSidebarHeader = useRef(sidebarHeader);
+  useEffect(() => {
+    const headerChanged = previousSidebarHeader.current !== sidebarHeader;
+    previousSidebarHeader.current = sidebarHeader;
+    if (usesDuoWorkspace && headerChanged) restoreSearchText();
+  }, [sidebarHeader, usesDuoWorkspace]);
   useEffect(
     () =>
       navigation.addListener("transitionEnd", (event) => {
