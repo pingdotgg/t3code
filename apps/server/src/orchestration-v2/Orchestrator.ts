@@ -9019,7 +9019,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const ended = yield* endOrphanedNativeSubagent({
           projection,
           subagentId: subagent.id,
-          result: outcome.result,
+          ...(outcome.status === "interrupted" ? {} : { result: outcome.result }),
           status: outcome.status,
           completedAt: outcome.completedAt,
           now,
@@ -9152,7 +9152,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerSessionId = providerThread.providerSessionId;
       const nativeTaskId = subagent.nativeTaskRef.nativeId;
       const now = yield* DateTime.now;
-      // The effect can repair stale projections only after the provider confirms an outcome.
+      // The effect repairs a confirmed outcome or acknowledged loss of runtime ownership.
       yield* emit(
         events,
         command,

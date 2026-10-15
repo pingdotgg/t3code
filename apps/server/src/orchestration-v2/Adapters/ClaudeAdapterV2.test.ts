@@ -9037,6 +9037,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("acknowledges an orphaned native Stop when no query owns the recorded thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const outcome = yield* harness.runtime.stopSubagent!({
+          providerThread: harness.providerThread,
+          nativeTaskId: "historical-orphan",
+        });
+        assert.isDefined(outcome);
+        assert.equal(outcome!.status, "interrupted");
+        assert.isNull(outcome!.result);
+        assert.isTrue(DateTime.isDateTime(outcome!.completedAt));
+        assert.lengthOf(harness.offeredMessages, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const makeStopFixture = (options?: Parameters<typeof makeWakeHarnessWithOptions>[0]) =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<void>();
@@ -9112,6 +9133,50 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         requests,
       };
     });
+
+  it.effect("keeps an unknown task on a live owning query unresolved", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeStopFixture();
+        const stopped = yield* Effect.exit(
+          fixture.runtime.stopSubagent!({
+            providerThread: fixture.providerThread,
+            nativeTaskId: "unknown-live-task",
+          }),
+        );
+        assert.isTrue(Exit.isFailure(stopped));
+        assert.isTrue(yield* fixture.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles a known task whose native thread has no owning query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeStopFixture();
+        const stopped = yield* fixture.runtime.stopSubagent!({
+          providerThread: {
+            ...fixture.providerThread,
+            nativeThreadRef: {
+              ...fixture.providerThread.nativeThreadRef!,
+              nativeId: "historical-native-thread",
+            },
+          },
+          nativeTaskId: "stop-agent",
+        });
+        assert.equal(stopped!.status, "interrupted");
+        assert.isNull(stopped!.result);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each([
     [false, "no notification"],

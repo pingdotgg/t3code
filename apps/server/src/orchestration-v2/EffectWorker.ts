@@ -197,7 +197,7 @@ export const layerExecutor: Layer.Layer<
                     ? Effect.void
                     : Effect.fail(cause),
                 ),
-                // A targeted Stop repairs only an outcome the provider actually observed.
+                // A targeted Stop repairs a confirmed outcome or acknowledged ownership loss.
                 // A full-turn Stop retains its existing process-teardown repair.
                 Effect.andThen((outcome) =>
                   request.subagent !== undefined && outcome === undefined

@@ -725,7 +725,7 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
 );
 
 it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)(
-  "a native child Stop only settles a confirmed %s outcome and preserves its owner and sibling",
+  "a native child Stop settles a %s outcome and preserves its owner and sibling",
   (providerState) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -748,6 +748,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
           nativeId: "claude-task",
           strength: "strong" as const,
         },
+        result: providerState === "missing session" ? "Retained partial native result" : null,
         status: "running" as const,
         startedAt: now,
       };
@@ -849,14 +850,12 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       const stateBefore = yield* threadState(threadId);
       const eventStore = yield* EventStore.EventStoreV2;
       const afterSequence = yield* eventStore.latestSequence({ threadId });
-      const confirmedStatus =
-        providerState === "completed" || providerState === "failed" || providerState === "cancelled"
-          ? providerState
-          : null;
-      const confirmedOutcome =
-        confirmedStatus === null
-          ? undefined
-          : { status: confirmedStatus, completedAt: now, result: "Actual provider outcome" };
+      const confirmedStatus = providerState === "missing session" ? "interrupted" : providerState;
+      let confirmedOutcome: ProviderAdapter.ProviderAdapterV2SubagentOutcome = {
+        status: confirmedStatus,
+        completedAt: now,
+        result: providerState === "missing session" ? null : "Actual provider outcome",
+      };
       const commandId = CommandId.make("stop-native-child");
       yield* orchestrator.dispatch({
         type: "subagent.stop",
@@ -896,6 +895,11 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       // Only execute Stop's durable effect, with no terminal event ingestion.
       yield* sql`DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${commandId}`;
       if (providerState === "missing session") {
+        confirmedOutcome = {
+          status: "interrupted",
+          completedAt: yield* DateTime.now,
+          result: null,
+        };
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         yield* worker.drain();
       } else {
@@ -905,33 +909,11 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
           threadId,
           providerThreadId: providerThread.id,
           providerTurnId,
-          subagent: { id: subagent.id, stoppedAt: now, outcome: confirmedOutcome! },
+          subagent: { id: subagent.id, stoppedAt: now, outcome: confirmedOutcome },
         });
       }
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const cancelled = settled.subagents.find((task) => task.id === subagent.id)!;
-      if (confirmedOutcome === undefined) {
-        const events = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
-        assert.isFalse(
-          events.some(
-            ({ event }) =>
-              (event.type === "subagent.updated" ||
-                event.type === "node.updated" ||
-                event.type === "turn-item.updated") &&
-              ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status),
-          ),
-        );
-        assert.equal(cancelled.status, "running");
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(childRoot.threadId)).nodes.find(
-            (node) => node.id === childRoot.id,
-          )?.status,
-          "running",
-        );
-        assert.deepEqual(yield* threadState(threadId), stateBefore);
-        return;
-      }
-
       // Cached clients resume from this sequence, so all lifecycle repairs
       // must be stored in the parent stream, not just applied to projections.
       const repaired = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
@@ -952,7 +934,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         assert.equal(event.nodeId, subagent.id);
         assert.equal(
           DateTime.toEpochMillis(event.payload.completedAt!),
-          DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+          DateTime.toEpochMillis(confirmedOutcome.completedAt),
         );
         if (event.type === "subagent.updated" || event.type === "turn-item.updated") {
           assert.isDefined(event.payload.updatedAt);
@@ -963,9 +945,14 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       assert.isNotNull(cancelled.completedAt);
       assert.equal(
         DateTime.toEpochMillis(cancelled.completedAt!),
-        DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+        DateTime.toEpochMillis(confirmedOutcome.completedAt),
       );
-      assert.equal(cancelled.result, confirmedOutcome!.result);
+      assert.equal(
+        cancelled.result,
+        providerState === "missing session"
+          ? "Retained partial native result"
+          : confirmedOutcome.result,
+      );
       assert.equal(
         settled.turnItems.find((candidate) => candidate.id === item.id)?.status,
         confirmedStatus,

@@ -531,9 +531,9 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
-/** A terminal task outcome observed by the provider, not inferred from a stop timeout. */
+/** A confirmed task outcome or acknowledged runtime loss, never inferred from a stop timeout. */
 export type ProviderAdapterV2SubagentOutcome = {
-  readonly status: "completed" | "failed" | "cancelled";
+  readonly status: "completed" | "failed" | "cancelled" | "interrupted";
   readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
   readonly result: OrchestrationV2Subagent["result"];
 };

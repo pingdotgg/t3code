@@ -9364,6 +9364,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const existing = yield* Ref.get(queryContext);
             const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
             const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
+            const orphanedOutcome = () =>
+              Effect.gen(function* () {
+                return {
+                  status: "interrupted" as const,
+                  completedAt: yield* DateTime.now,
+                  result: null,
+                };
+              });
+            if (
+              subagent === undefined &&
+              nativeThreadId != null &&
+              nativeThreadId.length > 0 &&
+              (existing === null || existing.nativeThreadId !== nativeThreadId)
+            ) {
+              return yield* orphanedOutcome();
+            }
             if (subagent?.task.threadId !== input.providerThread.appThreadId) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
@@ -9382,9 +9398,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               existing === null ||
               existing.nativeThreadId !== nativeThreadId ||
-              existing.subagentsFromEarlierProcesses.has(subagent) ||
-              existing.query.stopTask === undefined
+              existing.subagentsFromEarlierProcesses.has(subagent)
             ) {
+              if (nativeThreadId != null && nativeThreadId.length > 0)
+                return yield* orphanedOutcome();
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no recorded native thread to confirm ownership loss.",
+              });
+            }
+            if (existing.query.stopTask === undefined) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: "Claude subagent has no live owning query with task stopping support.",
