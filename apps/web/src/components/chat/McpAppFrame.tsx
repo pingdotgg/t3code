@@ -377,13 +377,18 @@ export function McpAppFrame(props: {
         if (result._tag !== "Success") throw commandFailure(result);
       },
       requestDisplayMode: async (mode) => {
-        // Full screen would cover the approval or question the agent waits
-        // on, or a confirmation any app is waiting on. Another app already
-        // full screen keeps the page; two would stack.
+        // Full screen opens only right after the reader used this frame, as
+        // links do: an app that asks on load or on every retry would otherwise
+        // take the page back each time the reader leaves. It would also cover
+        // the approval or question the agent waits on, or a confirmation any
+        // app is waiting on. Another app already full screen keeps the page;
+        // two would stack.
         const otherFullscreen = document.querySelector("[data-mcp-app-fullscreen]");
         if (
           mode === "fullscreen" &&
-          (latest.current.props.awaitingUser === true ||
+          (document.activeElement !== frameRef.current ||
+            !navigator.userActivation?.isActive ||
+            latest.current.props.awaitingUser === true ||
             isConfirmDialogActive() ||
             (otherFullscreen !== null && otherFullscreen !== boxRef.current))
         ) {
