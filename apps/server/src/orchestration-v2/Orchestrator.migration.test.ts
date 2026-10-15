@@ -1,14 +1,26 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { ContextHandoffId, OrchestrationV2Command, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import {
+  ContextHandoffId,
+  OrchestrationV2Command,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderThreadId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ProviderThread,
+} from "@t3tools/contracts";
 
 import {
   appendContextHandoffId,
   canReplayCommandReceipt,
+  isLegacyImportCovered,
   shouldPrepareLegacyImportHandoff,
 } from "./Orchestrator.ts";
 
-it("reissues imported context until a V2 run completes", () => {
+it("prepares imported context only for a v1 import without a completed V2 run", () => {
   assert.isTrue(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: "v1_import",
@@ -96,5 +108,80 @@ it("links and unlinks a pull request through thread.metadata.update (#8160)", ()
   assert.strictEqual(
     (unlinked as Extract<typeof unlinked, { type: "thread.metadata.update" }>).linkedPullRequest,
     null,
+  );
+});
+
+it("does not reissue imported context into a native thread that already has it", () => {
+  const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
+  const threadId = ThreadId.make("import:claudeAgent:session");
+  const codex = ProviderDriverKind.make("codex");
+  const providerThread: OrchestrationV2ProviderThread = {
+    id: ProviderThreadId.make("provider-thread:provider:codex:native-thread:pending%3Arun%3A3"),
+    driver: codex,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerSessionId: null,
+    appThreadId: threadId,
+    ownerNodeId: null,
+    nativeThreadRef: { driver: codex, nativeId: "native:codex", strength: "strong" },
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 3,
+    lastRunOrdinal: 3,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const run3 = RunId.make("run:3");
+  const legacy: OrchestrationV2ContextHandoff = {
+    id: ContextHandoffId.make(
+      "context-handoff:thread:import%3AclaudeAgent%3Asession:from-provider-instance:legacy:to-provider-instance:codex:1",
+    ),
+    transferId: null,
+    threadId,
+    targetRunId: run3,
+    fromProviderThreadIds: [],
+    toProviderThreadId: providerThread.id,
+    coveredRunOrdinals: { from: 1, to: 1 },
+    strategy: "manual_context",
+    status: "ready",
+    summaryMessageId: null,
+    summaryText: "Imported conversation history",
+    createdByProviderInstanceId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const delivered = (nativeThreadId: string, status: "injected") => ({
+    ...legacy,
+    delivery: { nativeThreadId, status, itemIds: [] },
+  });
+  const cancelled = [{ id: run3, status: "cancelled" as const }];
+
+  // The only run was cancelled by a restart after its handoff was injected.
+  assert.isTrue(
+    isLegacyImportCovered({
+      providerThread,
+      contextHandoffs: [delivered("native:codex", "injected")],
+      runs: cancelled,
+    }),
+  );
+  // A replaced native thread still needs it.
+  assert.isFalse(
+    isLegacyImportCovered({
+      providerThread,
+      contextHandoffs: [delivered("native:old", "injected")],
+      runs: cancelled,
+    }),
+  );
+  // Undelivered: turn start redelivers it after a failed run, not after a cancelled one.
+  assert.isTrue(
+    isLegacyImportCovered({
+      providerThread,
+      contextHandoffs: [legacy],
+      runs: [{ id: run3, status: "failed" }],
+    }),
+  );
+  assert.isFalse(
+    isLegacyImportCovered({ providerThread, contextHandoffs: [legacy], runs: cancelled }),
   );
 });
