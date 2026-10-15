@@ -150,8 +150,13 @@ const SNAPSHOT_SCRIPT = `(() => {
   };
 })()`;
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
-export const captureViewport = async (
+const CAPTURE_TIMEOUT_MS = 5_000;
+const NO_FRAME_MESSAGE =
+  "The page did not draw a frame, so no screenshot was taken. In the desktop app, a tab only draws while the user has its thread open. Use preview_evaluate to read the page, or ask the user to open the thread.";
+/** Captures Chromium has not answered yet; a page only draws one at a time. */
+const pendingCaptures = new WeakSet<Page>();
+
+const captureFrame = async (
   page: Page,
   cdp: CDPSession,
   options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
@@ -173,6 +178,31 @@ export const captureViewport = async (
     ...(clip ? { clip } : {}),
   });
   return data;
+};
+
+/**
+ * Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+ * A capture waits for the page's next frame. A desktop tab whose thread is not
+ * open draws none, so the capture gives up after a limit instead of holding
+ * the tab. A new capture is refused until Chromium answers the old one, which
+ * still owns the page's capture viewport.
+ */
+export const captureViewport = (
+  page: Page,
+  cdp: CDPSession,
+  options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
+): Promise<string> => {
+  const noFrame = () =>
+    new ServerBrowserOperationError("PreviewAutomationExecutionError", NO_FRAME_MESSAGE);
+  if (pendingCaptures.has(page)) return Promise.reject(noFrame());
+  pendingCaptures.add(page);
+  const capture = captureFrame(page, cdp, options).finally(() => pendingCaptures.delete(page));
+  void capture.catch(constVoid);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(noFrame()), CAPTURE_TIMEOUT_MS);
+  });
+  return Promise.race([capture, limit]).finally(() => clearTimeout(timer));
 };
 
 export const snapshot = async (input: {

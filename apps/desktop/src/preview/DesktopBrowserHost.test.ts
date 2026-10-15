@@ -148,4 +148,25 @@ describe("DesktopBrowserHost", () => {
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
   );
+
+  it.effect("asks the tab to draw when the server waits for a capture", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      host.attach(key, makeDebuggee().tab);
+      const requests = yield* host.frameRequests.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const command = (id: number, method: string) =>
+        host.handleCommandLine(
+          encodeJson({ type: "cdp", ...key, message: encodeJson({ id, method, params: {} }) }),
+        );
+      // Reading the page needs no frame; a capture waits for the next one.
+      yield* command(1, "DOM.getDocument");
+      yield* command(2, "Page.captureScreenshot");
+      expect(yield* Fiber.join(requests)).toEqual([key]);
+    }).pipe(Effect.scoped),
+  );
 });

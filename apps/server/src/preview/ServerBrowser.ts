@@ -691,14 +691,16 @@ const make = Effect.gen(function* () {
   /** Whether the preview session for a tab still exists. */
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /** `handOff` keeps the session for a new page, so viewers reconnect to it. */
+  const dropTab = (tab: ServerTab, closeSession: boolean, handOff = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end =
+      (tab.desktop || handOff) && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     // The desktop owns its page; letting go only ends this connection.
@@ -706,7 +708,9 @@ const make = Effect.gen(function* () {
     else void tab.page.close().catch(constVoid);
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
-    void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    // A handed-off tab keeps its downloads; the folder is keyed by tab, not page.
+    if (!handOff)
+      void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     reportLiveTabs();
     if (closeSession) {
       runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
@@ -2320,7 +2324,12 @@ const make = Effect.gen(function* () {
           if (next._tag === "frame") runFork(next.ack);
           // State a stalled viewer cannot miss replaces its backlog. It runs
           // synchronously so an older replacement can never land after a newer one.
-          else if (next._tag === "gone" || next._tag === "control" || next._tag === "fileChooser") {
+          else if (
+            next._tag === "gone" ||
+            next._tag === "reconnect" ||
+            next._tag === "control" ||
+            next._tag === "fileChooser"
+          ) {
             const dropped = Effect.runSyncExit(Queue.clear(output));
             if (dropped._tag === "Failure") return;
             Queue.offerUnsafe(output, next);
@@ -2494,15 +2503,28 @@ const make = Effect.gen(function* () {
   // The page came back, for example after its DevTools closed. Reconnect now
   // rather than on the next viewer or agent, or the tab's URL and title stop
   // reaching every client in the meantime.
+  // A tab that went headless before the desktop mounted it (its thread was in
+  // the background) moves onto the desktop's page. Otherwise the user and the
+  // agent see two different pages under one tab.
   yield* desktopChannel.attached.pipe(
     Stream.runForEach((key) =>
       Effect.gen(function* () {
-        if (tabs.has(tabKey(key.threadId, key.tabId))) return;
+        const pending = pendingTabs.get(tabKey(key.threadId, key.tabId));
+        if (pending) yield* Effect.promise(() => pending.catch(constVoid));
+        const existing = tabs.get(tabKey(key.threadId, key.tabId));
+        if (existing?.desktop) return;
+        if (existing) dropTab(existing, false, true);
         const { sessions } = yield* manager.list({ threadId: ThreadId.make(key.threadId) });
         const snapshot = sessions.find(
           (session) => session.tabId === key.tabId && session.runtime === "server",
         );
-        if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
+        const tab = snapshot
+          ? yield* Effect.promise(() => ensureTab(snapshot).catch(() => null))
+          : null;
+        if (!existing) return;
+        if (tab) tab.downloads.unshift(...existing.downloads);
+        else
+          void NodeFSP.rm(downloadDir(existing), { recursive: true, force: true }).catch(constVoid);
       }).pipe(Effect.ignore),
     ),
     Effect.forkScoped,

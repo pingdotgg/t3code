@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import { presentAsChrome } from "./ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
@@ -56,6 +65,39 @@ describe("server browser element refs", () => {
     return locator!;
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
+
+  it("gives up on a screenshot when the page draws no frame", async () => {
+    // A desktop tab whose thread is not open never answers a capture.
+    let captures = 0;
+    const stuck = {
+      send: (method: string, params?: object) => {
+        if (method !== "Page.captureScreenshot")
+          return cdp.send(method as "Page.getLayoutMetrics", params);
+        captures += 1;
+        return new Promise(() => {});
+      },
+    } as unknown as CDPSession;
+    const snapshotOf = () =>
+      ServerBrowserPage.snapshot({
+        page,
+        cdp: stuck,
+        renderScale: 1,
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const rejected = expect(snapshotOf()).rejects.toThrow("did not draw a frame");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejected;
+      // Chromium still holds the first capture, so a retry fails without starting another.
+      await expect(snapshotOf()).rejects.toThrow("did not draw a frame");
+      expect(captures).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);
