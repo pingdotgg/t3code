@@ -382,6 +382,89 @@ const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
   ]);
 });
 
+const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
+  const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const activeRun = {
+    ...settledRun,
+    id: RunId.make("run:settled-leaf-nodes:active"),
+    ordinal: 2,
+    userMessageId: MessageId.make("message:settled-leaf-nodes:active"),
+    rootNodeId: NodeId.make("node:settled-leaf-nodes:active-root"),
+    status: "running" as const,
+    completedAt: null,
+  };
+  yield* store.apply({
+    id: EventId.make("event:settled-leaf-nodes:active-run"),
+    type: "run.created",
+    threadId,
+    runId: activeRun.id,
+    nodeId: activeRun.rootNodeId,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: activeRun,
+  });
+  const nodes = [
+    ["settled-root", settledRun, "root_turn", "completed"],
+    ["settled-tool", settledRun, "tool_call", "completed"],
+    ["settled-message", settledRun, "assistant_message", "failed"],
+    ["settled-reasoning", settledRun, "reasoning", "cancelled"],
+    ["settled-subagent", settledRun, "subagent", "completed"],
+    ["settled-run-live-tool", settledRun, "tool_call", "running"],
+    ["active-run-done-tool", activeRun, "tool_call", "completed"],
+  ] as const;
+  for (const [name, run, kind, status] of nodes) {
+    const id = NodeId.make(`node:settled-leaf-nodes:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:settled-leaf-nodes:${name}`),
+      type: "node.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        rootNodeId: kind === "root_turn" ? id : run.rootNodeId!,
+        parentNodeId: kind === "root_turn" ? null : run.rootNodeId,
+        kind,
+        status,
+        countsForRun: kind === "root_turn",
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      },
+    });
+  }
+  const nodeNames = (records: { readonly nodes: ReadonlyArray<{ readonly id: string }> }) =>
+    records.nodes
+      .map((node) => node.id.replace("node:settled-leaf-nodes:", ""))
+      .filter((name) => nodes.some(([candidate]) => candidate === name))
+      .toSorted();
+
+  assert.deepEqual(
+    nodeNames(yield* store.getThreadRecords(threadId, ["nodes"], { omitSettledLeafNodes: true })),
+    ["active-run-done-tool", "settled-root", "settled-run-live-tool", "settled-subagent"],
+  );
+  assert.deepEqual(
+    nodeNames(yield* store.getThreadRecords(threadId, ["nodes"])),
+    nodes.map(([name]) => name).toSorted(),
+  );
+});
+
+it.effect("memory command reads skip finished leaf nodes of finished runs", () =>
+  commandReadsSkipSettledLeafNodes.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory worktree path lookup reads only active threads", () =>
   threadWorktreePathsReadActiveThreads.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
@@ -656,6 +739,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(recovery?.status, "completed");
       assert.deepEqual(recovery?.restartCancelledBackgroundWork, work);
     }),
+  );
+  it.effect(
+    "command reads skip finished leaf nodes of finished runs",
+    () => commandReadsSkipSettledLeafNodes,
   );
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {
