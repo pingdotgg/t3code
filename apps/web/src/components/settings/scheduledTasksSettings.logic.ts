@@ -141,7 +141,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
+    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)

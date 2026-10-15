@@ -58,6 +58,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
+import { usePaginatedBranches } from "../../state/queries";
+import { defaultWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-base-ref";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
@@ -125,7 +127,8 @@ const EMPTY_DRAFT: DraftState = {
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",
-  baseRef: "main",
+  // Empty until chosen; see defaultWorktreeBaseRef.
+  baseRef: "",
   startFromOrigin: true,
   existingWorktreePath: "",
   modelKey: "",
@@ -820,6 +823,18 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  // Until a branch is chosen, use `main`, or the repo's default branch without one.
+  const autoBaseRefCwd =
+    draft.workspaceMode === "worktree" && !draft.baseRef
+      ? (selectedProject?.workspaceRoot ?? null)
+      : null;
+  // The first page holds the current and default refs; `main` can sit past it.
+  const topRefs = usePaginatedBranches({ environmentId, cwd: autoBaseRefCwd, query: "" });
+  const mainRefs = usePaginatedBranches({ environmentId, cwd: autoBaseRefCwd, query: "main" });
+  const baseRef = draft.baseRef || defaultWorktreeBaseRef([...mainRefs.refs, ...topRefs.refs]);
+  // Wait for both answers so a save cannot pick a branch too early.
+  const baseRefPending =
+    (topRefs.isPending && topRefs.data === null) || (mainRefs.isPending && mainRefs.data === null);
   // The task runs in selectedProject, so its model picker should reflect that
   // project's effective enablement, not just the machine's.
   const instanceEntries = useMemo(
@@ -868,7 +883,8 @@ function ScheduledTaskEditorDialog({
       saving ||
       editingTaskMissing ||
       !connected ||
-      tasksQuery.data === null
+      tasksQuery.data === null ||
+      baseRefPending
     )
       return;
     const selection = activeSelection;
@@ -925,7 +941,7 @@ function ScheduledTaskEditorDialog({
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
           : {
               type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
+              baseRef: baseRef.trim() || "main",
               startFromOrigin: draft.startFromOrigin,
             };
     const input: ScheduledTaskUpsertInput = {
@@ -991,7 +1007,7 @@ function ScheduledTaskEditorDialog({
                     projectId: "",
                     modelKey: "",
                     baseModelSelection: null,
-                    baseRef: "main",
+                    baseRef: "",
                     startFromOrigin: true,
                     existingWorktreePath: "",
                   }));
@@ -1091,7 +1107,7 @@ function ScheduledTaskEditorDialog({
                   id="scheduled-task-base-ref"
                   environmentId={environmentId}
                   cwd={selectedProject?.workspaceRoot ?? null}
-                  value={draft.baseRef}
+                  value={baseRef}
                   onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
                   startFromOrigin={draft.startFromOrigin}
                   onStartFromOriginChange={(startFromOrigin) =>
@@ -1375,7 +1391,14 @@ function ScheduledTaskEditorDialog({
           </DialogClose>
           <Button
             size="sm"
-            disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+            disabled={
+              !canOperate ||
+              saving ||
+              editingTaskMissing ||
+              !connected ||
+              !tasksQuery.data ||
+              baseRefPending
+            }
             onClick={() => void submit()}
           >
             {draft.editingId ? "Save task" : "Create task"}
