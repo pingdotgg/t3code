@@ -66,31 +66,49 @@ function modelConfigOptions(
   });
 }
 
+interface AdvertisedModel {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+}
+
+function normalizedModel(id: string, candidate: AdvertisedModel): AcpRegistryProbeModel {
+  return {
+    id,
+    name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
+    description:
+      candidate.description === null
+        ? null
+        : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+  };
+}
+
+/**
+ * Bounds an advertised catalog to MAX_MODELS. A valid current model listed past
+ * the cap takes the last slot, so the catalog still shows what the session runs on.
+ */
 function normalizeModels(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  candidates: ReadonlyArray<AdvertisedModel>,
+  currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
-  // Model discovery is the model config option's base models; ACP has no
-  // other portable model inventory.
-  const candidates = modelConfigOptions(configOptions).map((model) => ({
-    id: model.value,
-    name: model.name,
-    description: model.description ?? null,
-  }));
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
+  let scanned = 0;
   for (const candidate of candidates) {
+    if (models.length === MAX_MODELS) break;
+    scanned += 1;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
-    models.push({
-      id,
-      name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
-      description:
-        candidate.description === null
-          ? null
-          : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
-    });
-    if (models.length === MAX_MODELS) break;
+    models.push(normalizedModel(id, candidate));
+  }
+  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+    const current = candidates.find(
+      (candidate, index) => index >= scanned && candidate.id === currentModelId,
+    );
+    if (current !== undefined) {
+      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+    }
   }
   return models;
 }
@@ -173,19 +191,42 @@ export interface AcpRegistryLiveConfiguration {
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
 }
 
-/** Normalizes volatile session configuration using the same bounds as discovery probes. */
+/**
+ * Normalizes volatile session configuration using the same bounds as discovery
+ * probes. Models come from the model config option; agents without one (ACP v1
+ * agents such as Hermes) advertise them as session model state instead.
+ */
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
+  modelState?: EffectAcpSchema.SessionModelState | null,
 ): AcpRegistryLiveConfiguration {
   const modelOption = configOptions.find(
     (option) => option.category === "model" && option.type === "select",
   );
+  const advertised =
+    modelOption?.type === "select" || modelState == null
+      ? {
+          currentModelId: modelOption?.type === "select" ? modelOption.currentValue : null,
+          candidates: modelConfigOptions(configOptions).map((model) => ({
+            id: model.value,
+            name: model.name,
+            description: model.description ?? null,
+          })),
+        }
+      : {
+          currentModelId: modelState.currentModelId,
+          candidates: modelState.availableModels.map((model) => ({
+            id: model.modelId,
+            name: model.name,
+            description: model.description ?? null,
+          })),
+        };
   const boundedCurrentModelId =
-    modelOption?.type === "select"
-      ? (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null)
-      : null;
-  const models = normalizeModels(configOptions);
+    advertised.currentModelId === null
+      ? null
+      : (boundedOpaqueValue(advertised.currentModelId, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(advertised.candidates, boundedCurrentModelId);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
@@ -249,6 +290,7 @@ export function acpRegistryProbeResult(
   const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
     started.sessionSetupResult.configOptions ?? [],
     parseSessionModeState(started.sessionSetupResult),
+    started.sessionSetupResult.models,
   );
   return AcpRegistryProbeResult.make({
     instanceId,

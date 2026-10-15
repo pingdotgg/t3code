@@ -227,9 +227,14 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
+  /**
+   * Receives the session's configuration after setup and each native change.
+   * `modelState` is the ACP v1 model list of agents without a model config option.
+   */
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
+    modelState: EffectAcpSchema.SessionModelState | null | undefined,
   ) => Effect.Effect<void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
@@ -643,15 +648,19 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  const hasModelConfig =
-    setup.configOptions?.some((option) => option.category === "model") === true;
+  // Mirrors configureSession: a model select config option, or ACP v1 session
+  // model state switched with session/set_model.
+  const canSwitchModel =
+    setup.configOptions?.some(
+      (option) => option.category === "model" && option.type === "select",
+    ) === true || setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
     ...base,
     sessions: {
       ...base.sessions,
-      supportsModelSwitchInSession: hasModelConfig,
+      supportsModelSwitchInSession: canSwitchModel,
     },
     threads: {
       ...base.threads,
@@ -5498,6 +5507,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.onSessionConfigurationUpdate?.(
                   yield* runtime.getConfigOptions,
                   yield* runtime.getModeState,
+                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
                 ) ?? Effect.void
               );
             }
@@ -6295,17 +6305,45 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startResult,
               modelSelection,
             });
-          } else if (
-            requestedModel.length > 0 &&
-            requestedModel !== "auto" &&
-            requestedModel !== "default"
-          ) {
-            const hasModelConfig =
-              startResult.sessionSetupResult.configOptions?.some(
-                (option) => option.category === "model",
-              ) === true;
-            if (hasModelConfig) {
-              yield* runtime.setModel(requestedModel);
+          } else if (requestedModel.length > 0) {
+            // "auto" and "default" stand for the agent's own choice unless the
+            // agent advertises a model under that exact id.
+            const isPlaceholder = requestedModel === "auto" || requestedModel === "default";
+            // Route by the live options, which the picker lists: agents can
+            // add or drop their model config option after setup.
+            const modelOption = (yield* runtime.getConfigOptions).find(
+              (
+                option,
+              ): option is Extract<
+                EffectAcpSchema.SessionConfigOption,
+                { readonly type: "select" }
+              > => option.category === "model" && option.type === "select",
+            );
+            const modelState = startResult.sessionSetupResult.models;
+            if (modelOption !== undefined) {
+              if (
+                !isPlaceholder ||
+                modelOption.options.some((entry) =>
+                  "value" in entry
+                    ? entry.value === requestedModel
+                    : entry.options.some((choice) => choice.value === requestedModel),
+                )
+              ) {
+                yield* runtime.setConfigOption(modelOption.id, requestedModel);
+                appliedModel = requestedModel;
+              }
+            } else if (
+              modelState != null &&
+              (!isPlaceholder ||
+                modelState.availableModels.some((model) => model.modelId === requestedModel))
+            ) {
+              // ACP v1 agents without a model config option (Hermes) advertise
+              // their models as session model state and switch with
+              // session/set_model.
+              if (modelState.currentModelId !== requestedModel) {
+                yield* runtime.setSessionModel(requestedModel);
+              }
+              appliedModel = requestedModel;
             }
           }
           // Same-runtime switches compare against this stored setup, so keep
@@ -6485,6 +6523,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
               yield* runtime.getModeState,
+              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
             ) ?? Effect.void
           );
         });

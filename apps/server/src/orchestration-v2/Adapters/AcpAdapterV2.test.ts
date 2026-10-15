@@ -15,16 +15,11 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
-  MessageId,
   type ModelSelection,
-  NodeId,
-  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
-  RunAttemptId,
-  RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
   type ProviderOptionDescriptor,
@@ -73,6 +68,12 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  decodeAcpReplayTranscript,
+  makeAcpReplayCompletenessAssertion,
+  makeAcpReplayRuntime,
+  makeTurnInput,
+} from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   AcpProviderCapabilitiesV2,
@@ -544,70 +545,6 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
     return methods;
   });
 
-function makeTurnInput(input: {
-  readonly threadId: ThreadId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly instanceId: ProviderInstanceId;
-  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-  readonly now: DateTime.Utc;
-  readonly ordinal?: number;
-  readonly modelSelection?: ModelSelection;
-  /** agent+provider marks a post-settle continuation attach (drains wakeBuffer). */
-  readonly messageCreatedBy?: "user" | "agent";
-  readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
-  readonly messageText?: string;
-}): ProviderAdapter.ProviderAdapterV2TurnInput {
-  const ordinal = input.ordinal ?? 1;
-  const suffix = `${input.threadId}:${ordinal}`;
-  const modelSelection =
-    input.modelSelection ?? ({ instanceId: input.instanceId, model: "default" } as const);
-  return {
-    appThread: {
-      createdBy: "user",
-      creationSource: "web",
-      id: input.threadId,
-      projectId: ProjectId.make(`project:${input.threadId}`),
-      title: "ACP adapter test",
-      providerInstanceId: input.instanceId,
-      modelSelection,
-      runtimeMode: "approval-required",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: input.providerThread.id,
-      lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: input.threadId,
-      },
-      forkedFrom: null,
-      createdAt: input.now,
-      updatedAt: input.now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      deletedAt: null,
-    },
-    threadId: input.threadId,
-    runId: RunId.make(`run:${suffix}`),
-    runOrdinal: ordinal,
-    providerTurnOrdinal: ordinal,
-    attemptId: RunAttemptId.make(`attempt:${suffix}`),
-    rootNodeId: NodeId.make(`node:${suffix}`),
-    providerThread: input.providerThread,
-    message: {
-      createdBy: input.messageCreatedBy ?? "user",
-      creationSource: input.messageCreationSource ?? "web",
-      messageId: MessageId.make(`message:${suffix}`),
-      text: input.messageText ?? "test prompt",
-      attachments: [],
-    },
-    modelSelection,
-    runtimePolicy: input.runtimePolicy,
-  };
-}
-
 describe("AcpAdapterV2", () => {
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
@@ -974,6 +911,185 @@ describe("AcpAdapterV2", () => {
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  describe("an agent that advertises models only as session model state", () => {
+    type Frame = Record<string, unknown>;
+    const outbound = (method: string, params: unknown = "<any>"): Frame => ({
+      type: "expect_outbound",
+      frame: { kind: "request", method, params },
+    });
+    const answer = (method: string, result: unknown): Frame => ({
+      type: "emit_inbound",
+      frame: { kind: "response", method, result },
+    });
+    const setModel = (modelId: string): ReadonlyArray<Frame> => [
+      outbound("session/set_model", { sessionId: "agent-session", modelId }),
+      answer("session/set_model", {}),
+    ];
+    const prompt: ReadonlyArray<Frame> = [
+      outbound("session/prompt"),
+      answer("session/prompt", { stopReason: "end_turn" }),
+    ];
+
+    // A scripted ACP v1 agent (Hermes) whose session/new advertises
+    // `availableModelIds` and `currentModelId` with no model config option.
+    // Opens on `openModel`, runs one turn per `turnModels` entry, and requires
+    // exactly `turnFrames` after session/new. Returns the adapter's plan for
+    // each consecutive in-session switch.
+    const runTurns = Effect.fn("runSessionModelStateTurns")(function* (input: {
+      readonly availableModelIds: ReadonlyArray<string>;
+      readonly currentModelId: string;
+      readonly openModel: string;
+      readonly turnModels: ReadonlyArray<string>;
+      readonly turnFrames: ReadonlyArray<Frame>;
+    }) {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-session-model-state-",
+      });
+      const statusPath = path.join(replayDir, "status.json");
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: ACP_TEST_DRIVER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "session-model-state",
+          entries: [
+            outbound("initialize"),
+            answer("initialize", {
+              protocolVersion: 1,
+              agentCapabilities: { loadSession: false },
+              authMethods: [{ id: "replay", name: "Replay" }],
+            }),
+            outbound("session/new"),
+            answer("session/new", {
+              sessionId: "agent-session",
+              models: {
+                currentModelId: input.currentModelId,
+                availableModels: input.availableModelIds.map((modelId) => ({
+                  modelId,
+                  name: modelId,
+                })),
+              },
+            }),
+            ...input.turnFrames,
+          ] as never,
+        },
+        ACP_TEST_DRIVER,
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-session-model-state");
+      const threadId = ThreadId.make("thread-acp-session-model-state");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath,
+            scriptPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+            ),
+            childProcessSpawner,
+            fileSystem,
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      const selection = (model: string): ModelSelection => ({ instanceId, model });
+      const plans = yield* Effect.gen(function* () {
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-session-model-state"),
+          modelSelection: selection(input.openModel),
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: selection(input.openModel),
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const plans: Array<string> = [];
+        let current = selection(input.openModel);
+        for (const [index, model] of input.turnModels.entries()) {
+          const target = selection(model);
+          const plan = yield* adapter.planSelectionTransition({
+            current,
+            target,
+            sessionCapabilities: runtime.providerSession.capabilities,
+          });
+          plans.push(plan.type);
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal: index + 1,
+              modelSelection: target,
+            }),
+          );
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+          current = target;
+        }
+        return plans;
+      }).pipe(Effect.scoped);
+      // Closing the session stops the agent, which writes its replay status in
+      // the same tick as its last answer. The script must be consumed exactly.
+      yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      return plans;
+    });
+
+    it.effect("switches models within the session from A to B and back to A", () =>
+      Effect.gen(function* () {
+        const plans = yield* runTurns({
+          availableModelIds: ["hermes-4-70b", "nous/hermes-4-405b"],
+          currentModelId: "hermes-4-70b",
+          openModel: "hermes-4-70b",
+          turnModels: ["nous/hermes-4-405b", "hermes-4-70b"],
+          turnFrames: [
+            ...setModel("nous/hermes-4-405b"),
+            ...prompt,
+            ...setModel("hermes-4-70b"),
+            ...prompt,
+          ],
+        });
+        assert.deepEqual(plans, ["apply_on_next_turn", "apply_on_next_turn"]);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("selects advertised models whose ids are literally default or auto", () =>
+      runTurns({
+        availableModelIds: ["hermes-4-70b", "auto", "default"],
+        currentModelId: "hermes-4-70b",
+        openModel: "hermes-4-70b",
+        turnModels: ["auto", "default"],
+        turnFrames: [...setModel("auto"), ...prompt, ...setModel("default"), ...prompt],
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("keeps the agent's model when an unadvertised Default is picked", () =>
+      runTurns({
+        availableModelIds: ["hermes-4-70b", "nous/hermes-4-405b"],
+        currentModelId: "hermes-4-70b",
+        openModel: "default",
+        turnModels: ["nous/hermes-4-405b", "default"],
+        turnFrames: [...setModel("nous/hermes-4-405b"), ...prompt, ...prompt],
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+  });
 
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
