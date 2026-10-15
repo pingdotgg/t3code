@@ -24,6 +24,7 @@ import {
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
+  projectScopeMenuGroups,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -210,7 +211,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {groups.map((group) => (
+        {projectScopeMenuGroups(groups, value).map((group) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />

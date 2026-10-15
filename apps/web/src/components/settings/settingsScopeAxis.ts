@@ -1,3 +1,4 @@
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
@@ -52,6 +53,18 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
   if (search.machine) next.machine = search.machine;
   return next;
+}
+
+/** The project picker offers only projects with a checkout on the chosen environment. */
+export function projectScopeMenuGroups(
+  groups: readonly SidebarProjectSnapshot[],
+  search: Pick<SettingsScopeSearch, "machine">,
+): readonly SidebarProjectSnapshot[] {
+  const { machine } = search;
+  if (machine === undefined) return groups;
+  return groups.filter((group) =>
+    group.memberProjects.some((member) => member.environmentId === machine),
+  );
 }
 
 /** Provider configuration always belongs to one environment, including project scopes. */
