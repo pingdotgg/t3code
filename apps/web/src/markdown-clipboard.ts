@@ -393,6 +393,15 @@ export function chatMarkdownClipboardPayload(
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    // A selection inside one rendered formula copies its whole TeX source.
+    const formula = ancestorElement
+      ?.closest("[data-markdown-math]")
+      ?.getAttribute("data-markdown-copy");
+    if (formula) {
+      texts.push(formula.trim());
+      htmls.push(sanitizedHtmlFrom(container));
+      continue;
+    }
     if (ancestorElement?.closest("pre")) {
       const text = range.toString();
       if (text) {
