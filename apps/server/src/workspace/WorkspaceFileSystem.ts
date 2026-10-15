@@ -12,6 +12,8 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
+import { PROJECT_READ_FULL_FILE_MAX_BYTES } from "@t3tools/contracts";
+
 import type {
   FilesystemEntryMetadata,
   FilesystemGetMetadataInput,
@@ -311,7 +313,10 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+          const maxBytes = input.full
+            ? PROJECT_READ_FULL_FILE_MAX_BYTES
+            : PROJECT_READ_FILE_MAX_BYTES;
+          const bytesToRead = Math.min(stat.size, maxBytes);
           const buffer = Buffer.alloc(bytesToRead);
           const { bytesRead } = yield* Effect.tryPromise({
             try: () => handle.read(buffer, 0, bytesToRead, 0),
@@ -338,7 +343,7 @@ export const make = Effect.gen(function* () {
             relativePath: target.relativePath,
             contents: new TextDecoder("utf-8").decode(fileBytes),
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated: stat.size > maxBytes,
           };
         }),
       (handle) =>

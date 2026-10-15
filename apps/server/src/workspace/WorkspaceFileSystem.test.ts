@@ -167,6 +167,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reads past the preview limit only when the full file is requested", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const contents = "x".repeat(2 * 1024 * 1024) + "END\n";
+        yield* writeTextFile(cwd, "large.txt", contents);
+
+        const preview = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.txt" });
+        const full = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.txt",
+          full: true,
+        });
+
+        expect(preview.contents.length).toBe(1024 * 1024);
+        expect(preview.truncated).toBe(true);
+        expect(full.contents === contents).toBe(true);
+        expect(full.truncated).toBe(false);
+      }),
+    );
+
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

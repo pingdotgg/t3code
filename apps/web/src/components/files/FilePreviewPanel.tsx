@@ -88,6 +88,7 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import { FileContentsCopyAction } from "./FileContentsCopyAction";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -1279,6 +1280,17 @@ export default function FilePreviewPanel({
               availableEditors={availableEditors}
               openInCwd={absolutePath}
               compact
+            />
+          ) : null}
+          {previewPath !== null && !file.isNotFile && !isMedia && !isPdf && file.data !== null ? (
+            <FileContentsCopyAction
+              key={JSON.stringify([environmentId, cwd, previewPath])}
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={previewPath}
+              contents={file.data.contents}
+              truncated={file.data.truncated}
+              byteLength={file.data.byteLength}
             />
           ) : null}
           {canToggleRendered && renderedMode ? (

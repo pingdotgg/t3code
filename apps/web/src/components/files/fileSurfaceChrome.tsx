@@ -73,42 +73,49 @@ export function FileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;
   readonly disabled?: boolean;
+  readonly disabledReason?: string;
   readonly onPress: () => void;
   readonly children: ReactNode;
 }) {
   const pressed = props.pressed;
+  const control =
+    pressed === undefined ? (
+      <Button
+        type="button"
+        className="shrink-0"
+        disabled={props.disabled ?? false}
+        onClick={props.onPress}
+        aria-label={props.label}
+        variant="ghost"
+        size="icon-sm"
+      >
+        {props.children}
+      </Button>
+    ) : (
+      <Toggle
+        className="shrink-0"
+        pressed={pressed}
+        disabled={props.disabled ?? false}
+        onPressedChange={props.onPress}
+        aria-label={props.label}
+        variant="ghost"
+        size="sm"
+      >
+        {props.children}
+      </Toggle>
+    );
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          pressed === undefined ? (
-            <Button
-              type="button"
-              className="shrink-0"
-              disabled={props.disabled ?? false}
-              onClick={props.onPress}
-              aria-label={props.label}
-              variant="ghost"
-              size="icon-sm"
-            >
-              {props.children}
-            </Button>
-          ) : (
-            <Toggle
-              className="shrink-0"
-              pressed={pressed}
-              disabled={props.disabled ?? false}
-              onPressedChange={props.onPress}
-              aria-label={props.label}
-              variant="ghost"
-              size="sm"
-            >
-              {props.children}
-            </Toggle>
-          )
-        }
-      />
-      <TooltipPopup>{props.label}</TooltipPopup>
+      {props.disabled && props.disabledReason ? (
+        <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
+          {control}
+        </TooltipTrigger>
+      ) : (
+        <TooltipTrigger render={control} />
+      )}
+      <TooltipPopup>
+        {props.disabled && props.disabledReason ? props.disabledReason : props.label}
+      </TooltipPopup>
     </Tooltip>
   );
 }

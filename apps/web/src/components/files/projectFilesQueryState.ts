@@ -106,6 +106,26 @@ export function getOptimisticProjectFileQueryData(
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
+/** Reads past the preview limit for copying; rejects rather than return partial contents. */
+export async function readFullProjectFile(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const result = await executeAtomQuery(
+    appAtomRegistry,
+    projectEnvironment.readFullFile({ environmentId, input: { cwd, relativePath, full: true } }),
+    { refresh: true, signal, reportDefect: false, reportFailure: false },
+  );
+  signal.throwIfAborted();
+  if (result._tag === "Failure") {
+    throw new Error(errorMessage(failureCause(result)) ?? "The file could not be read.");
+  }
+  if (result.value.truncated) throw new Error("This file is too large to copy.");
+  return result.value.contents;
+}
+
 /** The contents the Files panel shows, read outside React so it is current within a frame. */
 export function getProjectFileContents(
   environmentId: EnvironmentId,

@@ -15,6 +15,8 @@ import {
   type UnknownUnionMember,
 } from "./baseSchemas.ts";
 
+export const PROJECT_READ_FULL_FILE_MAX_BYTES = 16 * 1024 * 1024;
+
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
@@ -438,6 +440,8 @@ export const ProjectReadFileInput = Schema.Struct({
   // Workspace-relative, or an absolute host path for a file outside the
   // workspace. Only workspace-relative paths can be written back.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  // Raises the read cap from the preview limit to the larger copy limit.
+  full: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 

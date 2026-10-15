@@ -148,6 +148,13 @@ export function createProjectEnvironmentAtoms<R, E>(
           (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
         ),
     }),
+    // Uncached: a full copy can be many megabytes and is read once per click.
+    readFullFile: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:read-full-file",
+      tag: WS_METHODS.projectsReadFile,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {

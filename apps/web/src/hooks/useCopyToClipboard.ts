@@ -197,6 +197,28 @@ export async function readTextFromClipboard(target = "text"): Promise<string> {
   }
 }
 
+/** Start the write during the click; Safari accepts a promise for the eventual text. */
+async function writeDeferredTextToClipboard(value: Promise<string>, target: string) {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.write ||
+    typeof ClipboardItem === "undefined"
+  ) {
+    return writeTextToClipboard(await value, target);
+  }
+  const blob = value.then((text) => new Blob([text], { type: "text/plain" }));
+  // A rejected write may never consume the promised blob.
+  void blob.catch(() => {});
+  const outcome = navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]).then(
+    () => ({ ok: true as const }),
+    (cause: unknown) => ({ ok: false as const, cause }),
+  );
+  await value;
+  const result = await outcome;
+  if (!result.ok) throw new ClipboardWriteError({ target, cause: result.cause });
+  return true;
+}
+
 export function useCopyToClipboard<TContext = void>({
   timeout = 2000,
   target = "text",
@@ -209,7 +231,11 @@ export function useCopyToClipboard<TContext = void>({
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
   extraFlavors?: Readonly<Record<string, string>>;
-} = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
+} = {}): {
+  copyToClipboard: (value: string, ctx: TContext) => void;
+  copyTextWhenReady: (value: Promise<string>, ctx: TContext) => void;
+  isCopied: boolean;
+} {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
   const onCopyRef = React.useRef(onCopy);
@@ -224,8 +250,8 @@ export function useCopyToClipboard<TContext = void>({
   timeoutRef.current = timeout;
   extraFlavorsRef.current = extraFlavors;
 
-  const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
+  const observeCopy = React.useCallback((result: Promise<boolean>, ctx: TContext): void => {
+    void result.then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {
@@ -249,6 +275,19 @@ export function useCopyToClipboard<TContext = void>({
     );
   }, []);
 
+  const copyToClipboard = React.useCallback(
+    (value: string, ctx: TContext): void => {
+      observeCopy(writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current), ctx);
+    },
+    [observeCopy],
+  );
+  const copyTextWhenReady = React.useCallback(
+    (value: Promise<string>, ctx: TContext): void => {
+      observeCopy(writeDeferredTextToClipboard(value, targetRef.current), ctx);
+    },
+    [observeCopy],
+  );
+
   // Cleanup timeout on unmount
   React.useEffect(() => {
     return (): void => {
@@ -258,5 +297,5 @@ export function useCopyToClipboard<TContext = void>({
     };
   }, []);
 
-  return { copyToClipboard, isCopied };
+  return { copyToClipboard, copyTextWhenReady, isCopied };
 }
