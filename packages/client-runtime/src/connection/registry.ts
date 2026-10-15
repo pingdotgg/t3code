@@ -47,6 +47,7 @@ import {
   RELAY_ROUTE_ID,
   connectionRouteId,
   connectionRoutes,
+  credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
   mergeLearnedRoutes,
@@ -98,9 +99,13 @@ export class EnvironmentRegistry extends Context.Service<
     >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
+    /**
+     * Saves a user registration. Succeeds with `false` and changes nothing when
+     * the environment is platform-managed, since the host owns that entry.
+     */
     readonly register: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -557,11 +562,11 @@ export const make = Effect.gen(function* () {
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    yield* withLeaseLock(
+    return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          return;
+          return false;
         }
         // A new route joins the environment's saved routes. Registering one it
         // already has (the same id, or a pairing to the same address) replaces
@@ -588,6 +593,7 @@ export const make = Effect.gen(function* () {
           new Set(current).add(environmentId),
         );
         yield* installEntryLocked(entry);
+        return true;
       }),
     );
   });
@@ -707,8 +713,10 @@ export const make = Effect.gen(function* () {
           // the equivalent runtime. Anything not yet connected may be using the
           // old bearer: an attempt in flight would fail with it and then wait
           // blocked for a manual retry. Retry with the new one instead. A
-          // connected session keeps its socket.
-          if (bearerReplaced) {
+          // connected session keeps its socket, but the server revoked the old
+          // bearer, so its HTTP requests (such as the session's scopes) move to
+          // the new one.
+          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
@@ -720,6 +728,23 @@ export const make = Effect.gen(function* () {
                   state.lastFailure.reason === "authentication")
               ) {
                 yield* scope.supervisor.retryNow;
+              } else if (state.phase === "connected") {
+                const token = registration.credential.token;
+                yield* SubscriptionRef.updateSome(scope.supervisor.prepared, (current) =>
+                  Option.isSome(current) &&
+                  current.value.target._tag === "BearerConnectionTarget" &&
+                  credentialConnectionId(current.value.target.connectionId) ===
+                    registration.target.connectionId &&
+                  current.value.httpAuthorization?._tag === "Bearer" &&
+                  current.value.httpAuthorization.token !== token
+                    ? Option.some(
+                        Option.some({
+                          ...current.value,
+                          httpAuthorization: { _tag: "Bearer", token },
+                        }),
+                      )
+                    : Option.none(),
+                );
               }
             }
           }

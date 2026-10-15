@@ -1450,16 +1450,54 @@ describe("buildThreadFeed", () => {
     expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
   });
 
-  it("uses the CUA action title in the mobile feed", () => {
+  it.each(["cua_repl.js", "node_repl.js", "js"])(
+    "uses the %s action title in the mobile feed",
+    (toolName) => {
+      const item: OrchestrationV2TurnItem = {
+        ...base("cua", "2026-09-23T20:20:00.000Z", 1),
+        type: "dynamic_tool",
+        toolName,
+        input: {
+          code: "await game.getAXStateAndScreenshot();",
+          title: "Inspect Saga music screen",
+        },
+      };
+      const feed = buildThreadFeed([projected(item, 0)]);
+      const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+      expect(activity?.summary).toBe("Inspect Saga music screen");
+    },
+  );
+
+  it.each([
+    [
+      "failed",
+      "await sky.type_text({app:'T3 Code (Nightly)',text:'debug(ga.run)'});",
+      "Restrict the breakpoint to Git actions",
+      "computer",
+    ],
+    [
+      "completed",
+      "await fetch('http://127.0.0.1/json/list');",
+      "Discover the live Electron debugging endpoint",
+      "code",
+    ],
+  ] as const)("recovers the retained js title and %s call icon", (status, code, title, icon) => {
     const item: OrchestrationV2TurnItem = {
-      ...base("cua", "2026-09-23T20:20:00.000Z", 1),
+      ...base("retained-js", "2026-09-23T20:20:00.000Z", 1),
       type: "dynamic_tool",
-      toolName: "cua_repl.js",
-      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+      status,
+      title: "js",
+      toolName: "node_repl.js",
+      toolSource: { key: "mcp:node_repl", name: "node repl", kind: "integration" },
+      input: { code, title },
     };
     const feed = buildThreadFeed([projected(item, 0)]);
     const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
-    expect(activity?.summary).toBe("Inspect Saga music screen");
+    expect(activity?.summary).toBe(title);
+    expect(activity?.icon).toBe(icon);
+    expect(activity?.workEntry.toolSource?.kind).toBe(
+      icon === "computer" ? "computer" : "integration",
+    );
   });
 
   it("uses canonical T3 orchestration summaries in compact work groups", () => {
@@ -2027,6 +2065,124 @@ const multiSelectQuestion = {
   ],
   multiSelect: true,
 } as const;
+
+describe("subagent continued by a later turn", () => {
+  // Stored shape from #15891: resuming a subagent moves its item to the
+  // resuming run, but the item keeps the ordinal from the turn that started it.
+  const run2 = RunId.make("run-2");
+  const at = (second: number) => `2026-10-09T10:00:${String(second).padStart(2, "0")}.000Z`;
+  const item = (id: string, itemRunId: RunId, ordinal: number, second: number) => ({
+    ...base(id, at(second), ordinal),
+    runId: itemRunId,
+  });
+  const user = (id: string, itemRunId: RunId, ordinal: number, second: number) => ({
+    ...item(id, itemRunId, ordinal, second),
+    type: "user_message" as const,
+    messageId: MessageId.make(id),
+    createdBy: "user" as const,
+    creationSource: "mobile" as const,
+    inputIntent: "turn_start" as const,
+    text: `Prompt ${id}`,
+    attachments: [],
+  });
+  const assistant = (id: string, itemRunId: RunId, ordinal: number, second: number) => ({
+    ...item(id, itemRunId, ordinal, second),
+    type: "assistant_message" as const,
+    messageId: MessageId.make(id),
+    text: `Answer ${id}`,
+    streaming: false,
+  });
+  const reasoning = (id: string, itemRunId: RunId, ordinal: number, second: number) => ({
+    ...item(id, itemRunId, ordinal, second),
+    type: "reasoning" as const,
+    text: "Thinking",
+    streaming: false,
+  });
+  const items: OrchestrationV2TurnItem[] = [
+    user("prompt-1", runId, 1_000_001, 0),
+    reasoning("reasoning-1", runId, 1_000_002, 1),
+    {
+      ...item("subagent", run2, 1_000_003, 2),
+      type: "subagent",
+      subagentId: NodeId.make("subagent"),
+      origin: "provider_native",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      childThreadId: null,
+      prompt: "Research the bug",
+      result: "Found it",
+    },
+    assistant("answer-1", runId, 1_000_004, 3),
+    user("prompt-2", run2, 2_000_001, 30),
+    reasoning("reasoning-2", run2, 2_000_002, 31),
+    assistant("answer-2", run2, 2_000_003, 32),
+    {
+      ...item("send-message", run2, 2_000_004, 33),
+      type: "dynamic_tool",
+      toolName: "SendMessage",
+      input: { to: "subagent" },
+      output: "Sent",
+    },
+    assistant("closing-2", run2, 2_000_005, 41),
+  ];
+
+  it("keeps each turn's fold between its own prompt and answer", () => {
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(items.map((entry, index) => projected(entry, index))),
+      { runId: run2, status: "completed", startedAt: at(30), completedAt: at(41) },
+      new Set(),
+    );
+    expect(presented.map((entry) => entry.id)).toEqual([
+      "prompt-1",
+      `run-fold:${runId}`,
+      "answer-1",
+      "prompt-2",
+      `run-fold:${run2}`,
+      "answer-2",
+      "closing-2",
+    ]);
+  });
+
+  it("keeps a wake run's work open when the user steers it", () => {
+    const wakeRun = RunId.make("wake-run");
+    const wakeItems: OrchestrationV2TurnItem[] = [
+      user("prompt-1", runId, 1_000_001, 0),
+      reasoning("reasoning-1", runId, 1_000_002, 1),
+      assistant("answer-1", runId, 1_000_003, 3),
+      {
+        ...item("wake", wakeRun, 2_000_001, 30),
+        type: "notification",
+        source: { kind: "background_task" },
+        outcome: "completed",
+        summary: "Background task finished",
+      },
+      {
+        ...item("wake-command", wakeRun, 2_000_002, 31),
+        type: "command_execution",
+        input: "vp test",
+        output: "ok",
+        exitCode: 0,
+      },
+      { ...user("steer", wakeRun, 2_000_003, 32), inputIntent: "steer" },
+    ];
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(wakeItems.map((entry, index) => projected(entry, index))),
+      { runId: wakeRun, status: "running", startedAt: at(30), completedAt: null },
+      new Set(),
+      new Set(),
+      at(30),
+    );
+    expect(presented.map((entry) => entry.id)).toEqual([
+      "prompt-1",
+      `run-fold:${runId}`,
+      "answer-1",
+      "local:thread-1:wake",
+      "work-toggle:work-group:local:thread-1:wake-command",
+      "steer",
+      "live-activity-row",
+    ]);
+  });
+});
 
 describe("pending user input answers", () => {
   it("preserves exact editor text, including a deliberately cleared answer", () => {

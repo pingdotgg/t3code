@@ -76,15 +76,15 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const env = environment ?? (yield* HostProcess.Environment);
-  const nodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
+  const resolvedNodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
     // Batch wrappers require a shell; helper callers launch the runtime directly.
     env: platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env,
   }).pipe(
     // Refresh immediately after the user installs Node and retries setup.
     Effect.provideService(CommandResolutionCache, new Map()),
-    Effect.map((commandPath) => path.resolve(commandPath)),
-    Effect.mapError((cause) => new NodeRuntimeUnavailableError({ feature, cause })),
   );
+  if (resolvedNodePath === null) return yield* new NodeRuntimeUnavailableError({ feature });
+  const nodePath = path.resolve(resolvedNodePath);
   // A launcher or symlink named node must not point back at the standalone app.
   const resolvedPath = yield* fs
     .realPath(nodePath)

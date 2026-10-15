@@ -1,7 +1,6 @@
 import { defineConfig, type CodeRabbitContext } from "@coderabbitai/config";
 
-// Org members and collaborators merge their own pull requests. On anyone else's, CodeRabbit
-// requests changes until its comments are resolved, then approves.
+// Org members and collaborators can approve their own pull requests.
 const UNGATED_AUTHORS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const isGated = ({ pr }: CodeRabbitContext) => !UNGATED_AUTHORS.has(pr?.authorAssociation ?? "");
 
@@ -9,7 +8,7 @@ export default defineConfig((ctx) => ({
   reviews: {
     high_level_summary: false,
     review_status: false,
-    request_changes_workflow: isGated(ctx),
+    request_changes_workflow: false,
     allow_author_approval: !isGated(ctx),
     auto_review: {
       enabled: true,

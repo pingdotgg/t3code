@@ -103,6 +103,21 @@ export function createDeterministicAttachmentId(
   return `${threadSegment}-${uuid}`;
 }
 
+/**
+ * Stable key for an inline chat attachment. A retry resends the same bytes and
+ * keeps its id. Editing a queued message reuses the message id, so the bytes
+ * also stop a new image from taking an earlier image's id and file. Clients
+ * cache attachment images by id, which relies on ids never changing bytes.
+ */
+export function chatAttachmentStableKey(
+  messageId: string,
+  index: number,
+  bytes: Uint8Array,
+): string {
+  const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  return `${messageId}:${index}:${digest}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
   if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {

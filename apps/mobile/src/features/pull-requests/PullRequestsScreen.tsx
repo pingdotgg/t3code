@@ -34,6 +34,7 @@ import {
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
   PR_LIST_PAGE_SIZE,
+  withoutScratchProjectScope,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -102,7 +103,12 @@ export function PullRequestsScreen(
     },
     [navigation, selectAndroidWorkspace],
   );
-  const controls = listControls.controlsFor(environmentId);
+  const allProjects = useProjects();
+  const savedControls = listControls.controlsFor(environmentId);
+  const controls = useMemo(
+    () => withoutScratchProjectScope(savedControls, allProjects),
+    [allProjects, savedControls],
+  );
   const targets = useMemo(
     () =>
       environments
@@ -142,6 +148,7 @@ export function PullRequestsScreen(
   );
   const sidebar = props.sidebar === true || primaryColumn !== null;
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
+  const connectedKey = connectedTargets.map((target) => target.environmentId).join("\n");
   const entries = useMemo(
     () =>
       filterPullRequestList(
@@ -150,8 +157,9 @@ export function PullRequestsScreen(
         result.data?.viewers ?? {},
         query,
         result.data.localSearchHosts,
+        new Set(connectedKey.split("\n")),
       ),
-    [result.entries, controls, query, result.data],
+    [result.entries, controls, query, result.data, connectedKey],
   );
   const facets = useMemo(() => pullRequestListFacets(result.entries), [result.entries]);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -173,8 +181,9 @@ export function PullRequestsScreen(
       ].sort(),
     }));
   }
-  const projects = useProjects().filter(
-    (project) => environmentId === null || project.environmentId === environmentId,
+  const projects = allProjects.filter(
+    (project) =>
+      !project.isScratch && (environmentId === null || project.environmentId === environmentId),
   );
   const renderPullRequest = useCallback(
     ({ item }: { readonly item: EnvironmentPullRequestListEntry }) => (

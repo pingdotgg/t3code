@@ -2,6 +2,7 @@ import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { AnimatedWidth } from "~/components/AnimatedWidth";
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -26,6 +27,7 @@ import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
   BookOpenIcon,
+  CheckIcon,
   CircleDotIcon,
   CopyIcon,
   ChevronDownIcon,
@@ -43,6 +45,7 @@ import {
   PlayIcon,
   RotateCcwIcon,
   SparklesIcon,
+  Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
 import {
@@ -159,6 +162,7 @@ import {
   resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
+  canDeletePullRequestBranch,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
@@ -202,6 +206,7 @@ const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
   "enable-auto-merge": "Could not turn on auto-merge",
   "disable-auto-merge": "Could not turn off auto-merge",
   revert: "Could not open a revert pull request",
+  "delete-branch": "Could not delete this branch",
   "approve-workflows": "Could not approve workflows",
 };
 
@@ -226,6 +231,8 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
     "The host refused it. Check that you have write access, and that the merge has not already happened.",
   revert:
     "The host refused it. Check that you have write access and that this pull request was merged on the host.",
+  "delete-branch":
+    "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
   "approve-workflows":
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
 };
@@ -1028,6 +1035,9 @@ export function PullRequestDetailPanel({
     if (action === "revert") {
       toastManager.add({ type: "success", title: "Revert pull request opened" });
     }
+    if (action === "delete-branch") {
+      toastManager.add({ type: "success", title: "Branch deleted" });
+    }
     // A branch update moves the head commit, which leaves the diff atom pointed at a comparison
     // that no longer exists — the same staleness the manual refresh button fixes, so it goes
     // through that path rather than a second one. Every other action here only changes metadata;
@@ -1637,6 +1647,22 @@ export function PullRequestDetailPanel({
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;
+  const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
+  const environmentConnected = environments.some(
+    (environment) =>
+      environment.environmentId === environmentId && environment.connection.phase === "connected",
+  );
+  const confirmDeleteBranch = async () => {
+    if (detail === null) return;
+    const confirmed = await readLocalApi()?.dialogs.confirm(
+      [
+        `Delete branch ${detail.headBranch}?`,
+        `This deletes ${detail.headBranch} from ${detail.headRepositoryNameWithOwner ?? detail.repository}. Local branches and worktrees are not changed.`,
+      ].join("\n"),
+      { variant: "destructive" },
+    );
+    if (confirmed) void perform("delete-branch");
+  };
   const showsApproveWorkflows =
     workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows");
   const checksSummary = checksStale
@@ -1850,6 +1876,10 @@ export function PullRequestDetailPanel({
                       <button
                         type="button"
                         onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+                        onAuxClick={(event) => {
+                          if (event.button === 1)
+                            void readLocalApi()?.shell.openExternal(detail.url);
+                        }}
                         onContextMenu={(event) => openNumberContextMenu(event, detail)}
                         className={cn(
                           "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
@@ -1905,6 +1935,10 @@ export function PullRequestDetailPanel({
                         type="button"
                         tabIndex={condensed ? 0 : -1}
                         onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+                        onAuxClick={(event) => {
+                          if (event.button === 1)
+                            void readLocalApi()?.shell.openExternal(detail.url);
+                        }}
                         onContextMenu={(event) => openNumberContextMenu(event, detail)}
                         className={cn(
                           "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
@@ -2043,22 +2077,25 @@ export function PullRequestDetailPanel({
                                 : pendingAutoMergeLabel
                           }
                         >
-                          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                          <span className="inline-grid @max-[30rem]/pr-header:hidden">
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              {pendingAutoMergeLabel}
+                          {inlineConfirm.isArmed("enable-auto-merge") ? (
+                            <CheckIcon aria-hidden className="size-3.5" />
+                          ) : (
+                            <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                          )}
+                          <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                            <span className="grid">
+                              <span aria-hidden className="invisible col-start-1 row-start-1">
+                                {pendingAutoMergeLabel}
+                              </span>
+                              <span className="col-start-1 row-start-1">
+                                {pendingAction === "enable-auto-merge"
+                                  ? "Enabling..."
+                                  : inlineConfirm.isArmed("enable-auto-merge")
+                                    ? "Confirm auto-merge?"
+                                    : pendingAutoMergeLabel}
+                              </span>
                             </span>
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              Confirm auto-merge?
-                            </span>
-                            <span className="col-start-1 row-start-1">
-                              {pendingAction === "enable-auto-merge"
-                                ? "Enabling..."
-                                : inlineConfirm.isArmed("enable-auto-merge")
-                                  ? "Confirm auto-merge?"
-                                  : pendingAutoMergeLabel}
-                            </span>
-                          </span>
+                          </AnimatedWidth>
                         </Button>
                       </span>
                     }
@@ -2112,22 +2149,25 @@ export function PullRequestDetailPanel({
                                 : selectedMergeMethodLabel
                           }
                         >
-                          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                          <span className="inline-grid @max-[30rem]/pr-header:hidden">
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              {selectedMergeMethodLabel}
+                          {inlineConfirm.isArmed("merge") ? (
+                            <CheckIcon aria-hidden className="size-3.5" />
+                          ) : (
+                            <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                          )}
+                          <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                            <span className="grid">
+                              <span aria-hidden className="invisible col-start-1 row-start-1">
+                                {selectedMergeMethodLabel}
+                              </span>
+                              <span className="col-start-1 row-start-1">
+                                {pendingAction === "merge"
+                                  ? "Merging..."
+                                  : inlineConfirm.isArmed("merge")
+                                    ? "Confirm merge?"
+                                    : selectedMergeMethodLabel}
+                              </span>
                             </span>
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              Confirm merge?
-                            </span>
-                            <span className="col-start-1 row-start-1">
-                              {pendingAction === "merge"
-                                ? "Merging..."
-                                : inlineConfirm.isArmed("merge")
-                                  ? "Confirm merge?"
-                                  : selectedMergeMethodLabel}
-                            </span>
-                          </span>
+                          </AnimatedWidth>
                         </Button>
                       </span>
                     }
@@ -2413,6 +2453,30 @@ export function PullRequestDetailPanel({
                       >
                         <RotateCcwIcon className="size-3.5" />
                         {inlineConfirm.isArmed("revert") ? "Confirm revert?" : "Revert changes"}
+                      </MenuItem>
+                    </>
+                  ) : null}
+                  {showsDeleteBranch ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem
+                        variant="destructive"
+                        disabled={actionPending || !environmentConnected}
+                        onClick={() => void confirmDeleteBranch()}
+                      >
+                        <Trash2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+                        <span className="flex min-w-0 flex-col">
+                          <span>
+                            {pendingAction === "delete-branch"
+                              ? "Deleting branch..."
+                              : "Delete branch"}
+                          </span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {environmentConnected
+                              ? detail.headBranch
+                              : "Reconnect to delete this branch"}
+                          </span>
+                        </span>
                       </MenuItem>
                     </>
                   ) : null}

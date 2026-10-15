@@ -13,7 +13,9 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
@@ -34,6 +36,12 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
+import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -306,6 +314,57 @@ it.effect("shares detail and activity for a minute, and for ten once merged", ()
     assert.deepStrictEqual(yield* reread, ["activity #1", "activity #3", "detail #1", "detail #3"]);
     yield* TestClock.adjust("9 minutes");
     assert.deepStrictEqual(yield* reread, everything);
+  }),
+);
+
+it.effect("re-reads an open pull request after a turn, but not a merged one", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`detail #${number}`);
+              return {
+                ...hostedChangeRequest("Description"),
+                number,
+                state: number === 1 ? ("open" as const) : ("merged" as const),
+              };
+            }),
+          getChangeRequestActivity: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`activity #${number}`);
+              return {
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              };
+            }),
+        }),
+      ],
+    });
+    // What every client showing #1 (open) and #2 (merged) does on each refresh signal.
+    const merged = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
+    const reread = Effect.forEach([1, 2], (number) => {
+      const ref = { ...merged, number };
+      return Effect.andThen(service.detail(ref), service.activity(ref));
+    }).pipe(
+      Effect.andThen(Effect.yieldNow),
+      Effect.andThen(Effect.sync(() => reads.splice(0).toSorted())),
+    );
+
+    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #2", "detail #1", "detail #2"]);
+    for (let turn = 0; turn < 3; turn++) {
+      yield* service.refreshAfterTurn(merged.projectId);
+      assert.deepStrictEqual(yield* reread, ["activity #1", "detail #1"]);
+    }
+    // The refresh button still reads a merged pull request again.
+    yield* service.invalidate({ reference: merged });
+    assert.deepStrictEqual(yield* reread, ["activity #2", "detail #2"]);
   }),
 );
 
@@ -1571,6 +1630,196 @@ it.effect("refreshes every reader before a queued merge confirmation finishes", 
       assert.isUndefined(observedMerge.pollUnsafe());
     }),
   ),
+);
+
+it.effect("runs branch deletion only when the host and viewer support it, never for a stack", () =>
+  Effect.gen(function* () {
+    let actions = 0;
+    let supported = false;
+    let allowed = true;
+    const base = fakeProvider(SourceControlProviderKind.make("github"));
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        {
+          ...base,
+          capabilities: {
+            ...base.capabilities,
+            actions: ["delete-branch"],
+            stackActions: true,
+            get deleteBranch() {
+              return supported;
+            },
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: allowed ? ["delete-branch"] : [],
+              comment: true,
+              resolve: true,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          runAction: (input) =>
+            Effect.sync(() => {
+              assert.strictEqual(input.action, "delete-branch");
+              actions++;
+            }),
+        },
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "delete-branch" as const,
+    };
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(actions, 0);
+    supported = true;
+    assert.strictEqual(
+      (yield* Effect.flip(
+        service.runAction({
+          ...input,
+          stackNumber: 2,
+          expectedStackHeads: [{ number: 1, headSha: "abc123" }],
+        }),
+      ))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(actions, 0);
+    allowed = false;
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(actions, 0);
+    allowed = true;
+    yield* service.runAction(input);
+    assert.strictEqual(actions, 1);
+  }),
+);
+
+it.effect("keeps branch deletion on the credential that passed source repository permissions", () =>
+  Effect.gen(function* () {
+    let activeToken = "account-a";
+    const requests: Array<{ operation: string; authorization: string | undefined }> = [];
+    const credentials = Layer.succeed(
+      GitHubCredentials.GitHubCredentials,
+      GitHubCredentials.GitHubCredentials.of({
+        get: (host) =>
+          Effect.sync(() => ({
+            host,
+            token: Redacted.make(activeToken),
+            source: "gh" as const,
+            fingerprint: `${host}:${activeToken}`,
+          })),
+        invalidate: () => Effect.void,
+      }),
+    );
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          const operation = request.url.endsWith("/user")
+            ? "user"
+            : request.body._tag === "Uint8Array"
+              ? new TextDecoder().decode(request.body.body)
+              : "";
+          requests.push({ operation, authorization: request.headers["authorization"] });
+          let body;
+          if (operation === "user") {
+            body = { id: activeToken === "account-a" ? 101 : 202, login: activeToken };
+          } else if (operation.includes("query PullRequestBranchToDelete")) {
+            body = {
+              data: {
+                repository: {
+                  pullRequest: {
+                    state: "MERGED",
+                    headRefName: "feature",
+                    baseRefName: "main",
+                    headRefOid: "abc123",
+                    headRepository: { id: "FORK_REPO" },
+                  },
+                },
+              },
+            };
+          } else if (operation.includes("query PullRequestSourceBranch")) {
+            body = {
+              data: {
+                node: {
+                  defaultBranchRef: { name: "main" },
+                  ref: { target: { oid: "abc123" } },
+                },
+              },
+            };
+          } else if (operation.includes("updateRefs(")) {
+            body = { data: { updateRefs: {} } };
+          } else {
+            activeToken = "account-b";
+            body = {
+              data: {
+                repository: {
+                  mergeCommitAllowed: true,
+                  squashMergeAllowed: true,
+                  rebaseMergeAllowed: true,
+                  viewerPermission: "READ",
+                  pullRequest: {
+                    viewerCanUpdate: false,
+                    viewerDidAuthor: false,
+                    headRepository: { viewerPermission: "WRITE" },
+                  },
+                },
+              },
+            };
+          }
+          return HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body)));
+        }),
+      ),
+    );
+    const provider = yield* GitHubPullRequestProvider.make.pipe(
+      Effect.provide(
+        GitHubPullRequestApi.layer.pipe(
+          Layer.provide(
+            GitHubApi.layer.pipe(
+              Layer.provide(Layer.mergeAll(credentials, http)),
+              Layer.provide(GitHubQuota.layer),
+              Layer.provide(SourceControlRateLimit.layer),
+            ),
+          ),
+          Layer.provide(TestSourceControlHost.layer()),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+    yield* service.runAction({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "delete-branch",
+    });
+    assert.strictEqual(activeToken, "account-b");
+    assert.strictEqual(
+      requests.filter(({ operation }) => operation.includes("updateRefs(")).length,
+      1,
+    );
+    assert.deepStrictEqual(
+      requests.map(({ authorization }) => authorization),
+      [
+        "Bearer account-a",
+        "Bearer account-a",
+        "Bearer account-a",
+        "Bearer account-a",
+        "Bearer account-a",
+      ],
+    );
+  }),
 );
 
 it.effect("refuses an action this viewer may not take, and says what access it takes", () =>

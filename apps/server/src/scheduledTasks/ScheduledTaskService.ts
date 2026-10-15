@@ -1003,11 +1003,13 @@ export const layer = Layer.effect(
         const now = yield* localNow;
         const uuid =
           input.commandId === undefined
-            ? yield* crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) =>
-                  taskError("Could not generate schedule task id.", { cause }),
-                ),
-              )
+            ? yield* crypto
+                .randomUUIDv4()
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not generate schedule task id.", { cause }),
+                  ),
+                )
             : null;
         const id =
           input.id ??
@@ -1457,9 +1459,13 @@ export const layer = Layer.effect(
           observeDelivery(request, outcome, receivedAt, now);
         const deliveryId = ScheduledTaskWebhookDeliveryId.make(
           request.relayDeliveryId === undefined
-            ? `delivery:${yield* crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) => taskError("Could not generate delivery id.", { cause })),
-              )}`
+            ? `delivery:${yield* crypto
+                .randomUUIDv4()
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not generate delivery id.", { cause }),
+                  ),
+                )}`
             : `delivery:relay:${request.relayDeliveryId}`,
         );
         // A held request may already have reached this environment directly

@@ -22,6 +22,13 @@ const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSend
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
 
 describe("orchestrator MCP contracts", () => {
+  it("accepts explicit worktree isolation and keeps shared delegation as the default", () => {
+    expect(decodeDelegateTaskInput({ task: "Review changes" }).isolation).toBeUndefined();
+    expect(
+      decodeDelegateTaskInput({ task: "Review changes", isolation: "worktree" }).isolation,
+    ).toBe("worktree");
+    expect(() => decodeDelegateTaskInput({ task: "Review changes", isolation: "copy" })).toThrow();
+  });
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",
@@ -51,6 +58,7 @@ describe("orchestrator MCP contracts", () => {
       latestTerminalStatus: "completed",
       latestTerminalSummary: "Workspace inspected.",
       latestTerminalResultContextTransferId: "context-transfer-result-1",
+      hasPendingQuestion: false,
       waitTimedOut: false,
     });
 

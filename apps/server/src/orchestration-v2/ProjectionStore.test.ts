@@ -327,6 +327,148 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const create = (id: string, input: { worktreePath: string | null; archived?: boolean }) => {
+    const threadId = ThreadId.make(id);
+    const thread = {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId: ProjectId.make("project:worktree-paths"),
+      title: id,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: input.worktreePath === null ? null : id,
+      worktreePath: input.worktreePath,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: input.archived === true ? now : null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    return store
+      .apply({
+        id: EventId.make(`event:${id}:created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      })
+      .pipe(Effect.as(thread));
+  };
+  yield* create("thread:active", { worktreePath: "/worktrees/active" });
+  yield* create("thread:archived", { worktreePath: "/worktrees/archived", archived: true });
+  yield* create("thread:local", { worktreePath: null });
+  const deleted = yield* create("thread:deleted", { worktreePath: "/worktrees/deleted" });
+  yield* store.apply({
+    id: EventId.make("event:thread:deleted:deleted"),
+    type: "thread.deleted",
+    threadId: deleted.id,
+    occurredAt: now,
+    payload: { ...deleted, deletedAt: now },
+  });
+
+  assert.deepEqual(yield* store.getThreadWorktreePaths(), [
+    { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
+  ]);
+});
+
+const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
+  const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const activeRun = {
+    ...settledRun,
+    id: RunId.make("run:settled-leaf-nodes:active"),
+    ordinal: 2,
+    userMessageId: MessageId.make("message:settled-leaf-nodes:active"),
+    rootNodeId: NodeId.make("node:settled-leaf-nodes:active-root"),
+    status: "running" as const,
+    completedAt: null,
+  };
+  yield* store.apply({
+    id: EventId.make("event:settled-leaf-nodes:active-run"),
+    type: "run.created",
+    threadId,
+    runId: activeRun.id,
+    nodeId: activeRun.rootNodeId,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: activeRun,
+  });
+  const nodes = [
+    ["settled-root", settledRun, "root_turn", "completed"],
+    ["settled-tool", settledRun, "tool_call", "completed"],
+    ["settled-message", settledRun, "assistant_message", "failed"],
+    ["settled-reasoning", settledRun, "reasoning", "cancelled"],
+    ["settled-subagent", settledRun, "subagent", "completed"],
+    ["settled-run-live-tool", settledRun, "tool_call", "running"],
+    ["active-run-done-tool", activeRun, "tool_call", "completed"],
+  ] as const;
+  for (const [name, run, kind, status] of nodes) {
+    const id = NodeId.make(`node:settled-leaf-nodes:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:settled-leaf-nodes:${name}`),
+      type: "node.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        rootNodeId: kind === "root_turn" ? id : run.rootNodeId!,
+        parentNodeId: kind === "root_turn" ? null : run.rootNodeId,
+        kind,
+        status,
+        countsForRun: kind === "root_turn",
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      },
+    });
+  }
+  const nodeNames = (records: { readonly nodes: ReadonlyArray<{ readonly id: string }> }) =>
+    records.nodes
+      .map((node) => node.id.replace("node:settled-leaf-nodes:", ""))
+      .filter((name) => nodes.some(([candidate]) => candidate === name))
+      .toSorted();
+
+  assert.deepEqual(
+    nodeNames(yield* store.getThreadRecords(threadId, ["nodes"], { omitSettledLeafNodes: true })),
+    ["active-run-done-tool", "settled-root", "settled-run-live-tool", "settled-subagent"],
+  );
+  assert.deepEqual(
+    nodeNames(yield* store.getThreadRecords(threadId, ["nodes"])),
+    nodes.map(([name]) => name).toSorted(),
+  );
+});
+
+it.effect("memory command reads skip finished leaf nodes of finished runs", () =>
+  commandReadsSkipSettledLeafNodes.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+it.effect("memory worktree path lookup reads only active threads", () =>
+  threadWorktreePathsReadActiveThreads.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
@@ -553,6 +695,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     "SQL recovery selects unfinished runless native subagents",
     () => runlessNativeSubagentNeedsRecovery,
   );
+  it.effect(
+    "worktree path lookup reads only active threads",
+    () => threadWorktreePathsReadActiveThreads,
+  );
 
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
@@ -593,6 +739,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(recovery?.status, "completed");
       assert.deepEqual(recovery?.restartCancelledBackgroundWork, work);
     }),
+  );
+  it.effect(
+    "command reads skip finished leaf nodes of finished runs",
+    () => commandReadsSkipSettledLeafNodes,
   );
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {
@@ -886,6 +1036,203 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         cursor = page.nextCursor;
       }
       assert.isNull(cursor);
+      assert.deepEqual(loaded, allIds);
+    }),
+  );
+
+  it.effect("caps a SQL window by runs that a notification started", () =>
+    Effect.gen(function* () {
+      // A thread woken by PR watches: 12 user turns, then 400 runs that a
+      // notification started, with a user turn every 50 runs. The user-turn
+      // window reached back to the 12th-newest user turn and read almost every row.
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:notification-turn-pages");
+      yield* projectionStore.apply({
+        id: EventId.make("event:notification-turn-pages:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:notification-turn-pages"),
+          title: "Woken by notifications",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      const startedRuns = 412;
+      const allIds: string[] = [];
+      const startIds: string[] = [];
+      let ordinal = 0;
+      const itemRow = (runId: string, item: Record<string, unknown>) => {
+        ordinal += 1;
+        const id = `turn-item:notification-turn-pages:${ordinal}`;
+        allIds.push(id);
+        return {
+          turn_item_id: id,
+          thread_id: threadId,
+          run_id: runId,
+          node_id: null,
+          provider_thread_id: null,
+          provider_turn_id: null,
+          parent_item_id: null,
+          ordinal,
+          type: String(item.type),
+          status: "completed",
+          updated_at: nowIso,
+          payload_json: encodeUnknownJsonString({
+            id,
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: nowIso,
+            completedAt: nowIso,
+            updatedAt: nowIso,
+            ...item,
+          }),
+        };
+      };
+      const command = { type: "command_execution", input: "command", output: "x", exitCode: 0 };
+      const notification = (summary: string) => ({
+        type: "notification",
+        source: { kind: "monitor" },
+        outcome: "completed",
+        summary,
+      });
+      // The newest run is a wake queued behind the last one. It has no items yet,
+      // like a run cancelled before it started.
+      for (let run = 1; run <= startedRuns + 1; run += 1) {
+        const runId = `run:notification-turn-pages:${run}`;
+        const status = run > startedRuns ? "queued" : "completed";
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id, status,
+            requested_at, completed_at, payload_json
+          ) VALUES (
+            ${runId}, ${threadId}, ${run}, 'codex', NULL, ${status}, ${nowIso}, ${nowIso},
+            ${encodeUnknownJsonString({
+              id: runId,
+              threadId,
+              ordinal: run,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: `message:notification-turn-pages:${run}`,
+              rootNodeId: `node:notification-turn-pages:${run}`,
+              activeAttemptId: null,
+              status,
+              requestedAt: nowIso,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              checkpointId: null,
+              contextHandoffId: null,
+            })}
+          )
+        `;
+        if (run > startedRuns) continue;
+        const start =
+          run <= 12 || run % 50 === 0
+            ? {
+                type: "user_message",
+                createdBy: "user",
+                creationSource: "web",
+                messageId: `message:notification-turn-pages:${run}`,
+                inputIntent: "turn_start",
+                text: `Turn ${run}`,
+                attachments: [],
+              }
+            : notification(`Wake ${run}`);
+        // A row of the run (a handoff) can come before its first input. A wake
+        // steered into the running turn follows it and starts no turn.
+        const rows = [
+          itemRow(runId, command),
+          itemRow(runId, start),
+          itemRow(runId, command),
+          itemRow(runId, notification(`Steer ${run}`)),
+        ];
+        startIds.push(rows[1]!.turn_item_id);
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
+      }
+
+      const { statements, tracer } = traceSqlStatements();
+      const initial = yield* projectionStore
+        .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
+        .pipe(Effect.withTracer(tracer));
+      // The 152 newest turns are the 152 newest started runs, 261 to 412. Only
+      // three of them are user turns, short of the 12 the user-turn window needs.
+      assert.deepEqual(
+        initial.projection.turnItems.map((item) => String(item.id)),
+        allIds.slice(allIds.indexOf(startIds[260]!)),
+      );
+      // Each run's first input is read by run ID, newest run first, never by a
+      // walk over every turn item in the thread.
+      const windowStatement = statements.find((statement) => statement.includes("run_starts"));
+      assert.isDefined(windowStatement);
+      const windowPlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${windowStatement}`,
+      );
+      const windowPlanDetails = windowPlan.map((row) => row.detail);
+      assert.include(
+        windowPlanDetails,
+        "SEARCH recent_run USING INDEX orchestration_v2_projection_runs_thread_ordinal_idx (thread_id=? AND ordinal<?)",
+      );
+      assert.include(
+        windowPlanDetails,
+        "SEARCH first_input USING INDEX orchestration_v2_projection_turn_items_run_ordinal_idx (run_id=?)",
+      );
+      const bounded = buildBoundedThreadProjection({
+        projection: initial.projection,
+        snapshotSequence: 0,
+      });
+      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, startIds[262]);
+      const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
+      let cursor = bounded.historyCursor;
+      for (let pages = 0; cursor !== null; pages += 1) {
+        assert.isBelow(pages, 5);
+        const anchor = decodeThreadHistoryCursor(cursor);
+        const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 77,
+          userTurnLimit: 20,
+          anchorItemId: TurnItemId.make(anchor.si),
+          anchorThreadId: ThreadId.make(anchor.st),
+        });
+        // Older windows stay bounded too.
+        assert.isAtMost(snapshot.projection.turnItems.length, 152 * 4 + 1);
+        const page = selectHistoryPageFromCursor({
+          items: snapshot.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: 0,
+        });
+        loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
+        cursor = page.nextCursor;
+      }
       assert.deepEqual(loaded, allIds);
     }),
   );
@@ -2186,6 +2533,99 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("dates thread activity by a run event and leaves the rest of the thread alone", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const createdAt = yield* DateTime.now;
+      const runOccurredAt = DateTime.add(createdAt, { seconds: 5 });
+      const threadId = ThreadId.make("thread:projection-activity");
+      const runId = RunId.make("run:projection-activity");
+      const rootNodeId = NodeId.make("node:projection-activity");
+      const thread = {
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId: ProjectId.make("project:projection-activity"),
+        title: "Projection activity",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: "feature/activity",
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt,
+        updatedAt: createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: createdAt,
+        deletedAt: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-activity:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: createdAt,
+        payload: thread,
+      });
+      const created = (yield* projectionStore.getThreadProjection(threadId)).thread;
+
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore
+        .apply({
+          id: EventId.make("event:projection-activity:run-created"),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: runOccurredAt,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message:projection-activity"),
+            rootNodeId,
+            activeAttemptId: null,
+            status: "running" as const,
+            requestedAt: runOccurredAt,
+            startedAt: runOccurredAt,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        })
+        .pipe(Effect.withTracer(tracer));
+      // The thread row is patched in place, never read back to be re-encoded.
+      assert.isEmpty(
+        statements.filter(
+          (statement) =>
+            /^\s*SELECT/i.test(statement) &&
+            statement.includes("orchestration_v2_projection_threads"),
+        ),
+      );
+
+      const active = (yield* projectionStore.getThreadProjection(threadId)).thread;
+      assert.deepEqual(active, { ...created, updatedAt: runOccurredAt });
+      const shell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.deepEqual(shell?.updatedAt, runOccurredAt);
+    }),
+  );
+
   it.effect("preserves delegated completion ownership across stale run and task updates", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -3426,6 +3866,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.isAbove(sessionLookup, bindingLookup, marker);
         assert.include(plan[sessionLookup], "(provider_session_id=?)");
+        const errorLookups = plan.filter(
+          (detail) =>
+            /^SEARCH (?:item|error) /.test(detail) && !detail.includes("(turn_item_id=?)"),
+        );
+        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 1, marker);
+        for (const errorLookup of errorLookups) {
+          assert.include(errorLookup, "turn_items_failed_error_idx");
+          assert.include(errorLookup, "(thread_id=? AND run_id=? AND node_id=?)");
+        }
       }
     }),
   );

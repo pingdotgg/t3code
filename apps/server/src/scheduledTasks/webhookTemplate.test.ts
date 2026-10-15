@@ -52,6 +52,25 @@ describe("renderWebhookPrompt", () => {
     assert.deepEqual(rendered.missing, ["body.nope", "headers.x-missing", "unknown"]);
   });
 
+  it("trims placeholder whitespace before resolving and reporting missing fields", () => {
+    const rendered = renderWebhookPrompt(
+      "{{\tbody.action\n}}|{{  body.nope  }}|{{\nbody.nope\t}}|{{ \t\n }}",
+      githubPullRequest,
+    );
+    assert.equal(rendered.prompt, "opened|||");
+    assert.deepEqual(rendered.missing, ["body.nope", ""]);
+  });
+
+  it("preserves unclosed whitespace-heavy placeholders and resolves later valid ones", () => {
+    const unfinished = `Notify {{${" ".repeat(1024)}body`;
+    const rendered = renderWebhookPrompt(
+      `${unfinished}\n{{body.pull_request.number}}`,
+      githubPullRequest,
+    );
+    assert.equal(rendered.prompt, `${unfinished}\n45`);
+    assert.deepEqual(rendered.missing, []);
+  });
+
   it("addresses form-encoded bodies and leaves other bodies to {{body}}", () => {
     const form = renderWebhookPrompt("{{body.text}} by {{body.user_name}}", {
       ...githubPullRequest,

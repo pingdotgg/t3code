@@ -7,12 +7,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -63,6 +65,8 @@ interface ActiveConnector {
   readonly startedAtMillis: number;
   /** Completes when the connector first registers a tunnel connection. */
   readonly registered: Deferred.Deferred<void>;
+  /** Completes with the loopback address of the connector's metrics server. */
+  readonly metricsAddress: Deferred.Deferred<string>;
 }
 
 // A connector that exits before running this long is treated as part of a
@@ -80,6 +84,18 @@ const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 // Ask for recovery after this long, and again at this interval while it stays
 // unconnected; the relay hands back the same tunnel when it is still live.
 const CONNECTOR_REGISTRATION_TIMEOUT = Duration.minutes(3);
+// cloudflared resolves the edge only at startup, so after a network change it
+// can stay alive with zero connections, dialing addresses that no longer route.
+// Its /ready endpoint answers 503 then. After this many 503s in a row (about
+// three minutes), the connector is restarted. Each restart that is never
+// followed by a ready answer doubles the count, up to about thirty minutes, so
+// a host that is really offline does not restart every few minutes.
+const CONNECTOR_READINESS_INTERVAL = Duration.seconds(30);
+const CONNECTOR_READINESS_REQUEST_TIMEOUT = Duration.seconds(5);
+const CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART = 6;
+const CONNECTOR_NOT_READY_CHECKS_MAX = 60;
+// The connector binds its metrics server to a random loopback port and logs it.
+const RELAY_CLIENT_METRICS_LINE = /\bStarting metrics server on (127\.0\.0\.1:\d+)\/metrics\b/u;
 // A failed background install of the pinned relay client is retried no sooner
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
@@ -162,6 +178,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
@@ -174,6 +191,7 @@ export const make = Effect.gen(function* () {
   const lastInstallFailureAtRef = yield* Ref.make<number | null>(null);
   const prunedRef = yield* Ref.make(false);
   const retryLoopRunningRef = yield* Ref.make(false);
+  const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
@@ -393,6 +411,48 @@ export const make = Effect.gen(function* () {
       return false;
     }).pipe(Effect.repeat({ until: (connected) => connected }));
 
+  // Kills a connector whose /ready keeps answering 503, so the supervisor
+  // restarts it like any exited connector. Only an explicit 503 counts: a failed
+  // request says nothing about the tunnel. A connector that never logs its
+  // metrics address is not polled.
+  const watchConnectorReadiness = (connector: ActiveConnector) =>
+    Effect.gen(function* () {
+      const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;
+      let notReadyChecks = 0;
+      while (true) {
+        yield* Effect.sleep(CONNECTOR_READINESS_INTERVAL);
+        const status = yield* httpClient.get(readyUrl).pipe(
+          Effect.map((response) => response.status),
+          Effect.scoped,
+          Effect.withTracerEnabled(false),
+          Effect.timeoutOption(CONNECTOR_READINESS_REQUEST_TIMEOUT),
+          Effect.orElseSucceed(() => Option.none<number>()),
+        );
+        if (Option.isNone(status)) continue;
+        if (status.value === 200) {
+          notReadyChecks = 0;
+          yield* Ref.set(notReadyChecksBeforeRestartRef, CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
+          continue;
+        }
+        if (status.value !== 503) continue;
+        notReadyChecks += 1;
+        const threshold = yield* Ref.get(notReadyChecksBeforeRestartRef);
+        if (notReadyChecks < threshold) continue;
+        notReadyChecks = 0;
+        yield* Ref.set(
+          notReadyChecksBeforeRestartRef,
+          Math.min(threshold * 2, CONNECTOR_NOT_READY_CHECKS_MAX),
+        );
+        yield* Effect.logWarning("Relay client has no tunnel connection; restarting it", {
+          pid: Number(connector.child.pid),
+          notReadyChecks: threshold,
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+        });
+        yield* connector.child.kill().pipe(Effect.ignore);
+      }
+    });
+
   const observeConnectorOutput = (connector: ActiveConnector) => {
     let rejectedRegistrations = 0;
 
@@ -443,8 +503,14 @@ export const make = Effect.gen(function* () {
               }
             }
             return Effect.logWarning("Relay client reported a transport warning", attributes);
-          case "debug":
-            return Effect.logDebug("Relay client output", attributes);
+          case "debug": {
+            const metricsAddress = RELAY_CLIENT_METRICS_LINE.exec(line)?.[1];
+            return metricsAddress
+              ? Deferred.succeed(connector.metricsAddress, metricsAddress).pipe(
+                  Effect.andThen(Effect.logDebug("Relay client output", attributes)),
+                )
+              : Effect.logDebug("Relay client output", attributes);
+          }
         }
       }),
       Effect.catchCause((cause) =>
@@ -507,7 +573,17 @@ export const make = Effect.gen(function* () {
       .spawn(
         ChildProcess.make(
           executable.executablePath,
-          ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+          [
+            "tunnel",
+            "--no-autoupdate",
+            "--loglevel",
+            "info",
+            "--output",
+            "default",
+            "--metrics",
+            "127.0.0.1:0",
+            "run",
+          ],
           {
             detached: false,
             env: {
@@ -563,11 +639,13 @@ export const make = Effect.gen(function* () {
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
         registered: yield* Deferred.make<void>(),
+        metricsAddress: yield* Deferred.make<string>(),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
       yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
+      yield* Effect.forkIn(watchConnectorReadiness(connector), connectorScope);
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",

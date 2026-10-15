@@ -181,6 +181,20 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(detail.changedFiles).toBe(0);
   });
 
+  it("reads the head commit, and says nothing where GitLab omitted it", () => {
+    const headSha = (entry: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).headSha;
+    const sha = "afce4da4d5fe7d2fd0647b5b864526ea0a2827cb";
+
+    expect(headSha({ sha })).toBe(sha);
+    // A new merge request can report its head before GitLab has computed `diff_refs`.
+    expect(headSha({ sha, diff_refs: null })).toBe(sha);
+    expect(headSha({ sha, merge_commit_sha: "0".repeat(40) })).toBe(sha);
+    expect(headSha({})).toBeUndefined();
+    expect(headSha({ sha: null })).toBeUndefined();
+    expect(headSha({ sha: "  " })).toBeUndefined();
+  });
+
   it("reads either auto-merge field, and says nothing where GitLab named neither", () => {
     const armed = (entry: Record<string, unknown>) =>
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).autoMergeEnabled;

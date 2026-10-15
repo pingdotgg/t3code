@@ -1,4 +1,4 @@
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
@@ -12,7 +12,11 @@ vi.mock("../ui/collapsible", () => {
   };
 });
 
+vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }));
+
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+
+const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
 it("cancels an answer's pending auto-submit on revocation and resumes after a new grant", async () => {
   vi.useFakeTimers();
@@ -43,6 +47,8 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   const panel = (disabled: boolean) => (
     <ComposerPendingUserInputPanel
       pendingUserInputs={[prompt]}
+      cwd="/repo"
+      threadRef={threadRef}
       disabled={disabled}
       respondingRequestIds={[]}
       answers={{}}

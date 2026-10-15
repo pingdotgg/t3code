@@ -520,7 +520,7 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     // node_id, so a node_ordinal lookup walks the whole history once per thread.
     const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
     assert.lengthOf(itemLookups, 2);
-    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
+    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_failed_error_idx")));
     // The pending secret request lookup is bounded the same way.
     const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
     assert.lengthOf(secretLookups, 1);

@@ -36,7 +36,7 @@ export function dedupeChecks(
 ): ReadonlyArray<PullRequestCheck> {
   const newestByCheck = new Map<string, (typeof entries)[number]>();
   for (const entry of entries) {
-    const key = `${entry.workflowName ?? ""} ${entry.check.name}`;
+    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
     const kept = newestByCheck.get(key);
     // Re-setting a key a Map already holds keeps its first position, which is the order wanted.
     if (kept === undefined || isAtLeastAsNew(entry.at, kept.at)) newestByCheck.set(key, entry);

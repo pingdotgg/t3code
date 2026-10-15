@@ -66,6 +66,7 @@ import type {
   Dialog,
   Download,
   FileChooser,
+  Frame,
   Page,
 } from "playwright-core";
 
@@ -262,8 +263,6 @@ interface ViewerState {
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
   scrolledAt: number;
-  /** Last input from this viewer; page copies reach its clipboard only right after. */
-  inputAt: number;
   /** Panel bounds, retained in fixed mode; passive viewers never request a size. */
   requestedSize: { width: number; height: number; order: number } | null;
 }
@@ -290,6 +289,8 @@ interface ServerTab {
   readonly tabId: string;
   readonly page: Page;
   readonly cdp: CDPSession;
+  /** Sessions of the page's frames that run in their own process. */
+  readonly frameSessions: Map<Frame, CDPSession>;
   readonly createdAt: number;
   /** The agent's latest request on this tab; idle agent tabs close. */
   usedAt: number;
@@ -434,43 +435,50 @@ const editingCommand = (key: string, modifiers: number) => {
 };
 
 const CLIPBOARD_TEXT_LIMIT = 1024 * 1024;
-/** Copies reach the viewer only this soon after it last touched the page. */
-const CLIPBOARD_GESTURE_MS = 5_000;
-const CLIPBOARD_BINDING = "__t3PreviewClipboard";
-// Headless Chromium shares one clipboard between every context, so pages
-// report their own copies instead of the clipboard being read back.
+const CLIPBOARD_WORLD = "t3-preview-clipboard";
+// Headless Chromium shares one clipboard between every context, so the copy
+// a viewer's copy or cut key makes is read from this world instead of the
+// clipboard. Page scripts cannot see the world, and only a copy made while a
+// real key is handled counts.
 const CLIPBOARD_SCRIPT = `(() => {
-  const send = (text) => {
-    if (typeof text !== "string" || text.length === 0) return;
-    try { globalThis.${CLIPBOARD_BINDING}?.(text.slice(0, ${CLIPBOARD_TEXT_LIMIT})); } catch {}
-  };
+  let keying = false;
+  let copied = "";
+  // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
+  addEventListener("keydown", (event) => {
+    if (!event.isTrusted || event.altKey || event.ctrlKey === event.metaKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== "c" && key !== "x") return;
+    keying = true;
+    copied = "";
+    setTimeout(() => { keying = false; });
+  }, true);
   const selection = () => {
-    const field = document.activeElement;
+    let field = document.activeElement;
+    while (field?.shadowRoot?.activeElement) field = field.shadowRoot.activeElement;
     if ((field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) && field.selectionStart !== null)
       return field.value.slice(field.selectionStart, field.selectionEnd ?? field.selectionStart);
     return String(document.getSelection() ?? "");
   };
-  // Bubbling to window runs after page handlers, before cut removes the selection.
-  const copied = (event) =>
-    send(event.defaultPrevented ? event.clipboardData?.getData("text/plain") : selection());
-  addEventListener("copy", copied);
-  addEventListener("cut", copied);
-  const proto = globalThis.Clipboard?.prototype;
-  if (!proto) return;
-  const writeText = proto.writeText;
-  proto.writeText = function (text) {
-    const result = writeText.call(this, text);
-    result.then(() => send(String(text)), () => {});
-    return result;
+  const record = (text) => {
+    copied = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
   };
-  const write = proto.write;
-  proto.write = function (items) {
-    const result = write.call(this, items);
-    result.then(async () => {
-      const item = [...items].find((candidate) => candidate.types.includes("text/plain"));
-      if (item) send(await (await item.getType("text/plain")).text());
-    }, () => {});
-    return result;
+  // Capturing at window runs before page handlers can stop the event, and
+  // before cut removes the selection.
+  const snapshot = (event) => {
+    if (keying && event.isTrusted) record(selection());
+  };
+  // Bubbling back to window picks up text a page handler set instead.
+  const replace = (event) => {
+    if (keying && event.isTrusted && event.defaultPrevented) record(event.clipboardData?.getData("text/plain"));
+  };
+  for (const type of ["copy", "cut"]) {
+    addEventListener(type, snapshot, true);
+    addEventListener(type, replace);
+  }
+  globalThis.takeCopy = () => {
+    const text = copied;
+    copied = "";
+    return text;
   };
 })();`;
 
@@ -763,13 +771,14 @@ const make = Effect.gen(function* () {
         isolatedContext ? tabKey(snapshot.threadId, snapshot.tabId) : undefined,
       ));
     if (adopted?.page.isClosed()) throw new Error("The popup closed before it opened.");
-    // The desktop page already has its own clipboard; the bridge script is for headless tabs.
+    // The desktop page already has its own clipboard.
     if (!desktop) await prepareContext(context);
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     const cdp = await context.newCDPSession(page);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
+    if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -780,6 +789,7 @@ const make = Effect.gen(function* () {
       tabId: snapshot.tabId,
       page,
       cdp,
+      frameSessions: new Map(),
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
@@ -828,7 +838,10 @@ const make = Effect.gen(function* () {
     page.on("framenavigated", (frame) => {
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
+      if (!desktop) void recordFrameCopies(tab, frame);
     });
+    // An adopted popup's frames may have loaded before the tab listened.
+    if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
@@ -1129,16 +1142,81 @@ const make = Effect.gen(function* () {
     if (preparedContexts.has(context)) return;
     preparedContexts.add(context);
     await context.grantPermissions(["clipboard-write"]);
-    await context.exposeBinding(CLIPBOARD_BINDING, ({ page }, text: unknown) => {
-      if (typeof text !== "string") return;
-      const tab = [...tabs.values()].find((candidate) => candidate.page === page);
-      const controller = tab
-        ? [...tab.viewers].find((viewer) => viewer.id === tab.control.controller)
-        : undefined;
-      if (!controller || Date.now() - controller.inputAt > CLIPBOARD_GESTURE_MS) return;
-      controller.push({ _tag: "clipboard", text: text.slice(0, CLIPBOARD_TEXT_LIMIT) });
+  };
+
+  /** Records the copies made in each frame a session reaches. */
+  const recordCopies = async (cdp: CDPSession) => {
+    // Scripts for new documents run only while this session's Page domain is on.
+    await cdp.send("Page.enable");
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: CLIPBOARD_SCRIPT,
+      worldName: CLIPBOARD_WORLD,
+      runImmediately: true,
     });
-    await context.addInitScript(CLIPBOARD_SCRIPT);
+  };
+
+  /**
+   * A frame in its own process, such as one with an `Origin-Agent-Cluster`
+   * header, is out of the page session's reach, so it records copies through
+   * its own session until that target closes.
+   */
+  const recordFrameCopies = async (tab: ServerTab, frame: Frame) => {
+    if (frame === tab.page.mainFrame() || tab.frameSessions.has(frame)) return;
+    // A frame in its parent's process has no session of its own.
+    const cdp = await tab.page
+      .context()
+      .newCDPSession(frame)
+      .catch(() => null);
+    if (!cdp) return;
+    if (tab.frameSessions.has(frame) || frame.isDetached()) {
+      await cdp.detach().catch(constVoid);
+      return;
+    }
+    tab.frameSessions.set(frame, cdp);
+    cdp.on("close", () => {
+      if (tab.frameSessions.get(frame) !== cdp) return;
+      tab.frameSessions.delete(frame);
+      // A frame that moved to another process records through its new target.
+      if (!frame.isDetached()) void recordFrameCopies(tab, frame);
+    });
+    await recordCopies(cdp).catch(constVoid);
+  };
+
+  /** Clears and returns the copy of each frame a session reaches. */
+  const takeSessionCopies = async (cdp: CDPSession) => {
+    // An out-of-process frame that closed meanwhile copied nothing.
+    const tree = await cdp.send("Page.getFrameTree").catch(() => null);
+    if (!tree) return [];
+    const frameIds = (node: typeof tree.frameTree): Array<string> => [
+      node.frame.id,
+      ...(node.childFrames ?? []).flatMap(frameIds),
+    ];
+    return Promise.all(
+      frameIds(tree.frameTree).map((frameId) =>
+        cdp
+          .send("Page.createIsolatedWorld", { frameId, worldName: CLIPBOARD_WORLD })
+          .then(({ executionContextId }) =>
+            cdp.send("Runtime.evaluate", {
+              contextId: executionContextId,
+              expression: "globalThis.takeCopy?.()",
+              returnByValue: true,
+            }),
+          )
+          .then(
+            ({ result }) => (typeof result.value === "string" ? result.value : ""),
+            // A frame that detached meanwhile copied nothing.
+            () => "",
+          ),
+      ),
+    );
+  };
+
+  /** Clears every frame's copy and returns what the key just handled copied or cut. */
+  const takeCopiedText = async (tab: ServerTab) => {
+    const copies = await Promise.all(
+      [tab.cdp, ...tab.frameSessions.values()].map(takeSessionCopies),
+    );
+    return copies.flat().find((text) => text.length > 0);
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
@@ -2058,7 +2136,6 @@ const make = Effect.gen(function* () {
   ) => {
     const message = asRecord(raw);
     if (!message) return;
-    viewer.inputAt = Date.now();
     const modifiers = modifiersOf(message);
     switch (message.type) {
       case "mouse": {
@@ -2104,19 +2181,29 @@ const make = Effect.gen(function* () {
           viewer.pressedKeys.delete(code || key);
           return;
         }
+        const command = editingCommand(key, modifiers);
+        // Only the controlling viewer's own copy and cut reach its clipboard.
+        const copying =
+          !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
+        // Clear what any frame kept from an earlier key, so only this key's copy is read.
+        if (copying) await takeCopiedText(tab);
         await session.send("Input.dispatchKeyEvent", {
           type: text ? "keyDown" : "rawKeyDown",
           key,
           code,
           modifiers,
           ...(text ? { text, unmodifiedText: text } : {}),
-          ...editingCommand(key, modifiers),
+          ...command,
           windowsVirtualKeyCode: num(
             message.keyCode,
             key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,
           ),
         });
         viewer.pressedKeys.set(code || key, { key, code });
+        if (copying) {
+          const copied = await takeCopiedText(tab);
+          if (copied) viewer.push({ _tag: "clipboard", text: copied });
+        }
         return;
       }
       case "text":
@@ -2251,7 +2338,6 @@ const make = Effect.gen(function* () {
         },
         resume: () => startScreencast(screencastScale),
         scrolledAt: 0,
-        inputAt: 0,
         requestedSize: null,
       };
       yield* Effect.acquireRelease(

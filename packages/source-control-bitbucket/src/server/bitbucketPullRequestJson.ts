@@ -52,6 +52,9 @@ const RawUserSchema = Schema.Struct({
  */
 const RawBranchSchema = Schema.Struct({
   branch: Schema.Struct({ name: TrimmedNonEmptyString }),
+  commit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ hash: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
   repository: Schema.optional(Schema.NullOr(Schema.Struct({ full_name: TrimmedNonEmptyString }))),
 });
 
@@ -160,9 +163,8 @@ const RawViewerSchema = Schema.Struct({
 });
 
 /**
- * `/user/permissions/repositories` filtered to one repository, which is the only place Bitbucket
- * states what the credentials may do with it: nothing on the repository, the pull request or the
- * workspace carries it. One row, or none where Bitbucket names no permission for this account.
+ * The caller's workspace-scoped repository permissions, filtered to one repository.
+ * One row, or none where Bitbucket names no permission for this account.
  */
 const RawRepositoryPermissionsSchema = Schema.Struct({
   values: Schema.optional(
@@ -178,6 +180,7 @@ export interface BitbucketPullRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly headSha: string | null;
   readonly headRepositoryNameWithOwner: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
@@ -293,6 +296,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     url: raw.links.html.href,
     author: toActor(raw.author),
     headBranch: raw.source.branch.name,
+    headSha: trimmed(raw.source.commit?.hash),
     headRepositoryNameWithOwner: raw.source.repository?.full_name ?? null,
     baseBranch: raw.destination.branch.name,
     state: toState(raw),

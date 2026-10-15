@@ -791,15 +791,12 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       }
     }
 
-    const spawnCommand = yield* resolveSpawnCommand(
-      "vp",
-      [...MODE_ARGS[input.mode], ...input.runArgs],
-      { env },
-    );
+    const args = [...MODE_ARGS[input.mode], ...input.runArgs];
+    const spawnCommand = yield* resolveSpawnCommand("vp", args, { env });
     const processContext = {
       mode: input.mode,
       executable: "vp" as const,
-      argumentCount: spawnCommand.args.length,
+      argumentCount: args.length,
       shell: spawnCommand.shell,
     } as const;
     const child = yield* ChildProcess.make(spawnCommand.command, spawnCommand.args, {

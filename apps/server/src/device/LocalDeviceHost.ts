@@ -86,6 +86,19 @@ const AgentDeviceDaemonFile = Schema.Struct({
 });
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
 
+const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        details: Schema.Struct({
+          reason: Schema.String,
+          inspection: Schema.optional(Schema.Struct({ reason: Schema.String })),
+        }),
+      }),
+    }),
+  ),
+);
+
 interface HubProcess {
   readonly nodePath: string;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -498,7 +511,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: DeviceToolPaths,
     nodePath: string,
-  ): Effect.fn.Return<DeviceHost.AgentDeviceEndpoint, DeviceHost.DeviceHostTimeoutError> {
+  ): Effect.fn.Return<
+    DeviceHost.AgentDeviceEndpoint,
+    | DeviceHost.DeviceHostError
+    | DeviceHost.DeviceHostTimeoutError
+    | DeviceHost.AgentDeviceStartError
+  > {
     const stateDir = agentDeviceStateDir(path, config.stateDir);
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
     const existing = yield* readDaemonFile().pipe(Effect.option);
@@ -536,7 +554,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }
     // There is no `daemon start`; the first command in a state dir spawns the
     // daemon and blocks until it answers. `devices` is the cheapest one.
-    yield* runner
+    const runResult = yield* runner
       .run({
         command: nodePath,
         args: [agentTool.entryPath, "devices", "--json"],
@@ -544,7 +562,44 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeout: Duration.millis(DAEMON_READY_TIMEOUT_MS),
         timeoutBehavior: "timedOutResult",
       })
-      .pipe(Effect.ignore);
+      .pipe(Effect.result);
+    // Discovery can fail after the daemon starts. A published endpoint still
+    // lets agents connect; absent one, preserve the CLI failure instead of polling.
+    const started = yield* readDaemonFile().pipe(Effect.option);
+    if (started._tag === "Some") return toEndpoint(started.value);
+    if (runResult._tag === "Failure") {
+      return yield* new DeviceHost.DeviceHostError({
+        hostId,
+        step: "starting agent tools",
+        cause: runResult.failure,
+      });
+    }
+    const result = runResult.success;
+    if (result.timedOut) {
+      return yield* new DeviceHost.DeviceHostTimeoutError({
+        hostId,
+        timeoutMs: DAEMON_READY_TIMEOUT_MS,
+      });
+    }
+    if (result.code !== 0) {
+      const failure = decodeAgentDeviceFailure(result.stdout);
+      const details = Option.isSome(failure) ? failure.value.error.details : undefined;
+      const reason =
+        details?.reason === "daemon_registration_unproven"
+          ? details.inspection?.reason === "non-directory"
+            ? "daemon_lock_not_directory"
+            : "daemon_registration_unproven"
+          : details?.reason === "daemon_retirement_unconfirmed"
+            ? "daemon_retirement_unconfirmed"
+            : "command_failed";
+      return yield* new DeviceHost.AgentDeviceStartError({
+        hostId,
+        stateDir,
+        exitCode: result.code === null ? null : Number(result.code),
+        reason,
+        cause: result,
+      });
+    }
     const deadline = (yield* Clock.currentTimeMillis) + DAEMON_READY_TIMEOUT_MS;
     while (true) {
       const file = yield* readDaemonFile().pipe(Effect.option);
@@ -658,6 +713,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           unknown,
           | DeviceHost.DeviceHostError
           | DeviceHost.DeviceHostTimeoutError
+          | DeviceHost.AgentDeviceStartError
           | NodeRuntimeUnavailableError
         >,
         DeviceHost.DeviceHostAgentReady

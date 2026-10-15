@@ -189,7 +189,7 @@ export const make = Effect.gen(function* () {
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return crypto.randomUUIDv4.pipe(
+    return crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({

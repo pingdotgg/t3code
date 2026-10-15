@@ -10,6 +10,7 @@ import {
   type PullRequestDetailView,
   type PullRequestRef,
   type PullRequestReviewThread,
+  type PullRequestState,
   type RepositoryIdentity,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -28,6 +29,7 @@ import {
   buildExplainPullRequestHandoff,
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
+  canDeletePullRequestBranch,
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
   handoffPrompt,
@@ -1654,9 +1656,37 @@ describe("which actions need the host read again after they run", () => {
       "disable-auto-merge",
       "merge",
       "revert",
+      "delete-branch",
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
+  });
+});
+
+describe("when the source branch can be deleted", () => {
+  const branchDetail = (
+    state: PullRequestState,
+    overrides: { deleteBranch?: boolean; allowed?: boolean } = {},
+  ) => ({
+    state,
+    capabilities: {
+      deleteBranch: overrides.deleteBranch ?? true,
+      actions: ["delete-branch" as const],
+    },
+    viewerPermissions: {
+      actions: overrides.allowed === false ? [] : (["delete-branch"] as const),
+    },
+  });
+
+  it("offers it only after the pull request is merged or closed", () => {
+    expect(canDeletePullRequestBranch(branchDetail("merged"))).toBe(true);
+    expect(canDeletePullRequestBranch(branchDetail("closed"))).toBe(true);
+    expect(canDeletePullRequestBranch(branchDetail("open"))).toBe(false);
+  });
+
+  it("needs both the host capability and the viewer's permission", () => {
+    expect(canDeletePullRequestBranch(branchDetail("merged", { deleteBranch: false }))).toBe(false);
+    expect(canDeletePullRequestBranch(branchDetail("merged", { allowed: false }))).toBe(false);
   });
 });
 

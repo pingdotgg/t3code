@@ -398,11 +398,14 @@ export const make = Effect.gen(function* () {
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(function* (input) {
-    const id = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError(
-        (cause) => new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
-      ),
-    );
+    const id = yield* crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
+        ),
+      );
     const credential = yield* generatePairingToken;
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
     const ttl =

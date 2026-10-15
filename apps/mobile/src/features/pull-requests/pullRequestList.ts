@@ -15,6 +15,21 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   sort: "updated",
 };
 
+/** A scope saved on the Scratch folder is no longer offered, so it reads as "All projects". */
+export function withoutScratchProjectScope(
+  controls: PullRequestListControls,
+  projects: readonly { id: string; environmentId: string; isScratch?: true }[],
+): PullRequestListControls {
+  return projects.some(
+    (project) =>
+      project.isScratch &&
+      project.id === controls.projectId &&
+      project.environmentId === controls.projectEnvironmentId,
+  )
+    ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
+    : controls;
+}
+
 export function pullRequestListKey(
   item: Pick<PullRequestListEntry, "host" | "repository" | "number">,
 ) {
@@ -171,6 +186,7 @@ export function filterPullRequestList<
   viewers: PullRequestListResult["viewers"],
   query: string,
   localSearchHosts: ReadonlySet<string>,
+  connectedEnvironmentIds?: ReadonlySet<string>,
 ) {
   const normalize = (value: string) => value.toLowerCase();
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -210,11 +226,16 @@ export function filterPullRequestList<
     }
     return true;
   });
-  // The same repository can be available on multiple machines. Pick its first matching source.
+  // The same repository can be available on multiple machines. Pick its first matching source,
+  // unless that machine is unreachable and another one can answer: its rows may only be cached.
+  const reachable = (entry: Entry) =>
+    !connectedEnvironmentIds ||
+    (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));
   const unique = new Map<string, Entry>();
   for (const entry of filtered) {
     const key = pullRequestListKey(entry);
-    if (!unique.has(key)) unique.set(key, entry);
+    const held = unique.get(key);
+    if (!held || (!reachable(held) && reachable(entry))) unique.set(key, entry);
   }
   return [...unique.values()].sort((a, b) =>
     controls.sort === "created"

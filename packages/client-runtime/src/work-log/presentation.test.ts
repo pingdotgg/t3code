@@ -253,6 +253,28 @@ describe("summarizeToolGroup", () => {
     ).toBe("Used Chrome integration and ran 1 command");
   });
 
+  it.each([
+    [["Foo", "Foo"], "Used Foo integration and ran 1 command"],
+    [["Foo", "Bar", "Foo"], "Used Foo and Bar integrations and ran 1 command"],
+  ] as const)(
+    "uses the displayed source names for integration plurality: %j",
+    (names, expected) => {
+      expect(
+        summarizeToolGroup([
+          ...names.map((name, index) =>
+            entry(`integration-${index}`, {
+              toolSource: { key: `integration-${index}`, name, kind: "integration" },
+            }),
+          ),
+          entry("command", {
+            itemType: "command_execution",
+            command: "git status",
+          }),
+        ]).summary,
+      ).toBe(expected);
+    },
+  );
+
   it("omits the integration suffix for special browser and computer sources", () => {
     expect(
       summarizeToolGroup([
@@ -266,6 +288,25 @@ describe("summarizeToolGroup", () => {
         }),
       ]).summary,
     ).toBe("Used Browser and Computer Use");
+  });
+
+  it("names Computer Use once when native-app and fallback sources share its label", () => {
+    expect(
+      summarizeToolGroup([
+        entry("inspect-app", {
+          label: "Inspect app",
+          toolSource: {
+            key: "native-app:com.t3tools.t3code",
+            name: "Computer Use",
+            kind: "computer",
+          },
+        }),
+        entry("failed-sky", {
+          label: "Restrict the breakpoint to Git actions",
+          toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+        }),
+      ]).summary,
+    ).toBe("Used Computer Use");
   });
 });
 

@@ -631,6 +631,14 @@ export class GhosttyTerminalSurface {
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
   private wheelRemainder = 0;
+  private touchScroll: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastY: number;
+    remainder: number;
+    moved: boolean;
+  } | null = null;
   private lastMouseMotionData = "";
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
@@ -680,6 +688,7 @@ export class GhosttyTerminalSurface {
   ): Promise<GhosttyTerminalSurface> {
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
+    canvas.style.touchAction = "pan-x pinch-zoom";
     canvas.setAttribute("aria-hidden", "true");
 
     const input = document.createElement("textarea");
@@ -932,6 +941,22 @@ export class GhosttyTerminalSurface {
       if (!this.disposed) this.options.onResize(this.cols, this.rows);
     }, 150);
   }
+
+  /**
+   * Releasing a panel, drawer, or split divider settles the size, so the PTY
+   * hears it now instead of after the debounce. Otherwise typing right after
+   * the release reaches a shell that still lays out the old width.
+   */
+  private readonly onWindowPointerRelease = () => {
+    if (this.disposed || this.resizeNotifyTimer === null) return;
+    // The drag hook writes the release position before this bubbles to window,
+    // so fit now rather than wait a frame for the observer.
+    this.fit();
+    if (this.resizeNotifyTimer === null) return;
+    window.clearTimeout(this.resizeNotifyTimer);
+    this.resizeNotifyTimer = null;
+    this.options.onResize(this.cols, this.rows);
+  };
 
   focus(): void {
     if (this.disposed || !this.visible) return;
@@ -1361,6 +1386,21 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      if (!event.isPrimary || this.touchScroll !== null) return;
+      this.touchScroll = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastY: event.clientY,
+        remainder: 0,
+        moved: false,
+      };
+      this.clearHoveredLink();
+      this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
     this.focus();
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       const button = ghosttyMouseButton(event.button);
@@ -1445,6 +1485,25 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
+    if (event.pointerType === "touch") {
+      const touch = this.touchScroll;
+      if (touch?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      touch.moved ||=
+        Math.hypot(event.clientX - touch.startX, event.clientY - touch.startY) >
+        TERMINAL_LINK_DRAG_THRESHOLD_PX;
+      if (!touch.moved) return;
+      const delta = terminalWheelDeltaRows(
+        { deltaY: touch.lastY - event.clientY, deltaMode: 0 },
+        this.metrics.height,
+        this.rows,
+        touch.remainder,
+      );
+      touch.lastY = event.clientY;
+      touch.remainder = delta.remainder;
+      this.scrollRows(delta.rows, event);
+      return;
+    }
     if (this.linkActivationPointerId === event.pointerId) {
       const origin = this.linkActivationOrigin;
       if (
@@ -1585,6 +1644,26 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerUp = (event: PointerEvent) => {
+    if (event.pointerType === "touch") {
+      const touch = this.touchScroll;
+      if (touch?.pointerId !== event.pointerId) return;
+      this.touchScroll = null;
+      event.preventDefault();
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      if (event.type === "pointercancel" || touch.moved) return;
+      this.focus();
+      if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
+        this.sendMouse("press", ghosttyMouseButton(0), event);
+        this.sendMouse("release", ghosttyMouseButton(0), event);
+      } else {
+        const link = this.linkAt(event.clientX, event.clientY);
+        if (link) this.options.onLinkActivate(link.text, event);
+        else this.clearSelection();
+      }
+      return;
+    }
     this.setSelectionAutoscroll(0);
     if (this.linkActivationPointerId === event.pointerId) {
       event.preventDefault();
@@ -1644,10 +1723,14 @@ export class GhosttyTerminalSurface {
       this.wheelRemainder,
     );
     this.wheelRemainder = delta.remainder;
-    if (delta.rows === 0) return;
-    const magnitude = Math.abs(delta.rows);
+    this.scrollRows(delta.rows, event);
+  };
+
+  private scrollRows(rows: number, event: MouseEvent): void {
+    if (rows === 0) return;
+    const magnitude = Math.abs(rows);
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-      const button = delta.rows < 0 ? 4 : 5;
+      const button = rows < 0 ? 4 : 5;
       for (let index = 0; index < magnitude; index += 1) {
         this.sendMouse("press", button, event);
       }
@@ -1656,11 +1739,11 @@ export class GhosttyTerminalSurface {
     if (this.core.isAlternateScreen()) {
       // The alternate screen has no scrollback: translate wheel motion into
       // arrow keys so full-screen apps like vim and less scroll, matching xterm.
-      this.options.onData(terminalWheelArrowData(delta.rows, this.core.isApplicationCursorKeys()));
+      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
       return;
     }
-    this.scrollViewport(delta.rows);
-  };
+    this.scrollViewport(rows);
+  }
 
   private readonly onMouseDown = (event: MouseEvent) => {
     // Cancelling the middle button here stops autoscroll while still letting
@@ -1776,6 +1859,8 @@ export class GhosttyTerminalSurface {
     this.scrollbar.addEventListener("pointerup", this.onScrollbarPointerUp);
     this.scrollbar.addEventListener("pointercancel", this.onScrollbarPointerUp);
     this.scrollbar.addEventListener("keydown", this.onScrollbarKeyDown);
+    window.addEventListener("pointerup", this.onWindowPointerRelease);
+    window.addEventListener("pointercancel", this.onWindowPointerRelease);
   }
 
   private removeEvents(): void {
@@ -1802,6 +1887,8 @@ export class GhosttyTerminalSurface {
     this.scrollbar.removeEventListener("pointerup", this.onScrollbarPointerUp);
     this.scrollbar.removeEventListener("pointercancel", this.onScrollbarPointerUp);
     this.scrollbar.removeEventListener("keydown", this.onScrollbarKeyDown);
+    window.removeEventListener("pointerup", this.onWindowPointerRelease);
+    window.removeEventListener("pointercancel", this.onWindowPointerRelease);
   }
 
   private scrollViewport(deltaRows: number): void {

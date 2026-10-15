@@ -25,6 +25,12 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
+    /**
+     * Set for terminals, so a job the user detached (tmux, nohup) outlives a
+     * server restart. Agents leave it unset: the next server stops agents a
+     * killed server left running before it resumes their sessions.
+     */
+    readonly survivesRestart?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   /**
    * Whether the latest agent scope of this thread was killed because the

@@ -185,10 +185,10 @@ describe("composer file attachments", () => {
     );
 
     it.each([
-      { size: { width: 4032, height: 3024 }, resizes: [{ width: 2048 }] },
-      { size: { width: 3024, height: 4032 }, resizes: [{ height: 2048 }] },
-      { size: { width: 2048, height: 1536 }, resizes: [] },
-    ])("bounds a $size.width x $size.height photo to a 2048 px longest edge", async (input) => {
+      { size: { width: 4032, height: 3024 }, resizes: [{ width: 2000, height: 1500 }] },
+      { size: { width: 3024, height: 4032 }, resizes: [{ width: 1500, height: 2000 }] },
+      { size: { width: 2000, height: 1500 }, resizes: [] },
+    ])("bounds a $size.width x $size.height photo to a 2000 px longest edge", async (input) => {
       native.size = input.size;
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
 

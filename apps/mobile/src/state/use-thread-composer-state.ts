@@ -3,6 +3,7 @@ import { readEnvironmentScope } from "./session";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
@@ -334,6 +335,15 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const pendingHandoff = useMemo(
+    () =>
+      resolvePendingHandoff(
+        selectedThreadProjection?.projection,
+        modelSelection,
+        selectedEnvironmentRuntime?.serverConfig?.providers ?? [],
+      ),
+    [modelSelection, selectedThreadProjection, selectedEnvironmentRuntime?.serverConfig?.providers],
+  );
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
@@ -1091,6 +1101,7 @@ export function useThreadComposerState() {
     cancelQueuedRunEdit,
     onRemoveQueuedEditAttachment,
     modelSelection,
+    pendingHandoff,
     canSwitchThreadProvider,
     runtimeMode,
     interactionMode,

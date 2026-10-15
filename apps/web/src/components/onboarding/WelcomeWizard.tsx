@@ -47,6 +47,7 @@ import {
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
   type OnboardingProjectGroup,
+  splitOnboardingProjectPath,
 } from "../../onboarding/projectImport.logic";
 import {
   getOnboardingProviderState,
@@ -364,7 +365,10 @@ function ConnectionStep({
                     {environment.label}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
+                    {/* Same rule as Settings: a switched-off computer reads Off, not Not connected. */}
+                    {!environment.entry.enabled && environment.connection.phase !== "unsupported"
+                      ? "Off"
+                      : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
                   </span>
                 </span>
                 {environment.displayUrl ? (
@@ -1622,7 +1626,7 @@ function ImportCandidateList({
               <ImportCandidateRow
                 key={candidate.key}
                 candidate={candidate}
-                label={candidate.path}
+                path={candidate.path}
                 nested
                 checked={selectedKeys.has(candidate.key)}
                 onCheckedChange={(checked) => setKeys([candidate.key], checked)}
@@ -1653,7 +1657,7 @@ function ImportRepositoryGroup({
       <ImportCandidateRow
         candidate={only}
         label={group.label}
-        {...(group.repository === null ? {} : { secondary: only.path })}
+        path={only.path}
         checked={selectedKeys.has(only.key)}
         onCheckedChange={(checked) => onToggle([only.key], checked)}
       />
@@ -1682,7 +1686,7 @@ function ImportRepositoryGroup({
           <ImportCandidateRow
             key={candidate.key}
             candidate={candidate}
-            label={candidate.path}
+            path={candidate.path}
             nested
             checked={selectedKeys.has(candidate.key)}
             onCheckedChange={(checked) => onToggle([candidate.key], checked)}
@@ -1693,17 +1697,39 @@ function ImportRepositoryGroup({
   );
 }
 
+/**
+ * Clones of one repository and plain folders differ only by folder name, so
+ * the name stays visible and the shared parent path truncates first.
+ */
+function ProjectPathText({
+  path,
+  className,
+}: {
+  readonly path: string;
+  readonly className?: string;
+}) {
+  const { name, parent } = splitOnboardingProjectPath(path);
+  return (
+    <span className={cn("flex min-w-0 items-baseline font-mono", className)}>
+      {parent.length > 0 ? <span className="truncate">{parent}</span> : null}
+      <span className="max-w-full shrink-0 truncate">{name}</span>
+    </span>
+  );
+}
+
 function ImportCandidateRow({
   candidate,
   label,
-  secondary,
+  path,
   nested = false,
   checked,
   onCheckedChange,
 }: {
   readonly candidate: ImportCandidate;
-  readonly label: string;
-  readonly secondary?: string;
+  /** Text primary label. Nested rows omit it and are labelled by their path. */
+  readonly label?: string;
+  /** Shown with the folder name kept visible while the parent path truncates. */
+  readonly path?: string;
   readonly nested?: boolean;
   readonly checked: boolean;
   readonly onCheckedChange: (checked: boolean) => void;
@@ -1720,11 +1746,14 @@ function ImportCandidateRow({
         <TooltipTrigger
           render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
         >
-          <span className={cn("truncate", nested ? "font-mono text-xs" : "text-sm font-medium")}>
-            {label}
-          </span>
-          {secondary !== undefined ? (
-            <span className="truncate font-mono text-2xs text-muted-foreground">{secondary}</span>
+          {label !== undefined ? (
+            <span className="truncate text-sm font-medium">{label}</span>
+          ) : null}
+          {path !== undefined ? (
+            <ProjectPathText
+              path={path}
+              className={label === undefined ? "text-xs" : "text-2xs text-muted-foreground"}
+            />
           ) : null}
         </TooltipTrigger>
         <TooltipPopup variant="code">{candidate.path}</TooltipPopup>

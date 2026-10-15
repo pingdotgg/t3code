@@ -381,6 +381,32 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("selects the runtime mode's permission profile on native start and resume", () =>
+    Effect.gen(function* () {
+      for (const [runtimeMode, profile, approvalMode] of [
+        ["approval-required", ":ask-me", "promptUnmatched"],
+        ["full-access", ":unrestricted", "allowAll"],
+      ] as const) {
+        const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...runtimePolicy,
+          runtimeMode,
+        });
+        const fresh = yield* makeFakeMuse();
+        yield* makeHarness(fresh, INSTANCE_ID, undefined, undefined, undefined, policy);
+        const started = yield* fresh.takeCall("session/start");
+        assert.strictEqual(started.params.permissionProfile, profile);
+        assert.strictEqual(started.params.approvalMode, approvalMode);
+
+        const saved = yield* makeFakeMuse();
+        yield* makeHarness(saved, INSTANCE_ID, "saved-session", undefined, undefined, policy);
+        const resumed = yield* saved.takeCall("session/resume");
+        assert.strictEqual(resumed.params.permissionProfile, profile);
+        const mode = yield* saved.takeCall("session/setApprovalMode");
+        assert.strictEqual(mode.params.mode, approvalMode);
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("rejects a host without session MCP support before opening a native session", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({

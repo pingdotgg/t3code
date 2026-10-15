@@ -3,8 +3,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
+// "revoked" leads to no action: relinking a deregistered environment is the
+// user's call, so startup neither retries nor relinks it.
 export type ManagedTunnelRegistrationResult =
-  | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" }
+  | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" | "revoked" }
   | {
       readonly status: "recovery_required";
       readonly config: RelayManagedEndpointRuntimeConfig;

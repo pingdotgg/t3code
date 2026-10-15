@@ -19,10 +19,12 @@ if (!projectRoot) {
 const worktree = NodePath.dirname(import.meta.dirname);
 
 // `shell` resolves `vp` through PATH, including Windows command shims.
-const install = NodeChildProcess.spawnSync("vp i", {
+// Setup has no one answering install prompts. Pass pnpm's confirmation flag
+// through vp and leave stdin closed so other prompts fail instead of hanging.
+const install = NodeChildProcess.spawnSync("vp i -- --yes", {
   cwd: worktree,
   shell: true,
-  stdio: "inherit",
+  stdio: ["ignore", "inherit", "inherit"],
 });
 if (install.status !== 0) process.exit(install.status ?? 1);
 

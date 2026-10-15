@@ -498,9 +498,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     const kegBrewPath = path.join(homebrew.prefix, "bin", "brew");
     const brewPath = (yield* fileSystem.exists(kegBrewPath).pipe(Effect.orElseSucceed(() => false)))
       ? kegBrewPath
-      : yield* resolveCommandPath("brew", { env: context.env }).pipe(
-          Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
-        );
+      : yield* resolveCommandPath("brew", { env: context.env });
     if (!brewPath) {
       return fallback;
     }
@@ -648,9 +646,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   // resolveCommandPath checks explicit paths for existence too, so a missing
   // binary always lands in the no-context branch and never gets an update
   // command it cannot run.
-  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env }).pipe(
-    Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
-  );
+  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);
   }

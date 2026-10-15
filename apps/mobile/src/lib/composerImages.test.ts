@@ -12,6 +12,35 @@ const clipboard = vi.hoisted(() => ({
 
 vi.mock("expo-clipboard", () => clipboard);
 
+/** A native image renderer that reports the source size the test gives it. */
+const manipulator = vi.hoisted(() => {
+  const state = { sourceSize: { width: 0, height: 0 } };
+  const manipulate = vi.fn((source: string | { width: number; height: number }) => {
+    let size = typeof source === "string" ? state.sourceSize : source;
+    const context = {
+      resize: vi.fn((next: { width: number; height: number }) => {
+        size = next;
+        return context;
+      }),
+      renderAsync: vi.fn(async () => ({
+        ...size,
+        release: vi.fn(),
+        saveAsync: vi.fn(async (options: { format: string }) => ({
+          uri: `file:///cache/rendered.${options.format}`,
+          base64: `cmVuZGVyZWQ=`,
+        })),
+      })),
+    };
+    return context;
+  });
+  return { state, manipulate };
+});
+
+vi.mock("expo-image-manipulator", () => ({
+  ImageManipulator: { manipulate: manipulator.manipulate },
+  SaveFormat: { JPEG: "jpeg", PNG: "png" },
+}));
+
 vi.mock("expo-file-system", () => ({
   File: class {
     readonly uri: string;
@@ -125,6 +154,67 @@ describe("composer clipboard paste", () => {
       text: null,
       error: "Clipboard is empty.",
     });
+  });
+});
+
+describe("oversized pasted images", () => {
+  const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+  const pngDataUrl = (width: number, height: number) =>
+    `data:image/png;base64,${Buffer.from([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      ...u32(13),
+      0x49,
+      0x48,
+      0x44,
+      0x52,
+      ...u32(width),
+      ...u32(height),
+      8,
+      6,
+      0,
+      0,
+      0,
+    ]).toString("base64")}`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clipboard.hasImageAsync.mockResolvedValue(true);
+  });
+
+  it("scales a clipboard screenshot over 2000px to 2000px and keeps it a PNG", async () => {
+    manipulator.state.sourceSize = { width: 3024, height: 1964 };
+    const pasted = pngDataUrl(3024, 1964);
+    clipboard.getImageAsync.mockResolvedValue({ data: pasted });
+
+    const result = await pasteComposerClipboard({ existingCount: 0 });
+
+    expect(manipulator.manipulate).toHaveBeenCalledWith(pasted);
+    const resize = manipulator.manipulate.mock.results.at(-1)?.value.resize;
+    expect(resize).toHaveBeenCalledWith({ width: 2000, height: 1299 });
+    expect(result.images).toEqual([
+      expect.objectContaining({
+        mimeType: "image/png",
+        dataUrl: "data:image/png;base64,cmVuZGVyZWQ=",
+        previewUri: "data:image/png;base64,cmVuZGVyZWQ=",
+      }),
+    ]);
+  });
+
+  it("keeps a 2000px clipboard image byte for byte without rendering it", async () => {
+    const pasted = pngDataUrl(2000, 1200);
+    clipboard.getImageAsync.mockResolvedValue({ data: pasted });
+
+    const result = await pasteComposerClipboard({ existingCount: 0 });
+
+    expect(manipulator.manipulate).not.toHaveBeenCalled();
+    expect(result.images).toEqual([expect.objectContaining({ dataUrl: pasted })]);
   });
 });
 

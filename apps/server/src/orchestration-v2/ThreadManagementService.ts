@@ -23,9 +23,11 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
   RunId,
@@ -33,6 +35,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -45,6 +48,8 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -183,6 +188,15 @@ export class ThreadManagementThreadNotFoundError extends Schema.TaggedError<Thre
 ) {
   override get message(): string {
     return `Thread ${this.threadId} was not found in project ${this.projectId}.`;
+  }
+}
+
+export class ThreadTranscriptTooLargeError extends Schema.TaggedError<ThreadTranscriptTooLargeError>()(
+  "ThreadTranscriptTooLargeError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return "The thread transcript exceeds the file attachment limit.";
   }
 }
 
@@ -336,6 +350,13 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
   readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
   readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
+  readonly getThreadTranscript: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    OrchestrationV2ThreadTranscript,
+    Orchestrator.OrchestratorV2Error | ThreadTranscriptTooLargeError,
+    ServerEnvironment.ServerEnvironmentIdentity
+  >;
   readonly getThreadSnapshotWindow: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshotWindow"];
   readonly getProjectThreadRecords: <K extends ProjectionRecordField>(
     input: { readonly projectId: ProjectId; readonly threadId: ThreadId },
@@ -486,6 +507,20 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+/** The newest run in `run`'s restart continuation chain, or `run` itself. */
+function latestRestartContinuation(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  run: OrchestrationV2Run,
+): OrchestrationV2Run {
+  let current = run;
+  for (let hops = 0; hops < runs.length; hops++) {
+    const next = runs.find((candidate) => candidate.restartContinuationOfRunId === current.id);
+    if (next === undefined) break;
+    current = next;
+  }
+  return current;
+}
+
 export function latestActiveRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
@@ -613,6 +648,32 @@ const make = Effect.gen(function* () {
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
     );
+  const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
+    function* (threadId: ThreadId) {
+      const { projection } = yield* getThreadSnapshot(threadId);
+      const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+      const transcript = {
+        threadId: projection.thread.id,
+        title: projection.thread.title,
+        updatedAt: projection.updatedAt,
+        items: projection.visibleTurnItems,
+      };
+      let sizeBytes = Buffer.byteLength(
+        threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
+        "utf8",
+      );
+      if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        return yield* new ThreadTranscriptTooLargeError({ threadId });
+      }
+      for (const row of transcript.items) {
+        sizeBytes += projectedRowEncodedBytes(row) + 1;
+        if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+          return yield* new ThreadTranscriptTooLargeError({ threadId });
+        }
+      }
+      return transcript;
+    },
+  );
   const getThreadSnapshotWindow: ThreadManagementServiceShape["getThreadSnapshotWindow"] = (
     threadId,
     options,
@@ -844,65 +905,76 @@ const make = Effect.gen(function* () {
       if (selectedRun === undefined) {
         return { threadId: input.threadId, run: null, timedOut: false };
       }
-      if (isTerminalRunStatus(selectedRun.status)) {
-        return { threadId: input.threadId, run: selectedRun, timedOut: false };
+      // A restart cuts a run and continues it as a new run. Follow that chain,
+      // so a cut run is not the answer while its continuation is pending.
+      const outcome = (runs: ReadonlyArray<OrchestrationV2Run>) =>
+        Effect.gen(function* () {
+          const current = runs.find((candidate) => candidate.id === selectedRun.id);
+          if (current === undefined) {
+            return yield* new ThreadManagementRunNotFoundError({
+              threadId: input.threadId,
+              runId: selectedRun.id,
+            });
+          }
+          const run = latestRestartContinuation(runs, current);
+          const pending =
+            isTerminalRunStatus(run.status) &&
+            (yield* orchestrator.restartContinuationPending(run));
+          return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
+        });
+      const initial = yield* outcome(target.runs);
+      if (initial.settled) {
+        return { threadId: input.threadId, run: initial.run, timedOut: false };
       }
 
-      // Re-read the run only when the thread records a run update or its
-      // deletion, instead of polling the projection for up to an hour. Each
-      // stream keeps one event type, so transcript events never fill its buffer.
+      // Re-read the runs only when the thread records an update to the waited
+      // run or a continuation, or its deletion, instead of polling the
+      // projection for up to an hour. Each stream keeps one event type, so
+      // transcript events never fill its buffer. A declined continuation
+      // records no event, so its effect settling wakes the wait too.
       const wait = Stream.merge(
-        orchestrator.streamStoredEventsFrom({
-          threadId: input.threadId,
-          afterSequence,
-          eventType: "run.updated",
-        }),
-        orchestrator.streamStoredEventsFrom({
-          threadId: input.threadId,
-          afterSequence,
-          eventType: "thread.deleted",
-        }),
-      ).pipe(
-        Stream.mapError(loadError),
-        Stream.filter(
-          (stored) =>
-            stored.event.type !== "run.updated" || stored.event.payload.id === selectedRun.id,
-        ),
-        Stream.mapEffect(() =>
-          getProjectThreadRecords(input, ["runs"], { runIds: [selectedRun.id] }).pipe(
-            Effect.flatMap((current) => {
-              const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
-              return run === undefined
-                ? Effect.fail(
-                    new ThreadManagementRunNotFoundError({
-                      threadId: input.threadId,
-                      runId: selectedRun.id,
-                    }),
-                  )
-                : Effect.succeed(run);
-            }),
+        Stream.merge(
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "run.updated",
+          }),
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "thread.deleted",
+          }),
+        ).pipe(
+          Stream.mapError(loadError),
+          Stream.filter(
+            (stored) =>
+              stored.event.type !== "run.updated" ||
+              stored.event.payload.id === selectedRun.id ||
+              stored.event.payload.restartContinuationOfRunId !== undefined,
           ),
         ),
-        Stream.filter((run) => isTerminalRunStatus(run.status)),
+        initial.pending
+          ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
+          : Stream.empty,
+      ).pipe(
+        Stream.mapEffect(() =>
+          getProjectThreadRecords(input, ["runs"]).pipe(
+            Effect.flatMap((current) => outcome(current.runs)),
+          ),
+        ),
+        Stream.filter((current) => current.settled),
         Stream.runHead,
         Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
       );
       const waited = Option.flatten(yield* wait);
       if (Option.isSome(waited)) {
-        return { threadId: input.threadId, run: waited.value, timedOut: false };
-      }
-      const current = yield* getProjectThreadRecords(input, ["runs"], { runIds: [selectedRun.id] });
-      const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
-      if (run === undefined) {
-        return yield* new ThreadManagementRunNotFoundError({
-          threadId: input.threadId,
-          runId: selectedRun.id,
-        });
+        return { threadId: input.threadId, run: waited.value.run, timedOut: false };
       }
       // The run may have reached a terminal status while the timeout was
       // winning the race; the final projection read decides what actually
       // happened, so only a still-active run counts as timed out.
-      return { threadId: input.threadId, run, timedOut: !isTerminalRunStatus(run.status) };
+      const final = yield* outcome((yield* getProjectThreadRecords(input, ["runs"])).runs);
+      return { threadId: input.threadId, run: final.run, timedOut: !final.settled };
     });
 
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
@@ -1136,6 +1208,7 @@ const make = Effect.gen(function* () {
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,
+    getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
     getProjectThread,

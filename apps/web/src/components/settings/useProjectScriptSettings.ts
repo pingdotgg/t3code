@@ -19,7 +19,6 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 
-import { isElectron } from "../../env";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
@@ -50,7 +49,7 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
 
 /**
  * Edits the action list on every target: the environment default when there is
- * no project, else that project's override entry. Shortcuts follow on desktop.
+ * no project, else that project's override entry, then saves changed shortcuts.
  */
 export function useProjectScriptSettings(
   targets: readonly {
@@ -129,7 +128,6 @@ export function useProjectScriptSettings(
           },
         });
         if (result._tag === "Failure") return reportScriptFailure(result);
-        if (!isElectron) continue;
         const changedIds = scriptId
           ? [scriptId]
           : current

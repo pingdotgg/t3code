@@ -50,6 +50,28 @@ describe("dedupeChecks", () => {
     ]);
   });
 
+  it("keeps distinct workflow and check pairs even when their names join to the same text", () => {
+    const checks = dedupeChecks([
+      entry("Linux tests", "success", {
+        workflowName: "Build",
+        at: "2026-08-11T16:00:00Z",
+      }),
+      entry("tests", "success", {
+        workflowName: "Build Linux",
+        at: "2026-08-11T17:00:00Z",
+      }),
+      entry("Linux tests", "failure", {
+        workflowName: "Build",
+        at: "2026-08-11T18:00:00Z",
+      }),
+    ]);
+
+    expect(checks.map((check) => [check.name, check.status])).toEqual([
+      ["Linux tests", "failure"],
+      ["tests", "success"],
+    ]);
+  });
+
   it("loses a run that never said when it happened to one that did, whichever came first", () => {
     const undated = dedupeChecks([
       entry("build", "success", { at: "2026-08-11T16:00:00Z" }),

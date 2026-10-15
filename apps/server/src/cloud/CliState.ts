@@ -5,6 +5,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -57,6 +58,31 @@ export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(f
   }
 });
 
+/**
+ * Drops a link the relay rejected, keeping the sign-in and preferences, so the
+ * next start links this environment again. `t3 connect link` calls it: the
+ * server never relinks a revoked link on its own. Returns whether it dropped one.
+ */
+export const dropRevokedCloudLink = Effect.gen(function* () {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  if (Option.isNone(yield* secrets.get(CLOUD_LINK_REVOKED))) {
+    return false;
+  }
+  yield* Effect.all(
+    [
+      secrets.remove(CLOUD_LINKED_USER_ID),
+      secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+      secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+      secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+    ],
+    { concurrency: "unbounded" },
+  );
+  // Last, so a failed removal above leaves the mark for the next attempt.
+  yield* secrets.remove(CLOUD_LINK_REVOKED);
+  return true;
+});
+
 export const clearPersistedCloudLink = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   yield* Effect.all(
@@ -70,6 +96,7 @@ export const clearPersistedCloudLink = Effect.gen(function* () {
       secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
       secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
+      secrets.remove(CLOUD_LINK_REVOKED),
     ],
     { concurrency: "unbounded" },
   );

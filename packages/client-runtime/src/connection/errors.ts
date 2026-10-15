@@ -46,6 +46,20 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         traceId: error.traceId,
       });
     case "RelayEnvironmentConnectNotAuthorizedError":
+      // A host swapping in a new tunnel leaves its allocation unready until
+      // the tunnel is up, and nothing on the client changes when it is.
+      if (error.reason === "managed_endpoint_allocation_not_ready") {
+        return new ConnectionTransientError({
+          reason: "endpoint-unavailable",
+          detail: relayProtectedErrorMessage(error),
+          traceId: error.traceId,
+        });
+      }
+      return new ConnectionBlockedError({
+        reason: "permission",
+        detail: relayProtectedErrorMessage(error),
+        traceId: error.traceId,
+      });
     case "RelayEnvironmentLinkProofInvalidError":
     case "RelayEnvironmentLinkLimitExceededError":
       return new ConnectionBlockedError({

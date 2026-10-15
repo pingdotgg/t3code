@@ -69,7 +69,8 @@ export function redactQuery(query: string): string {
     .join("&");
 }
 
-const PLACEHOLDER = /\{\{\s*([^{}]*?)\s*\}\}/g;
+// Trim after matching so unclosed placeholders cannot backtrack over whitespace partitions.
+const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 
 function parseBody(request: WebhookRequest): unknown {
   const contentType = (request.headers["content-type"] ?? "").toLowerCase();
@@ -144,7 +145,8 @@ export function renderWebhookPrompt(
     }
   };
 
-  const prompt = template.replace(PLACEHOLDER, (_match, expression: string) => {
+  const prompt = template.replace(PLACEHOLDER, (_match, rawExpression: string) => {
+    const expression = rawExpression.trim();
     const value = resolve(expression);
     if (value === undefined || value === null) {
       if (!missing.includes(expression)) missing.push(expression);

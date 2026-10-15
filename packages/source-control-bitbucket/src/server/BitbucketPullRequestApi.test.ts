@@ -998,8 +998,26 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       assert.isFalse(yield* api.getRepositoryPermission({ repository: "acme/web" }));
 
-      expect(callAt(0).url).toContain("/user/permissions/repositories");
+      expect(new URL(callAt(0).url, "https://api.bitbucket.org").pathname).toBe(
+        "/user/workspaces/acme/permissions/repositories",
+      );
       assert.strictEqual(filterOfCall(0), 'repository.full_name="acme/web"');
+    }),
+  );
+
+  it.effect("matches repository permissions after normalizing whitespace around segments", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        const url = new URL(input.url, "https://api.bitbucket.org");
+        const matches =
+          url.pathname === "/user/workspaces/acme/permissions/repositories" &&
+          url.searchParams.get("q") === 'repository.full_name="acme/web"';
+        return Effect.succeed(response(valuePage(matches ? [{ permission: "read" }] : [])));
+      });
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      // An unmatched, empty permission page is treated as unknown and would allow this attempt.
+      assert.isFalse(yield* api.getRepositoryPermission({ repository: " acme / web " }));
     }),
   );
 
@@ -1015,43 +1033,36 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "reads a removed permissions endpoint as granted rather than failing the merge on it",
-    () =>
+  const permissionFailure = (status: number) =>
+    Effect.fail(
+      new BitbucketApi.BitbucketResponseError({
+        operation: "request",
+        status,
+        responseBodyLength: 0,
+      }),
+    );
+
+  it.effect.each([403, 404, 410])(
+    "reads HTTP %s from the permissions endpoint as an unknown permission",
+    (status) =>
       Effect.gen(function* () {
-        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
-        // gets HTTP 410 here, whatever it may do.
-        mockedRequest.mockReturnValue(
-          Effect.fail(
-            new BitbucketApi.BitbucketResponseError({
-              operation: "request",
-              status: 410,
-              responseBodyLength: 0,
-            }),
-          ),
-        );
+        mockedRequest.mockReturnValue(permissionFailure(status));
         const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
         assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
       }),
   );
 
-  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+  it.effect.each([401, 500])("still fails the permission read on HTTP %s", (status) =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValue(
-        Effect.fail(
-          new BitbucketApi.BitbucketResponseError({
-            operation: "request",
-            status: 401,
-            responseBodyLength: 0,
-          }),
-        ),
-      );
+      mockedRequest.mockReturnValue(permissionFailure(status));
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
       const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
-
       assert.strictEqual(error._tag, "BitbucketResponseError");
+      if (error._tag === "BitbucketResponseError") {
+        assert.strictEqual(error.status, status);
+      }
     }),
   );
 

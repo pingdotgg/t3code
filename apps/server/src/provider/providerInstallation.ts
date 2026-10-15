@@ -141,12 +141,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
           return [];
         }
         const binaryPath = entry.config.binaryPath.trim();
-        return yield* resolveCommandPath(binaryPath, {
+        const resolved = yield* resolveCommandPath(binaryPath, {
           env: yield* mergeProviderInstanceEnvironment(entry.environment),
-        }).pipe(
-          Effect.map((resolved) => [binaryPath, resolved]),
-          Effect.orElseSucceed(() => [binaryPath]),
-        );
+        });
+        return resolved === null ? [binaryPath] : [binaryPath, resolved];
       }),
     );
     yield* installation

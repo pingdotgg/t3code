@@ -18,6 +18,7 @@ import {
   pullRequestLabelColor,
   scopedPullRequestListKey,
   pullRequestListRowsAreEqual,
+  withoutScratchProjectScope,
 } from "./pullRequestList";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
@@ -333,6 +334,19 @@ describe("mobile PR scan and filters", () => {
       ),
     ).toHaveLength(0);
   });
+  it("lists a shared repository's row from a connected environment over an offline one", () => {
+    const rows = [
+      { ...entry(1), environmentId: "laptop" },
+      { ...entry(1), environmentId: "server" },
+    ];
+    const pick = (connected: ReadonlySet<string>) =>
+      filterPullRequestList(rows, DEFAULT_PR_LIST_CONTROLS, {}, "", new Set(), connected).map(
+        (row) => row.environmentId,
+      );
+    expect(pick(new Set(["server"]))).toEqual(["server"]);
+    expect(pick(new Set(["laptop", "server"]))).toEqual(["laptop"]);
+    expect(pick(new Set())).toEqual(["laptop"]);
+  });
   it("sorts loaded rows and builds unique author and label options", () => {
     const rows = [
       entry(1, { labels: [{ name: "bug", color: null }] }),
@@ -358,5 +372,41 @@ describe("mobile PR scan and filters", () => {
     });
     expect(pullRequestLabelColor("ffab00")).toBe("#ffab00");
     expect(pullRequestLabelColor("not-a-color")).toBeNull();
+  });
+});
+
+describe("withoutScratchProjectScope", () => {
+  const projects = [
+    { id: "repo", environmentId: "env-a" },
+    { id: "scratch", environmentId: "env-a", isScratch: true as const },
+  ];
+
+  it("reads a scope saved on the Scratch folder as all projects", () => {
+    const controls = withoutScratchProjectScope(
+      { ...DEFAULT_PR_LIST_CONTROLS, projectId: "scratch", projectEnvironmentId: "env-a" },
+      projects,
+    );
+    expect(controls.projectId).toBeUndefined();
+    expect(controls.projectEnvironmentId).toBeUndefined();
+  });
+
+  it("keeps a repository scope, and one whose projects have not arrived yet", () => {
+    const repository = {
+      ...DEFAULT_PR_LIST_CONTROLS,
+      projectId: "repo",
+      projectEnvironmentId: "env-a",
+    };
+    expect(withoutScratchProjectScope(repository, projects)).toBe(repository);
+    const pending = { ...repository, projectId: "scratch" };
+    expect(withoutScratchProjectScope(pending, [])).toBe(pending);
+  });
+
+  it("keeps another server's project that shares the Scratch folder's id", () => {
+    const elsewhere = {
+      ...DEFAULT_PR_LIST_CONTROLS,
+      projectId: "scratch",
+      projectEnvironmentId: "env-b",
+    };
+    expect(withoutScratchProjectScope(elsewhere, projects)).toBe(elsewhere);
   });
 });

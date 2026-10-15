@@ -21,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 
 import {
@@ -51,6 +52,8 @@ import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+
+const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 
 export class PullRequestReviewGuideService extends Context.Service<
   PullRequestReviewGuideService,
@@ -173,9 +176,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A detached checkout of the head beside the project, removed when the run ends. Fetched by
-   * commit rather than by branch so a fork's head and a branch checked out elsewhere both work,
-   * and so the checkout is exactly what the host reported.
+   * A detached checkout of the head beside the project, removed when the run ends. Pinned to
+   * the reported commit, so a branch checked out elsewhere works and the checkout is exactly
+   * what the host reported.
    */
   const checkoutHead = Effect.fn("PullRequestReviewGuideService.checkoutHead")(function* (
     workspaceRoot: string,
@@ -192,9 +195,7 @@ const make = Effect.gen(function* () {
         args: ["fetch", "--quiet", "--no-tags", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
-    // The base branch is what the change is measured from; the head commit is the change. Hosts
-    // that do not serve an unadvertised commit still serve their pull refs, which GitHub and
-    // Forgejo name the same way.
+    // The base branch is what the change is measured from; the head commit is the change.
     // The host names the base branch. A name git rejects, or one that would change the refspec
     // (a leading `+`, a `:`), is refused before it reaches `git fetch`.
     yield* git
@@ -227,9 +228,63 @@ const make = Effect.gen(function* () {
         .pipe(Effect.ignore({ log: true })),
     );
     const baseTip = yield* git.resolveCommit({ cwd: workspaceRoot, revision: baseRef });
-    const fetchHead = (number: number, sha: string) =>
-      fetch([sha]).pipe(Effect.catch(() => fetch([`refs/pull/${number}/head`])));
-    yield* fetchHead(detail.number, headSha);
+    const fetchHead = Effect.fn("PullRequestReviewGuideService.fetchHead")(function* (
+      number: number,
+      reportedSha: string,
+      branch: string,
+    ) {
+      const sha = reportedSha.toLowerCase();
+      if (!COMMIT_HASH_PATTERN.test(sha)) {
+        return yield* new PullRequestOperationError({
+          operation: "generateReviewGuide",
+          detail: `The host reported a head for #${number} that is not a commit hash.`,
+        });
+      }
+      // Not redundant: rev-parse prefers a branch or tag named like a short hash over the commit.
+      const resolveHead = git.resolveCommit({ cwd: workspaceRoot, revision: sha }).pipe(
+        Effect.filterOrFail(
+          ({ commitSha }) => commitSha.startsWith(sha),
+          ({ commitSha }) =>
+            new PullRequestOperationError({
+              operation: "generateReviewGuide",
+              detail: `${sha} names ${commitSha} here, a branch or tag rather than the commit.`,
+            }),
+        ),
+      );
+      const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
+      const branchRef = `refs/heads/${branch}`;
+      const checkBranch = git.execute({
+        operation: "PullRequestReviewGuideService.checkHeadBranch",
+        cwd: workspaceRoot,
+        args: ["check-ref-format", branchRef],
+      });
+      const sources = [
+        { source: "local objects", head: resolveHead },
+        ...(sha.length === 40 || sha.length === 64
+          ? [{ source: "the commit", head: fetchAndResolve(sha) }]
+          : []),
+        {
+          source: `branch ${branch}`,
+          head: checkBranch.pipe(Effect.andThen(fetchAndResolve(branchRef))),
+        },
+        { source: `refs/pull/${number}/head`, head: fetchAndResolve(`refs/pull/${number}/head`) },
+        {
+          source: `refs/merge-requests/${number}/head`,
+          head: fetchAndResolve(`refs/merge-requests/${number}/head`),
+        },
+      ];
+      const failures: Array<string> = [];
+      for (const { source, head } of sources) {
+        const result = yield* Effect.result(head);
+        if (Result.isSuccess(result)) return result.success;
+        failures.push(`${source}: ${result.failure.detail}`);
+      }
+      return yield* new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: `Could not find head ${sha} of #${number}. ${failures.join(" ")}`,
+      });
+    });
+    const resolvedHead = yield* fetchHead(detail.number, headSha, detail.headBranch);
     // The other layers of a stack are context the model may read across a seam. A layer that
     // cannot be fetched is still named in the prompt, without a head to read.
     const layers: ReadonlyArray<ReviewGuideStackLayer> = yield* Effect.forEach(
@@ -239,10 +294,14 @@ const make = Effect.gen(function* () {
         if (layer.number === detail.number) return Effect.succeed({ ...described, headSha });
         const sha = layer.headSha;
         if (sha === undefined) return Effect.succeed({ ...described, headSha: null });
-        return fetchHead(layer.number, sha).pipe(
-          Effect.andThen(git.resolveCommit({ cwd: workspaceRoot, revision: sha })),
-          Effect.as({ ...described, headSha: sha }),
-          Effect.orElseSucceed(() => ({ ...described, headSha: null })),
+        return fetchHead(layer.number, sha, layer.headBranch).pipe(
+          Effect.map(({ commitSha }) => ({ ...described, headSha: commitSha })),
+          Effect.catch((error) =>
+            Effect.logInfo("Review guide could not read a stack layer's head", {
+              layer: layer.number,
+              detail: error.detail,
+            }).pipe(Effect.as({ ...described, headSha: null })),
+          ),
         );
       },
       { concurrency: 4 },
@@ -255,7 +314,7 @@ const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "PullRequestReviewGuideService.addWorktree",
       cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, headSha],
+      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
       timeoutMs: 5 * 60_000,
     });
     yield* Effect.addFinalizer(() =>

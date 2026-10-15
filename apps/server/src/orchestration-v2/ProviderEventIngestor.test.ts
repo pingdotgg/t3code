@@ -29,6 +29,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -58,6 +59,7 @@ const layerTestEventSink = EventSink.layer.pipe(
 );
 
 const layerTest = Layer.mergeAll(
+  layerTestDatabase,
   layerTestStores,
   layerTestEventSink,
   IdAllocator.layer,
@@ -320,6 +322,66 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+    }),
+  );
+
+  it.effect("skips a node update only when it matches the stored node", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const nodeId = NodeId.make(`${threadId}:approval`);
+      const node: OrchestrationV2ExecutionNode = {
+        id: nodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const ingestNode = (sent: OrchestrationV2ExecutionNode) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: { type: "node.updated", driver: CODEX_DRIVER, node: sent },
+        });
+
+      assert.lengthOf(yield* ingestNode(node), 1);
+      assert.isEmpty(yield* ingestNode({ ...node }));
+      // The server resolves the request, then the provider asks again with the same node.
+      yield* eventSink.write({
+        events: [
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "node.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...node, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      assert.lengthOf(yield* ingestNode(node), 1);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "waiting");
     }),
   );
 
@@ -1511,6 +1573,84 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
         [{ mimeType: "image/png", data: screenshotBase64 }],
       );
+    }),
+  );
+
+  it.effect("stores a bounded copy of a large file-change diff in both SQLite tables", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const largeDiff = `@@ -0,0 +1 @@\n${"+generated line\n".repeat(150_000)}`;
+      const fileChange = (
+        id: string,
+        ordinal: number,
+        diffStr: string,
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "file_change",
+        fileName: "src/generated.ts",
+        diffStr,
+      });
+      const large = fileChange("turn-item:large-diff", 1, largeDiff);
+      const small = fileChange("turn-item:small-diff", 2, "@@ -1 +1 @@\n-old\n+new\n");
+
+      yield* eventSink.write({ events: [threadEvent] });
+      for (const turnItem of [large, small]) {
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+      }
+
+      const sql = yield* SqlClient.SqlClient;
+      const storedBytes = yield* sql<{ readonly events: number; readonly projection: number }>`
+        SELECT
+          (SELECT SUM(LENGTH(payload_json)) FROM orchestration_events
+            WHERE stream_id = ${threadEvent.threadId} AND event_type = 'turn-item.updated') AS events,
+          (SELECT SUM(LENGTH(payload_json)) FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadEvent.threadId}) AS projection
+      `;
+      const projectedLarge = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: large.id,
+      });
+      const projectedSmall = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: small.id,
+      });
+
+      assert.isAbove(largeDiff.length, 2_000_000);
+      assert.isBelow(storedBytes[0]!.events, 100_000);
+      assert.isBelow(storedBytes[0]!.projection, 100_000);
+      assert.isTrue(projectedLarge?.type === "file_change");
+      if (projectedLarge?.type !== "file_change") return;
+      assert.equal(projectedLarge.fileName, "src/generated.ts");
+      assert.isBelow(projectedLarge.diffStr?.length ?? 0, 40_000);
+      assert.isTrue(largeDiff.startsWith(projectedLarge.diffStr?.split("\n…")[0] ?? "-"));
+      assert.deepEqual(projectedSmall, small);
     }),
   );
 

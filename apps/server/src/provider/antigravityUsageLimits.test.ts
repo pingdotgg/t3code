@@ -53,6 +53,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     models?: unknown;
     summaryStatus?: number;
     tokenStatus?: number;
+    refreshToken?: string;
+    /** Google account id from userinfo; omit to make userinfo fail. */
+    userId?: string;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
   } = {},
@@ -72,7 +75,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         project_id: "project-id",
       }),
     );
-  if (!options.missingToken) yield* writeToken("refresh-a");
+  if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
   const requests: Array<{ url: string; body: string }> = [];
   const http = HttpClient.make((request, _url, _signal, fiber) =>
     Effect.sync(() => {
@@ -92,6 +95,14 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         );
       }
       expect(request.headers.authorization).toBe("Bearer access-token");
+      if (request.url.endsWith("/userinfo")) {
+        return HttpClientResponse.fromWeb(
+          request,
+          options.userId
+            ? Response.json({ id: options.userId, email: "someone@example.com" })
+            : Response.json({}, { status: 403 }),
+        );
+      }
       expect(JSON.parse(body)).toEqual({ project: "project-id" });
       return HttpClientResponse.fromWeb(
         request,
@@ -142,6 +153,7 @@ describe("Antigravity subscription limits", () => {
       const first = yield* probe;
       yield* writeToken("refresh-b");
       const second = yield* probe;
+      // Without a readable Google account, the credential itself names the account.
       expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
       yield* (yield* FileSystem.FileSystem).remove(tokenPath);
@@ -152,6 +164,20 @@ describe("Antigravity subscription limits", () => {
       yield* clear;
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("names one Google account the same way from every sign-in", () =>
+    Effect.gen(function* () {
+      const read = (refreshToken: string, userId: string) =>
+        fixture({ refreshToken, userId }).pipe(Effect.flatMap((usage) => usage.probe));
+      const machineA = yield* read("refresh-a", "google-user-1");
+      const machineB = yield* read("refresh-b", "google-user-1");
+      const otherAccount = yield* read("refresh-c", "google-user-2");
+      expect(machineA.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(machineB.credentialFingerprint).toBe(machineA.credentialFingerprint);
+      expect(otherAccount.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
+      expect(JSON.stringify(machineA)).not.toMatch(/google-user-1|someone@example.com/);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

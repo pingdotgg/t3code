@@ -64,6 +64,7 @@ import {
 import {
   createMuseSdkHostEffect,
   museApprovalMode,
+  musePermissionProfile,
   museWorkspaceRoot,
   type createMuseSdkHost,
   type MuseSdkHost,
@@ -1791,17 +1792,21 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               }
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
+          // Resume selects it too, since the thread may predate it or its mode changed.
+          // `session/setPermissionProfile` would need Muse's experimental API.
+          const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
           const result = yield* request(
             requestedId ? "session/resume" : "session/start",
             requestedId
               ? // T3 already has the transcript; skip Muse's history payload.
-                { excludeItems: true, ...(config ? { config } : {}) }
+                { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
               : {
                   workspaceRoot: cwd,
                   ...(config ? { config } : {}),
                   ...(startModel ? { modelId: startModel } : {}),
                   providerId: "meta",
                   approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
+                  permissionProfile,
                 },
           ).pipe(
             Effect.catch((error) => {
@@ -2107,6 +2112,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         providerSessionId: input.providerSessionId,
         providerSession: session,
         events: Stream.fromQueue(events),
+        // Workflows and subagents run in this session's own `muse` host.
+        backgroundTasksEndWithProcess: true,
         // A running workflow or a held Muse turn keeps the host: idle release must wait.
         hasPendingBackgroundWork: Effect.sync(
           () => observedChildren.size > 0 || wake !== undefined,

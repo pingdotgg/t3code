@@ -320,7 +320,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                 operation: "start",
                 detail: "Cursor setup is already in progress.",
               });
-            const id = yield* crypto.randomUUIDv4.pipe(
+            const id = yield* crypto.randomUUIDv4().pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderSetupError({

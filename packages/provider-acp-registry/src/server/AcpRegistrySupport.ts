@@ -758,7 +758,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     .pipe(Effect.flatMap(decodeRegistryText), Effect.option);
 
   const writeRegistryCache = (text: string) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.flatMap((id) => {
         const temporaryPath = `${registryCachePath}.${process.pid}-${id}.tmp`;
         return fileSystem

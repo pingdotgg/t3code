@@ -1752,4 +1752,41 @@ describe("AcpSessionRuntime", () => {
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  it.effect("sends configured custom models the agent does not advertise", () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
+    const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setModel("cline-free/custom-model");
+      const error = yield* runtime.setModel("unconfigured/model").pipe(Effect.flip);
+      expect(error._tag).toBe("AcpRequestError");
+
+      const sentModels = NodeFS.readFileSync(requestLogPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { method?: string; params?: { value?: unknown } })
+        .filter((message) => message.method === "session/set_config_option")
+        .map((message) => message.params?.value);
+      expect(sentModels).toEqual(["cline-free/custom-model"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          ...mockRuntimeOptions,
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+          },
+          customModels: ["cline-free/custom-model"],
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  });
 });

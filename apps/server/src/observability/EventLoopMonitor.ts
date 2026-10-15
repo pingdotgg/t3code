@@ -1,9 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram.
 import * as NodePerfHooks from "node:perf_hooks";
 
+import { RotatingFileSink } from "@t3tools/shared/logging";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+
+import * as ServerConfig from "../config.ts";
 
 // Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
 // gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
@@ -13,6 +19,9 @@ import type * as Scope from "effect/Scope";
 const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
+// A stall line is about 250 bytes, so the file and its one backup keep the last
+// 1000 to 2000 stalls.
+const STALL_LOG_MAX_BYTES = 256 * 1024;
 
 /** One sample interval as Node reports it. Delay in ns, active time in ms, CPU in µs. */
 export interface EventLoopReadings {
@@ -83,41 +92,75 @@ export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
   return delayMs;
 };
 
+const encodeStallLine = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
+export interface StallLogOptions {
+  readonly filePath: string;
+  readonly maxBytes: number;
+}
+
 /**
  * Samples event loop health every 30 s and records a `server.eventLoop.stall` span
  * with a warning when the loop stalled for more than 2 s, so stalls land in
- * the local trace file and Settings > Diagnostics without OTLP. Takes the sampler
- * so tests can inject readings.
+ * the local trace file and Settings > Diagnostics without OTLP. Each stall is
+ * also appended as one NDJSON line to a small stall log, which keeps stall
+ * history long after the trace file has rotated. Takes the sampler and log
+ * options so tests can inject readings and a small cap.
  */
 export const layerWith = (
   makeSampler: Effect.Effect<Effect.Effect<EventLoopReadings>, never, Scope.Scope>,
+  stallLog: StallLogOptions,
 ) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const sample = yield* makeSampler;
+      // A log that cannot open must not stop the monitor; the span still records stalls.
+      const stallSink = yield* Effect.try(
+        () =>
+          new RotatingFileSink({
+            filePath: stallLog.filePath,
+            maxBytes: stallLog.maxBytes,
+            maxFiles: 1,
+            throwOnError: true,
+          }),
+      ).pipe(
+        Effect.catch(() =>
+          Effect.logWarning("event loop stall log unavailable", {
+            filePath: stallLog.filePath,
+          }).pipe(Effect.as(undefined)),
+        ),
+      );
       const tick = Effect.gen(function* () {
         const readings = yield* sample;
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
         const { utilization, usage, rssBytes } = readings;
+        const attributes = {
+          delayMaxMs,
+          utilization: Math.round(utilization * 100) / 100,
+          cpuUserMs: Math.round(usage.userCPUTime / 1000),
+          cpuSystemMs: Math.round(usage.systemCPUTime / 1000),
+          majorPageFaults: usage.majorPageFault,
+          minorPageFaults: usage.minorPageFault,
+          involuntaryContextSwitches: usage.involuntaryContextSwitches,
+          rssMb: Math.round(rssBytes / 1024 / 1024),
+        };
         // Root, as the stall has no caller to attach to. Warn level keeps it when
         // T3CODE_TRACE_MIN_LEVEL is raised to cut trace noise.
         yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
-          Effect.withSpan("server.eventLoop.stall", {
-            root: true,
-            level: "Warn",
-            attributes: {
-              delayMaxMs,
-              utilization: Math.round(utilization * 100) / 100,
-              cpuUserMs: Math.round(usage.userCPUTime / 1000),
-              cpuSystemMs: Math.round(usage.systemCPUTime / 1000),
-              majorPageFaults: usage.majorPageFault,
-              minorPageFaults: usage.minorPageFault,
-              involuntaryContextSwitches: usage.involuntaryContextSwitches,
-              rssMb: Math.round(rssBytes / 1024 / 1024),
-            },
-          }),
+          Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),
         );
+        if (stallSink !== undefined) {
+          const time = DateTime.formatIso(yield* DateTime.now);
+          yield* encodeStallLine({ time, ...attributes }).pipe(
+            Effect.flatMap((line) => Effect.try(() => stallSink.write(`${line}\n`))),
+            Effect.catch(() =>
+              Effect.logWarning("event loop stall log write failed", {
+                filePath: stallLog.filePath,
+              }),
+            ),
+          );
+        }
       });
       const wait = Effect.sleep(SAMPLE_INTERVAL);
       // The layer builds before the rest of the server, so the first sample covers
@@ -132,4 +175,14 @@ export const layerWith = (
     }),
   );
 
-export const layer = layerWith(makeNodeSampler);
+/** Writes the stall log next to the server trace file, as `event-loop-stalls.ndjson`. */
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const { serverTracePath } = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    return layerWith(makeNodeSampler, {
+      filePath: path.join(path.dirname(serverTracePath), "event-loop-stalls.ndjson"),
+      maxBytes: STALL_LOG_MAX_BYTES,
+    });
+  }),
+);

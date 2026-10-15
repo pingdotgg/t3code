@@ -592,7 +592,6 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           detail: expect.stringContaining("Install Node.js"),
           cause: {
             _tag: "NodeRuntimeUnavailableError",
-            cause: { _tag: "CommandResolutionError" },
           },
         });
       }

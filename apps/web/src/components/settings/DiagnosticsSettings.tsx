@@ -1038,11 +1038,17 @@ export function DiagnosticsSettingsPanel() {
           <StatBlock
             label="Samples"
             value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
-            tooltip="In-memory process samples retained by the server. This resets when the server restarts."
+            tooltip="In-memory process samples retained by the server. The server samples only while diagnostics is open, and this resets when the server restarts."
           />
           <StatBlock
             label="Interval"
-            value={resourceData ? formatDuration(resourceData.sampleIntervalMs) : "..."}
+            value={
+              resourceData
+                ? resourceData.sampleIntervalMs === 0
+                  ? "On demand"
+                  : formatDuration(resourceData.sampleIntervalMs)
+                : "..."
+            }
           />
           <StatBlock
             label="Processes"

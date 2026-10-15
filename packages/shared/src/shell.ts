@@ -5,7 +5,6 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -43,19 +42,14 @@ export type CommandAvailabilityChecker = (
   options?: CommandAvailabilityOptions,
 ) => Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path>;
 
-export class CommandResolutionError extends Data.TaggedError("CommandResolutionError")<{
-  readonly command: string;
-  readonly reason: "not-found";
-}> {}
-
 const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
 /**
  * Escapes a single argument for `cmd.exe` shell mode (`spawn(..., { shell: true })`
- * on Windows). Node joins the command and arguments with spaces and hands the
- * resulting string to `cmd.exe` without any quoting, so every dynamic argument
- * must be escaped to survive both cmd.exe parsing and the target program's
- * `CommandLineToArgvW` parsing. Mirrors cross-spawn's argument escaping.
+ * on Windows). Node hands the command string to `cmd.exe /d /s /c "<command>"`
+ * without any quoting, so every dynamic argument must be escaped to survive both
+ * cmd.exe parsing and the target program's `CommandLineToArgvW` parsing.
+ * Mirrors cross-spawn's argument escaping.
  */
 function escapeWindowsShellArg(arg: string): string {
   // Double up backslashes that precede a double quote, then escape the quote
@@ -67,18 +61,6 @@ function escapeWindowsShellArg(arg: string): string {
   escaped = `"${escaped}"`;
   // Escape cmd.exe metacharacters so cmd passes them through verbatim.
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
-}
-
-/**
- * Escapes arguments for shell-mode spawns: applies {@link escapeWindowsShellArg}
- * when the platform is `win32` (where `shell: true` routes through `cmd.exe`)
- * and returns the arguments untouched everywhere else.
- */
-function sanitizeShellModeArgsForPlatform(
-  args: ReadonlyArray<string>,
-  platform: NodeJS.Platform,
-): Array<string> {
-  return platform === "win32" ? args.map(escapeWindowsShellArg) : [...args];
 }
 
 export interface ResolvedSpawnCommand {
@@ -176,13 +158,6 @@ export function listLoginShellCandidates(
   }
 
   return candidates;
-}
-
-export function readPathFromLoginShell(
-  shell: string,
-  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
-): string | undefined {
-  return readEnvironmentFromLoginShell(shell, ["PATH"], execFile).PATH;
 }
 
 export function readPathFromLaunchctl(
@@ -612,7 +587,7 @@ const isExecutableFile = Effect.fnUntraced(function* (
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
-): Effect.fn.Return<string, CommandResolutionError, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const platform = options.platform;
   const env = options.env ?? process.env;
@@ -630,12 +605,12 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
         return candidate;
       }
     }
-    return yield* new CommandResolutionError({ command, reason: "not-found" });
+    return null;
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
   if (pathValue.length === 0) {
-    return yield* new CommandResolutionError({ command, reason: "not-found" });
+    return null;
   }
 
   const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
@@ -645,9 +620,6 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    if (cached.resolvedPath === null) {
-      return yield* new CommandResolutionError({ command, reason: "not-found" });
-    }
     return cached.resolvedPath;
   }
 
@@ -680,7 +652,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     }
   }
   cacheCommandResolution(cache, cacheKey, null, nowNanos);
-  return yield* new CommandResolutionError({ command, reason: "not-found" });
+  return null;
 });
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
@@ -789,9 +761,12 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     return { command: resolvedCommand, args: [...args], shell: false };
   }
 
+  // Node runs a shell spawn as `cmd.exe /d /s /c "<command> <args...>"`, but
+  // passing args with `shell: true` prints DEP0190. Build the same escaped line
+  // here and pass no args.
   return {
-    command: escapeWindowsShellArg(resolvedCommand),
-    args: sanitizeShellModeArgsForPlatform(args, platform),
+    command: [resolvedCommand, ...args].map(escapeWindowsShellArg).join(" "),
+    args: [],
     shell: true,
   };
 });
@@ -800,10 +775,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
   command: string,
   options: CommandAvailabilityOptions = {},
 ) {
-  return yield* resolveCommandPath(command, options).pipe(
-    Effect.as(true),
-    Effect.catchTags({ CommandResolutionError: () => Effect.succeed(false) }),
-  );
+  return (yield* resolveCommandPath(command, options)) !== null;
 });
 
 export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
