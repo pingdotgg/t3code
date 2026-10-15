@@ -9,6 +9,7 @@ import { pullRequestSavedViewPreferences } from "./pullRequestSavedViews";
 export function usePullRequestListControls() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const applyPreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const saved = AsyncResult.isSuccess(preferences)
     ? preferences.value.pullRequestListFilters
     : undefined;
@@ -38,7 +39,7 @@ export function usePullRequestListControls() {
       }),
     });
   const applyView = (view: PullRequestSavedView) =>
-      savePreferences({
+      applyPreferences({
         transform: (current) => pullRequestSavedViewPreferences(current, view),
       });
   return { environmentId, controlsFor, setEnvironmentId, setControls, applyView } as const;

@@ -15,7 +15,7 @@ export function PullRequestSavedViewsMenu({
   onApply,
 }: {
   scope: PullRequestSavedViewScope;
-  onApply: (view: PullRequestSavedView) => void;
+  onApply: (view: PullRequestSavedView) => Promise<void>;
 }) {
   const { views, ready, update } = usePullRequestSavedViews();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -27,6 +27,18 @@ export function PullRequestSavedViewsMenu({
       : views.find((view) => pullRequestViewMatches(view, scope));
   const selectedView = matchingView ?? explicitlySelected;
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
+
+  async function applyView(view: PullRequestSavedView) {
+    setBusy(true);
+    try {
+      await onApply(view);
+      setSelectedId(view.id);
+    } catch {
+      Alert.alert("Could not apply PR view", "The device could not save your filters. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function persist(
     transform: (
@@ -100,8 +112,7 @@ export function PullRequestSavedViewsMenu({
         if (!ready || busy) return;
         const view = views.find((item) => `apply:${item.id}` === id);
         if (view) {
-          setSelectedId(view.id);
-          onApply(view);
+          void applyView(view);
           return;
         }
         if (id === "save") editName();

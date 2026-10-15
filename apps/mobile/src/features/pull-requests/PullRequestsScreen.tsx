@@ -347,12 +347,12 @@ export function PullRequestsScreen(
                     controls,
                     query: tab.searchMode === "resting" ? "" : tab.query,
                   }}
-                  onApply={(view) => {
-                    listControls.applyView(view);
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
                     workspace.dispatch(
                       view.query.trim()
                         ? { type: "search", tab: "pullRequests" }
-                        : { type: "cancel", tab: "pullRequests" },
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
                     );
                     workspace.dispatch({ type: "query", tab: "pullRequests", query: view.query.trim() });
                     void listRef.current?.scrollToOffset({
