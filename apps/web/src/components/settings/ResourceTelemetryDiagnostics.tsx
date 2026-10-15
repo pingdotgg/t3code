@@ -49,7 +49,7 @@ import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { DiagnosticsTooltip } from "./DiagnosticsTooltip";
 import { toastManager } from "../ui/toast";
 import {
   resourceHistoryBarHeight,
@@ -425,34 +425,33 @@ function ResourceHistoryChart({
             minimumVisiblePercent: 1,
           });
           return (
-            <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
-              <TooltipTrigger
-                render={
-                  <div className="grid h-full min-w-1 flex-1 grid-cols-3 items-end gap-px">
-                    <span
-                      className="block rounded-t-sm bg-foreground/65"
-                      style={{ height: `${cpuHeight}%` }}
-                    />
-                    <span
-                      className="block rounded-t-sm bg-info/70"
-                      style={{ height: `${readHeight}%` }}
-                    />
-                    <span
-                      className="block rounded-t-sm bg-warning/80"
-                      style={{ height: `${writeHeight}%` }}
-                    />
-                  </div>
-                }
-              />
-              <TooltipPopup side="top" className="text-left">
-                <div className="space-y-0.5">
+            <DiagnosticsTooltip
+              key={DateTime.formatIso(bucket.startedAt)}
+              tooltip={
+                <div className="space-y-0.5 text-left">
                   <div>CPU avg {bucket.avgCpuPercent.toFixed(1)}%</div>
                   <div>CPU peak {bucket.maxCpuPercent.toFixed(1)}%</div>
                   <div>Read {formatBytes(bucket.ioReadBytes)}</div>
                   <div>Write {formatBytes(bucket.ioWriteBytes)}</div>
                 </div>
-              </TooltipPopup>
-            </Tooltip>
+              }
+              render={
+                <div className="grid h-full min-w-1 flex-1 grid-cols-3 items-end gap-px">
+                  <span
+                    className="block rounded-t-sm bg-foreground/65"
+                    style={{ height: `${cpuHeight}%` }}
+                  />
+                  <span
+                    className="block rounded-t-sm bg-info/70"
+                    style={{ height: `${readHeight}%` }}
+                  />
+                  <span
+                    className="block rounded-t-sm bg-warning/80"
+                    style={{ height: `${writeHeight}%` }}
+                  />
+                </div>
+              }
+            />
           );
         })}
       </div>
@@ -489,14 +488,11 @@ function ProcessTreeName({
         <span className="size-5" aria-hidden />
       )}
       <span className={cn("size-1.5 rounded-full", categoryDotClass(process.category))} />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command || process.name}
-        </TooltipPopup>
-      </Tooltip>
+      <DiagnosticsTooltip
+        tooltip={process.command || process.name}
+        variant="code"
+        render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+      />
     </div>
   );
 }
@@ -637,10 +633,10 @@ function ProcessTable({
                   {formatBytes(process.ioReadBytes)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger render={<span>{formatBytes(process.ioWriteBytes)}</span>} />
-                    <TooltipPopup side="top">{ioSemanticsLabel(process.ioSemantics)}</TooltipPopup>
-                  </Tooltip>
+                  <DiagnosticsTooltip
+                    tooltip={ioSemanticsLabel(process.ioSemantics)}
+                    render={<span>{formatBytes(process.ioWriteBytes)}</span>}
+                  />
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
                   {process.identity.pid}
@@ -711,18 +707,15 @@ function HistoryProcessTable({
             {processes.map((process) => (
               <tr key={processSummaryIdentityKey(process)} className="hover:bg-muted/20">
                 <td className="px-4 py-2 sm:pl-5">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="block truncate font-medium text-foreground">
-                          {process.name || process.command}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command || process.name}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <DiagnosticsTooltip
+                    tooltip={process.command || process.name}
+                    variant="code"
+                    render={
+                      <span className="block truncate font-medium text-foreground">
+                        {process.name || process.command}
+                      </span>
+                    }
+                  />
                 </td>
                 <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
                   {categoryLabel(process.category)}
@@ -976,22 +969,20 @@ export function ResourceTelemetryDiagnostics({
               <SourceStatusBadge label="Native" status={snapshot.health.native.status} />
             ) : null}
             <LastSampleLabel sampledAt={snapshot?.readAt ?? null} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost"
-                    disabled={telemetry.isPending}
-                    onClick={telemetry.refresh}
-                    aria-label="Refresh resource telemetry"
-                  >
-                    <RefreshIcon size="xs" refreshing={telemetry.isPending} />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Refresh telemetry snapshot</TooltipPopup>
-            </Tooltip>
+            <DiagnosticsTooltip
+              tooltip="Refresh telemetry snapshot"
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost"
+                  disabled={telemetry.isPending}
+                  onClick={telemetry.refresh}
+                  aria-label="Refresh resource telemetry"
+                >
+                  <RefreshIcon size="xs" refreshing={telemetry.isPending} />
+                </Button>
+              }
+            />
           </div>
         }
       >
