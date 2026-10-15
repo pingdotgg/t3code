@@ -7,6 +7,7 @@ import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  isTerminalSubagentStatus,
   deriveWorkflowGroups,
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
@@ -215,6 +216,8 @@ function currentSubagent<Agent extends RuntimeSubagent>(
     progress: null,
     result: null,
     error: null,
+    // A settled task's usage is from that run too; a follow-up reports none.
+    contextUsage: isTerminalSubagentStatus(agent.status) ? null : agent.contextUsage,
   };
 }
 
@@ -515,6 +518,7 @@ export function ThreadRelationshipsPanel(props: {
                   status={agent.status}
                   result={agent.result}
                   progress={agent.progress}
+                  usage={agent.contextUsage}
                   parentThread={currentThread ?? undefined}
                   childThread={node?.thread ?? undefined}
                   parentProject={currentProject}

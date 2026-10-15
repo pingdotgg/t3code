@@ -45,6 +45,27 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(agent?.phases).toEqual([]);
   });
 
+  it("keeps context snapshots separate from workflow totals and member usage", () => {
+    const usage = { contextTokens: 12_000, toolUses: 2 };
+    const [plain] = projectedSubagentsToRuntime([subagent({ usage })]);
+    expect(plain?.contextUsage).toEqual(usage);
+    expect(plain?.usage).toBeNull();
+    const [coordinator, child] = projectedSubagentsToRuntime([
+      subagent({
+        usage,
+        workflow: {
+          phases: [],
+          agents: [member({ totalTokens: 500 })],
+          totalTokens: 1000,
+        },
+      }),
+    ]);
+    expect(coordinator?.contextUsage).toEqual(usage);
+    expect(coordinator?.usage?.totalTokens).toBe(1000);
+    expect(child?.contextUsage).toBeNull();
+    expect(child?.usage?.totalTokens).toBe(500);
+  });
+
   it("projects a coordinator plus one row per member", () => {
     const rows = projectedSubagentsToRuntime([
       subagent({

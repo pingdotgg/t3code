@@ -851,6 +851,34 @@ it("shows readable models and only differing workspace details in agent tooltips
   expect(text()).not.toContain("Worktree");
   expect(text()).not.toContain("Workspace");
 
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        ...projection.subagents[0],
+        status: "running",
+        usage: { contextTokens: 41_100, toolUses: 2 },
+      },
+    ],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("41.1K context · 2 tool uses");
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        ...projection.subagents[0],
+        status: "completed",
+        usage: { contextTokens: 41_100, toolUses: 2 },
+      },
+    ],
+  };
+  state.shells = [{ environmentId: "test", source: { ...child, activityRunStatus: "running" } }];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).not.toContain("41.1K context");
+  state.projection = projection;
+  await rerender();
+
   for (const [model, expected] of [
     [null, "Not reported"],
     ["", "Not reported"],

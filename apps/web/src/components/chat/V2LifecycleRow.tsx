@@ -501,6 +501,7 @@ function SubagentTimelineLink(props: {
           status={liveStatus}
           result={agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
+          usage={agent?.usage}
         />
       </ThreadHoverCardPopup>
     </Tooltip>
@@ -510,6 +511,7 @@ function SubagentTimelineLink(props: {
 function SubagentTimelineTooltip(
   props: Parameters<typeof SubagentTimelineLink>[0] & {
     model: string | null;
+    usage: OrchestrationV2Subagent["usage"];
     modelSelection: OrchestrationV2Subagent["modelSelection"];
     elapsed: ReactNode;
   },
@@ -537,6 +539,7 @@ function SubagentTimelineTooltip(
       status={props.status}
       result={props.result}
       progress={props.progress}
+      usage={props.usage}
       parentThread={parent}
       childThread={child}
       parentProject={parentProject ?? undefined}

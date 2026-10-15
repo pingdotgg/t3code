@@ -778,6 +778,14 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "interrupted",
   ]),
   progress: Schema.optional(Schema.String),
+  // Latest provider-reported snapshot. contextTokens is the subagent's current
+  // context size, not a cumulative total, so it must never be summed.
+  usage: Schema.optional(
+    Schema.Struct({
+      contextTokens: NonNegativeInt,
+      toolUses: NonNegativeInt,
+    }),
+  ),
   /** Present only on a workflow coordinator task; absent on ordinary subagents. */
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),

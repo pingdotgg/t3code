@@ -1,6 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  formatSubagentUsage,
+  resolveSubagentMetadata,
+} from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -25,6 +28,7 @@ type SubagentRowSubagent = Pick<
   | "prompt"
   | "status"
   | "progress"
+  | "usage"
   | "result"
 >;
 
@@ -110,6 +114,7 @@ function SubagentMetadata(props: {
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
+  const usage = formatSubagentUsage(subagent.usage ?? null);
   const { modelLabel, workspace } = resolveSubagentMetadata({
     model: subagent.model,
     provider,
@@ -129,6 +134,11 @@ function SubagentMetadata(props: {
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
       </Text>
+      {usage ? (
+        <Text className="shrink-0 text-xs text-foreground-muted" numberOfLines={1}>
+          · {usage}
+        </Text>
+      ) : null}
       {workspace.map(({ label, value }) => (
         // The row reads this label in place of the icon. collapsable keeps the
         // view (and label) from being flattened away without making it a

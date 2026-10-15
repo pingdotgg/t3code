@@ -59,6 +59,7 @@ export interface RuntimeSubagent {
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
   readonly usage: SubagentUsage | null;
+  readonly contextUsage?: OrchestrationV2Subagent["usage"] | null;
   readonly progress: string | null;
   readonly lastToolName: string | null;
   readonly result: string | null;
@@ -175,6 +176,7 @@ function workflowMembersToRuntime(
       // A member the workflow retried counts each attempt as a run.
       activationCount: agent.attempt ?? 1,
       usage: workflowUsage(agent),
+      contextUsage: null,
       // A member keeps its prompt on `progress` even once settled: that is the
       // question half of its conversation, and the detail view shows both halves.
       progress: agent.prompt ?? null,
@@ -207,6 +209,7 @@ export function projectedSubagentsToRuntime(
     readonly model: string | null;
     readonly status: OrchestrationV2Subagent["status"];
     readonly progress?: string | undefined;
+    readonly usage?: OrchestrationV2Subagent["usage"];
     readonly childThreadId?: string | null | undefined;
     readonly workflow?: OrchestrationV2SubagentWorkflow | undefined;
     readonly result: string | null;
@@ -232,6 +235,7 @@ export function projectedSubagentsToRuntime(
       effort: null,
       status: subagent.status,
       activationCount: 1,
+      contextUsage: subagent.usage ?? null,
       usage: workflow === undefined ? null : workflowUsage(workflow),
       progress: subagent.progress ?? null,
       lastToolName: null,
