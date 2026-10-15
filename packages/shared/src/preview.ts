@@ -61,6 +61,7 @@ const SEARCH_URL = "https://duckduckgo.com/?q=";
 /** A bare host that is always an address: localhost, an IPv4 literal, or a bracketed IPv6 one. */
 const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
 const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
+const URL_SCHEME_WITH_AUTHORITY_PATTERN = /^[a-z][a-z\d+.-]*:\/\//i;
 /**
  * Registered schemes that are never a bare host, so `ftp:21` or `tel:5551234`
  * is rejected rather than read as host and port.
@@ -91,7 +92,7 @@ const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
  */
 export function resolveAddressBarInput(rawInput: string): string {
   const trimmed = rawInput.trim();
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) || trimmed.length === 0)
+  if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
   if (!/\s/.test(trimmed)) {
     // `mailto:x` or `data:...` is an explicit scheme; `example.com:8080` or
@@ -141,7 +142,7 @@ export function normalizePreviewUrl(rawUrl: string): string {
     throw new PreviewUrlNormalizationError({ inputLength: rawUrl.length, reason: "empty" });
   }
   const useHttp = LOOPBACK_PREFIX_PATTERN.test(trimmed);
-  const candidate = trimmed.includes("://")
+  const candidate = URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed)
     ? trimmed
     : `${useHttp ? "http" : "https"}://${trimmed}`;
   let parsed: URL;
