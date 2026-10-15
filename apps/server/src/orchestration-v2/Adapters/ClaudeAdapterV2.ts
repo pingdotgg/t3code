@@ -3151,6 +3151,9 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   // Stop, rollback or fork is closing this process; its work is ending.
   stopping: boolean;
+  // A turn failed to authenticate. The CLI reads its login once per process,
+  // so the next turn replaces this process to pick up a new login.
+  signedOut: boolean;
   // Registry entries still running when this process opened. Their process
   // is gone and never reports their end; any later task_started replaces the
   // entry, so an entry still in this set runs nowhere.
@@ -7889,9 +7892,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
+            const status = interrupted
+              ? "interrupted"
+              : terminalStatusFromResult(message, failureHint);
+            if (status === "failed" && context.authenticationFailureMessage !== undefined) {
+              liveQuery.signedOut = true;
+            }
             yield* finalizeActiveTurn({
               context,
-              status: interrupted ? "interrupted" : terminalStatusFromResult(message, failureHint),
+              status,
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
@@ -8494,6 +8503,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            !existing.signedOut &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
@@ -8652,6 +8662,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             openedPermissionMode: queryOptions.permissionMode,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            signedOut: false,
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
