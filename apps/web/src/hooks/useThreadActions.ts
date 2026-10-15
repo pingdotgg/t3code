@@ -4,7 +4,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
@@ -678,6 +682,34 @@ export function useThreadActions() {
     [unsettleThreadMutation],
   );
 
+  const unsettleLastThread = useCallback(async () => {
+    const latest = readThreadShells()
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          readEnvironmentSupportsSettlement(thread.environmentId) &&
+          thread.settledOverride === "settled" &&
+          thread.settledAt !== null &&
+          Number.isFinite(Date.parse(thread.settledAt)),
+      )
+      .toSorted((left, right) => Date.parse(right.settledAt!) - Date.parse(left.settledAt!))[0];
+    if (!latest) return;
+    const result = await unsettleThread({
+      environmentId: latest.environmentId,
+      threadId: latest.id,
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to un-settle thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [unsettleThread]);
+
   /** Turns automatic settlement (inactivity, merged PR) on or off for one thread. */
   const setThreadAutoSettle = useCallback(
     async (target: ScopedThreadRef, enabled: boolean) => {
@@ -1015,6 +1047,7 @@ export function useThreadActions() {
       confirmAndDeleteThread,
       settleThread,
       unsettleThread,
+      unsettleLastThread,
       snoozeThread,
       unsnoozeThread,
       pinThread,
@@ -1040,6 +1073,7 @@ export function useThreadActions() {
       unarchiveThread,
       unpinThread,
       unsettleThread,
+      unsettleLastThread,
       unsnoozeThread,
     ],
   );
