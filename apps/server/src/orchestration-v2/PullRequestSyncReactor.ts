@@ -134,8 +134,8 @@ function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): bool
 
 /**
  * Keeps every thread ↔ pull request link's host snapshot current. One sweep a minute reads
- * only the active threads that have links, groups visible links by pull request so the host
- * is asked once per PR no matter how many threads share it, and writes back only what
+ * only the active threads that have links, groups visible links by project and pull request so
+ * each project reads once per PR no matter how many threads share it, and writes back only what
  * changed. Native stacks the host reports are auto-linked to the thread as `source: "stack"`.
  */
 export class PullRequestSyncReactor extends Context.Service<
@@ -160,9 +160,10 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
-  const requested = new Map<string, number>();
-  let requestGeneration = 0;
-  // Requested keys wait in `requested` for one queued sweep, so a burst of links (an agent
+  const requested = new Set<string>();
+  // A refresh requested while a host read is in flight waits here for the next sweep.
+  const pendingRequests = new Set<string>();
+  // PR keys wait in `pendingRequests` for one queued sweep, so a burst of links (an agent
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
@@ -199,12 +200,19 @@ export const make = Effect.gen(function* () {
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
       for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
-        const key = threadPullRequestKeyOf(link);
+        // Reads depend on the project's checkout and credentials, including their failures.
+        const key = `${thread.projectId}\0${threadPullRequestKeyOf(link)}`;
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
         groups.set(key, entries);
       }
     }
+
+    // A host-level refresh reaches every project, each retaining its own pending retry.
+    for (const [key, entries] of groups) {
+      if (pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) requested.add(key);
+    }
+    pendingRequests.clear();
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
@@ -284,12 +292,12 @@ export const make = Effect.gen(function* () {
         repository: first.link.repository,
         number: first.link.number,
       };
-      const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
+      const refreshRequested = requested.has(key);
+      if (refreshRequested) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
-        generation !== undefined ||
+        refreshRequested ||
         retryStacks.has(key) ||
         entries.some(
           (entry) =>
@@ -332,8 +340,7 @@ export const make = Effect.gen(function* () {
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
-      // A refresh requested while the host read was in flight belongs to the next sweep.
-      if (requested.get(key) === generation) requested.delete(key);
+      requested.delete(key);
       yield* Effect.forEach(
         entries,
         (entry) =>
@@ -482,7 +489,7 @@ export const make = Effect.gen(function* () {
 
   const requestSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
     Effect.suspend(() => {
-      requested.set(threadPullRequestKeyOf(key), ++requestGeneration);
+      pendingRequests.add(threadPullRequestKeyOf(key));
       if (requestedSweepQueued) return Effect.void;
       requestedSweepQueued = true;
       return worker.enqueue("requested");
