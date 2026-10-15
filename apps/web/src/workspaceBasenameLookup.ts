@@ -1,3 +1,5 @@
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+
 // Enough hits to look past same-named neighbours (`ChatView.test.tsx`) without
 // asking for a full listing on a single click.
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
@@ -51,4 +53,47 @@ export function pickWorkspaceBasenameMatch(
     (entry) => basenameOfPath(entry.path).toLowerCase() === folded,
   );
   return foldedMatches.length === 1 ? (foldedMatches[0]?.path ?? null) : null;
+}
+
+/**
+ * Agents echo git paths relative to the repository root, so in a project that
+ * is a subfolder of its repository `physics/notes/a.md` repeats the project's
+ * own folder. Returns the path with that repeated prefix removed, if any.
+ */
+export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
+  const pathSegments = relativePath.split(/[\\/]+/);
+  const cwdSegments = cwd.split(/[\\/]+/).filter(Boolean);
+  const fold = isWindowsAbsolutePath(cwd)
+    ? (segment: string | undefined) => segment?.toLowerCase()
+    : (segment: string | undefined) => segment;
+  for (let count = Math.min(cwdSegments.length, pathSegments.length - 1); count > 0; count--) {
+    const prefix = cwdSegments.slice(-count);
+    if (prefix.every((segment, index) => fold(segment) === fold(pathSegments[index]))) {
+      return pathSegments.slice(count).join("/");
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolves a stripped path against index entries. A real child folder named
+ * like the project keeps the literal path, so this returns null when the
+ * literal path is indexed too.
+ */
+export function pickStrippedWorkspaceMatch(
+  literalPath: string,
+  strippedPath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  const key = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const pathsByKey = new Map(
+    entries.filter((entry) => entry.kind === "file").map((entry) => [key(entry.path), entry.path]),
+  );
+  if (pathsByKey.has(key(literalPath))) return null;
+  return pathsByKey.get(key(strippedPath)) ?? null;
 }

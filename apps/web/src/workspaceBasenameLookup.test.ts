@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
+  pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
+  stripRepeatedWorkspacePrefix,
 } from "./workspaceBasenameLookup";
 
 describe("needsWorkspaceBasenameLookup", () => {
@@ -90,5 +92,60 @@ describe("claimWorkspaceBasenameLookup", () => {
   it("stays valid while it is the only claim", () => {
     const only = claimWorkspaceBasenameLookup();
     expect(only()).toBe(true);
+  });
+});
+
+describe("stripRepeatedWorkspacePrefix", () => {
+  it("drops the project folder repeated by a repo-root-relative path", () => {
+    expect(stripRepeatedWorkspacePrefix("physics/notes/outline.md", "/school/physics")).toBe(
+      "notes/outline.md",
+    );
+    expect(stripRepeatedWorkspacePrefix("courses/physics/a.md", "/school/courses/physics")).toBe(
+      "a.md",
+    );
+    expect(stripRepeatedWorkspacePrefix("physics\\a.md", "C:\\school\\physics")).toBe("a.md");
+    expect(stripRepeatedWorkspacePrefix("physics\\a.md", "C:\\school\\Physics")).toBe("a.md");
+    expect(stripRepeatedWorkspacePrefix("physics/a.md", "/school/Physics")).toBeNull();
+  });
+
+  it("returns null when the path does not start with the project folder", () => {
+    expect(stripRepeatedWorkspacePrefix("notes/outline.md", "/school/physics")).toBeNull();
+    expect(stripRepeatedWorkspacePrefix("physics", "/school/physics")).toBeNull();
+  });
+});
+
+describe("pickStrippedWorkspaceMatch", () => {
+  const file = (path: string) => ({ path, kind: "file" as const });
+
+  it("opens the stripped path when only it exists", () => {
+    expect(
+      pickStrippedWorkspaceMatch("physics/notes/a.md", "notes/a.md", "/school/physics", [
+        file("notes/a.md"),
+      ]),
+    ).toBe("notes/a.md");
+  });
+
+  it("keeps the literal path when a real nested folder exists", () => {
+    expect(
+      pickStrippedWorkspaceMatch("physics/notes/a.md", "notes/a.md", "/school/physics", [
+        file("notes/a.md"),
+        file("physics/notes/a.md"),
+      ]),
+    ).toBeNull();
+  });
+
+  it("matches casing loosely only on Windows", () => {
+    const entries = [file("Notes/a.md")];
+    expect(
+      pickStrippedWorkspaceMatch(
+        "physics\\notes\\a.md",
+        "notes/a.md",
+        "C:\\school\\physics",
+        entries,
+      ),
+    ).toBe("Notes/a.md");
+    expect(
+      pickStrippedWorkspaceMatch("physics/notes/a.md", "notes/a.md", "/school/physics", entries),
+    ).toBeNull();
   });
 });

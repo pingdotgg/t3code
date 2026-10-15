@@ -192,7 +192,9 @@ import { projectEnvironment } from "../state/projects";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
+  pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
+  stripRepeatedWorkspacePrefix,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
 import {
@@ -2606,28 +2608,40 @@ function useChatMarkdownState({
       if (
         !cwd ||
         environmentId === null ||
-        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-        !needsWorkspaceBasenameLookup(workspaceRelativePath)
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
       ) {
         return null;
       }
+      const isBasename = needsWorkspaceBasenameLookup(workspaceRelativePath);
+      const strippedPath = isBasename
+        ? null
+        : stripRepeatedWorkspacePrefix(workspaceRelativePath, cwd);
+      if (!isBasename && strippedPath === null) return null;
       const result = await searchProjectEntries({
         environmentId,
         input: {
           cwd,
-          query: workspaceRelativePath,
+          query: strippedPath ?? workspaceRelativePath,
           limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
           kind: "file",
         },
       });
-      return result._tag === "Success"
-        ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-        : null;
+      if (result._tag !== "Success") return null;
+      if (strippedPath === null) {
+        return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
+      }
+      return pickStrippedWorkspaceMatch(
+        workspaceRelativePath,
+        strippedPath,
+        cwd,
+        result.value.entries,
+      );
     },
     [cwd, environmentId, searchProjectEntries],
   );
   // A bare filename resolves to the workspace root, which is rarely where the
-  // file is, so ask the index before opening. Absolute host paths open as-is.
+  // file is, and a repo-root-relative path repeats the project folder, so ask
+  // the index before opening. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
@@ -2636,7 +2650,11 @@ function useChatMarkdownState({
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
         useRightPanelStore.getState().openFile(threadRef, path, line);
-      if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+      if (
+        !cwd ||
+        (!needsWorkspaceBasenameLookup(panelPath) &&
+          stripRepeatedWorkspacePrefix(panelPath, cwd) === null)
+      ) {
         openAt(panelPath);
         return;
       }
