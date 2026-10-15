@@ -11,7 +11,7 @@ import type { ColorValue, PressableProps } from "react-native";
 import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { withMenuActionIconColors } from "../lib/menu-action-colors";
-import type { ControlPillMenuProps } from "./ControlPillMenu.types";
+import type { MenuProps } from "./Menu.types";
 
 const ThemedMenuView = withUniwind(
   function NativeMenuView({
@@ -41,7 +41,7 @@ const ThemedMenuView = withUniwind(
   },
 );
 
-export function ControlPillMenu(props: ControlPillMenuProps) {
+export function Menu(props: MenuProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const menuPress = useRef({ isPreparing: false, isOpen: false, suppressPress: false });

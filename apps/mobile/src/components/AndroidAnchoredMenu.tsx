@@ -8,7 +8,7 @@ import Animated, { FadeIn } from "react-native-reanimated";
 
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
-import { MaterialMenuPopup } from "./MaterialMenuPopup";
+import { MenuPopup } from "./MenuPopup";
 
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
@@ -201,7 +201,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           >
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
             {!placeable || local === null ? null : !anchor.keyboardWasVisible ? (
-              <MaterialMenuPopup
+              <MenuPopup
                 anchor={local}
                 menuWidth={menuWidth}
                 actions={levelActions}
@@ -237,7 +237,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   keyboardShouldPersistTaps="always"
                   showsVerticalScrollIndicator={false}
                 >
-                  <MaterialMenuPopup
+                  <MenuPopup
                     inline
                     anchor={local}
                     menuWidth={menuWidth}

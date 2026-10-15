@@ -10,7 +10,7 @@ import { Alert, Platform, ScrollView, View } from "react-native";
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { AudioFilePreview } from "../../components/AudioFilePreview";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { Menu } from "../../components/Menu";
 import { EmptyState } from "../../components/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { useAttachmentDocument } from "../../lib/attachmentDocument";
@@ -368,14 +368,14 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
           subtitle={subtitle}
           onBack={handleBack}
           trailing={
-            <ControlPillMenu
+            <Menu
               actions={androidMenuActions}
               isAnchoredToRight
               title="File actions"
               onPressAction={handleAndroidMenuAction}
             >
               <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
-            </ControlPillMenu>
+            </Menu>
           }
         />
       ) : null}

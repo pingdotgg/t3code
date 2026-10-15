@@ -7,8 +7,6 @@ import { IconButton } from "./IconButton";
 import { Button } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-export { ControlPillMenu } from "./ControlPillMenu";
-
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;

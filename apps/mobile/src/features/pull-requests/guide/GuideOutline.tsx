@@ -4,7 +4,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/AppText";
 import { SymbolView } from "../../../components/AppSymbol";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
-import { ControlPillMenu } from "../../../components/ControlPillMenu";
+import { Menu } from "../../../components/Menu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 
@@ -29,7 +29,7 @@ export function GuideOutline({
             through {files.size} {files.size === 1 ? "file" : "files"}
           </Text>
         </View>
-        <ControlPillMenu
+        <Menu
           title="Guide options"
           actions={[
             {
@@ -55,7 +55,7 @@ export function GuideOutline({
           >
             <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
           </Pressable>
-        </ControlPillMenu>
+        </Menu>
       </View>
       {guide.stops[0]?.summary ? (
         <View className="mb-6">

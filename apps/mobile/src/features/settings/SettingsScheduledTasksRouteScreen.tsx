@@ -46,7 +46,7 @@ import {
   EnvironmentMachineSymbol,
   ENVIRONMENT_MACHINE_SYMBOLS,
 } from "../../components/EnvironmentMachineSymbol";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { Menu } from "../../components/Menu";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
@@ -203,7 +203,7 @@ function SelectRow(props: {
     );
   }
   return (
-    <ControlPillMenu
+    <Menu
       actions={props.actions}
       onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
     >
@@ -225,7 +225,7 @@ function SelectRow(props: {
           type="monochrome"
         />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }
 
@@ -1232,7 +1232,7 @@ function EnvironmentTasks({
                 </Text>
               ) : null}
             </Pressable>
-            <ControlPillMenu
+            <Menu
               actions={[
                 { id: "edit", title: "Edit" },
                 {
@@ -1279,7 +1279,7 @@ function EnvironmentTasks({
                   type="monochrome"
                 />
               </Pressable>
-            </ControlPillMenu>
+            </Menu>
           </View>
         ))
       )}

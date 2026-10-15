@@ -1,6 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 
-export interface MaterialMenuPopupProps {
+export interface MenuPopupProps {
   readonly menuWidth: number;
   readonly anchor: {
     readonly x: number;
@@ -18,6 +18,6 @@ export interface MaterialMenuPopupProps {
   readonly inline?: boolean;
 }
 
-export function MaterialMenuPopup(_props: MaterialMenuPopupProps) {
+export function MenuPopup(_props: MenuPopupProps) {
   return null;
 }

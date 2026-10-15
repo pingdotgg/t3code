@@ -10,7 +10,7 @@ import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
+import { Menu } from "../../components/Menu";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { type PullRequestParams } from "./usePullRequestDiff";
@@ -154,7 +154,7 @@ export function PullRequestActionToolbar(props: {
         <MaterialFloatingToolbar>
           <View className="flex-row items-center gap-2">
             {showAgentControls ? (
-              <ControlPillMenu
+              <Menu
                 title="AI helpers"
                 actions={agentActions.map((action) => agent.menuAction(action.task))}
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
@@ -166,18 +166,18 @@ export function PullRequestActionToolbar(props: {
                     disabled={agent.disabled}
                   />
                 </View>
-              </ControlPillMenu>
+              </Menu>
             ) : null}
             {showPrimary ? (
               <View className="min-w-0 shrink">
                 {!pendingReview && chooseThread ? (
-                  <ControlPillMenu
+                  <Menu
                     title="Open thread"
                     actions={threadMenuItems}
                     onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
                   >
                     <View pointerEvents="none">{primary}</View>
-                  </ControlPillMenu>
+                  </Menu>
                 ) : (
                   primary
                 )}

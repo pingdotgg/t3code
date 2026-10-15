@@ -7,7 +7,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
+import { Menu } from "../../components/Menu";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import { SymbolView } from "../../components/AppSymbol";
@@ -215,7 +215,7 @@ export function usePullRequestFilesContent(props: {
                 deletions={parsed.deletions}
                 compact
               />
-              <ControlPillMenu
+              <Menu
                 title="Review files"
                 actions={[
                   {
@@ -234,7 +234,7 @@ export function usePullRequestFilesContent(props: {
                     selected={filter.hideTestFiles}
                   />
                 </View>
-              </ControlPillMenu>
+              </Menu>
             </View>
             {parsed.files.length === 0 && filter.hiddenCount > 0 ? (
               <EmptyState

@@ -6,7 +6,7 @@ import * as Clipboard from "expo-clipboard";
 import { Atom } from "effect/reactivity";
 import { use, useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Platform, Share } from "react-native";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import type { MenuProps } from "../../components/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -152,7 +152,7 @@ export function usePullRequestListActions(
     [navigation, params, perform, selectAndroidWorkspace],
   );
   const actions = useCallback(
-    (entry: EnvironmentPullRequestListEntry): ControlPillMenuProps["actions"] => [
+    (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
       {
         id: "open",
         title: "Open pull request",

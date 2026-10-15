@@ -3,7 +3,7 @@ import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
 
-import { ControlPillMenu } from "../../../components/ControlPill";
+import { Menu } from "../../../components/Menu";
 import { SymbolView } from "../../../components/AppSymbol";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
@@ -153,7 +153,7 @@ export function AndroidSettingsEnvironmentFilter() {
       : "line.3.horizontal.decrease.circle.fill";
 
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityRole="button"
       accessibilityLabel="Filter settings environments and projects"
@@ -208,6 +208,6 @@ export function AndroidSettingsEnvironmentFilter() {
       >
         <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }

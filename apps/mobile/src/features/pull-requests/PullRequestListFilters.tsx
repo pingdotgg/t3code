@@ -1,7 +1,7 @@
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { useMemo } from "react";
 import { ScrollView } from "react-native";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import type { MenuProps } from "../../components/Menu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -176,7 +176,7 @@ export function PullRequestListFilters(props: {
     Number(Boolean(value.filters.review)) +
     Number(Boolean(value.filters.checks)) +
     Number(Boolean(value.projectId));
-  const more: ControlPillMenuProps["actions"] = [
+  const more: MenuProps["actions"] = [
     {
       id: "drafts",
       title: value.filters.draft ? DRAFTS[value.filters.draft] : "Drafts",

@@ -1,7 +1,7 @@
 import { Pressable } from "react-native";
 import { Chip } from "../../components/Chip";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import { Menu } from "../../components/Menu";
+import type { MenuProps } from "../../components/Menu.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 /** A visible filter with a native menu containing only that filter's choices. */
@@ -10,12 +10,12 @@ export function ListFilterMenu(props: {
   readonly accessibilityLabel: string;
   readonly active?: boolean;
   readonly icon?: boolean;
-  readonly actions: ControlPillMenuProps["actions"];
+  readonly actions: MenuProps["actions"];
   readonly onSelect: (id: string) => void;
 }) {
   const { themeAppearance } = useAppearancePreferences();
   return (
-    <ControlPillMenu
+    <Menu
       title={props.accessibilityLabel}
       actions={props.actions}
       onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
@@ -35,6 +35,6 @@ export function ListFilterMenu(props: {
           colorScheme={themeAppearance}
         />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }

@@ -5,7 +5,7 @@ import { Alert, Platform, View, type TextInputInstance } from "react-native";
 import { AppText, AppTextInput } from "../../components/AppText";
 import { AppSheet } from "../../components/AppSheet";
 import { Chip } from "../../components/Chip";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
+import { Menu } from "../../components/Menu";
 import { ListActionRow } from "../../components/ListActionRow";
 import { ListChoiceRow } from "../../components/ListChoiceRow";
 import { ListRow } from "../../components/ListRow";
@@ -221,7 +221,7 @@ export function ComponentCatalogScreen() {
             <View className="flex-row flex-wrap gap-2">
               <Button label="Sheet" onPress={() => setSheet(true)} />
               <Button label="Dialog" onPress={confirm} />
-              <ControlPillMenu
+              <Menu
                 title="Example menu"
                 actions={[
                   { id: "copy", title: "Copy", image: "doc.on.doc" },
@@ -232,7 +232,7 @@ export function ComponentCatalogScreen() {
                 }
               >
                 <Chip label="Menu" trailingIcon="chevron.down" />
-              </ControlPillMenu>
+              </Menu>
             </View>
             <View className="relative h-3 overflow-hidden rounded-full bg-subtle">
               <LoadingStrip progress={0.6} />

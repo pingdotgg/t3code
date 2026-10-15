@@ -11,7 +11,8 @@ import {
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { Alert } from "react-native";
 
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPill } from "../../components/ControlPill";
+import { Menu } from "../../components/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -144,7 +145,7 @@ export function BrowserTabMenu({
   );
   if (disabled) return pill;
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityLabel="Browser tab options"
       accessibilityRole="button"
@@ -152,6 +153,6 @@ export function BrowserTabMenu({
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
       {pill}
-    </ControlPillMenu>
+    </Menu>
   );
 }

@@ -13,7 +13,7 @@ import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import type { MaterialMenuPopupProps } from "./MaterialMenuPopup";
+import type { MenuPopupProps } from "./MenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
 
 function MenuIcon(props: {
@@ -46,7 +46,7 @@ function MenuIcon(props: {
 }
 
 /** Native popup positioned at the original trigger, outside virtualized rows. */
-export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
+export function MenuPopup(props: MenuPopupProps) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();
   const body = resolveScaledTextRole("body", appearance.baseFontSize);

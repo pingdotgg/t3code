@@ -3,7 +3,7 @@ import { Pressable } from "react-native";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { SymbolView } from "./AppSymbol";
-import { ControlPillMenu } from "./ControlPill";
+import { Menu } from "./Menu";
 
 const ATTACHMENT_MENU_ACTIONS: MenuAction[] = [
   { id: "photos", title: "Photo Library", image: "photo" },
@@ -41,7 +41,7 @@ export function ComposerAttachmentButton(props: {
   }
 
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityLabel="Add attachment"
       accessibilityRole="button"
@@ -55,6 +55,6 @@ export function ComposerAttachmentButton(props: {
       }}
     >
       {button}
-    </ControlPillMenu>
+    </Menu>
   );
 }

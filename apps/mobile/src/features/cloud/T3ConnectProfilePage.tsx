@@ -12,7 +12,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from "react-
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { Menu } from "../../components/Menu";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -176,7 +176,7 @@ export function T3ConnectProfilePage() {
                   size="small"
                 />
               ) : (
-                <ControlPillMenu
+                <Menu
                   actions={ENVIRONMENT_MENU_ACTIONS}
                   isAnchoredToRight
                   onPressAction={() =>
@@ -198,7 +198,7 @@ export function T3ConnectProfilePage() {
                       />
                     </View>
                   </Pressable>
-                </ControlPillMenu>
+                </Menu>
               )
             }
           />
