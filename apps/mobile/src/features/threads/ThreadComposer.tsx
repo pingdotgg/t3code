@@ -77,12 +77,8 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import {
-  ComposerActionButton,
-  ComposerInlineControl,
-  ComposerToolbarRow,
-} from "../../components/ComposerToolbar";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -1151,18 +1147,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPickFiles={props.onPickDraftFiles}
                     />
                     <View className="min-w-0 shrink">
-                      <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
-                        emphasized
-                        renderIcon={(size) => (
-                          <ProviderIcon
-                            iconUrl={currentModelOption?.providerIconUrl}
-                            provider={currentModelOption?.providerDriver}
-                            size={size}
-                          />
-                        )}
-                        label={currentModelOption?.label ?? currentModelSelection.model}
-                        maxWidth="100%"
+                      <ComposerModelControl
+                        modelOption={currentModelOption}
+                        selection={currentModelSelection}
+                        reportedSelection={props.reportedModelSelection}
                         onPress={openSettings}
                       />
                     </View>

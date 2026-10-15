@@ -63,7 +63,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerModelControl } from "../../components/ComposerModelControl";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -1783,21 +1783,12 @@ export function NewTaskDraftScreen(props: {
                     onPickMedia={handlePickMedia}
                     onPickFiles={handlePickFiles}
                   />
-                  <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
-                    <View className="min-w-0 shrink">
-                      <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                  <View className="min-w-0 flex-1 flex-row flex-wrap items-center justify-end gap-2">
+                    <View className="min-w-0 shrink" style={{ flexBasis: 190 }}>
+                      <ComposerModelControl
                         disabled={isComposerInteractionLocked}
-                        emphasized
-                        renderIcon={(size) => (
-                          <ProviderIcon
-                            iconUrl={flow.selectedModelOption?.providerIconUrl}
-                            provider={flow.selectedModelOption?.providerDriver}
-                            size={size}
-                          />
-                        )}
-                        label={flow.selectedModelOption?.label ?? "Choose model"}
-                        maxWidth="100%"
+                        modelOption={flow.selectedModelOption}
+                        selection={flow.selectedModel}
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>
