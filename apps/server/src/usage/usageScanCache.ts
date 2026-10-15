@@ -31,17 +31,23 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: entries carry the session's working directory and sub-agent label, so
+// usage can be attributed to projects. Older entries still load, and live
+// transcripts whose format names a folder re-parse once to pick these up.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -59,6 +65,10 @@ export interface CachedFile {
    */
   readonly tailRecords: readonly UsageRecord[];
   readonly position: TranscriptParsePosition;
+  /** Working directory the session ran in, when the transcript says. */
+  readonly cwd: string | null;
+  /** What a provider-native sub-agent was asked to do, from its metadata. */
+  readonly label: string | null;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -97,6 +107,9 @@ interface SerializedFile {
   readonly gh: number;
   /** The format's encoded reducer state at `o`; `null` for stateless formats. */
   readonly cs: unknown;
+  /** Working directory and sub-agent label; absent when unknown. */
+  readonly w?: string;
+  readonly l?: string;
 }
 
 interface SerializedCache {
@@ -154,6 +167,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     gl: entry.position.guardLength,
     gh: entry.position.guardHash,
     cs: entry.position.state,
+    ...(entry.cwd === null ? {} : { w: entry.cwd }),
+    ...(entry.label === null ? {} : { l: entry.label }),
   };
 }
 
@@ -337,11 +352,13 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
-    const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
+    // v4 records of stateful formats (Codex) predate service tiers, and v5
+    // entries predate working directories. Keep their records, because the
+    // transcript may be gone, but make a live transcript re-parse whole: no
+    // file has size -1, and a zero position cannot resume.
+    const legacy =
+      version < USAGE_SCAN_CACHE_VERSION &&
+      ((format.state !== undefined && version < 5) || format.workingDirectory !== undefined);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
@@ -365,6 +382,8 @@ export function decodeScanCache(
             guardHash: entry.gh,
             state: entry.cs,
           },
+      cwd: typeof entry.w === "string" && entry.w.length > 0 ? entry.w : null,
+      label: typeof entry.l === "string" && entry.l.length > 0 ? entry.l : null,
     });
   }
 

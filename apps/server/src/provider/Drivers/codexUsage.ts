@@ -17,6 +17,7 @@ import {
   type TranscriptUsageFormat,
   type UsageRecord,
   type UsageSpeed,
+  workingDirectoryHook,
 } from "@t3tools/provider-core/server/usage";
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
@@ -222,6 +223,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       type: true,
       id: true,
       session_id: true,
+      cwd: true,
       model: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
@@ -237,6 +239,14 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   state: { initial: initialCodexScanState, schema: CodexScanState },
   // A rollout that moved after it was read leaves a copy in both places.
   sharedSessionsAcrossFiles: true,
+  // The rollout's first `session_meta` is its own session; a fork repeats its
+  // ancestors' metas after it, and the engine keeps the first folder.
+  workingDirectory: workingDirectoryHook(['"session_meta"'], (record) => {
+    const payload = record["payload"];
+    return record["type"] === "session_meta" && typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)["cwd"]
+      : null;
+  }),
 };
 
 export const codexUsageReader: ProviderUsageReader<CodexSettings, Path.Path> = {

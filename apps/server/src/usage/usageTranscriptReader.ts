@@ -72,6 +72,11 @@ export interface TranscriptParseResult {
   readonly position: TranscriptParsePosition;
   /** Whether the parse continued from `resumeFrom` rather than byte 0. */
   readonly resumed: boolean;
+  /**
+   * The session's working directory, from the first parsed line naming it,
+   * or `null`. Formats without a `workingDirectory` hook always report `null`.
+   */
+  readonly cwd: string | null;
 }
 
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
@@ -290,9 +295,18 @@ export async function readTranscriptRecords<State>(
     // Gate on the raw bytes so the lines that fail it, which is most of them,
     // are never decoded.
     const mightCarryUsage = transcriptLineGate(format.usageMarkers);
+    // Lines naming the folder are read too, but only until one does.
+    const cwdHook = format.workingDirectory;
+    const mightNameCwd = cwdHook === undefined ? undefined : transcriptLineGate(cwdHook.markers);
+    let cwd: string | null = null;
     const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
-      if (!mightCarryUsage(lineBuffer)) return;
-      for (const record of format.parseLine(toLineString(lineBuffer), lineState)) out.push(record);
+      const carriesUsage = mightCarryUsage(lineBuffer);
+      const namesCwd = cwd === null && mightNameCwd !== undefined && mightNameCwd(lineBuffer);
+      if (!carriesUsage && !namesCwd) return;
+      const line = toLineString(lineBuffer);
+      if (namesCwd) cwd = cwdHook!.fromLine(line);
+      if (!carriesUsage) return;
+      for (const record of format.parseLine(line, lineState)) out.push(record);
     };
 
     const records: UsageRecord[] = [];
@@ -327,6 +341,7 @@ export async function readTranscriptRecords<State>(
       if (streaming) {
         streaming.write(decoder!.end());
         const projected = streaming.finish();
+        if (cwd === null && cwdHook !== undefined) cwd = cwdHook.fromProjected(projected);
         for (const record of format.parseProjected(projected, lineState)) out.push(record);
       } else if (pendingBytes > 0) {
         const line =
@@ -394,6 +409,7 @@ export async function readTranscriptRecords<State>(
         state: encodedState,
       },
       resumed,
+      cwd,
     };
   } catch {
     return null;
