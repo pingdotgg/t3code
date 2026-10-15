@@ -1,6 +1,6 @@
 /**
- * ACP Registry internals the server's replay testkit and ACP adapter tests
- * drive directly.
+ * ACP Registry internals the server's replay testkit, ACP adapter tests, and
+ * provider registry tests drive directly.
  *
  * @module provider-acp-registry/testing
  */
@@ -17,6 +17,7 @@ export {
   normalizeDevinToolCall,
 } from "./server/devinAcp.ts";
 export { extractCopilotSubagentUpdate, makeCopilotSubagentRouting } from "./server/copilotAcp.ts";
+export { buildCheckedAcpRegistrySnapshot } from "./server/driver.ts";
 export {
   acpRegistryProbeFailure,
   acpRegistryProbeResult,

@@ -234,6 +234,8 @@ function baseSnapshot(
     },
     ...(input.message ? { message: input.message } : {}),
     models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+    // Only a completed discovery probe carries session capabilities. The
+    // provider registry reads them as "this model list is the full inventory".
     ...(input.probe === undefined
       ? {}
       : {

@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import {
+  AcpRegistryOperationError,
   EnvironmentId,
   ClaudeSettings,
   CodexSettings,
@@ -37,6 +38,8 @@ import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
+import { buildCheckedAcpRegistrySnapshot } from "@t3tools/provider-acp-registry/testing";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
@@ -84,6 +87,7 @@ const disabledDefaultSlots = (
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeAcpRegistrySettings = Schema.decodeSync(AcpRegistrySettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
@@ -820,80 +824,103 @@ it.layer(
       );
     });
 
-    it("drops stale ACP Registry models missing from a completed discovery probe", () => {
-      const previousProvider = {
-        instanceId: ProviderInstanceId.make("acpRegistry_codex"),
-        driver: ProviderDriverKind.make("acpRegistry"),
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        checkedAt: "2026-08-13T00:00:00.000Z",
-        version: "1.2.0",
-        models: [
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-          {
-            slug: "gpt-5.6-sol[low]",
-            name: "GPT-5.6-Sol (low)",
-            isCustom: false,
-            capabilities: null,
+    describe("ACP Registry model discovery", () => {
+      const settings = decodeAcpRegistrySettings({
+        agentId: "test-agent",
+        customModels: ["my-custom"],
+      });
+      const snapshotInput = {
+        instanceId: ProviderInstanceId.make("acpRegistry_test"),
+        displayName: "Test ACP",
+        accentColor: undefined,
+        continuationKey: "acpRegistry:instance:acpRegistry_test",
+        settings,
+        checkedAt: "2026-10-14T00:00:00.000Z",
+        inspection: {
+          status: "ready",
+          agentId: "test-agent",
+          version: "1.0.0",
+          distribution: "npx",
+        },
+      } as const;
+      const advertised = (ids: ReadonlyArray<string>) => ({
+        probe: {
+          instanceId: snapshotInput.instanceId,
+          ready: true as const,
+          icon: null,
+          // The agent offers no sign-in, so discovery never reports it authenticated.
+          authMethods: [],
+          models: ids.map((id) => ({ id, name: id, description: null })),
+          currentModelId: ids[0] ?? null,
+          configOptions: [],
+          sessionManagement: {
+            canList: false,
+            canLoad: false,
+            canResume: false,
+            canLogout: false,
+            canDelete: false,
+            canConfigureProviders: false,
           },
-          { slug: "default", name: "Default", isCustom: false, capabilities: null },
-        ],
+        },
         slashCommands: [],
         skills: [],
-      } as const satisfies ServerProvider;
-      const refreshedProvider = {
-        ...previousProvider,
-        checkedAt: "2026-08-13T00:01:00.000Z",
-        models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null }],
-      } satisfies ServerProvider;
+      });
+      const completedProbe = (ids: ReadonlyArray<string>) =>
+        buildCheckedAcpRegistrySnapshot({ ...snapshotInput, probe: advertised(ids) });
+      const readiness = buildCheckedAcpRegistrySnapshot(snapshotInput);
+      const modelSummary = (provider: ServerProvider) =>
+        provider.models.map(({ slug, isCustom, isDefault }) => ({ slug, isCustom, isDefault }));
 
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
-        [...refreshedProvider.models],
-      );
-    });
+      it("replaces the model list after a completed discovery probe, without sign-in", () => {
+        // The cached list already carries the readiness placeholder beside real models.
+        const cached = ProviderRegistry.mergeProviderSnapshot(
+          completedProbe(["old-default", "old-removed", "kept"]),
+          readiness,
+        );
+        assert.deepStrictEqual(
+          cached.models.filter((model) => model.isDefault).map((model) => model.slug),
+          ["default", "old-default"],
+        );
 
-    it("retains ACP Registry models while discovery has not completed", () => {
-      const previousProvider = {
-        instanceId: ProviderInstanceId.make("acpRegistry_codex"),
-        driver: ProviderDriverKind.make("acpRegistry"),
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        checkedAt: "2026-08-13T00:00:00.000Z",
-        version: "1.2.0",
-        models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null }],
-        slashCommands: [],
-        skills: [],
-      } as const satisfies ServerProvider;
-      const checkingProvider = {
-        ...previousProvider,
-        checkedAt: "2026-08-13T00:01:00.000Z",
-        auth: { status: "unknown" },
-        models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
-      } satisfies ServerProvider;
-      const failedProbeProvider = {
-        ...checkingProvider,
-        status: "warning",
-      } satisfies ServerProvider;
+        const probed = completedProbe(["current", "kept"]);
+        const merged = ProviderRegistry.mergeProviderSnapshot(cached, probed);
 
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, checkingProvider).models,
-        [
-          { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-        ],
-      );
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProbeProvider).models,
-        [
-          { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-        ],
-      );
+        assert.strictEqual(merged.auth.status, "unknown");
+        assert.deepStrictEqual(modelSummary(merged), [
+          { slug: "current", isCustom: false, isDefault: true },
+          { slug: "kept", isCustom: false, isDefault: undefined },
+          { slug: "my-custom", isCustom: true, isDefault: undefined },
+        ]);
+      });
+
+      it("keeps known models while discovery is pending or failed", () => {
+        const previous = completedProbe(["current", "kept"]);
+        const failedProbe = buildCheckedAcpRegistrySnapshot({
+          ...snapshotInput,
+          probeError: new AcpRegistryOperationError({
+            reason: "probe_failed",
+            message: "The ACP agent could not create a test session.",
+          }),
+        });
+        // A saved sign-in confirmation marks the readiness snapshot authenticated
+        // before the background probe has discovered any models.
+        const confirmedReadiness = {
+          ...readiness,
+          auth: { ...readiness.auth, status: "authenticated" },
+        } satisfies ServerProvider;
+
+        for (const partial of [readiness, confirmedReadiness, failedProbe]) {
+          assert.deepStrictEqual(
+            modelSummary(ProviderRegistry.mergeProviderSnapshot(previous, partial)),
+            [
+              { slug: "default", isCustom: false, isDefault: true },
+              { slug: "my-custom", isCustom: true, isDefault: undefined },
+              { slug: "current", isCustom: false, isDefault: true },
+              { slug: "kept", isCustom: false, isDefault: undefined },
+            ],
+          );
+        }
+      });
     });
 
     it("drops stale OpenCode models missing from a successful refresh", () => {
