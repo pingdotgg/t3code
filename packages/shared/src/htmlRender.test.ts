@@ -11,6 +11,7 @@ import {
   injectHtmlRenderBootstrap,
   htmlRenderThemeMessage,
   readHtmlRenderContentHeight,
+  readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
@@ -106,6 +107,29 @@ describe("readHtmlRenderLinkRequest", () => {
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
     ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderImageRequest", () => {
+  it("accepts http(s) and inline image URLs in an open-image notification", () => {
+    const image = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/open-image",
+      params,
+    });
+    expect(
+      readHtmlRenderImageRequest(image({ src: "data:image/png;base64,AA", name: " Chart " })),
+    ).toEqual({
+      src: "data:image/png;base64,AA",
+      name: "Chart",
+    });
+    expect(readHtmlRenderImageRequest(image({ src: "https://example.com/a.png" }))).toEqual({
+      src: "https://example.com/a.png",
+      name: "Image",
+    });
+    expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
+    expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
+    expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
   });
 });
 
