@@ -3656,6 +3656,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
         [providerSessionId],
       );
+      assert.isTrue(
+        yield* projectionStore.isProviderSessionShared(firstThreadId, providerSessionId),
+      );
+      assert.isTrue(
+        yield* projectionStore.isProviderSessionShared(secondThreadId, providerSessionId),
+      );
       assert.deepEqual(
         (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions.map(
           (value) => value.id,
@@ -3692,6 +3698,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.lengthOf(
         (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions,
         1,
+      );
+      assert.isFalse(
+        yield* projectionStore.isProviderSessionShared(secondThreadId, providerSessionId),
       );
     }),
   );
