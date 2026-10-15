@@ -201,6 +201,33 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reads a GH_REPO owner/name behind a github.com subdomain through github.com", () => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@work.github.com:acme/web.git"]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            hosts.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "chosen/repo",
+              html_url: "https://github.com/chosen/repo",
+              ssh_url: "git@github.com:chosen/repo.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.getDefaultBranch({ cwd: "/repo", context: githubContext("work.github.com") });
+      assert.deepStrictEqual(hosts, ["github.com repos/chosen/repo"]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, { GH_REPO: "chosen/repo" }),
+    );
+  });
+
   it.effect("names a missing repository rather than a pull request", () => {
     const { layer } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/gone.git"]),

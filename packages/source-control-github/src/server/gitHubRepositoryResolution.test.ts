@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  resolveGitHubRepository,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -83,5 +84,49 @@ describe("gitHubApiHostForRemote", () => {
       "github.example.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@gitlab.com:a/b.git"), null);
+  });
+
+  it("reads a subdomain of github.com through github.com", () => {
+    assert.strictEqual(
+      gitHubApiHostForRemote("ssh://git@ssh.github.com:443/acme/web.git"),
+      "github.com",
+    );
+    assert.strictEqual(gitHubApiHostForRemote("git@work.github.com:acme/web.git"), "github.com");
+    assert.strictEqual(
+      gitHubApiHostForRemote("https://work.github.com:8443/acme/web.git"),
+      "github.com",
+    );
+  });
+});
+
+describe("resolveGitHubRepository", () => {
+  it("resolves a checkout behind a github.com subdomain alias to github.com", () => {
+    const remotes = [
+      "origin\tgit@work.github.com:acme/web.git (fetch)",
+      "origin\tgit@work.github.com:acme/web.git (push)",
+    ].join("\n");
+    const expected = {
+      host: "github.com",
+      locator: { host: "github.com", owner: "acme", name: "web" },
+    };
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: undefined,
+        defaultHost: "github.com",
+      }),
+      expected,
+    );
+    // The provider context names the alias as the checkout's host.
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: "work.github.com",
+        defaultHost: "github.com",
+      }),
+      expected,
+    );
   });
 });

@@ -10,6 +10,7 @@ import {
   PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
+  gitHubApiHostOf,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -88,6 +89,26 @@ describe("PullRequestListResult", () => {
         SourceControlProviderKind.make("forgejo"),
       ),
     ).toBe("forge.example");
+  });
+  it("names a GitHub checkout behind a github.com subdomain by github.com", () => {
+    const identity = {
+      canonicalKey: "work.github.com/acme/web",
+      locator: { remoteUrl: "git@work.github.com:acme/web.git" },
+    };
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(
+      "github.com",
+    );
+    expect(
+      pullRequestHostOf(
+        { canonicalKey: "github.example.com/acme/web" },
+        SourceControlProviderKind.make("github"),
+      ),
+    ).toBe("github.example.com");
+  });
+
+  it("reads a github.com subdomain with a port through github.com", () => {
+    expect(gitHubApiHostOf("work.github.com:8443")).toBe("github.com");
+    expect(gitHubApiHostOf("github.example.com:8443")).toBe("github.example.com:8443");
   });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record

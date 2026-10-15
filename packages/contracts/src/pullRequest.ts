@@ -1385,7 +1385,18 @@ export function pullRequestHostOf(
     }
   }
   const host = identity?.canonicalKey?.split("/")[0]?.trim();
-  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+  if (host === undefined || host.length === 0) return kind;
+  return kind === "github" ? gitHubApiHostOf(host) : host.toLowerCase();
+}
+
+/**
+ * The host a GitHub checkout is read through. github.com serves no API under its subdomains, so
+ * a remote there (`ssh.github.com`, or an SSH alias like `work.github.com`) is read through
+ * github.com; a self-hosted GitHub lives on its own domain.
+ */
+export function gitHubApiHostOf(host: string): string {
+  const normalized = host.toLowerCase();
+  return normalized.replace(/:\d+$/, "").endsWith(".github.com") ? "github.com" : normalized;
 }
 
 /**

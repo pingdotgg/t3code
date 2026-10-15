@@ -28,6 +28,7 @@ import {
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 import {
+  apiHostForHint,
   gitHubApiHostForRemote,
   parseFetchRemotes,
   parseGitHubRepositorySelector,
@@ -513,7 +514,7 @@ export const make = Effect.gen(function* () {
     }) {
       const envRepository = environment.GH_REPO?.trim();
       const hostHint = input.host ?? contextHost(input.context);
-      const defaultHost = (hostHint ?? environment.GH_HOST ?? "github.com").toLowerCase();
+      const defaultHost = apiHostForHint(hostHint ?? environment.GH_HOST ?? "github.com");
       if (envRepository) {
         const locator = parseGitHubRepositorySelector(envRepository, defaultHost);
         if (locator !== null) return locator;
