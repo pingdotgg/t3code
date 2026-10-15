@@ -223,6 +223,11 @@ const classifyResponseError = (
     ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
     cause: error,
   };
+  // The server's own browser writes these; other hosts' text stays out of the agent's context.
+  const serverReason =
+    context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
+      ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
+      : {};
   switch (error._tag) {
     case "PreviewAutomationRecordingDesktopUpdateRequiredError":
       return new PreviewAutomationRecordingDesktopUpdateRequiredError({
@@ -263,6 +268,7 @@ const classifyResponseError = (
       return new PreviewAutomationTimeoutError({
         ...context,
         ...remoteDiagnostics,
+        ...serverReason,
       });
     case "PreviewAutomationControlInterruptedError": {
       const reason = decodeControlReason(error.detail);
@@ -340,10 +346,7 @@ const classifyResponseError = (
       return new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
-        // The server's own browser writes these; other hosts' text stays out of the agent's context.
-        ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
-          ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
-          : {}),
+        ...serverReason,
       });
   }
 };
@@ -665,7 +668,13 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             // actions: the client may have applied them before becoming unreachable.
             // A background metadata read has a short budget and changes nothing,
             // so a slow one must not cut the host off from the agent's next call.
-            if (input.updateCurrentTab !== false) {
+            // The server's own browser is in-process: a slow page there is not
+            // an unreachable host, and evicting it would drop every thread's
+            // tab assignment and in-flight request at once.
+            if (
+              input.updateCurrentTab !== false &&
+              connection.clientId !== SERVER_BROWSER_AUTOMATION_CLIENT_ID
+            ) {
               yield* disconnect(connection.clientId, connection.queue, true);
             }
             return yield* new PreviewAutomationTimeoutError(requestContext);

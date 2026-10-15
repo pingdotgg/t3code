@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import { presentAsChrome } from "./ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
@@ -276,6 +285,18 @@ describe("server browser element refs", () => {
     ).rejects.toMatchObject({ tag: "PreviewAutomationTimeoutError" });
     expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" }, 2_000)).toBe(2);
   });
+
+  it("tells the agent what blocks a click that times out", async () => {
+    await page.setContent(
+      `<button>Save</button><div class="overlay" style="position:fixed;inset:0"></div>`,
+    );
+    const failure = await ServerBrowserPage.click(page, {
+      selector: "button",
+      timeoutMs: 1_500,
+    }).then(() => undefined, ServerBrowserPage.toOperationError);
+    expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    expect(failure?.message).toMatch(/<div class="overlay".*intercepts pointer events/);
+  });
 });
 
 describe("server browser drag", () => {
@@ -317,5 +338,34 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser snapshot", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails a snapshot of a page that never answers, freeing the tab for the next request", async () => {
+    vi.useFakeTimers();
+    const never = () => new Promise<never>(() => {});
+    // A page whose main thread is stuck: nothing it is asked ever settles.
+    const page = {
+      viewportSize: () => ({ width: 800, height: 600 }),
+      evaluate: never,
+      ariaSnapshot: never,
+      on: () => {},
+    } as unknown as Page;
+    const cdp = { send: never } as unknown as CDPSession;
+    const settled = ServerBrowserPage.snapshot({
+      page,
+      cdp,
+      renderScale: 1,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    }).then(() => null, ServerBrowserPage.toOperationError);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await settled).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
   });
 });
