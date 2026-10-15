@@ -37,11 +37,12 @@ export function Chip(props: {
         <SymbolView name={props.icon} size={15} tintColorClassName={iconColor} />
       ) : null}
       <AppText
+        textRole={small ? "caption" : "footnote"}
         numberOfLines={small ? undefined : 1}
         className={cn(
           "shrink",
           !small && "max-w-[180px]",
-          small ? "text-2xs" : "text-sm font-t3-medium",
+          !small && "font-t3-medium",
           props.selected ? "text-primary-foreground" : "text-foreground-muted",
         )}
       >

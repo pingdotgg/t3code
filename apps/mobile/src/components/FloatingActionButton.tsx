@@ -26,8 +26,8 @@ export function FloatingActionButton(props: FloatingActionButtonProps) {
       />
       {props.variant === "extended" && props.expanded !== false ? (
         <AppText
+          textRole="footnote"
           className={cn(
-            "text-sm",
             props.tone === "primary" ? "text-primary-foreground" : "text-secondary-foreground",
           )}
         >

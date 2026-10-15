@@ -6,4 +6,8 @@ export const MOBILE_SHAPE = {
 } as const;
 
 /** Finite transitions only; each animation must opt into system reduced motion. */
-export const MOBILE_MOTION = { enter: 200, exit: 150 } as const;
+export const MOBILE_MOTION = {
+  adjust: 120,
+  enter: 200,
+  exit: 150,
+} as const;

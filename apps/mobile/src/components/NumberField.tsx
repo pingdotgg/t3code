@@ -1,47 +1,96 @@
+import { Button, HStack, Picker, Popover, Text, VStack } from "@expo/ui/swift-ui";
+import {
+  accessibilityLabel,
+  buttonStyle,
+  disabled,
+  font,
+  foregroundStyle,
+  frame,
+  padding,
+  pickerStyle,
+  presentationBackground,
+  tag,
+} from "@expo/ui/swift-ui/modifiers";
 import { useState } from "react";
-import { AppTextInput } from "./AppText";
 
-export interface NumberFieldProps {
-  readonly label: string;
-  readonly min: number;
-  readonly max: number;
-  readonly formatValue?: (value: number) => string;
-  readonly value: number;
-  readonly onValueChange: (value: number) => void;
-  readonly disabled?: boolean;
-}
+import { NativeThemeHost } from "./NativeThemeHost";
+import { useControlTheme } from "./useControlTheme";
+import type { NumberFieldProps } from "./NumberField.types";
 
 export function NumberField(props: NumberFieldProps) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const commit = () => {
-    if (props.disabled) {
-      setDraft(null);
-      return;
-    }
-    const text = (draft ?? "").trim();
-    setDraft(null);
-    // Validate the whole input; decimals and trailing text must not become whole days.
-    const parsed = /^\d+$/.test(text) ? Number(text) : Number.NaN;
-    if (
-      Number.isInteger(parsed) &&
-      parsed >= props.min &&
-      parsed <= props.max &&
-      parsed !== props.value
-    ) {
-      props.onValueChange(parsed);
-    }
-  };
+  const { colors, fontSize } = useControlTheme();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(props.value);
+  const values = Array.from({ length: props.max - props.min + 1 }, (_, index) => props.min + index);
+  if (!values.includes(draft)) values.push(draft);
+  values.sort((a, b) => a - b);
   return (
-    <AppTextInput
-      className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
-      keyboardType="number-pad"
-      returnKeyType="done"
-      value={draft ?? String(props.value)}
-      onChangeText={setDraft}
-      onBlur={commit}
-      onSubmitEditing={commit}
-      accessibilityLabel={props.label}
-      editable={!props.disabled}
-    />
+    <NativeThemeHost matchContents>
+      <Popover isPresented={open} onIsPresentedChange={setOpen}>
+        <Popover.Trigger>
+          <Button
+            onPress={() => {
+              if (props.disabled) return;
+              setDraft(props.value);
+              setOpen(true);
+            }}
+            modifiers={[
+              buttonStyle("bordered"),
+              disabled(props.disabled),
+              accessibilityLabel(
+                `${props.label}: ${props.formatValue?.(props.value) ?? props.value}`,
+              ),
+              frame({ minWidth: 64, minHeight: 44 }),
+              foregroundStyle(colors["--color-primary-text"]),
+              font({ size: fontSize }),
+            ]}
+          >
+            <Text>{String(props.value)}</Text>
+          </Button>
+        </Popover.Trigger>
+        <Popover.Content>
+          <VStack
+            modifiers={[
+              padding({ all: 12 }),
+              frame({ width: 240 }),
+              presentationBackground(colors["--color-sheet-solid"]),
+            ]}
+          >
+            <Picker
+              label={props.label}
+              selection={draft}
+              onSelectionChange={setDraft}
+              modifiers={[pickerStyle("wheel"), frame({ height: 180 })]}
+            >
+              {values.map((value) => (
+                <Text
+                  key={value}
+                  modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
+                >
+                  {props.formatValue?.(value) ?? String(value)}
+                </Text>
+              ))}
+            </Picker>
+            <HStack spacing={24}>
+              <Button
+                label="Cancel"
+                onPress={() => setOpen(false)}
+                modifiers={[foregroundStyle(colors["--color-primary-text"])]}
+              />
+              <Button
+                label="Done"
+                onPress={() => {
+                  setOpen(false);
+                  if (!props.disabled && draft !== props.value) props.onValueChange(draft);
+                }}
+                modifiers={[foregroundStyle(colors["--color-primary-text"])]}
+              />
+            </HStack>
+          </VStack>
+        </Popover.Content>
+      </Popover>
+    </NativeThemeHost>
   );
 }
+
+export type { NumberFieldProps } from "./NumberField.types";

@@ -1,3 +1,4 @@
+import { MOBILE_MOTION } from "../lib/designTokens";
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "./AppSymbol";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -8,6 +9,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  ReduceMotion,
 } from "react-native-reanimated";
 import type { ComponentProps } from "react";
 
@@ -17,7 +19,10 @@ type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
 const THUMB_SIZE = 26;
 const TRACK_HEIGHT = 4;
-const SNAP_ANIMATION = { duration: 120 } as const;
+const SNAP_ANIMATION = {
+  duration: MOBILE_MOTION.adjust,
+  reduceMotion: ReduceMotion.System,
+} as const;
 
 function clampFraction(value: number): number {
   "worklet";

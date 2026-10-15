@@ -2,7 +2,7 @@ import { View } from "react-native";
 
 import { AppText } from "./AppText";
 import { IconButton } from "./IconButton";
-import type { NumberFieldProps } from "./NumberField";
+import type { NumberFieldProps } from "./NumberField.types";
 
 export function NumberField(props: NumberFieldProps) {
   const adjust = (amount: number) => {
@@ -26,7 +26,8 @@ export function NumberField(props: NumberFieldProps) {
         onPress={() => adjust(-1)}
       />
       <AppText
-        className="min-w-8 text-center text-base"
+        textRole="body"
+        className="min-w-8 text-center"
         style={{ fontVariant: ["tabular-nums"] }}
         accessibilityLabel={`${props.label}: ${props.formatValue?.(props.value) ?? props.value}`}
         accessibilityLiveRegion="polite"

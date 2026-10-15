@@ -39,9 +39,10 @@ export function Notice(props: {
       ) : null}
       <AppText
         selectable
+        textRole="footnote"
         accessibilityLiveRegion="polite"
         className={cn(
-          "min-w-0 flex-1 text-sm",
+          "min-w-0 flex-1",
           danger ? "text-danger-foreground" : "text-foreground",
           !props.floating && "font-t3-medium",
         )}
