@@ -87,6 +87,7 @@ export function ThreadDetailsPrRow({
   reference: linkedReference,
   status,
   project,
+  url,
   label,
   openAriaLabel,
   onOpen,
@@ -100,6 +101,7 @@ export function ThreadDetailsPrRow({
   status: PrStatusIndicator | null;
   /** The thread's project, which is what the pull request is read through on the host. */
   project: EnvironmentProject | null;
+  url: string;
   label: string;
   openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
@@ -389,7 +391,7 @@ export function ThreadDetailsPrRow({
       <TooltipTrigger
         render={
           <ThreadDetailsControl
-            type="button"
+            render={<a href={url} target="_blank" rel="noopener noreferrer" />}
             variant="ghost"
             size="sm"
             part={part}
