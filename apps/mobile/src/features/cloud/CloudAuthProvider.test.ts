@@ -20,6 +20,10 @@ vi.mock("../../lib/runtime", () => ({
   },
 }));
 
+vi.mock("../../lib/protectedData", () => ({
+  whenProtectedDataAvailable: vi.fn(async () => undefined),
+}));
+
 vi.mock("../../connection/catalog", () => ({
   environmentCatalog: {
     removeRelayEnvironments: {},
