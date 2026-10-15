@@ -14,6 +14,7 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  resolveModelPick,
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
@@ -221,6 +222,33 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+});
+
+describe("resolveModelPick", () => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const current = createModelSelection(claude, "claude-opus-5-5", [
+    { id: "effort", value: "medium" },
+  ]);
+  const remembered = [{ id: "effort", value: "high" }];
+
+  it("changes nothing when the current model is picked again", () => {
+    expect(resolveModelPick(current, claude, "claude-opus-5-5", remembered)).toBeNull();
+  });
+
+  it("starts any other model from the given options", () => {
+    expect(resolveModelPick(current, claude, "claude-sonnet-5-5", remembered)).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-sonnet-5-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(
+      resolveModelPick(current, ProviderInstanceId.make("claude_work"), "claude-opus-5-5"),
+    ).toEqual({ instanceId: "claude_work", model: "claude-opus-5-5" });
+    expect(resolveModelPick(null, claude, "claude-opus-5-5")).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+    });
   });
 });
 
