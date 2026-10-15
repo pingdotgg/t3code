@@ -182,6 +182,19 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // A single turn starts at the checkpoint its capture diffed against: the
+      // previous ordinal in the same scope. That checkpoint may belong to a
+      // stopped run or be the baseline left when the previous run captured none.
+      const parentCheckpoint =
+        input.fromTurnCount === input.toTurnCount - 1
+          ? projection.checkpoints.find(
+              (checkpoint) =>
+                checkpoint.status === "ready" &&
+                checkpoint.scopeId === toCheckpoint.scopeId &&
+                checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1,
+            )
+          : undefined;
+
       // The root scope is shared by every run in this thread. Its runId
       // tracks the latest owner, while ordinal zero stays the baseline.
       const firstScope =
@@ -196,8 +209,12 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Crypto.Crypto, crypto))
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
+          : (
+              parentCheckpoint ??
+              readyCheckpoints.find(
+                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+              )
+            )?.ref;
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,
