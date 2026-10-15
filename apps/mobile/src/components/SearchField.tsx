@@ -4,15 +4,7 @@ import { Pressable, TextInput, type TextInputInstance, View } from "react-native
 import { SymbolView } from "./AppSymbol";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-export function MaterialSearchField({
-  inputRef,
-  autoFocus = true,
-  accessibilityLabel,
-  clearAccessibilityLabel,
-  placeholder,
-  value,
-  onChangeText,
-}: {
+export interface SearchFieldProps {
   readonly autoFocus?: boolean;
   readonly inputRef: RefObject<TextInputInstance | null>;
   readonly accessibilityLabel: string;
@@ -20,7 +12,17 @@ export function MaterialSearchField({
   readonly placeholder: string;
   readonly value: string;
   readonly onChangeText: (value: string) => void;
-}) {
+}
+
+export function SearchField({
+  inputRef,
+  autoFocus = true,
+  accessibilityLabel,
+  clearAccessibilityLabel,
+  placeholder,
+  value,
+  onChangeText,
+}: SearchFieldProps) {
   const { scale, mediumIconSize } = useAndroidControlSizing();
   return (
     <View

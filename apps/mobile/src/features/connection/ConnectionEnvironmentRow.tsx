@@ -12,7 +12,7 @@ import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanim
 import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { Button } from "../../components/Button";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
@@ -195,14 +195,14 @@ export function ConnectionEnvironmentRow(props: {
                   />
                 </View>
               )}
-              <MaterialIconButton
+              <IconButton
                 accessibilityLabel="Reconnect environment"
                 icon="arrow.clockwise"
                 variant="tonal"
                 disabled={!enabled}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
               />
-              <MaterialIconButton
+              <IconButton
                 accessibilityLabel="Remove environment"
                 icon="trash"
                 variant="danger"

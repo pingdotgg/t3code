@@ -5,7 +5,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ControlPill } from "../../components/ControlPill";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -41,7 +41,7 @@ export function PullRequestSheetContent(props: {
           subtitle={props.subtitle}
           hideBottomBorder
           leading={
-            <MaterialIconButton
+            <IconButton
               icon="arrow.left"
               accessibilityLabel="Close"
               disabled={props.busy}

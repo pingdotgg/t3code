@@ -16,7 +16,7 @@ import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { ControlPillMenu } from "../../components/ControlPill";
-import { MaterialSearchField } from "../../components/MaterialSearchField";
+import { SearchField } from "../../components/SearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
@@ -86,7 +86,7 @@ export function MaterialThreadListToolbar(props: {
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
   const searchField = (
-    <MaterialSearchField
+    <SearchField
       inputRef={searchRef}
       accessibilityLabel="Search threads"
       clearAccessibilityLabel="Clear search"

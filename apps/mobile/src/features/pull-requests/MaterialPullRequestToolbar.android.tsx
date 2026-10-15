@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { MaterialSearchField } from "../../components/MaterialSearchField";
+import { SearchField } from "../../components/SearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -54,7 +54,7 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
       title="Pull requests"
       titleContent={
         searching ? (
-          <MaterialSearchField
+          <SearchField
             inputRef={input}
             accessibilityLabel="Search pull requests"
             clearAccessibilityLabel="Clear search"

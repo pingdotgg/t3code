@@ -1,27 +1,24 @@
+import type { IconButtonProps } from "./IconButton.types";
 import { NativeThemeHost } from "./NativeThemeHost.android";
-import { FilledIconButton, FilledTonalIconButton, IconButton } from "@expo/ui/jetpack-compose";
+import {
+  FilledIconButton,
+  FilledTonalIconButton,
+  IconButton as ComposeIconButton,
+} from "@expo/ui/jetpack-compose";
 import { size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
 import { useControlTheme } from "./useControlTheme";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView } from "./AppSymbol";
 
-export function MaterialIconButton(props: {
-  readonly accessibilityLabel: string;
-  readonly icon: AppSymbolName;
-  readonly onPress?: () => void;
-  readonly disabled?: boolean;
-  readonly selected?: boolean;
-  readonly variant?: "standard" | "primary" | "tonal" | "danger";
-  readonly tintColorClassName?: string;
-}) {
+export function IconButton(props: IconButtonProps) {
   const { colors } = useControlTheme();
   const { iconSize, buttonSize } = useAndroidControlSizing();
   const variant = props.variant ?? "standard";
   const Component =
     variant === "standard"
-      ? IconButton
+      ? ComposeIconButton
       : variant === "tonal"
         ? FilledTonalIconButton
         : FilledIconButton;

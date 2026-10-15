@@ -9,7 +9,7 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { Button } from "../../components/Button";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { SymbolView } from "../../components/AppSymbol";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -228,7 +228,7 @@ export function usePullRequestFilesContent(props: {
                 onPressAction={filter.toggle}
               >
                 <View pointerEvents="none">
-                  <MaterialIconButton
+                  <IconButton
                     icon="line.3.horizontal.decrease"
                     accessibilityLabel="Filter review files"
                     selected={filter.hideTestFiles}

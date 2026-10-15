@@ -3,7 +3,7 @@ import { BackHandler, Keyboard, type TextInputInstance, View } from "react-nativ
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { MaterialSearchField } from "../../components/MaterialSearchField";
+import { SearchField } from "../../components/SearchField";
 import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
 
 /** Keep Files search in the same header row on compact and expanded layouts. */
@@ -84,7 +84,7 @@ export function MaterialFilesHeader(props: {
               icon="arrow.left"
               onPress={closeSearch}
             />
-            <MaterialSearchField
+            <SearchField
               inputRef={searchRef}
               accessibilityLabel="Search files"
               clearAccessibilityLabel="Clear file search"

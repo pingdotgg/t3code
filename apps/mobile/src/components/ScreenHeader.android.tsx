@@ -15,7 +15,7 @@ import { AndroidScreenHeader } from "./AndroidScreenHeader";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { SymbolView } from "./AppSymbol";
 import { ControlPillMenu } from "./ControlPill";
-import { MaterialSearchField } from "./MaterialSearchField";
+import { SearchField } from "./SearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 import type { ScreenHeaderProps } from "./ScreenHeader.types";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
@@ -208,7 +208,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                   icon="arrow.left"
                   onPress={closeSearch}
                 />
-                <MaterialSearchField
+                <SearchField
                   inputRef={inputRef}
                   accessibilityLabel={search.placeholder}
                   clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}

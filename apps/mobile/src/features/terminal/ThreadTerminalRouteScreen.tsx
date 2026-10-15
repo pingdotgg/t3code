@@ -36,7 +36,7 @@ import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { Button } from "../../components/Button";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
@@ -1303,7 +1303,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                     />
                   ) : null}
                   <View className="flex-1" />
-                  <MaterialIconButton
+                  <IconButton
                     accessibilityLabel="Show keyboard"
                     disabled={!canOperateTerminal}
                     icon="keyboard"

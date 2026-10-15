@@ -15,7 +15,7 @@ import { GuideOutline } from "./GuideOutline";
 import { AppText as Text } from "../../../components/AppText";
 import { ScreenScrollView } from "../../../components/ScreenScrollView";
 import { ControlPillMenu } from "../../../components/ControlPillMenu";
-import { MaterialIconButton } from "../../../components/MaterialIconButton";
+import { IconButton } from "../../../components/IconButton";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";
@@ -156,7 +156,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               onPressAction={() => setCodeWordBreak(!appearance.codeWordBreak)}
             >
               <View pointerEvents="none">
-                <MaterialIconButton icon="ellipsis" accessibilityLabel="Guide options" />
+                <IconButton icon="ellipsis" accessibilityLabel="Guide options" />
               </View>
             </ControlPillMenu>
           }

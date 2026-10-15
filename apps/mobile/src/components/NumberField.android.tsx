@@ -1,7 +1,7 @@
 import { View } from "react-native";
 
 import { AppText } from "./AppText";
-import { MaterialIconButton } from "./MaterialIconButton";
+import { IconButton } from "./IconButton";
 import type { NumberFieldProps } from "./NumberField";
 
 export function NumberField(props: NumberFieldProps) {
@@ -19,7 +19,7 @@ export function NumberField(props: NumberFieldProps) {
         className="absolute inset-x-0 rounded-full bg-subtle"
         style={{ height: 32 }}
       />
-      <MaterialIconButton
+      <IconButton
         icon="minus"
         accessibilityLabel={`Decrease ${props.label}`}
         disabled={props.disabled || props.value <= props.min}
@@ -33,7 +33,7 @@ export function NumberField(props: NumberFieldProps) {
       >
         {props.value}
       </AppText>
-      <MaterialIconButton
+      <IconButton
         icon="plus"
         accessibilityLabel={`Increase ${props.label}`}
         disabled={props.disabled || props.value >= props.max}

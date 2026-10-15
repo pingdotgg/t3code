@@ -12,9 +12,9 @@ import { ListRow } from "../../components/ListRow";
 import { ListSection } from "../../components/ListSection";
 import { ListToggleRow } from "../../components/ListToggleRow";
 import { Button } from "../../components/Button";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
-import { MaterialSearchField } from "../../components/MaterialSearchField";
+import { SearchField } from "../../components/SearchField";
 import { LoadingStrip } from "../../components/LoadingStrip";
 import { Notice } from "../../components/Notice";
 import { NumberField } from "../../components/NumberField";
@@ -150,7 +150,7 @@ export function ComponentCatalogScreen() {
               <View className="flex-row flex-wrap gap-2">
                 <Button label="Disabled" disabled onPress={announceAction} />
                 <Button label="Loading" loading onPress={announceAction} />
-                <MaterialIconButton
+                <IconButton
                   accessibilityLabel="Open example sheet"
                   icon="plus"
                   variant="tonal"
@@ -170,7 +170,7 @@ export function ComponentCatalogScreen() {
               onChangeText={setText}
             />
             <View className="flex-row">
-              <MaterialSearchField
+              <SearchField
                 inputRef={searchRef}
                 accessibilityLabel="Search examples"
                 clearAccessibilityLabel="Clear examples search"

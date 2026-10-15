@@ -3,7 +3,7 @@ import { Platform, Pressable, View } from "react-native";
 import { cn } from "../lib/cn";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
-import { MaterialIconButton } from "./MaterialIconButton";
+import { IconButton } from "./IconButton";
 import { Button } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
@@ -110,7 +110,7 @@ export function ControlPill(props: {
     !props.activateOnPressIn
   ) {
     return (
-      <MaterialIconButton
+      <IconButton
         accessibilityLabel={props.accessibilityLabel}
         icon={props.icon}
         onPress={props.onPress}

@@ -1,7 +1,8 @@
+import type { IconButtonProps } from "./IconButton.types";
 import { cn } from "../lib/cn";
 import { Pressable } from "react-native";
 
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView } from "./AppSymbol";
 
 const VARIANT_CLASS_NAMES = {
   standard: ["", "accent-foreground"],
@@ -10,15 +11,7 @@ const VARIANT_CLASS_NAMES = {
   tonal: ["rounded-full bg-secondary", "accent-secondary-foreground"],
 } as const;
 
-export function MaterialIconButton(props: {
-  readonly accessibilityLabel: string;
-  readonly icon: AppSymbolName;
-  readonly onPress?: () => void;
-  readonly disabled?: boolean;
-  readonly selected?: boolean;
-  readonly variant?: "standard" | "primary" | "tonal" | "danger";
-  readonly tintColorClassName?: string;
-}) {
+export function IconButton(props: IconButtonProps) {
   const variant = props.variant ?? "standard";
   const [containerClassName, iconTintClassName] = VARIANT_CLASS_NAMES[variant];
   return (

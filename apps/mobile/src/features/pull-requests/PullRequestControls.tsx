@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { Button } from "../../components/Button";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { IconButton } from "../../components/IconButton";
 import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
@@ -160,7 +160,7 @@ export function PullRequestActionToolbar(props: {
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
               >
                 <View pointerEvents="none">
-                  <MaterialIconButton
+                  <IconButton
                     icon="sparkles"
                     accessibilityLabel="PR agent actions"
                     disabled={agent.disabled}
@@ -183,11 +183,7 @@ export function PullRequestActionToolbar(props: {
                 )}
               </View>
             ) : null}
-            <MaterialIconButton
-              icon="file.diff"
-              accessibilityLabel="Changed files"
-              onPress={openFiles}
-            />
+            <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
           </View>
         </MaterialFloatingToolbar>
       </View>
