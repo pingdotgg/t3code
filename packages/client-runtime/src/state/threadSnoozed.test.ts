@@ -28,6 +28,7 @@ function makeShell(input: {
   readonly snoozedAt?: string | null;
   readonly sessionStatus?: "starting" | "running" | "ready" | "error";
   readonly pending?: "approval" | "user-input";
+  readonly pendingUserInputAt?: string | null;
   readonly turnCompletedAt?: string | null;
 }): ThreadSnoozeShell {
   const threadId = ThreadId.make("thread-1");
@@ -36,6 +37,7 @@ function makeShell(input: {
     snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
     hasPendingApprovals: input.pending === "approval",
     hasPendingUserInput: input.pending === "user-input",
+    pendingUserInputAt: input.pendingUserInputAt ?? null,
     session:
       input.sessionStatus === undefined
         ? null
@@ -96,6 +98,23 @@ describe("effectiveSnoozed", () => {
         now: NOW,
       }),
     ).toBe(false);
+  });
+
+  it("defers an existing question until the timer, but wakes for a new question", () => {
+    const shell = makeShell({
+      snoozedUntil: FUTURE_WAKE,
+      pending: "user-input",
+      pendingUserInputAt: SNOOZED_AT,
+    });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBeNull();
+    expect(effectiveSnoozed(shell, { now: FUTURE_WAKE })).toBe(false);
+    expect(threadWokeAt(shell, { now: FUTURE_WAKE })).toBe(FUTURE_WAKE);
+
+    const newQuestion = { ...shell, pendingUserInputAt: "2026-04-10T10:00:00.000Z" };
+    expect(effectiveSnoozed(newQuestion, { now: NOW })).toBe(false);
+    expect(threadWokeAt(newQuestion, { now: NOW })).toBe(newQuestion.pendingUserInputAt);
+    expect(effectiveSnoozed({ ...shell, pendingUserInputAt: "invalid" }, { now: NOW })).toBe(false);
   });
 
   it("wakes early on a failure that happened after the snooze", () => {
@@ -179,7 +198,7 @@ describe("canSnooze", () => {
     ).toBe(true);
   });
 
-  it("refuses blocked-on-you work", () => {
+  it("allows deferring user input while refusing approvals and subagent requests", () => {
     expect(
       canSnooze({ ...makeShell({ pending: "approval" }), latestUserMessageAt: null }, { now: NOW }),
     ).toBe(false);
@@ -188,7 +207,7 @@ describe("canSnooze", () => {
         { ...makeShell({ pending: "user-input" }), latestUserMessageAt: null },
         { now: NOW },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canSnooze(
         { ...makeShell({}), latestUserMessageAt: null, pendingSubagentRequest: "approval" },
@@ -290,6 +309,45 @@ describe("threadWokeAt", () => {
       }),
     ).toBe("2026-04-10T11:00:00.000Z");
   });
+
+  it.each(["failure", "subagent request"] as const)(
+    "keeps an old question from masking a newer %s wake",
+    (wake) => {
+      const shell = {
+        ...makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          pending: "user-input",
+          pendingUserInputAt: SNOOZED_AT,
+          sessionStatus: wake === "failure" ? "error" : "running",
+        }),
+        pendingSubagentRequest: wake === "subagent request" ? ("user_input" as const) : null,
+      };
+      const lastVisitedAt = "2026-04-10T10:00:00.000Z";
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+      const wokeAt = threadWokeAt(shell, { now: NOW });
+      expect(wokeAt).toBe("2026-04-10T11:00:00.000Z");
+      expect(Date.parse(wokeAt!)).toBeGreaterThan(Date.parse(lastVisitedAt));
+    },
+  );
+
+  it.each([
+    ["error", "2026-04-10T10:00:00.000Z", "2026-04-10T11:00:00.000Z"],
+    ["failed", "2026-04-10T10:00:00.000Z", "2026-04-10T11:00:00.000Z"],
+    ["failed", "2026-04-10T11:30:00.000Z", "2026-04-10T11:30:00.000Z"],
+    ["running", "2026-04-10T10:00:00.000Z", "2026-04-10T10:00:00.000Z"],
+  ] as const)(
+    "uses the latest wake event for a %s runtime and a question at %s",
+    (status, pendingUserInputAt, expectedWakeAt) => {
+      const shell = {
+        ...makeShell({ snoozedUntil: FUTURE_WAKE, pending: "user-input", pendingUserInputAt }),
+        runtime: { status, updatedAt: "2026-04-10T11:00:00.000Z" },
+      };
+      const lastVisitedAt = "2026-04-10T10:30:00.000Z";
+      const wokeAt = threadWokeAt(shell, { now: NOW });
+      expect(wokeAt).toBe(expectedWakeAt);
+      expect(Date.parse(wokeAt!) > Date.parse(lastVisitedAt)).toBe(status !== "running");
+    },
+  );
 
   it("keeps the early wake authoritative after the scheduled time passes", () => {
     // Woke early at 10:30 via run-completed; the scheduled wake (PAST_WAKE

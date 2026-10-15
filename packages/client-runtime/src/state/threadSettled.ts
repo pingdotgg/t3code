@@ -92,19 +92,30 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
 }
 
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
- * the user's snooze: the agent or one of its subagents is blocked on them
- * (approval / user input), the session failed, or a run completed after the
+ * the user's snooze: a new question arrives, the agent or a subagent needs
+ * approval, a subagent needs input, the session failed, or a run completed after the
  * snooze was set — the v1 taste of event-based snooze ("something happened"
  * wakes early). Raising a hand never clears the server-side snooze fields; it
  * only stops the thread from classifying as snoozed.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
+  if (shell.hasPendingApprovals) return true;
+  // Snoozing an existing question means "ask me later". Only a new question
+  // wakes it early; missing or invalid timestamps keep the request visible.
+  if (
+    shell.hasPendingUserInput &&
+    (shell.snoozedAt == null ||
+      shell.pendingUserInputAt == null ||
+      !(Date.parse(shell.pendingUserInputAt) <= Date.parse(shell.snoozedAt)))
+  ) {
+    return true;
+  }
   if (shell.pendingSubagentRequest != null) return true;
   const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
@@ -131,12 +142,10 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
 }
 
 /**
- * A thread may be snoozed unless the agent or one of its subagents is blocked
- * on the user: hiding a pending approval or user-input request defeats the
- * request, and a queued turn start (a message no turn has adopted yet) is
- * invisible pending work the same way it is for settle. A running session IS snoozable — snooze
- * only affects visibility, never the agent. Client-side twin of the server
- * invariants so the UI can reject before a round trip.
+ * Snooze can defer an unanswered question without answering or cancelling it.
+ * Approvals, subagent requests, and queued turn starts still block snooze.
+ * A running session is snoozable: snooze only affects visibility, never the
+ * agent. Client-side twin of the server invariants.
  */
 export function canSnooze(
   shell: Pick<
@@ -152,7 +161,7 @@ export function canSnooze(
   >,
   options: { readonly now: string },
 ): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (shell.hasPendingApprovals) return false;
   if (shell.pendingSubagentRequest != null) return false;
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
@@ -209,6 +218,21 @@ export function threadWokeAt(
       Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
     ) {
       return latestRun.completedAt;
+    }
+    if (
+      shell.hasPendingUserInput &&
+      shell.pendingUserInputAt != null &&
+      shell.snoozedAt != null &&
+      Date.parse(shell.pendingUserInputAt) > Date.parse(shell.snoozedAt)
+    ) {
+      if (
+        (runtime?.status === "error" || runtime?.status === "failed") &&
+        runtime.updatedAt != null &&
+        Date.parse(runtime.updatedAt) > Date.parse(shell.pendingUserInputAt)
+      ) {
+        return runtime.updatedAt;
+      }
+      return shell.pendingUserInputAt;
     }
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }

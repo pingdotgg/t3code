@@ -2795,6 +2795,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     let snoozedUntil: DateTime.Utc | null = null;
+    let snoozeHasNewInput = false;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
@@ -2810,13 +2811,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
       }
-      if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+      if (
+        projection.runtimeRequests.some(
+          (request) => request.status === "pending" && request.kind !== "user_input",
+        )
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
+          cause: `Thread ${command.threadId} has a pending approval and cannot be snoozed.`,
         });
       }
+      snoozeHasNewInput = projection.runtimeRequests.some(
+        (request) =>
+          request.status === "pending" &&
+          request.kind === "user_input" &&
+          (thread.snoozedAt == null ||
+            DateTime.toEpochMillis(request.createdAt) > DateTime.toEpochMillis(thread.snoozedAt)),
+      );
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
       const queuedMessages =
         queuedRuns.length === 0
@@ -2902,7 +2914,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.snoozedUntil != null &&
             snoozedUntil !== null &&
             DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil);
-          const existingSnoozedAt = sameWakeTime ? (thread.snoozedAt ?? null) : null;
+          const existingSnoozedAt =
+            sameWakeTime && !snoozeHasNewInput ? (thread.snoozedAt ?? null) : null;
           return {
             ...thread,
             snoozedUntil,

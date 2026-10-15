@@ -165,8 +165,8 @@ export function isAutoSettlementCandidate(
 
 /**
  * Whether a thread is parked on its snooze: its wake time is in the future and
- * it has not raised its hand with a pending request, a fresh failure, or work
- * that completed after the snooze. Server twin of the client's
+ * it has not raised its hand with a new question, a pending approval, a fresh
+ * failure, or work that completed after the snooze. Server twin of the client's
  * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
  * difference: a failure counts as fresh when its run completed after the
  * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
@@ -181,8 +181,15 @@ export function isSnoozed(
 ): boolean {
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
-  if (thread.pendingRuntimeRequest !== null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  if (
+    thread.pendingRuntimeRequest !== null &&
+    (thread.pendingRuntimeRequest.kind !== "user_input" ||
+      snoozedAtMs === null ||
+      DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) > snoozedAtMs)
+  ) {
+    return false;
+  }
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&

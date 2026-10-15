@@ -153,7 +153,7 @@ export function resolveThreadListV2SnoozeGateExpiryMs(
   >,
   options: { readonly now: string },
 ): number | null {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return null;
+  if (thread.hasPendingApprovals) return null;
   if (thread.pendingSubagentRequest != null) return null;
   if (!hasQueuedTurnStart(thread, options)) return null;
   const messageAtMs = Date.parse(thread.latestUserMessageAt ?? "");

@@ -12,7 +12,7 @@ import {
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -20,6 +20,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -249,6 +250,35 @@ describe("queued messages keep a settled thread active", () => {
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
+  it("offers snooze for a presented input request and moves it onto the snoozed shelf", () => {
+    const raw = makeRawThreadShell({
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question"),
+        kind: "user_input",
+        createdAt: DateTime.makeUnsafe(NOW),
+      },
+    });
+    const thread = presentThreadShell(environmentId, raw);
+    expect(thread.pendingUserInputAt).toBe(NOW);
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: canSnooze(thread, { now: NOW }),
+      }).secondary,
+    ).toBe("snooze");
+
+    const layout = buildThreadListV2Items({
+      threads: [{ ...thread, snoozedAt: NOW, snoozedUntil: "2026-06-03T00:00:00.000Z" }],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+      snoozeEnvironmentIds: new Set([environmentId]),
+    });
+    expect(layout.snoozedCount).toBe(1);
+  });
   it("offers settle and snooze for an active snoozable thread", () => {
     expect(
       resolveThreadListV2SwipeActions({
