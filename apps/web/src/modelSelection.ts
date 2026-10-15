@@ -366,9 +366,19 @@ export function resolveAppModelSelectionState(
     selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
   if (entry) {
     // When the instance changed due to fallback (e.g. selected instance was disabled),
-    // don't carry over the old instance's model — use the fallback instance's default.
+    // don't carry over the old instance's model.
     const selectedModel = selectedEntry ? selection.model : null;
+    // A saved model the catalog no longer lists, or a new fallback instance,
+    // gets the driver's cheap text generation default. The catalog's own
+    // default is the flagship chat model, which is too expensive here.
+    const options = getAppModelOptionsForInstance(settings, entry);
     const model =
+      resolveSelectableModel(entry.driverKind, selectedModel, options) ??
+      resolveSelectableModel(
+        entry.driverKind,
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
+        options,
+      ) ??
       resolveAppModelSelectionForInstance(
         entry.instanceId,
         settings,
