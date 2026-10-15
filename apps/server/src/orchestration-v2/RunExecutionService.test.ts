@@ -3748,6 +3748,151 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
+it.effect("finalizes a planned workspace detach before the provider announces its first turn", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-before-turn";
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
+      knownProviderTurn: false,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.fail(
+          new ProviderAdapter.ProviderAdapterSessionDetached({
+            driver,
+            providerSessionId: ProviderSessionId.make(`session:${key}`),
+            threadId: ids.threadId,
+            reason: "workspace_changed",
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+    const interruption = written.find((item) => item.type === "run_interrupt_result");
+    assert.equal(interruption?.message, "Run interrupted because the workspace changed");
+  }),
+);
+
+it.effect.each(["pending", "running"] as const)(
+  "interrupts %s root tool items before finalizing a planned workspace detach",
+  (status) =>
+    Effect.gen(function* () {
+      const key = `workspace-detach-open-tools:${status}`;
+      const ids = backgroundScenarioIds(key);
+      const secondItemId = TurnItemId.make(`${ids.itemId}:second`);
+      const completedItemId = TurnItemId.make(`${ids.itemId}:completed`);
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.concat(
+            Stream.fromIterable([
+              backgroundTurnItemEvent(ids, "dynamic_tool", status, 1),
+              backgroundTurnItemEvent(ids, "dynamic_tool", status, 2, secondItemId),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3, completedItemId),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedItemId),
+            ]),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterSessionDetached({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                threadId: ids.threadId,
+                reason: "workspace_changed",
+              }),
+            ),
+          ),
+      });
+      const interruptedItems = ingested.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        interruptedItems.map((item) => item.id),
+        [ids.itemId, secondItemId],
+      );
+      for (const item of interruptedItems) {
+        assert.isNotNull(item.completedAt);
+        assert.deepEqual(item.updatedAt, item.completedAt);
+      }
+      assert.equal(ingested.at(-1)?.type, "turn.terminal");
+      assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    }),
+);
+
+it.effect("leaves planned-detach subagent items to the run-owned cascade", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-subagent";
+    const { ingested, written } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.make({
+            type: "turn_item.updated" as const,
+            driver,
+            turnItem: makeRunOwnedSubagentTurnItemFixture({
+              ids,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              childThreadId: ids.childThreadId,
+              driver,
+              status: "running",
+            }),
+          }),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              threadId: ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+        ),
+    });
+    assert.deepEqual(
+      ingested.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem.status] : [],
+      ),
+      ["running"],
+    );
+    assert.deepEqual(
+      written.filter((item) => item.type === "subagent").map((item) => item.status),
+      ["interrupted"],
+    );
+  }),
+);
+
+it.effect.each(["thread", "session"] as const)(
+  "fails rather than treating another %s's planned detach as this run's interruption",
+  (mismatch) =>
+    Effect.gen(function* () {
+      const key = `workspace-detach-mismatched-${mismatch}`;
+      const { written, observed } = yield* captureRootRunTermination({
+        key,
+        knownProviderTurn: false,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(
+                mismatch === "session" ? "session:other" : `session:${key}`,
+              ),
+              threadId: mismatch === "thread" ? ThreadId.make("thread:other") : ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      assert.deepEqual(
+        written.map((item) => item.type),
+        ["error"],
+      );
+    }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -3820,6 +3965,7 @@ function captureRootRunTermination(input: {
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
+  readonly knownProviderTurn?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3840,6 +3986,7 @@ function captureRootRunTermination(input: {
       status: "running",
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
+    const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
@@ -3893,7 +4040,8 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: ({ event }) =>
+              Ref.update(ingested, (current) => [...current, event]).pipe(Effect.as([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3954,7 +4102,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2Run,
         rootNode: {
           id: ids.rootNodeId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.knownProviderTurn === false ? null : ids.rootProviderTurnId,
         } as OrchestrationV2ExecutionNode,
         checkpointScope: {
           id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
@@ -3965,7 +4113,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.knownProviderTurn === false ? null : ids.rootProviderTurnId,
         } as OrchestrationV2RunAttempt,
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
@@ -4000,6 +4148,7 @@ function captureRootRunTermination(input: {
     yield* Deferred.await(ingestionDone);
     return {
       written: yield* Ref.get(writtenItems),
+      ingested: yield* Ref.get(ingested),
       observed: yield* Ref.get(observed),
       submittedEffects: yield* Ref.get(submittedEffects),
       committedEffects: yield* Ref.get(committedEffects),
@@ -4075,7 +4224,7 @@ function childBackgroundTurnItemEvent(
 function backgroundTurnItemEvent(
   ids: BackgroundScenarioIds,
   type: "command_execution" | "dynamic_tool" | "subagent",
-  status: "running" | "completed" | "idle",
+  status: "pending" | "running" | "completed" | "idle",
   ordinal: number,
   itemId?: TurnItemId,
 ): ProviderAdapter.ProviderAdapterV2Event {

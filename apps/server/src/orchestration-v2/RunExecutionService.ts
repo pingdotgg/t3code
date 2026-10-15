@@ -590,6 +590,7 @@ export const layer: Layer.Layer<
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
+      readonly interruptionMessage?: string;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
       readonly writeIfRunCurrent?: {
@@ -743,6 +744,9 @@ export const layer: Layer.Layer<
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
                       completedAt,
+                      ...(input.interruptionMessage === undefined
+                        ? {}
+                        : { message: input.interruptionMessage }),
                     }),
                   },
                 ]
@@ -934,6 +938,11 @@ export const layer: Layer.Layer<
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
+          const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
+          // A planned detach closes ingestion before the adapter can end its open root items.
+          const openRootTurnItems = yield* Ref.make<
+            ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>
+          >(new Map());
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -975,6 +984,7 @@ export const layer: Layer.Layer<
           );
           const rootTerminalSeen = yield* Ref.make(false);
           const rootRunFinalized = yield* Ref.make(false);
+          const interruptionMessage = yield* Ref.make<string | undefined>(undefined);
           const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
@@ -989,6 +999,7 @@ export const layer: Layer.Layer<
               }
               const providerThread = yield* Ref.get(latestProviderThread);
               const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+              const message = yield* Ref.get(interruptionMessage);
               yield* writeFinalRunEvents({
                 run: input.run,
                 rootNode: input.rootNode,
@@ -1013,6 +1024,7 @@ export const layer: Layer.Layer<
                     }),
                 openRunOwnedSubagents: openSubagents,
                 terminal,
+                ...(message === undefined ? {} : { interruptionMessage: message }),
                 failureItemPersisted: terminal.status === "failed",
                 refreshAfterTurn,
               }).pipe(
@@ -1225,6 +1237,81 @@ export const layer: Layer.Layer<
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const providerEventFiber = yield* eventSubscription.events.pipe(
+            Stream.catchTag("ProviderAdapterSessionDetached", (detached) =>
+              detached.providerSessionId !== input.providerSessionId ||
+              detached.threadId !== input.run.threadId
+                ? Stream.fail(detached)
+                : Stream.unwrap(
+                    Effect.gen(function* () {
+                      if (yield* Ref.get(rootRunFinalized)) return Stream.empty;
+                      yield* Ref.set(
+                        interruptionMessage,
+                        "Run interrupted because the workspace changed",
+                      );
+                      const routing = yield* Ref.get(eventRouting);
+                      const providerTurn = yield* Ref.get(latestRootProviderTurn);
+                      const completedAt = yield* DateTime.now;
+                      const terminal = {
+                        type: "turn.terminal",
+                        driver: input.providerThread.driver,
+                        providerThreadId: input.providerThread.id,
+                        providerTurnId:
+                          routing.rootProviderTurnId ??
+                          input.attempt.providerTurnId ??
+                          idAllocator.derive.providerTurn({
+                            driver: input.providerThread.driver,
+                            nativeTurnId: `detached:${input.attempt.id}`,
+                          }),
+                        runOrdinal: input.run.ordinal,
+                        status: "interrupted",
+                        failure: null,
+                        threadDisposition: "reusable",
+                      } satisfies ProviderTerminalEvent;
+                      // Before the provider's first turn event, the planned
+                      // detach supplies this run's root identity for routing.
+                      yield* Ref.update(eventRouting, (state) =>
+                        state.rootProviderTurnId === null
+                          ? {
+                              ...state,
+                              rootProviderTurnId: terminal.providerTurnId,
+                              ownedProviderTurnIds: new Set([
+                                ...state.ownedProviderTurnIds,
+                                terminal.providerTurnId,
+                              ]),
+                            }
+                          : state,
+                      );
+                      const openItems = yield* Ref.getAndSet(openRootTurnItems, new Map());
+                      return Stream.fromIterable<ProviderAdapter.ProviderAdapterV2Event>([
+                        ...[...openItems.values()].map((turnItem) => ({
+                          type: "turn_item.updated" as const,
+                          driver: input.providerThread.driver,
+                          turnItem: {
+                            ...turnItem,
+                            ...("streaming" in turnItem ? { streaming: false } : {}),
+                            status: "interrupted" as const,
+                            completedAt,
+                            updatedAt: completedAt,
+                          },
+                        })),
+                        ...(providerTurn?.status === "running" || providerTurn?.status === "pending"
+                          ? [
+                              {
+                                type: "provider_turn.updated" as const,
+                                driver: input.providerThread.driver,
+                                providerTurn: {
+                                  ...providerTurn,
+                                  status: "interrupted" as const,
+                                  completedAt,
+                                },
+                              },
+                            ]
+                          : []),
+                        terminal,
+                      ]);
+                    }),
+                  ),
+            ),
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
             ),
@@ -1293,6 +1380,13 @@ export const layer: Layer.Layer<
                   }
                 }
                 if (
+                  event.type === "provider_turn.updated" &&
+                  (event.providerTurn.runAttemptId === input.attempt.id ||
+                    event.providerTurn.id === (yield* Ref.get(eventRouting)).rootProviderTurnId)
+                ) {
+                  yield* Ref.set(latestRootProviderTurn, event.providerTurn);
+                }
+                if (
                   event.type === "turn_item.updated" &&
                   event.turnItem.providerTurnId ===
                     (yield* Ref.get(eventRouting)).rootProviderTurnId
@@ -1300,6 +1394,18 @@ export const layer: Layer.Layer<
                   yield* Ref.update(latestTurnItemOrdinal, (current) =>
                     Math.max(current, event.turnItem.ordinal),
                   );
+                  const turnItem = event.turnItem;
+                  // Subagent items are ended by the run-owned cascade.
+                  if (turnItem.type !== "subagent") {
+                    const open = turnItem.status === "running" || turnItem.status === "pending";
+                    yield* Ref.update(openRootTurnItems, (items) => {
+                      if (!open && !items.has(turnItem.id)) return items;
+                      const next = new Map(items);
+                      if (open) next.set(turnItem.id, turnItem);
+                      else next.delete(turnItem.id);
+                      return next;
+                    });
+                  }
                 }
                 if (event.type === "turn.terminal") {
                   yield* Ref.set(terminalEvent, event);
@@ -1515,6 +1621,7 @@ export function makeInterruptResultTurnItem(input: {
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly completedAt: DateTime.Utc;
+  readonly message?: string;
 }): OrchestrationV2TurnItem {
   return {
     id: input.idAllocator.derive.runSignalTurnItem({
@@ -1538,6 +1645,6 @@ export function makeInterruptResultTurnItem(input: {
     completedAt: input.completedAt,
     updatedAt: input.completedAt,
     type: "run_interrupt_result",
-    message: "Run interrupted by user",
+    message: input.message ?? "Run interrupted by user",
   };
 }
