@@ -1,220 +1,77 @@
-import { MOBILE_MOTION } from "../lib/designTokens";
+import { Slider } from "@expo/ui/swift-ui";
+import {
+  accessibilityLabel,
+  accessibilityValue,
+  disabled,
+  tint,
+} from "@expo/ui/swift-ui/modifiers";
 import * as Haptics from "expo-haptics";
+import { useEffect, useRef } from "react";
+import { View } from "react-native";
+
+import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { View, type AccessibilityActionEvent } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  ReduceMotion,
-} from "react-native-reanimated";
-import type { ComponentProps } from "react";
+import { NativeThemeHost } from "./NativeThemeHost";
+import type { SliderRowProps } from "./SliderRow.types";
+import { useControlTheme } from "./useControlTheme";
 
-import { AppText as Text } from "./AppText";
+export type { SliderRowProps } from "./SliderRow.types";
 
-type SymbolName = ComponentProps<typeof SymbolView>["name"];
-
-const THUMB_SIZE = 26;
-const TRACK_HEIGHT = 4;
-const SNAP_ANIMATION = {
-  duration: MOBILE_MOTION.adjust,
-  reduceMotion: ReduceMotion.System,
-} as const;
-
-function clampFraction(value: number): number {
-  "worklet";
-  return Math.min(1, Math.max(0, value));
-}
-
-export function SliderRow(props: {
-  readonly disabled?: boolean;
-  readonly icon: SymbolName;
-  readonly minimumIcon?: SymbolName;
-  readonly maximumIcon?: SymbolName;
-  readonly label: string;
-  readonly valueLabel: string;
-  readonly min: number;
-  readonly max: number;
-  readonly step: number;
-  readonly value: number;
-  readonly onChange: (value: number) => void;
-}) {
-  const latest = useRef(props);
-  latest.current = props;
-
-  const { min, max, step, value, disabled } = props;
-  const fraction = (value - min) / (max - min);
-
-  const progress = useSharedValue(clampFraction(fraction));
-  const trackWidth = useSharedValue(0);
-  const dragging = useSharedValue(false);
-
+export function SliderRow(props: SliderRowProps) {
+  const { colors } = useControlTheme();
+  const draft = useRef(props.value);
+  const editing = useRef(false);
   useEffect(() => {
-    if (!dragging.value) {
-      progress.value = withTiming(clampFraction(fraction), SNAP_ANIMATION);
-    }
-  }, [dragging, fraction, progress]);
-
-  const commit = useCallback((next: number) => {
-    const current = latest.current;
-    if (current.disabled || next === current.value) {
-      return;
-    }
-    Haptics.selectionAsync().catch(() => undefined);
-    current.onChange(next);
-  }, []);
-
-  const gesture = useMemo(() => {
-    const snapValue = (raw: number): number => {
-      "worklet";
-      const stepped = Math.round((raw - min) / step) * step + min;
-      return Math.min(max, Math.max(min, stepped));
-    };
-    const fractionAt = (x: number): number => {
-      "worklet";
-      const usable = trackWidth.value - THUMB_SIZE;
-      if (usable <= 0) {
-        return 0;
-      }
-      return clampFraction((x - THUMB_SIZE / 2) / usable);
-    };
-    const valueAtFraction = (f: number): number => {
-      "worklet";
-      return snapValue(min + f * (max - min));
-    };
-    const fractionOfValue = (v: number): number => {
-      "worklet";
-      return clampFraction((v - min) / (max - min));
-    };
-
-    const pan = Gesture.Pan()
-      .enabled(!disabled)
-      .activeOffsetX([-8, 8])
-      .failOffsetY([-12, 12])
-      .onUpdate((event) => {
-        dragging.value = true;
-        const f = fractionAt(event.x);
-        progress.value = f;
-      })
-      .onFinalize((_event, success) => {
-        if (!dragging.value) {
-          return;
-        }
-        dragging.value = false;
-        if (!success) {
-          progress.value = withTiming(fractionOfValue(value), SNAP_ANIMATION);
-          return;
-        }
-        const next = valueAtFraction(progress.value);
-        progress.value = withTiming(fractionOfValue(next), SNAP_ANIMATION);
-        runOnJS(commit)(next);
-      });
-
-    const tap = Gesture.Tap()
-      .enabled(!disabled)
-      .onEnd((event) => {
-        const next = valueAtFraction(fractionAt(event.x));
-        progress.value = withTiming(fractionOfValue(next), SNAP_ANIMATION);
-        runOnJS(commit)(next);
-      });
-
-    return Gesture.Race(pan, tap);
-  }, [commit, disabled, dragging, max, min, progress, step, trackWidth, value]);
-
-  const fillStyle = useAnimatedStyle(() => ({
-    width: THUMB_SIZE / 2 + progress.value * Math.max(0, trackWidth.value - THUMB_SIZE),
-  }));
-  const thumbStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: progress.value * Math.max(0, trackWidth.value - THUMB_SIZE) }],
-  }));
-
-  const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
-    if (event.nativeEvent.actionName === "increment") {
-      commit(Math.min(max, value + step));
-    } else if (event.nativeEvent.actionName === "decrement") {
-      commit(Math.max(min, value - step));
-    }
+    if (!editing.current) draft.current = props.value;
+  }, [props.value]);
+  const commit = (value: number) => {
+    if (props.disabled) return;
+    const next = Math.min(
+      props.max,
+      Math.max(props.min, props.min + Math.round((value - props.min) / props.step) * props.step),
+    );
+    if (next === props.value) return;
+    void Haptics.selectionAsync().catch(() => undefined);
+    props.onChange(next);
   };
-
   return (
-    <View className={disabled ? "gap-1 p-4 opacity-[0.45]" : "gap-1 p-4"}>
+    <View className={props.disabled ? "gap-1 p-4 opacity-[0.45]" : "gap-1 p-4"}>
       <View className="flex-row items-center gap-4">
-        <SymbolView
-          name={props.icon}
-          size={22}
-          tintColorClassName={"accent-icon"}
-          type="monochrome"
-          weight="regular"
-        />
-        <Text className="flex-1 text-lg text-foreground">{props.label}</Text>
-        <Text className="text-base font-t3-medium text-foreground-muted">{props.valueLabel}</Text>
+        <SymbolView name={props.icon} size={22} tintColorClassName="accent-icon" />
+        <AppText className="flex-1 text-lg text-foreground">{props.label}</AppText>
+        <AppText className="text-base font-t3-medium text-foreground-muted">
+          {props.valueLabel}
+        </AppText>
       </View>
       <View className="flex-row items-center gap-3">
         {props.minimumIcon ? (
-          <SymbolView
-            name={props.minimumIcon}
-            size={15}
-            tintColorClassName={"accent-icon-muted"}
-            type="monochrome"
-            weight="regular"
-          />
+          <SymbolView name={props.minimumIcon} size={15} tintColorClassName="accent-icon-muted" />
         ) : null}
-        <GestureDetector gesture={gesture}>
-          <View
-            accessible
-            accessibilityActions={[
-              { name: "increment", label: `Increase ${props.label}` },
-              { name: "decrement", label: `Decrease ${props.label}` },
+        <NativeThemeHost style={{ flex: 1, height: 44 }}>
+          <Slider
+            min={props.min}
+            max={props.max}
+            step={props.step}
+            value={props.value}
+            modifiers={[
+              tint(colors["--color-primary"]),
+              disabled(Boolean(props.disabled)),
+              accessibilityLabel(props.label),
+              accessibilityValue(props.valueLabel),
             ]}
-            accessibilityLabel={props.label}
-            accessibilityRole="adjustable"
-            accessibilityState={{ disabled: Boolean(disabled) }}
-            accessibilityValue={{ min, max, now: value, text: props.valueLabel }}
-            className="h-11 flex-1 justify-center"
-            onAccessibilityAction={handleAccessibilityAction}
-            onLayout={(event) => {
-              trackWidth.value = event.nativeEvent.layout.width;
+            onValueChange={(value) => {
+              draft.current = value;
+              // Accessibility adjustments do not begin a touch editing session.
+              if (!editing.current) commit(value);
             }}
-          >
-            <View
-              className="w-full rounded-full bg-secondary-border"
-              style={{ height: TRACK_HEIGHT }}
-            >
-              <Animated.View
-                className="absolute inset-y-0 left-0 rounded-full bg-primary"
-                style={fillStyle}
-              />
-            </View>
-            <Animated.View
-              className="absolute left-0 rounded-full border-border bg-primary"
-              style={[
-                {
-                  borderWidth: 1,
-                  height: THUMB_SIZE,
-                  marginTop: -THUMB_SIZE / 2,
-                  shadowColor: "#000000",
-                  shadowOffset: { height: 2, width: 0 },
-                  shadowOpacity: 0.18,
-                  shadowRadius: 3,
-                  top: "50%",
-                  width: THUMB_SIZE,
-                },
-                thumbStyle,
-              ]}
-            />
-          </View>
-        </GestureDetector>
-        {props.maximumIcon ? (
-          <SymbolView
-            name={props.maximumIcon}
-            size={22}
-            tintColorClassName={"accent-icon-muted"}
-            type="monochrome"
-            weight="regular"
+            onEditingChanged={(isEditing) => {
+              editing.current = isEditing;
+              if (!isEditing) commit(draft.current);
+            }}
           />
+        </NativeThemeHost>
+        {props.maximumIcon ? (
+          <SymbolView name={props.maximumIcon} size={22} tintColorClassName="accent-icon-muted" />
         ) : null}
       </View>
     </View>
