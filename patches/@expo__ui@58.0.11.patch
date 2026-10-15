@@ -1,0 +1,180 @@
+diff --git a/android/src/main/java/expo/modules/ui/HostView.kt b/android/src/main/java/expo/modules/ui/HostView.kt
+index eac1903ae62f66081211101a0de408215fea6b44..1a3feb98cfb2e6bb38832ae96a22217b990ee888 100644
+--- a/android/src/main/java/expo/modules/ui/HostView.kt
++++ b/android/src/main/java/expo/modules/ui/HostView.kt
+@@ -68,6 +68,7 @@ internal enum class ExpoLayoutDirection(val value: String) : Enumerable {
+ internal data class HostProps(
+   val colorScheme: MutableState<ExpoColorScheme?> = mutableStateOf(null),
+   val seedColor: MutableState<android.graphics.Color?> = mutableStateOf(null),
++  val colorOverrides: MutableState<Map<String, android.graphics.Color>?> = mutableStateOf(null),
+   val layoutDirection: MutableState<ExpoLayoutDirection> = mutableStateOf(ExpoLayoutDirection.LeftToRight),
+   val useViewportSizeMeasurement: MutableState<Boolean> = mutableStateOf(false),
+   val ignoreSafeAreaKeyboardInsets: MutableState<Boolean> = mutableStateOf(false),
+@@ -132,9 +133,60 @@ internal class HostView(context: Context, appContext: AppContext) :
+     val seededScheme = remember(seedArgb, isDark) {
+       seedArgb?.let { seedColorScheme(it, isDark) }
+     }
+-    val colorScheme = seededScheme
++    val baseColorScheme = seededScheme
+       ?: props.colorScheme.value?.toColorScheme(context)
+       ?: ExpoColorScheme.defaultColorScheme(context, isSystemInDarkTheme())
++    val overrides = props.colorOverrides.value.orEmpty()
++    val colorScheme = baseColorScheme.copy(
++      primary = overrides["primary"]?.composeOrNull ?: baseColorScheme.primary,
++      onPrimary = overrides["onPrimary"]?.composeOrNull ?: baseColorScheme.onPrimary,
++      primaryContainer = overrides["primaryContainer"]?.composeOrNull ?: baseColorScheme.primaryContainer,
++      onPrimaryContainer = overrides["onPrimaryContainer"]?.composeOrNull ?: baseColorScheme.onPrimaryContainer,
++      inversePrimary = overrides["inversePrimary"]?.composeOrNull ?: baseColorScheme.inversePrimary,
++      secondary = overrides["secondary"]?.composeOrNull ?: baseColorScheme.secondary,
++      onSecondary = overrides["onSecondary"]?.composeOrNull ?: baseColorScheme.onSecondary,
++      secondaryContainer = overrides["secondaryContainer"]?.composeOrNull ?: baseColorScheme.secondaryContainer,
++      onSecondaryContainer = overrides["onSecondaryContainer"]?.composeOrNull ?: baseColorScheme.onSecondaryContainer,
++      tertiary = overrides["tertiary"]?.composeOrNull ?: baseColorScheme.tertiary,
++      onTertiary = overrides["onTertiary"]?.composeOrNull ?: baseColorScheme.onTertiary,
++      tertiaryContainer = overrides["tertiaryContainer"]?.composeOrNull ?: baseColorScheme.tertiaryContainer,
++      onTertiaryContainer = overrides["onTertiaryContainer"]?.composeOrNull ?: baseColorScheme.onTertiaryContainer,
++      background = overrides["background"]?.composeOrNull ?: baseColorScheme.background,
++      onBackground = overrides["onBackground"]?.composeOrNull ?: baseColorScheme.onBackground,
++      surface = overrides["surface"]?.composeOrNull ?: baseColorScheme.surface,
++      onSurface = overrides["onSurface"]?.composeOrNull ?: baseColorScheme.onSurface,
++      surfaceVariant = overrides["surfaceVariant"]?.composeOrNull ?: baseColorScheme.surfaceVariant,
++      onSurfaceVariant = overrides["onSurfaceVariant"]?.composeOrNull ?: baseColorScheme.onSurfaceVariant,
++      surfaceTint = overrides["surfaceTint"]?.composeOrNull ?: baseColorScheme.surfaceTint,
++      inverseSurface = overrides["inverseSurface"]?.composeOrNull ?: baseColorScheme.inverseSurface,
++      inverseOnSurface = overrides["inverseOnSurface"]?.composeOrNull ?: baseColorScheme.inverseOnSurface,
++      error = overrides["error"]?.composeOrNull ?: baseColorScheme.error,
++      onError = overrides["onError"]?.composeOrNull ?: baseColorScheme.onError,
++      errorContainer = overrides["errorContainer"]?.composeOrNull ?: baseColorScheme.errorContainer,
++      onErrorContainer = overrides["onErrorContainer"]?.composeOrNull ?: baseColorScheme.onErrorContainer,
++      outline = overrides["outline"]?.composeOrNull ?: baseColorScheme.outline,
++      outlineVariant = overrides["outlineVariant"]?.composeOrNull ?: baseColorScheme.outlineVariant,
++      scrim = overrides["scrim"]?.composeOrNull ?: baseColorScheme.scrim,
++      surfaceBright = overrides["surfaceBright"]?.composeOrNull ?: baseColorScheme.surfaceBright,
++      surfaceDim = overrides["surfaceDim"]?.composeOrNull ?: baseColorScheme.surfaceDim,
++      surfaceContainer = overrides["surfaceContainer"]?.composeOrNull ?: baseColorScheme.surfaceContainer,
++      surfaceContainerHigh = overrides["surfaceContainerHigh"]?.composeOrNull ?: baseColorScheme.surfaceContainerHigh,
++      surfaceContainerHighest = overrides["surfaceContainerHighest"]?.composeOrNull ?: baseColorScheme.surfaceContainerHighest,
++      surfaceContainerLow = overrides["surfaceContainerLow"]?.composeOrNull ?: baseColorScheme.surfaceContainerLow,
++      surfaceContainerLowest = overrides["surfaceContainerLowest"]?.composeOrNull ?: baseColorScheme.surfaceContainerLowest,
++      primaryFixed = overrides["primaryFixed"]?.composeOrNull ?: baseColorScheme.primaryFixed,
++      primaryFixedDim = overrides["primaryFixedDim"]?.composeOrNull ?: baseColorScheme.primaryFixedDim,
++      onPrimaryFixed = overrides["onPrimaryFixed"]?.composeOrNull ?: baseColorScheme.onPrimaryFixed,
++      onPrimaryFixedVariant = overrides["onPrimaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onPrimaryFixedVariant,
++      secondaryFixed = overrides["secondaryFixed"]?.composeOrNull ?: baseColorScheme.secondaryFixed,
++      secondaryFixedDim = overrides["secondaryFixedDim"]?.composeOrNull ?: baseColorScheme.secondaryFixedDim,
++      onSecondaryFixed = overrides["onSecondaryFixed"]?.composeOrNull ?: baseColorScheme.onSecondaryFixed,
++      onSecondaryFixedVariant = overrides["onSecondaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onSecondaryFixedVariant,
++      tertiaryFixed = overrides["tertiaryFixed"]?.composeOrNull ?: baseColorScheme.tertiaryFixed,
++      tertiaryFixedDim = overrides["tertiaryFixedDim"]?.composeOrNull ?: baseColorScheme.tertiaryFixedDim,
++      onTertiaryFixed = overrides["onTertiaryFixed"]?.composeOrNull ?: baseColorScheme.onTertiaryFixed,
++      onTertiaryFixedVariant = overrides["onTertiaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onTertiaryFixedVariant
++    )
+     val layoutDirection = props.layoutDirection.value.toLayoutDirection()
+ 
+     // Material3's `MaterialTheme` does not provide `LocalContentColor` — only `Surface` does — so
+diff --git a/build/jetpack-compose/Host/index.d.ts b/build/jetpack-compose/Host/index.d.ts
+index b586b653a991ce8840b9994a6fe1e6af75480ece..e32f6e093fde22e9cfc9d7ff612cddb59e036945 100644
+--- a/build/jetpack-compose/Host/index.d.ts
++++ b/build/jetpack-compose/Host/index.d.ts
+@@ -1,6 +1,7 @@
+ import { type Ref } from 'react';
+ import { type ColorSchemeName, type ColorValue, type StyleProp, type ViewStyle } from 'react-native';
+ import { type PrimitiveBaseProps } from '../layout';
++import type { MaterialColors } from '../colors';
+ export interface HostProps extends PrimitiveBaseProps {
+     /**
+      * When true, the host view will update its size in the React Native view tree to match the content's layout from Jetpack Compose.
+@@ -41,6 +42,7 @@ export interface HostProps extends PrimitiveBaseProps {
+      * available to descendants via `useMaterialColors()`.
+      */
+     seedColor?: ColorValue;
++    colorOverrides?: Partial<MaterialColors>;
+     /**
+      * The layout direction for the content.
+      * Defaults to the current locale direction from I18nManager.
+diff --git a/build/jetpack-compose/Host/index.js b/build/jetpack-compose/Host/index.js
+index 3e785c1667bcba137c3369da15aa7b397aa0fb37..80dba6ac4dd6ac8caf53fb7839ff3ed38c27b7f3 100644
+--- a/build/jetpack-compose/Host/index.js
++++ b/build/jetpack-compose/Host/index.js
+@@ -7,17 +7,14 @@ import { useMergeRefs } from '../../utils/useMergeRefs';
+ import { getMaterialColors, HostPaletteContext } from '../colors';
+ const HostNativeView = requireNativeView('ExpoUI', 'HostView');
+ export function Host(props) {
+-    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, ref, ...restProps } = props;
++    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, colorOverrides, ref, ...restProps } = props;
+     const schemeString = colorScheme === 'light' || colorScheme === 'dark' ? colorScheme : undefined;
+     const systemScheme = useRNColorScheme();
+     const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
+-    const palette = useMemo(()=>getMaterialColors({
+-            scheme: resolvedScheme,
+-            seedColor
+-        }), [
+-        resolvedScheme,
+-        seedColor
+-    ]);
++    const palette = useMemo(() => ({
++        ...getMaterialColors({ scheme: resolvedScheme, seedColor }),
++        ...colorOverrides
++    }), [resolvedScheme, seedColor, colorOverrides]);
+     const hostRef = useTextInputHostRef();
+     const mergedRef = useMergeRefs(ref, hostRef);
+     return /*#__PURE__*/ _jsx(HostPaletteContext.Provider, {
+@@ -30,7 +27,7 @@ export function Host(props) {
+                 matchContentsVertical: typeof matchContents === 'object' ? matchContents.vertical : matchContents,
+                 matchContentsHorizontal: typeof matchContents === 'object' ? matchContents.horizontal : matchContents,
+                 colorScheme: schemeString,
+-                seedColor: seedColor,
++                seedColor: seedColor, colorOverrides: colorOverrides,
+                 onLayoutContent: onLayoutContent,
+                 layoutDirection: layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight'),
+                 ref: mergedRef
+diff --git a/src/jetpack-compose/Host/index.tsx b/src/jetpack-compose/Host/index.tsx
+index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332ac0d79760 100644
+--- a/src/jetpack-compose/Host/index.tsx
++++ b/src/jetpack-compose/Host/index.tsx
+@@ -11,7 +11,7 @@ import {
+ 
+ import { TextInputHostProvider, useTextInputHostRef } from '../../keyboard';
+ import { useMergeRefs } from '../../utils/useMergeRefs';
+-import { getMaterialColors, HostPaletteContext } from '../colors';
++import { getMaterialColors, HostPaletteContext, type MaterialColors } from '../colors';
+ import { type PrimitiveBaseProps } from '../layout';
+ 
+ export interface HostProps extends PrimitiveBaseProps {
+@@ -51,6 +51,9 @@ export interface HostProps extends PrimitiveBaseProps {
+    */
+   seedColor?: ColorValue;
+ 
++  /** Explicit Material roles, applied after the seed or system palette. */
++  colorOverrides?: Partial<MaterialColors>;
++
+   /**
+    * The layout direction for the content.
+    * Defaults to the current locale direction from I18nManager.
+@@ -92,6 +95,7 @@ export function Host(props: HostProps) {
+     layoutDirection,
+     colorScheme,
+     seedColor,
++    colorOverrides,
+     ref,
+     ...restProps
+   } = props;
+@@ -100,8 +104,8 @@ export function Host(props: HostProps) {
+   const systemScheme = useRNColorScheme();
+   const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
+   const palette = useMemo(
+-    () => getMaterialColors({ scheme: resolvedScheme, seedColor }),
+-    [resolvedScheme, seedColor]
++    () => ({ ...getMaterialColors({ scheme: resolvedScheme, seedColor }), ...colorOverrides }),
++    [resolvedScheme, seedColor, colorOverrides]
+   );
+   const hostRef = useTextInputHostRef();
+   const mergedRef = useMergeRefs(ref, hostRef);
+@@ -120,6 +124,7 @@ export function Host(props: HostProps) {
+           }
+           colorScheme={schemeString}
+           seedColor={seedColor}
++          colorOverrides={colorOverrides}
+           onLayoutContent={onLayoutContent}
+           layoutDirection={
+             layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight')

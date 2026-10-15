@@ -1,4 +1,4 @@
-import { Button, Host, HStack, Picker, Popover, Text, VStack } from "@expo/ui/swift-ui";
+import { Button, HStack, Picker, Popover, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
   buttonStyle,
@@ -13,16 +13,17 @@ import {
 } from "@expo/ui/swift-ui/modifiers";
 import { useState } from "react";
 
+import { NativeThemeHost } from "./NativeThemeHost";
 import { useControlTheme } from "./useControlTheme";
 import type { NumberFieldProps } from "./NumberField";
 
 export function NumberField(props: NumberFieldProps) {
-  const { colorScheme, colors, fontSize } = useControlTheme();
+  const { colors, fontSize } = useControlTheme();
   const values = Array.from({ length: props.max - props.min + 1 }, (_, index) => props.min + index);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.value);
   return (
-    <Host matchContents colorScheme={colorScheme} seedColor={colors["--color-primary"]}>
+    <NativeThemeHost matchContents>
       <Popover isPresented={open} onIsPresentedChange={setOpen}>
         <Popover.Trigger>
           <Button
@@ -86,6 +87,6 @@ export function NumberField(props: NumberFieldProps) {
           </VStack>
         </Popover.Content>
       </Popover>
-    </Host>
+    </NativeThemeHost>
   );
 }

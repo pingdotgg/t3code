@@ -50,7 +50,7 @@
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/metro-runtime": "~58.0.10",
-    "@expo/ui": "~58.0.11",
+    "@expo/ui": "58.0.11",
     "@legendapp/list": "catalog:",
     "@material/material-color-utilities": "0.3.0",
     "@noble/curves": "catalog:",
@@ -164,6 +164,7 @@
     },
     "autolinking": {
       "buildFromSource": [
+        "expo-ui",
         "expo-notifications",
         "react-native-screens",
         "react-native-reanimated",

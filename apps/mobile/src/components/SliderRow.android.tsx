@@ -1,4 +1,4 @@
-import { Host, Slider } from "@expo/ui/jetpack-compose";
+import { Slider } from "@expo/ui/jetpack-compose";
 import { fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
 import * as Haptics from "expo-haptics";
 import { useRef, type ComponentProps } from "react";
@@ -6,11 +6,12 @@ import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
+import { NativeThemeHost } from "./NativeThemeHost";
 import { useControlTheme } from "./useControlTheme";
 import type { SliderRow as SharedSliderRow } from "./SliderRow";
 
 export function SliderRow(props: ComponentProps<typeof SharedSliderRow>) {
-  const { colorScheme, systemColorsActive, colors } = useControlTheme();
+  const { colors } = useControlTheme();
   const draft = useRef(props.value);
   const commit = (value: number) => {
     if (props.disabled) return;
@@ -47,11 +48,7 @@ export function SliderRow(props: ComponentProps<typeof SharedSliderRow>) {
         }}
       >
         <View importantForAccessibility="no-hide-descendants">
-          <Host
-            colorScheme={colorScheme}
-            seedColor={systemColorsActive ? undefined : colors["--color-primary"]}
-            style={{ height: 48, width: "100%" }}
-          >
+          <NativeThemeHost style={{ height: 48, width: "100%" }}>
             <Slider
               min={props.min}
               max={props.max}
@@ -69,7 +66,7 @@ export function SliderRow(props: ComponentProps<typeof SharedSliderRow>) {
               }}
               onValueChangeFinished={() => commit(draft.current)}
             />
-          </Host>
+          </NativeThemeHost>
         </View>
       </View>
     </View>

@@ -1,0 +1,63 @@
+import type { MaterialColors } from "@expo/ui/jetpack-compose";
+import { flattenThemeColor, type MobileThemeVariables } from "./mobileTheme";
+
+/** Native controls use the same resolved palette as RN, without generating new hues. */
+export function createNativeThemeColors(colors: MobileThemeVariables): MaterialColors {
+  const roles = {
+    primary: colors["--color-primary"],
+    onPrimary: colors["--color-primary-foreground"],
+    primaryContainer: colors["--color-thread-selected"],
+    onPrimaryContainer: colors["--color-thread-selected-foreground"],
+    inversePrimary: colors["--color-primary-foreground"],
+    secondary: colors["--color-secondary"],
+    onSecondary: colors["--color-secondary-foreground"],
+    secondaryContainer: colors["--color-subtle-strong"],
+    onSecondaryContainer: colors["--color-secondary-foreground"],
+    tertiary: colors["--color-primary"],
+    onTertiary: colors["--color-primary-foreground"],
+    tertiaryContainer: colors["--color-thread-selected"],
+    onTertiaryContainer: colors["--color-thread-selected-foreground"],
+    background: colors["--color-screen"],
+    onBackground: colors["--color-foreground"],
+    surface: colors["--color-screen"],
+    onSurface: colors["--color-foreground"],
+    surfaceVariant: colors["--color-card-alt"],
+    onSurfaceVariant: colors["--color-foreground-muted"],
+    surfaceTint: colors["--color-primary"],
+    inverseSurface: colors["--color-foreground"],
+    inverseOnSurface: colors["--color-screen"],
+    error: colors["--color-danger-foreground"],
+    onError: colors["--color-danger"],
+    errorContainer: colors["--color-danger"],
+    onErrorContainer: colors["--color-danger-foreground"],
+    outline: colors["--color-input-border"],
+    outlineVariant: colors["--color-separator"],
+    scrim: "#000000",
+    surfaceBright: colors["--color-card-alt"],
+    surfaceDim: colors["--color-input"],
+    surfaceContainer: colors["--color-grouped-card"],
+    surfaceContainerHigh: colors["--color-card-alt"],
+    surfaceContainerHighest: colors["--color-subtle-strong"],
+    surfaceContainerLow: colors["--color-sheet-solid"],
+    surfaceContainerLowest: colors["--color-input"],
+    primaryFixed: colors["--color-primary"],
+    primaryFixedDim: colors["--color-primary"],
+    onPrimaryFixed: colors["--color-primary-foreground"],
+    onPrimaryFixedVariant: colors["--color-primary-foreground"],
+    secondaryFixed: colors["--color-secondary"],
+    secondaryFixedDim: colors["--color-secondary"],
+    onSecondaryFixed: colors["--color-secondary-foreground"],
+    onSecondaryFixedVariant: colors["--color-secondary-foreground"],
+    tertiaryFixed: colors["--color-primary"],
+    tertiaryFixedDim: colors["--color-primary"],
+    onTertiaryFixed: colors["--color-primary-foreground"],
+    onTertiaryFixedVariant: colors["--color-primary-foreground"],
+  } satisfies Record<keyof MaterialColors, string>;
+  // Material scheme roles are opaque. Composite translucent RN fills onto the canvas.
+  return Object.fromEntries(
+    Object.entries(roles).map(([role, color]) => [
+      role,
+      flattenThemeColor(color, colors["--color-screen"]),
+    ]),
+  ) as MaterialColors;
+}
