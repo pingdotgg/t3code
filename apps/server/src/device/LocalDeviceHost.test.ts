@@ -255,6 +255,66 @@ const diagnose = (
   );
 
 describe("Android SDK availability", () => {
+  it.effect("uses the standard Windows SDK without probing PATH", () =>
+    Effect.gen(function* () {
+      const root = "C:\\Users\\test\\AppData\\Local\\Android\\Sdk";
+      const probes: string[] = [];
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          USERPROFILE: "C:\\Users\\test",
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+          PATH: "\\\\slow-share\\tools;C:\\other-tools",
+        }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) =>
+              Effect.sync(() => {
+                probes.push(file);
+                return file === `${root}\\platform-tools\\adb.exe`;
+              }),
+            realPath: () => Effect.die("Standard SDK must not resolve PATH executables"),
+          }),
+        ),
+        Effect.provide(NodePath.layerWin32),
+      );
+      expect(sdk).toMatchObject({ root, adb: true });
+      expect(probes.filter((file) => !file.startsWith("C:\\Users\\test\\"))).toEqual([]);
+    }),
+  );
+
+  it.effect("falls back to adb on the Windows Path without resolving missing entries", () =>
+    Effect.gen(function* () {
+      const root = "D:\\Android\\Sdk";
+      const resolved: string[] = [];
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          USERPROFILE: "C:\\Users\\test",
+          Path: "C:\\missing;C:\\shims",
+        }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) =>
+              Effect.succeed(
+                file === "C:\\shims\\adb.exe" || file === `${root}\\platform-tools\\adb.exe`,
+              ),
+            realPath: (file) =>
+              Effect.sync(() => {
+                resolved.push(file);
+                return `${root}\\platform-tools\\adb.exe`;
+              }),
+          }),
+        ),
+        Effect.provide(NodePath.layerWin32),
+      );
+      expect(sdk).toMatchObject({ root, adb: true });
+      expect(resolved).toEqual(["C:\\shims\\adb.exe"]);
+    }),
+  );
+
   it.effect("explains that adb alone is insufficient to launch an emulator", () =>
     Effect.gen(function* () {
       const reason = yield* diagnose(["/sdk/platform-tools/adb"], { ANDROID_HOME: "/sdk" });
