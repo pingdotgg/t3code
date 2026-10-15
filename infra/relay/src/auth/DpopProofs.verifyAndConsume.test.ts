@@ -125,6 +125,43 @@ describe("DpopProofReplay.verifyAndConsume", () => {
     }).pipe(Effect.provide(layer(() => Effect.die("unexpected replay persistence"))));
   });
 
+  it.effect("remembers a consumed proof for as long as its time window accepts it", () => {
+    const now = DateTime.makeUnsafe("2026-05-25T12:00:00.000Z");
+    const nowEpochSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    const proof = makeDpopProof({
+      method: "POST",
+      url: "https://relay.example.com/v1/environments/env/connect",
+      iat: nowEpochSeconds + 300,
+      jti: "proof-future",
+    });
+    const inserted: Array<DpopProofInsertValues> = [];
+
+    return Effect.gen(function* () {
+      const replay = yield* DpopProofs.DpopProofReplay;
+      yield* replay.verifyAndConsume({
+        proof: proof.proof,
+        method: "POST",
+        url: "https://relay.example.com/v1/environments/env/connect",
+        expectedThumbprint: proof.thumbprint,
+        now,
+      });
+
+      // The proof still passes the time check until the end of second iat + 300s.
+      expect(inserted.map((values) => values.expiresAt)).toEqual([
+        DateTime.formatIso(DateTime.add(now, { seconds: 601 })),
+      ]);
+    }).pipe(
+      Effect.provide(
+        layer((values) =>
+          Effect.sync(() => {
+            inserted.push(values);
+            return [{ jti: values.jti }];
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("rejects replayed proofs after persistence consumes the jti once", () => {
     const now = DateTime.makeUnsafe("2026-05-25T12:00:00.000Z");
     const proof = makeDpopProof({

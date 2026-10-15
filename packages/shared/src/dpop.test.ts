@@ -183,6 +183,26 @@ describe("verifyDpopProof", () => {
     assert.equal(invalidSignature.code, "invalid_signature");
   });
 
+  it("tolerates the same clock skew ahead of and behind the verifier", () => {
+    const verifyAt = (nowEpochSeconds: number) =>
+      verifyDpopProof({
+        proof,
+        method: "POST",
+        url: "https://example.com/oauth/token",
+        nowEpochSeconds,
+      });
+
+    assert.equal(verifyAt(100 - 200).ok, true);
+    assert.equal(verifyAt(100 + 200).ok, true);
+    for (const nowEpochSeconds of [100 - 301, 100 + 301]) {
+      const result = verifyAt(nowEpochSeconds);
+      if (result.ok) {
+        assert.fail(`Expected verification at ${nowEpochSeconds} to fail.`);
+      }
+      assert.equal(result.code, "time_window");
+    }
+  });
+
   it("requires the RFC 9449 access token hash when an access token is expected", () => {
     const thumbprint = computeDpopJwkThumbprint(publicJwk);
     const accessTokenProof = signDpopProof({
