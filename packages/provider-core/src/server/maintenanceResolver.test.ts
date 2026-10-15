@@ -471,6 +471,52 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect.skipIf(windowsHost)("keeps mise wrappers in native install locations manual-only", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-mise-wrapper");
+      const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+      writeExecutable(nativePath);
+      NodeFS.writeFileSync(
+        nativePath,
+        '#!/bin/sh\nexec mise x native-package-tool -- native-package-tool "$@"\n',
+      );
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        { binaryPath: nativePath, env: { PATH: "" } },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps native-location links into mise installs manual-only",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-mise-link");
+        const target = NodePath.join(
+          tempDir,
+          "mise",
+          "installs",
+          "native-package-tool",
+          "1.0.0",
+          "native-package-tool",
+        );
+        writeExecutable(target);
+        const link = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
+        NodeFS.symlinkSync(target, link);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: link, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toBeNull();
+      }),
+  );
+
   // Regression for #9850: an explicit native path outside PATH, with spaces,
   // must be what actually gets spawned.
   it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
