@@ -278,12 +278,30 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("saves narrow tiled bounds and restores them in a fresh settings service", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        for (const width of [600, 664, 768]) {
+          const bounds = { x: 0, y: 0, width, height: 780 };
+          yield* settings.setMainWindowBounds(bounds, false);
+          const restored = yield* Effect.gen(function* () {
+            const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
+            return yield* freshSettings.load;
+          }).pipe(Effect.provide(DesktopAppSettings.layer));
+          assert.deepEqual(restored.mainWindowBounds, bounds);
+          assert.isFalse(restored.mainWindowMaximized);
+        }
+      }),
+    ),
+  );
+
   it.effect("rejects window bounds that do not satisfy the domain schema", () =>
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowBounds: { x: 10, y: 20, width: 599, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });

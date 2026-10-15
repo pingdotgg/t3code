@@ -17,7 +17,7 @@ import {
 } from "~/components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
-import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
@@ -96,6 +96,7 @@ function useSidebarVisibility() {
 
 function SidebarProvider({
   defaultOpen = true,
+  mobileBreakpoint,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -104,10 +105,13 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
+  mobileBreakpoint?: number;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const isMobile = useIsMobile();
+  const isMobile = useMediaQuery(
+    mobileBreakpoint === undefined ? "max-md" : { max: mobileBreakpoint },
+  );
   const [openMobile, setOpenMobile] = React.useState(false);
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
   const setMobileSheetElement = React.useCallback((element: HTMLDivElement | null) => {
