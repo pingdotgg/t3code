@@ -283,6 +283,49 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+/**
+ * Whether Claude marked the record as subagent, injected, or compaction output,
+ * which an imported thread never shows.
+ */
+function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
+  return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
+}
+
+/** The user or assistant text of a Claude record, when it has any. Skip hidden records first. */
+function claudeMessage(record: DecodedTranscriptRecord) {
+  if (record.type !== "user" && record.type !== "assistant") return undefined;
+  const text = extractText(record.message?.content);
+  return text.length > 0 ? ({ role: record.type, text } as const) : undefined;
+}
+
+/**
+ * The fields of a Claude thread where the newest record wins. They are folded
+ * as records stream past, so the many records that carry them need not be kept.
+ */
+interface ClaudeFields {
+  readonly sessionId: string | undefined;
+  readonly title: string | undefined;
+  readonly model: string | undefined;
+}
+
+const emptyClaudeFields: ClaudeFields = {
+  sessionId: undefined,
+  title: undefined,
+  model: undefined,
+};
+
+function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord): ClaudeFields {
+  if (isHiddenClaudeRecord(record)) return fields;
+  const model = record.message?.model?.trim();
+  return {
+    sessionId: record.sessionId?.trim() || fields.sessionId,
+    title: record.aiTitle?.trim() || fields.title,
+    // Claude uses this sentinel for local error responses. It is not a
+    // model ID that can be selected when the imported session resumes.
+    model: model && model !== "<synthetic>" ? model : fields.model,
+  };
+}
+
 /** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
@@ -292,19 +335,25 @@ export function parseAgentSessionTranscript(
 ): AgentSessionThread | null {
   if (lines.length > MAX_IMPORT_RECORDS) return null;
   const records = lines.flatMap((line) => Option.toArray(decodeTranscriptRecord(line)));
-  return parseAgentSessionRecords(input, records);
+  const claudeFields =
+    input.source === "claudeAgent"
+      ? records.reduce(foldClaudeFields, emptyClaudeFields)
+      : emptyClaudeFields;
+  return parseAgentSessionRecords(input, records, claudeFields);
 }
 
 function parseAgentSessionRecords(
   input: AgentSessionTranscriptMetadata,
   records: ReadonlyArray<DecodedTranscriptRecord>,
+  claudeFields: ClaudeFields,
 ): AgentSessionThread | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
   // timestamp text, so only transcript metadata can provide a resumable ID.
-  let providerSessionId = input.source === "codex" ? "" : input.fallbackSessionId;
-  let title: string | null = null;
-  let model: string | null = null;
+  let providerSessionId =
+    input.source === "codex" ? "" : (claudeFields.sessionId ?? input.fallbackSessionId);
+  const title = claudeFields.title ?? null;
+  let model = claudeFields.model ?? null;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -396,28 +445,11 @@ function parseAgentSessionRecords(
   for (const record of records) {
     recordIndex += 1;
     if (input.source === "claudeAgent") {
-      if (
-        record.isSidechain === true ||
-        record.isMeta === true ||
-        record.isCompactSummary === true
-      ) {
-        continue;
-      }
-      if (record.sessionId?.trim()) providerSessionId = record.sessionId.trim();
-      if (record.aiTitle?.trim()) title = record.aiTitle.trim();
-      const messageModel = record.message?.model?.trim();
-      // Claude uses this sentinel for local error responses. It is not a
-      // model ID that can be selected when the imported session resumes.
-      if (messageModel && messageModel !== "<synthetic>") model = messageModel;
-      if (record.type !== "user" && record.type !== "assistant") {
-        continue;
-      }
-
-      const text = extractText(record.message?.content);
-      if (text.length === 0) continue;
+      if (isHiddenClaudeRecord(record)) continue;
+      const message = claudeMessage(record);
+      if (message === undefined) continue;
       retainMessage({
-        role: record.type,
-        text,
+        ...message,
         createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
         codexResponseUser: false,
       });
@@ -511,19 +543,19 @@ function extractDecodedCwd(record: DecodedTranscriptRecord): string | null {
   return cwd && cwd.length > 0 ? cwd : null;
 }
 
+/**
+ * Whether the importer needs the whole record: Claude messages and the Codex
+ * records that build a thread. Claude writes a record for every attachment,
+ * tool call, and event, nearly all with a cwd and a session ID, so keeping a
+ * record for either would hold most of a long transcript in memory. Claude's
+ * newest session ID, title, and model are folded instead.
+ */
 function shouldRetainDecodedRecord(
   source: AgentSessionSource,
   record: DecodedTranscriptRecord,
 ): boolean {
-  if (extractDecodedCwd(record) !== null) return true;
   if (source === "claudeAgent") {
-    return (
-      record.type === "user" ||
-      record.type === "assistant" ||
-      record.sessionId !== undefined ||
-      record.aiTitle !== undefined ||
-      record.message?.model !== undefined
-    );
+    return !isHiddenClaudeRecord(record) && claudeMessage(record) !== undefined;
   }
   return (
     record.type === "session_meta" ||
@@ -813,6 +845,7 @@ export const make = Effect.gen(function* () {
    * Project history fields while reading, before allocating whole JSON records.
    * Check the file identity on both sides of the read. A selected-history budget
    * failure rejects the entire transcript before any imported messages persist.
+   * `cwd` and `claudeFields` come from every decoded record, retained or not.
    */
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
@@ -830,6 +863,8 @@ export const make = Effect.gen(function* () {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
+            let cwd = Option.none<string>();
+            let claudeFields = emptyClaudeFields;
             let historyBytes = 0;
             let recordBytes = 0;
             let recordCount = 0;
@@ -851,9 +886,15 @@ export const make = Effect.gen(function* () {
               recordCount += 1;
               if (recordCount > recordLimit) return false;
               const decoded = decodeTranscriptValue(reader.finish());
-              if (Option.isSome(decoded) && shouldRetainDecodedRecord(source, decoded.value)) {
-                records.push(decoded.value);
-                historyBytes += recordBytes;
+              if (Option.isSome(decoded)) {
+                if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
+                if (source === "claudeAgent") {
+                  claudeFields = foldClaudeFields(claudeFields, decoded.value);
+                }
+                if (shouldRetainDecodedRecord(source, decoded.value)) {
+                  records.push(decoded.value);
+                  historyBytes += recordBytes;
+                }
               }
               recordBytes = 0;
               reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
@@ -889,7 +930,7 @@ export const make = Effect.gen(function* () {
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, recordCount }
+              ? { records, recordCount, cwd, claudeFields }
               : null;
           }),
         ),
@@ -1431,15 +1472,10 @@ export const make = Effect.gen(function* () {
           recordsRemaining -= snapshot.recordCount;
 
           // A stable replacement file can belong to a different project than the cached candidate.
-          let snapshotCwd: string | null = null;
-          for (const record of snapshot.records) {
-            snapshotCwd = extractDecodedCwd(record);
-            if (snapshotCwd !== null) break;
-          }
-          if (snapshotCwd === null) {
+          if (Option.isNone(snapshot.cwd)) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const expandedCwd = expandHomePath(snapshotCwd.trim(), homeDir);
+          const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
           if (
             !path.isAbsolute(expandedCwd) ||
             (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
@@ -1455,6 +1491,7 @@ export const make = Effect.gen(function* () {
               lastActiveAtMs: transcript.mtimeMs,
             },
             snapshot.records,
+            snapshot.claudeFields,
           );
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
