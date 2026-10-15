@@ -98,7 +98,22 @@ vi.mock("react-native", () => ({
   },
 }));
 
-import { loadPreferences, savePreferencesPatch } from "../persistence/imperative";
+import { loadPreferences, saveConnection, savePreferencesPatch } from "../persistence/imperative";
+import { toStableSavedRemoteConnection } from "./connection";
+import { pullRequestSavedViewPreferences } from "../features/pull-requests/pullRequestSavedViews";
+
+const managedConnection = {
+  environmentId: EnvironmentId.make("environment-1"),
+  environmentLabel: "Desktop",
+  pairingUrl: "https://desktop.example/",
+  displayUrl: "https://desktop.example/",
+  httpBaseUrl: "https://desktop.example/",
+  wsBaseUrl: "wss://desktop.example/",
+  bearerToken: null,
+  authenticationMethod: "dpop",
+  dpopAccessToken: "short-lived-token",
+  relayManaged: true,
+} as const;
 
 describe("mobile connection storage", () => {
   beforeEach(() => {
@@ -150,6 +165,72 @@ describe("mobile connection storage", () => {
     };
     expect(JSON.parse(fallback.payload)).toEqual({ baseFontSize: 19 });
     expect(fallback.updatedAt).toEqual(expect.any(Number));
+  });
+
+  it("restores named PR views and applies their complete scope after restarting storage", async () => {
+    const views = [
+      {
+        id: "reviewing",
+        name: "PRs Requesting My Review",
+        environmentId: "remote",
+        query: "label:bug authentication",
+        controls: {
+          state: "open",
+          involvement: "reviewing",
+          filters: {
+            draft: "hide",
+            review: "review-required",
+            checks: "passing",
+            author: "me",
+            labels: [["bug"]],
+          },
+          sort: "created",
+          projectId: "project",
+          projectEnvironmentId: "remote",
+        },
+      },
+      {
+        id: "all",
+        name: "All PRs",
+        environmentId: null,
+        query: "",
+        controls: { state: "all", involvement: "all", filters: {}, sort: "updated" },
+      },
+    ] as const;
+    const localControls = {
+      state: "merged",
+      involvement: "authored",
+      filters: { checks: "failing" },
+      sort: "oldest",
+    } as const;
+    await savePreferencesPatch({
+      pullRequestSavedViews: views,
+      pullRequestListFilters: { environmentId: "local", controls: { local: localControls } },
+    });
+
+    const restored = await loadPreferences();
+    expect(restored.pullRequestSavedViews).toEqual(views);
+    await savePreferencesPatch(pullRequestSavedViewPreferences(restored, views[0]));
+    expect((await loadPreferences()).pullRequestListFilters).toEqual({
+      environmentId: "remote",
+      controls: { local: localControls, remote: views[0].controls },
+    });
+    await savePreferencesPatch(pullRequestSavedViewPreferences(await loadPreferences(), views[1]));
+    expect((await loadPreferences()).pullRequestListFilters).toEqual({
+      environmentId: null,
+      controls: { local: localControls, remote: views[0].controls, "": views[1].controls },
+    });
+  });
+
+  it("discards malformed saved PR views without discarding other preferences", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        baseFontSize: 17,
+        pullRequestSavedViews: [{ id: "invalid", name: "Broken", controls: { sort: "unknown" } }],
+      }),
+      10,
+    );
+    expect(await loadPreferences()).toEqual({ baseFontSize: 17 });
   });
 
   it("reconciles fallback preferences after SQLite recovers", async () => {

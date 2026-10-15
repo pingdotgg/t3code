@@ -34,6 +34,7 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
+import { PullRequestSavedViewsMenu } from "./PullRequestSavedViewsMenu";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -337,7 +338,32 @@ export function PullRequestsScreen(
         renderItem={renderPullRequest}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              savedViewsMenu={
+                <PullRequestSavedViewsMenu
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={(view) => {
+                    listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query.trim()
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests" },
+                    );
+                    workspace.dispatch({ type: "query", tab: "pullRequests", query: view.query.trim() });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
+              filters={filters}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (
