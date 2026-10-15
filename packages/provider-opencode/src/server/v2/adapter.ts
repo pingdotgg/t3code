@@ -42,6 +42,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -648,6 +649,14 @@ const stringField = (record: Readonly<Record<string, unknown>> | undefined, key:
   const value = record?.[key];
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 };
+
+/**
+ * OpenCode types its own execution failures. A quota or rate-limit stop is the
+ * usage limit T3 already recovers from, not a generic provider error, so the
+ * thread shows Limited instead of Failed. OpenCode reports no reset time.
+ */
+const failureClassFor = (type: string): OrchestrationV2ProviderFailureClass =>
+  type === "provider.quota" || type === "provider.rate-limit" ? "usage_limit" : "provider_error";
 
 /** How a background subagent ended, from the `state` of OpenCode's report to its parent. */
 const reportOutcome = (state: string | undefined) =>
@@ -2366,7 +2375,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             failure: makeProviderFailure({
               message: event.data.error.message,
               code: event.data.error.type,
-              class: "provider_error",
+              class: failureClassFor(event.data.error.type),
             }),
           });
         default:

@@ -532,6 +532,44 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("shows an OpenCode Go quota stop as a usage limit", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        // OpenCode's typed quota failure, as an exhausted Go session reports it.
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider.quota", message: "Go usage limit exceeded" },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.equal(ended?.status === "failed" ? ended.failure.class : undefined, "usage_limit");
+      assert.equal(ended?.status === "failed" ? ended.failure.code : undefined, "provider.quota");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows an OpenCode rate-limit stop as a usage limit", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider.rate-limit", message: "Rate limit exceeded" },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.equal(ended?.status === "failed" ? ended.failure.class : undefined, "usage_limit");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
