@@ -12,6 +12,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   type ClaudeModelCatalog,
 } from "./provider/ClaudeModelCatalog.ts";
@@ -20,6 +21,7 @@ export interface CompiledClaudeModelSelection {
   readonly apiModelId: string;
   readonly effort: string | undefined;
   readonly promptEffort: string | undefined;
+  readonly contextWindowTokens: number | undefined;
   readonly settings: Readonly<Record<string, boolean>>;
   readonly queryIdentity: string;
 }
@@ -53,6 +55,7 @@ export function compileClaudeModelSelection(
     apiModelId,
     effort,
     promptEffort,
+    contextWindowTokens: resolveClaudeCatalogContextWindowTokens(catalog, selection),
     settings,
     queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
   };
