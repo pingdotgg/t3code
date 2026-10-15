@@ -1,7 +1,10 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import type { PreviewAnnotationPayload, ThreadContextRecord } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { fileContextReference, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import type { TerminalContextDraft } from "../../lib/terminalContext";
+import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 interface RetainedPreviewAnnotation {
   annotation: PreviewAnnotationPayload;
@@ -11,6 +14,38 @@ interface RetainedPreviewAnnotation {
 export interface RetainedAttachmentContextPayloads {
   files: Map<string, ComposerFileAttachment>;
   previewAnnotations: Map<string, RetainedPreviewAnnotation>;
+}
+
+export interface RetainedContextPayloads extends RetainedAttachmentContextPayloads {
+  terminals: Map<string, TerminalContextDraft>;
+  reviewComments: Map<string, ReviewCommentContext>;
+  threads: Map<string, ThreadContextRecord>;
+}
+
+/**
+ * Payloads for chips the prompt no longer references. History undo restores the
+ * reference text but knows nothing about the draft records behind it, so a delete keeps its
+ * payload here and an undo puts it back rather than leaving a dangling chip.
+ *
+ * Scoped to one draft: switching drafts or unmounting releases them, so deleted files do not
+ * stay reachable for the composer's whole lifetime.
+ */
+export function useRetainedContextPayloads(draftTargetKey: string): RetainedContextPayloads {
+  const [retained] = useState<RetainedContextPayloads>(() => ({
+    terminals: new Map(),
+    reviewComments: new Map(),
+    threads: new Map(),
+    files: new Map(),
+    previewAnnotations: new Map(),
+  }));
+  useEffect(
+    () => () => {
+      for (const payloads of Object.values(retained)) payloads.clear();
+    },
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Switching drafts releases the previous draft's payloads.
+    [draftTargetKey, retained],
+  );
+  return retained;
 }
 
 export function reconcileAttachmentContextReferences(input: {

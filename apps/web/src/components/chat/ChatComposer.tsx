@@ -151,7 +151,7 @@ import {
 import { ComposerActivityRow } from "./ComposerActivityStatus";
 import {
   reconcileAttachmentContextReferences,
-  type RetainedAttachmentContextPayloads,
+  useRetainedContextPayloads,
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
@@ -3807,20 +3807,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed(false);
   }, [setIsComposerScrollCollapsed]);
 
-  /**
-   * Payloads for chips the prompt no longer references. History undo restores the
-   * reference text but knows nothing about the draft records behind it, so a delete keeps its
-   * payload here and an undo puts it back rather than leaving a dangling chip.
-   */
-  const removedContextPayloadsRef = useRef<{
-    terminals: Map<string, TerminalContextDraft>;
-    reviewComments: Map<string, ReviewCommentContext>;
-    threads: Map<string, ThreadContextRecord>;
-  }>({ terminals: new Map(), reviewComments: new Map(), threads: new Map() });
-  const removedAttachmentContextPayloadsRef = useRef<RetainedAttachmentContextPayloads>({
-    files: new Map(),
-    previewAnnotations: new Map(),
-  });
+  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
 
   const onPromptChange = useCallback(
     (
@@ -3856,7 +3843,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         promptHistoryPositionRef.current = null;
       }
       const referenced = new Set(contextIds);
-      const retained = removedContextPayloadsRef.current;
 
       // An undone delete brings the reference back; restore the payload it points at.
       const liveTerminalIds = new Set<string>(
@@ -3864,7 +3850,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       const restoredTerminals = [...referenced].flatMap((contextId) => {
         if (liveTerminalIds.has(contextId)) return [];
-        const context = retained.terminals.get(contextId);
+        const context = retainedContextPayloads.terminals.get(contextId);
         return context ? [context] : [];
       });
       const nextTerminals = [
@@ -3875,7 +3861,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ];
       for (const context of composerTerminalContexts) {
         const contextId = terminalContextReference(context).contextId;
-        if (!referenced.has(contextId)) retained.terminals.set(contextId, context);
+        if (!referenced.has(contextId)) retainedContextPayloads.terminals.set(contextId, context);
       }
       if (
         nextTerminals.length !== composerTerminalContexts.length ||
@@ -3889,7 +3875,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       const restoredThreads = [...referenced].flatMap((contextId) => {
         if (liveThreadIds.has(contextId)) return [];
-        const record = retained.threads.get(contextId);
+        const record = retainedContextPayloads.threads.get(contextId);
         return record ? [record] : [];
       });
       const nextThreads = [
@@ -3897,7 +3883,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ...restoredThreads,
       ];
       for (const record of composerThreadContexts) {
-        if (!referenced.has(record.contextId)) retained.threads.set(record.contextId, record);
+        if (!referenced.has(record.contextId))
+          retainedContextPayloads.threads.set(record.contextId, record);
       }
       if (nextThreads.length !== composerThreadContexts.length || restoredThreads.length > 0) {
         setComposerDraftThreadContexts(composerDraftTarget, nextThreads);
@@ -3906,7 +3893,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       for (const comment of composerReviewComments) {
         const contextId = reviewCommentContextId(comment.id);
         if (!referenced.has(contextId)) {
-          retained.reviewComments.set(contextId, comment);
+          retainedContextPayloads.reviewComments.set(contextId, comment);
           removeComposerDraftReviewComment(composerDraftTarget, comment.id);
         }
       }
@@ -3915,7 +3902,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       for (const contextId of referenced) {
         if (liveReviewIds.has(contextId)) continue;
-        const comment = retained.reviewComments.get(contextId);
+        const comment = retainedContextPayloads.reviewComments.get(contextId);
         if (comment) {
           addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
         }
@@ -3926,7 +3913,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         files: composerFiles,
         images: composerImages,
         previewAnnotations: composerPreviewAnnotations,
-        retained: removedAttachmentContextPayloadsRef.current,
+        retained: retainedContextPayloads,
       });
       for (const annotationId of attachmentChanges.annotationIdsToRemove) {
         // Keep the upload queue entry alive: undo restores the image that owns it.
@@ -3976,6 +3963,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftImages,
       addComposerDraftFiles,
       attachmentDraftTarget,
+      retainedContextPayloads,
     ],
   );
 
