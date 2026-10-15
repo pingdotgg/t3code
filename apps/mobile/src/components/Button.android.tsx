@@ -1,10 +1,12 @@
+import { SymbolView } from "./AppSymbol";
 import {
   Box,
-  Button,
+  Button as ComposeButton,
   LoadingIndicator,
   FilledTonalButton,
   Host,
   Row,
+  RNHostView,
   Text,
   TextButton,
 } from "@expo/ui/jetpack-compose";
@@ -13,37 +15,42 @@ import { View } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import type { MaterialButtonProps } from "./MaterialButton";
+import type { ButtonProps } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-export function MaterialButton(props: MaterialButtonProps) {
+export function Button(props: ButtonProps) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
   const { scale, mediumIconSize } = useAndroidControlSizing();
   const tone = props.tone ?? "secondary";
   const Component =
-    tone === "text" ? TextButton : tone === "secondary" ? FilledTonalButton : Button;
+    tone === "text" ? TextButton : tone === "secondary" ? FilledTonalButton : ComposeButton;
   const containerColor =
-    tone === "primary"
-      ? colors["--color-primary"]
-      : tone === "danger"
-        ? colors["--color-danger"]
-        : tone === "text"
-          ? "#00000000"
-          : colors["--color-secondary"];
+    tone === "contrast"
+      ? colors["--color-foreground"]
+      : tone === "primary"
+        ? colors["--color-primary"]
+        : tone === "danger"
+          ? colors["--color-danger"]
+          : tone === "text"
+            ? "#00000000"
+            : colors["--color-secondary"];
   const contentColor =
-    tone === "primary"
-      ? colors["--color-primary-foreground"]
-      : tone === "danger"
-        ? colors["--color-danger-foreground"]
-        : tone === "text"
-          ? colors["--color-primary-text"]
-          : colors["--color-secondary-foreground"];
+    tone === "contrast"
+      ? colors["--color-screen"]
+      : tone === "primary"
+        ? colors["--color-primary-foreground"]
+        : tone === "danger"
+          ? colors["--color-danger-foreground"]
+          : tone === "text"
+            ? colors["--color-primary-text"]
+            : colors["--color-secondary-foreground"];
   return (
     <View
       accessible
       accessibilityRole="button"
       accessibilityLabel={props.label}
+      accessibilityHint={props.accessibilityHint}
       accessibilityState={{
         disabled: Boolean(props.disabled || props.loading),
         busy: Boolean(props.loading),
@@ -82,6 +89,21 @@ export function MaterialButton(props: MaterialButtonProps) {
                     modifiers={[size(mediumIconSize, mediumIconSize)]}
                     color={colors["--color-foreground-muted"]}
                   />
+                  <Box modifiers={[size(8 * scale, 1)]} />
+                </>
+              ) : props.icon ? (
+                <>
+                  <RNHostView matchContents modifiers={[size(mediumIconSize, mediumIconSize)]}>
+                    <View style={{ width: mediumIconSize, height: mediumIconSize }}>
+                      <SymbolView
+                        name={props.icon}
+                        size={mediumIconSize}
+                        tintColor={
+                          props.disabled ? colors["--color-foreground-muted"] : contentColor
+                        }
+                      />
+                    </View>
+                  </RNHostView>
                   <Box modifiers={[size(8 * scale, 1)]} />
                 </>
               ) : null}

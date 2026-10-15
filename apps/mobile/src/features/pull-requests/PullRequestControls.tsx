@@ -7,7 +7,7 @@ import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { MaterialFloatingToolbar } from "./MaterialFloatingToolbar";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
@@ -137,7 +137,7 @@ export function PullRequestActionToolbar(props: {
   const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
     const primary = (
-      <MaterialButton
+      <Button
         label={primaryLabel}
         tone="primary"
         disabled={primaryDisabled}

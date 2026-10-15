@@ -18,7 +18,7 @@ import { ScrollViewMarker } from "react-native-screens";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
@@ -259,7 +259,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   detail={result.error ?? "Search people and teams with access to this repository."}
                   variant="plain"
                 />
-                {result.error ? <MaterialButton label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
               </View>
             )
           }
@@ -302,13 +302,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 autoCorrect={false}
                 className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
               />
-              <MaterialButton
+              <Button
                 label="Request review"
                 fullWidth
                 disabled={!allowed || !query.trim() || pending !== null}
                 onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
               />
-              <MaterialButton
+              <Button
                 label="Remove review request"
                 fullWidth
                 tone="text"

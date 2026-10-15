@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
 import { AppText as Text } from "../../components/AppText";
 import { AppSheet } from "../../components/AppSheet";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
 
@@ -112,7 +112,7 @@ export function TerminalContextSheet(props: {
             Select fewer lines to fit the context limit.
           </Text>
         ) : null}
-        <MaterialButton
+        <Button
           label="Attach selected output"
           tone="primary"
           fullWidth

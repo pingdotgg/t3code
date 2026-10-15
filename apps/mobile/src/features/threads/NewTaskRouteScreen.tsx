@@ -20,7 +20,7 @@ import { Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -388,7 +388,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               </Text>
               {Platform.OS === "android" ? (
                 <>
-                  <MaterialButton
+                  <Button
                     label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
                     tone="primary"
                     onPress={() =>
@@ -398,7 +398,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     }
                   />
                   {canStartScratch ? (
-                    <MaterialButton
+                    <Button
                       label="Start without a project"
                       tone="secondary"
                       onPress={() => void startScratch()}

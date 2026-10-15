@@ -8,7 +8,7 @@ import { ActivityIndicator, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { SymbolView } from "../../components/AppSymbol";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -242,13 +242,7 @@ export function usePullRequestFilesContent(props: {
                   result.nextCursor ? "No non-test files loaded yet" : "Only test files changed"
                 }
                 detail="Test files are hidden from this review."
-                action={
-                  <MaterialButton
-                    label="Show test files"
-                    tone="contrast"
-                    onPress={filter.showAll}
-                  />
-                }
+                action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
                 variant="plain"
               />
             ) : null}

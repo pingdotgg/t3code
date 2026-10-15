@@ -52,7 +52,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
@@ -1364,7 +1364,7 @@ function ThreadSettingsModelsScreen() {
                 )}
               </AndroidAnchoredMenu>
               {session.pendingModel ? (
-                <MaterialButton label="Save" tone="text" onPress={commitAndClose} />
+                <Button label="Save" tone="text" onPress={commitAndClose} />
               ) : null}
             </View>
           }

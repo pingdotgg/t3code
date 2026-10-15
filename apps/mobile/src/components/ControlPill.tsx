@@ -4,7 +4,7 @@ import { cn } from "../lib/cn";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { MaterialIconButton } from "./MaterialIconButton";
-import { MaterialButton } from "./MaterialButton";
+import { Button } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export { ControlPillMenu } from "./ControlPillMenu";
@@ -91,7 +91,7 @@ export function ControlPill(props: {
     (!props.accessibilityLabel || props.accessibilityLabel === props.label)
   ) {
     return (
-      <MaterialButton
+      <Button
         label={props.label}
         onPress={props.onPress}
         disabled={props.disabled}

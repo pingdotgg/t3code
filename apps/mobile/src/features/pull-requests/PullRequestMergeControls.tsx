@@ -7,7 +7,7 @@ import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-nativ
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -174,7 +174,7 @@ export function PullRequestMergeControls(props: {
       >
         {Platform.OS === "android" ? (
           <View className="min-w-0 flex-1">
-            <MaterialButton
+            <Button
               label={busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
               tone="primary"
               fullWidth

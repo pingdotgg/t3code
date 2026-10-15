@@ -9,7 +9,7 @@ import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { GlassSurface } from "../../components/GlassSurface";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { relativeTime } from "../../lib/time";
@@ -174,7 +174,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   {thread.isResolved ? "Resolved" : "Unresolved"}
                   {thread.isOutdated ? " · Outdated" : ""}
                 </Text>
-                <MaterialButton
+                <Button
                   label="View file diff"
                   onPress={() =>
                     navigation.navigate("PullRequestFile", { ...params, path: thread.path })
@@ -199,7 +199,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               </View>
             ))}
             {nextCursor ? (
-              <MaterialButton
+              <Button
                 label={busy ? "Loading…" : "Load more replies"}
                 disabled={busy}
                 onPress={() => void more()}
@@ -232,7 +232,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
               />
               <View>
-                <MaterialButton
+                <Button
                   label={busy ? "Posting…" : "Reply"}
                   tone="contrast"
                   disabled={busy || !body.trim()}

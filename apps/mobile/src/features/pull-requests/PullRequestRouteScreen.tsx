@@ -26,7 +26,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { ControlPillMenu } from "../../components/ControlPillMenu";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
@@ -1088,7 +1088,7 @@ export function PullRequestFileRouteScreen({
           <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
             The branch changed. Reload before adding line comments.
           </Text>
-          <MaterialButton
+          <Button
             label="Reload changes"
             onPress={() => {
               result.refresh();
@@ -1196,9 +1196,7 @@ export function PullRequestFileRouteScreen({
             <EmptyState
               title="Only test files changed"
               detail="Test files are hidden from this review."
-              action={
-                <MaterialButton label="Show test files" tone="contrast" onPress={filter.showAll} />
-              }
+              action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
               variant="plain"
             />
           </View>

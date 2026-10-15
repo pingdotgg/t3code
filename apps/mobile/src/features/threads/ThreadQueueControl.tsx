@@ -14,7 +14,7 @@ import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-scree
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -198,7 +198,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
-          <MaterialButton
+          <Button
             label="Resume queue"
             disabled={resuming || busyRunId !== null}
             onPress={async () => {

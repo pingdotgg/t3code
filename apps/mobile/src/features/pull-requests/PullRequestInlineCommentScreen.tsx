@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -77,7 +77,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       title={saved ? "Edit review comment" : "Review comment"}
       subtitle={`#${params.number} · ${reviewPositionLabel(params.position)}`}
       footer={
-        <MaterialButton
+        <Button
           fullWidth
           tone="contrast"
           label={busy ? "Saving…" : "Save draft"}
@@ -125,7 +125,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         <Text className="text-sm text-danger-foreground">{store.error ?? detail.error}</Text>
       ) : null}
       {saved ? (
-        <MaterialButton
+        <Button
           label="Delete draft"
           onPress={() =>
             Alert.alert("Delete this draft?", "Your other review comments will be kept.", [

@@ -2,7 +2,7 @@ import { SymbolView } from "../../../components/AppSymbol";
 import type { ComponentProps } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/AppText";
-import { MaterialButton } from "../../../components/MaterialButton";
+import { Button } from "../../../components/Button";
 import { cn } from "../../../lib/cn";
 
 /* ─── Shared sheet components ──────────────────────────────────────── */
@@ -17,8 +17,9 @@ export function SheetActionButton(props: {
   if (Platform.OS === "android")
     return (
       <View className="flex-1">
-        <MaterialButton
+        <Button
           label={props.label}
+          icon={props.icon}
           tone={props.tone}
           disabled={props.disabled}
           onPress={props.onPress}

@@ -2,7 +2,7 @@ import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { MaterialButton } from "../../components/MaterialButton";
+import { Button } from "../../components/Button";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -263,7 +263,7 @@ function PrimaryActionButton(props: {
   readonly loading?: boolean;
   readonly onPress: () => void;
 }) {
-  if (Platform.OS === "android") return <MaterialButton {...props} tone="primary" fullWidth />;
+  if (Platform.OS === "android") return <Button {...props} tone="primary" fullWidth />;
   return (
     <Pressable
       disabled={props.disabled}

@@ -2,7 +2,7 @@ import { Component, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
-import { MaterialButton } from "./MaterialButton";
+import { Button } from "./Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 interface RenderErrorBoundaryProps {
@@ -107,19 +107,14 @@ export function RenderFailureView(
         {props.details.split("\n", 1)[0]?.slice(0, 300)}
       </Text>
       <View className="w-full max-w-xs gap-2">
-        <MaterialButton label="Try again" onPress={props.retry} tone="primary" fullWidth />
-        <MaterialButton
+        <Button label="Try again" onPress={props.retry} tone="primary" fullWidth />
+        <Button
           label="Copy details"
           onPress={() => copyTextWithHaptic(props.details, { target: "error details" })}
           fullWidth
         />
         {props.exit ? (
-          <MaterialButton
-            label={props.exit.label}
-            onPress={props.exit.onPress}
-            tone="text"
-            fullWidth
-          />
+          <Button label={props.exit.label} onPress={props.exit.onPress} tone="text" fullWidth />
         ) : null}
       </View>
     </ScrollView>
