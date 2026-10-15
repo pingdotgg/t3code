@@ -1066,16 +1066,20 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         { platform: "win32", arch: "arm64" },
       ];
 
+    const versions = new Set<string>();
     for (const { platform, arch } of supportedPlatforms) {
       const asset = resolveAntigravityReleaseAsset(platform, arch);
       expect(asset).not.toBeNull();
-      expect(asset?.version).toBe("1.3.0");
-      expect(asset?.url).toContain("1.3.0");
-      expect(asset?.archiveBytes).toBeGreaterThan(0);
-      expect(asset?.executable.bytes).toBeGreaterThan(0);
-      expect(asset?.harness.bytes).toBeGreaterThan(0);
+      if (!asset) continue;
+      versions.add(asset.version);
+      expect(asset.url).toContain(`/agy-acp-server-${asset.version}-`);
+      expect(asset.archiveBytes).toBeGreaterThan(0);
+      expect(asset.executable.bytes).toBeGreaterThan(0);
+      expect(asset.harness.bytes).toBeGreaterThan(0);
     }
 
+    // Every platform installs the same release, so a bump cannot leave one behind.
+    expect(versions.size).toBe(1);
     expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
   });
 });
