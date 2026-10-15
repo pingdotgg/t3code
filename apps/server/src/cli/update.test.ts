@@ -5,8 +5,88 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+
+it.effect("authenticates every paginated release check with the selected token", () =>
+  Effect.gen(function* () {
+    const requests: Array<{
+      readonly origin: string;
+      readonly pathname: string;
+      readonly page: string;
+      readonly accept: string | undefined;
+      readonly authorization: string | undefined;
+    }> = [];
+    const httpClient = HttpClient.make((request) => {
+      const url = new URL(request.url);
+      const page = url.searchParams.get("page") ?? "";
+      requests.push({
+        origin: url.origin,
+        pathname: url.pathname,
+        page,
+        accept: request.headers.accept,
+        authorization: request.headers.authorization,
+      });
+      const body =
+        page === "3" ? [{ tag_name: "v1.2.3" }] : [{ tag_name: "v1.2.3-preview.20260101.1" }];
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+    });
+    const cases: ReadonlyArray<{
+      readonly environment: NodeJS.ProcessEnv;
+      readonly authorization: string | undefined;
+    }> = [
+      {
+        environment: { GH_TOKEN: "gh-token", GITHUB_TOKEN: "github-token" },
+        authorization: "Bearer gh-token",
+      },
+      {
+        environment: { GH_TOKEN: " gh-token ", GITHUB_TOKEN: " github-token " },
+        authorization: "Bearer gh-token",
+      },
+      { environment: { GITHUB_TOKEN: "github-token" }, authorization: "Bearer github-token" },
+      { environment: { GITHUB_TOKEN: " github-token " }, authorization: "Bearer github-token" },
+      {
+        environment: { GH_TOKEN: "  ", GITHUB_TOKEN: "github-token" },
+        authorization: "Bearer github-token",
+      },
+      { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: "  " }, authorization: undefined },
+      { environment: {}, authorization: undefined },
+    ];
+
+    for (const testCase of cases) {
+      const start = requests.length;
+      const version = yield* resolveNewestVersion("stable").pipe(
+        Effect.provideService(HostProcess.Environment, testCase.environment),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      assert.equal(version, "1.2.3");
+      assert.deepStrictEqual(requests.slice(start), [
+        {
+          origin: "https://api.github.com",
+          pathname: "/repos/pingdotgg/t3code/releases",
+          page: "1",
+          accept: "application/vnd.github+json",
+          authorization: testCase.authorization,
+        },
+        {
+          origin: "https://api.github.com",
+          pathname: "/repos/pingdotgg/t3code/releases",
+          page: "2",
+          accept: "application/vnd.github+json",
+          authorization: testCase.authorization,
+        },
+        {
+          origin: "https://api.github.com",
+          pathname: "/repos/pingdotgg/t3code/releases",
+          page: "3",
+          accept: "application/vnd.github+json",
+          authorization: testCase.authorization,
+        },
+      ]);
+    }
+  }),
+);
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
