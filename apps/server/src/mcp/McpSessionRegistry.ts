@@ -70,8 +70,9 @@ export interface McpSessionRegistryOptions {
  * session.
  *
  * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
+ * turn and hourly while a turn's event stream is open, so a session that is
+ * still doing work or waiting on the user never expires no matter how long it
+ * goes between tool calls. This window therefore only bounds
  * credentials whose session died without a clean stop — the normal paths
  * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
  *
@@ -249,7 +250,8 @@ export const issueActiveMcpCredential = (
 
 /**
  * Refreshes the liveness of a thread's MCP credential. Called on every provider
- * turn so an active session is never mistaken for an abandoned one.
+ * turn, and hourly while its event stream is open, so an active session is
+ * never mistaken for an abandoned one.
  */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;

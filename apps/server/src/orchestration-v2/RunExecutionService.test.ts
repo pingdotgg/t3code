@@ -4,6 +4,7 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -36,7 +37,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
+import * as TestClock from "effect/testing/TestClock";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -1028,6 +1034,109 @@ it.effect("refreshes MCP credential liveness before calling the provider", () =>
 
     assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
   }).pipe(Effect.provide(layerRunExecutionTest)),
+);
+
+const layerMcpSessionRegistryTest = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:mcp-heartbeat")),
+          getDescriptor: Effect.die("unused"),
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  ["keeps the MCP credential alive while the turn waits on the user", Stream.never, true],
+  [
+    "lets the MCP credential expire once the provider event stream ends",
+    // The provider exits two hours into the turn.
+    Stream.fromEffect(Effect.sleep("2 hours")).pipe(Stream.drain),
+    false,
+  ],
+] as const)("%s", ([, events, tokenSurvives]) =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const threadId = ThreadId.make("thread:run-execution-mcp-heartbeat");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    yield* runExecution.startRootRun({
+      commandId: CommandId.make("command:run-execution-mcp-heartbeat"),
+      appThread: { id: threadId } as OrchestrationV2AppThread,
+      providerSessionId: ProviderSessionId.make(issued.config.providerSessionId),
+      session: {
+        events,
+        startTurn: () => Effect.void,
+      } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      run: {
+        id: RunId.make("run:run-execution-mcp-heartbeat"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      } as OrchestrationV2Run,
+      rootNode: {
+        id: NodeId.make("node:run-execution-mcp-heartbeat"),
+      } as OrchestrationV2ExecutionNode,
+      checkpointScope: {
+        id: CheckpointScopeId.make("checkpoint-scope:run-execution-mcp-heartbeat"),
+      } as OrchestrationV2CheckpointScope,
+      providerThread: {
+        id: ProviderThreadId.make("provider-thread:run-execution-mcp-heartbeat"),
+        driver,
+      } as OrchestrationV2ProviderThread,
+      attempt: {
+        id: RunAttemptId.make("attempt:run-execution-mcp-heartbeat"),
+        providerTurnId: null,
+      } as OrchestrationV2RunAttempt,
+      attemptId: RunAttemptId.make("attempt:run-execution-mcp-heartbeat"),
+      providerTurnOrdinal: 1,
+      message: {
+        messageId: MessageId.make("message:run-execution-mcp-heartbeat"),
+        text: "Ask me something and wait.",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimePolicy: {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "readOnly",
+          access: { type: "fullAccess" },
+          networkAccess: false,
+        },
+      },
+    });
+    // The report in #14076 answered a question 44 hours into the turn.
+    yield* TestClock.adjust("44 hours");
+
+    const resolved = yield* registry.resolve(token);
+    assert.equal(resolved?.thread.threadId === threadId, tokenSurvives);
+  }).pipe(Effect.provide(Layer.merge(layerRunExecutionTest, layerMcpSessionRegistryTest))),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
