@@ -80,14 +80,19 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+// What glab prints when it holds no login for the host, across its 1.x releases.
+const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
+  /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
+
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
   const host = input.context.provider.name.toLowerCase();
-  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
+  const output = combinedAuthOutput(input.auth);
+  const authenticated = parseGitLabAuthStatusHosts(output).some(
     (entry) => entry.account !== null && entry.host === host,
   );
 
   if (!authenticated) {
-    return null;
+    return GITLAB_HOST_NOT_LOGGED_IN_PATTERN.test(output) ? null : undefined;
   }
 
   return {
@@ -104,6 +109,12 @@ export const discovery = {
   executable: "glab",
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
+  // glab matches its configured hosts by exact name, so ask with the remote's own spelling.
+  remoteRefinementArgs: ({ provider, remoteUrl }) => {
+    const at = remoteUrl.toLowerCase().indexOf(provider.name.toLowerCase());
+    const host = at < 0 ? provider.name : remoteUrl.slice(at, at + provider.name.length);
+    return ["auth", "status", "--hostname", host];
+  },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:

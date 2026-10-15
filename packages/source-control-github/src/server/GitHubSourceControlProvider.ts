@@ -269,10 +269,14 @@ export const makeDiscovery = Effect.gen(function* () {
       // Identity resolution also probes providers before a web base URL is known.
       const url = URL.parse(context.provider.baseUrl);
       if (!url?.host) return Effect.succeed(null);
+      // A timeout or keyring failure propagates: the registry does not keep that answer.
       return api.credential(url.host).pipe(
         Effect.as(true),
-        Effect.catchTags({ GitHubHostDisabledError: () => Effect.succeed(true) }),
-        Effect.orElseSucceed(() => false),
+        Effect.catchTags({
+          GitHubCliMissingError: () => Effect.succeed(false),
+          GitHubHostDisabledError: () => Effect.succeed(true),
+          GitHubNotSignedInError: () => Effect.succeed(false),
+        }),
         Effect.map((known) =>
           known
             ? ({

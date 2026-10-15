@@ -8,6 +8,7 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
+  isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
@@ -24,7 +25,7 @@ export const discovery = {
   executable: "tea",
   versionArgs: ["--version"],
   authArgs: ["login", "status", "--output", "json"],
-  remoteRefinementArgs: ["login", "list", "--output", "json"],
+  remoteRefinementArgs: () => ["login", "list", "--output", "json"],
   parseAuth: (input) => {
     const logins = ForgejoCli.parseForgejoLogins(input.stdout);
     const login = logins.find((entry) => entry.default === "true") ?? logins[0];
@@ -150,13 +151,30 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
+        // Both CLIs claim Forgejo, so one failing does not stop the other from claiming the host.
+        let failure: ForgejoCli.ForgejoCliError | undefined;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
-          }).pipe(Effect.orElseSucceed(() => []));
-          const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
+          }).pipe(
+            // A CLI that is not installed holds no login.
+            Effect.catchIf(
+              (error) => isMissingExecutable(error.cause),
+              () => Effect.succeed([]),
+            ),
+            Effect.result,
+          );
+          if (Result.isFailure(logins)) {
+            failure ??= logins.failure;
+            continue;
+          }
+          const login = ForgejoCli.matchForgejoLogin(
+            logins.success,
+            remote,
+            input.context.requestedHost,
+          );
           if (login)
             return {
               kind: SourceControlProviderKind.make("forgejo"),
@@ -164,6 +182,7 @@ export const makeDiscovery = Effect.gen(function* () {
               baseUrl: login.url,
             };
         }
+        if (failure) return yield* failure;
         return null;
       },
     ),
