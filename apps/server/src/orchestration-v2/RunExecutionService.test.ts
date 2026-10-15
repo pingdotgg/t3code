@@ -2920,6 +2920,95 @@ it.effect("finalizes a planned workspace detach before the provider announces it
   }),
 );
 
+it.effect.each(["pending", "running"] as const)(
+  "interrupts %s root tool items before finalizing a planned workspace detach",
+  (status) =>
+    Effect.gen(function* () {
+      const key = `workspace-detach-open-tools:${status}`;
+      const ids = backgroundScenarioIds(key);
+      const secondItemId = TurnItemId.make(`${ids.itemId}:second`);
+      const completedItemId = TurnItemId.make(`${ids.itemId}:completed`);
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.concat(
+            Stream.fromIterable([
+              backgroundTurnItemEvent(ids, "dynamic_tool", status, 1),
+              backgroundTurnItemEvent(ids, "dynamic_tool", status, 2, secondItemId),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3, completedItemId),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedItemId),
+            ]),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterSessionDetached({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                threadId: ids.threadId,
+                reason: "workspace_changed",
+              }),
+            ),
+          ),
+      });
+      const interruptedItems = ingested.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        interruptedItems.map((item) => item.id),
+        [ids.itemId, secondItemId],
+      );
+      for (const item of interruptedItems) {
+        assert.isNotNull(item.completedAt);
+        assert.deepEqual(item.updatedAt, item.completedAt);
+      }
+      assert.equal(ingested.at(-1)?.type, "turn.terminal");
+      assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    }),
+);
+
+it.effect("leaves planned-detach subagent items to the run-owned cascade", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-subagent";
+    const { ingested, written } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.make({
+            type: "turn_item.updated" as const,
+            driver,
+            turnItem: makeRunOwnedSubagentTurnItemFixture({
+              ids,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              childThreadId: ids.childThreadId,
+              driver,
+              status: "running",
+            }),
+          }),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              threadId: ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+        ),
+    });
+    assert.deepEqual(
+      ingested.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem.status] : [],
+      ),
+      ["running"],
+    );
+    assert.deepEqual(
+      written.filter((item) => item.type === "subagent").map((item) => item.status),
+      ["interrupted"],
+    );
+  }),
+);
+
 it.effect.each(["thread", "session"] as const)(
   "fails rather than treating another %s's planned detach as this run's interruption",
   (mismatch) =>
@@ -3524,6 +3613,7 @@ function captureRootRunTermination(input: {
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const finalEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
@@ -3586,7 +3676,8 @@ function captureRootRunTermination(input: {
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
+            ingestNormalized: input.ingestNormalized ?? (({ event }) =>
+              Ref.update(ingested, (current) => [...current, event]).pipe(Effect.as([]))),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3718,6 +3809,7 @@ function captureRootRunTermination(input: {
       previewActivityEnded,
       written: yield* Ref.get(writtenItems),
       finalEvents: yield* Ref.get(finalEvents),
+      ingested: yield* Ref.get(ingested),
       observed: yield* Ref.get(observed),
       submittedEffects: yield* Ref.get(submittedEffects),
       committedEffects: yield* Ref.get(committedEffects),
@@ -3793,7 +3885,7 @@ function childBackgroundTurnItemEvent(
 function backgroundTurnItemEvent(
   ids: BackgroundScenarioIds,
   type: "command_execution" | "dynamic_tool" | "subagent",
-  status: "running" | "completed" | "idle",
+  status: "pending" | "running" | "completed" | "idle",
   ordinal: number,
   itemId?: TurnItemId,
 ): ProviderAdapter.ProviderAdapterV2Event {
