@@ -2177,6 +2177,240 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
+  describe("scheduled task targets", () => {
+    const miniModel = "gpt-5.4-mini";
+    const callerSelection = {
+      instanceId: codexInstanceId,
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const stored: ScheduledTask = {
+      id: ScheduledTaskId.make("scheduled-task:triage"),
+      title: "Triage",
+      prompt: "Triage {{body.issue.title}}",
+      enabled: true,
+      schedule: { type: "webhook", signature: null },
+      projectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: callerSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    };
+    const codex = providerSnapshot({
+      instanceId: codexInstanceId,
+      driver: ProviderDriverKind.make("codex"),
+      model: "gpt-5.4",
+    });
+
+    /** The service with one stored task that keeps the last selection saved to it. */
+    const service = (
+      saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
+      enabledForProject = true,
+      extraProviders: ReadonlyArray<ServerProvider> = [],
+    ) =>
+      OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(parentProjection([], callerSelection)),
+              isProviderInstanceEnabledForProject: () => Effect.succeed(enabledForProject),
+            }),
+            providerRegistryLayer([
+              {
+                ...codex,
+                models: [
+                  ...codex.models,
+                  { slug: miniModel, name: miniModel, isCustom: false, capabilities: null },
+                ],
+              },
+              ...extraProviders,
+            ]),
+            adapterRegistryLayer([
+              codexInstanceId,
+              ...extraProviders.map((provider) => provider.instanceId),
+            ]),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () => Effect.succeedSome({ id: projectId } as never),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              list: () =>
+                Ref.get(saved).pipe(
+                  Effect.map((selections) => ({
+                    tasks: [
+                      {
+                        ...stored,
+                        modelSelection: selections[selections.length - 1] ?? stored.modelSelection,
+                      },
+                    ],
+                  })),
+                ),
+              upsert: (input) =>
+                Ref.update(saved, (selections) => [...selections, input.modelSelection]).pipe(
+                  Effect.as({ task: { ...stored, modelSelection: input.modelSelection } }),
+                ),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+
+    it.effect("schedules a task on the target model instead of the caller's", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+        );
+        const schedule = { type: "webhook", signature: null } as const;
+        const inherited = yield* mcp.scheduleTask(scope, { prompt: "Triage", schedule });
+        const targeted = yield* mcp.scheduleTask(scope, {
+          prompt: "Triage",
+          schedule,
+          target: { model: miniModel },
+        });
+        // The caller's options belong to its own model, so they do not carry over.
+        assert.deepEqual(yield* Ref.get(saved), [
+          callerSelection,
+          { instanceId: codexInstanceId, model: miniModel },
+        ]);
+        assert.deepEqual(
+          [inherited, targeted].map(({ providerInstanceId, model, options }) => ({
+            providerInstanceId,
+            model,
+            options,
+          })),
+          [
+            {
+              providerInstanceId: codexInstanceId,
+              model: "gpt-5.4",
+              options: callerSelection.options,
+            },
+            { providerInstanceId: codexInstanceId, model: miniModel, options: undefined },
+          ],
+        );
+      }),
+    );
+
+    it.effect("changes a task's model only when an update names a target", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+        );
+        yield* mcp.updateScheduledTask(scope, { scheduledTaskId: stored.id, enabled: false });
+        const retargeted = yield* mcp.updateScheduledTask(scope, {
+          scheduledTaskId: stored.id,
+          target: { model: miniModel },
+        });
+        // A target that names only options keeps the stored provider and model.
+        yield* mcp.updateScheduledTask(scope, {
+          scheduledTaskId: stored.id,
+          target: { options: [{ id: "reasoningEffort", value: "low" }] },
+        });
+        assert.deepEqual(yield* Ref.get(saved), [
+          callerSelection,
+          { instanceId: codexInstanceId, model: miniModel },
+          {
+            instanceId: codexInstanceId,
+            model: miniModel,
+            options: [{ id: "reasoningEffort", value: "low" }],
+          },
+        ]);
+        assert.equal(retargeted.model, miniModel);
+        const listed = yield* mcp.listScheduledTasks(scope, {});
+        assert.equal(listed.tasks[0]?.model, miniModel);
+      }),
+    );
+
+    it.effect("keeps the stored model on a provider-only update, or refuses it", () =>
+      Effect.gen(function* () {
+        const sharedInstanceId = ProviderInstanceId.make("codex-shared");
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        const codexDriver = ProviderDriverKind.make("codex");
+        // Lists a different default first, so falling back to models[0] would
+        // silently swap the stored gpt-5.4.
+        const shared = providerSnapshot({
+          instanceId: sharedInstanceId,
+          driver: codexDriver,
+          model: "shared-default",
+        });
+        const sharedWithStoredModel = {
+          ...shared,
+          models: [
+            ...shared.models,
+            { slug: "gpt-5.4", name: "gpt-5.4", isCustom: false, capabilities: null },
+          ],
+        };
+        const other = providerSnapshot({
+          instanceId: otherInstanceId,
+          driver: codexDriver,
+          model: "other-default",
+        });
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved, true, [sharedWithStoredModel, other])),
+        );
+        const moved = yield* mcp.updateScheduledTask(scope, {
+          scheduledTaskId: stored.id,
+          target: { providerInstanceId: sharedInstanceId },
+        });
+        assert.equal(moved.providerInstanceId, sharedInstanceId);
+        assert.equal(moved.model, "gpt-5.4");
+        const refused = yield* mcp
+          .updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { providerInstanceId: otherInstanceId },
+          })
+          .pipe(Effect.flip);
+        assert.equal(refused.code, "model_unavailable");
+        assert.deepEqual(yield* Ref.get(saved), [
+          { instanceId: sharedInstanceId, model: "gpt-5.4" },
+        ]);
+      }),
+    );
+
+    it.effect("saves nothing when the target cannot run in the project", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const schedule = { type: "webhook", signature: null } as const;
+        const unknownModel = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+          Effect.flatMap((mcp) =>
+            mcp
+              .scheduleTask(scope, { prompt: "Triage", schedule, target: { model: "gpt-unknown" } })
+              .pipe(Effect.flip),
+          ),
+        );
+        assert.equal(unknownModel.code, "model_unavailable");
+        // The project turned the provider off.
+        const disabled = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved, false)),
+          Effect.flatMap((mcp) =>
+            mcp
+              .updateScheduledTask(scope, {
+                scheduledTaskId: stored.id,
+                target: { model: miniModel },
+              })
+              .pipe(Effect.flip),
+          ),
+        );
+        assert.equal(disabled.code, "invalid_request");
+        assert.deepEqual(yield* Ref.get(saved), []);
+      }),
+    );
+  });
+
   describe("resolveRuntimeMode", () => {
     // Muse offers only these two, and runs any other mode as Supervised.
     const muse = {

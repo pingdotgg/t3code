@@ -258,6 +258,11 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    providerInstanceId: task.modelSelection.instanceId,
+    model: task.modelSelection.model,
+    ...(task.modelSelection.options === undefined ? {} : { options: task.modelSelection.options }),
+    runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
     // A bare path is not a URL anyone can call, so agents never get one to share.
     ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
     ...(task.webhook === undefined
@@ -1177,7 +1182,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "projectId" | "modelSelection"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /**
@@ -1190,6 +1200,14 @@ const make = Effect.gen(function* () {
      * command id than the one checked for a receipt.
      */
     readonly skipProjectEnablementFilter?: boolean;
+    /**
+     * When the target switches provider instance without naming a model, keep
+     * the inherited model instead of taking the new provider's first model,
+     * failing with `model_unavailable` when the new provider does not
+     * advertise it. Scheduled task updates set this so a provider-only change
+     * never silently swaps the stored model.
+     */
+    readonly keepInheritedModelAcrossProviders?: boolean;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       const requestedInstanceId = input.target?.providerInstanceId;
@@ -1273,9 +1291,23 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
+      const keepInheritedModel =
+        requestedModel === undefined &&
+        instanceId !== inheritedSelection.instanceId &&
+        input.keepInheritedModelAcrossProviders === true;
+      if (
+        keepInheritedModel &&
+        provider.models.length > 0 &&
+        !provider.models.some((candidate) => candidate.slug === inheritedSelection.model)
+      ) {
+        return yield* failure(
+          "model_unavailable",
+          `Model ${inheritedSelection.model} is not advertised by provider ${instanceId}; name a model in target to switch providers.`,
+        );
+      }
       const model =
         requestedModel ??
-        (instanceId === inheritedSelection.instanceId
+        (instanceId === inheritedSelection.instanceId || keepInheritedModel
           ? inheritedSelection.model
           : provider?.models[0]?.slug);
       if (model === undefined) {
@@ -1320,6 +1352,41 @@ const make = Effect.gen(function* () {
               : { instanceId, model, options: requestedOptions },
         supportedRuntimeModes: provider.supportedRuntimeModes,
       };
+    });
+
+  /**
+   * The selection a scheduled task's runs use when the caller names a target:
+   * resolved like a work-starting tool's target, with `inherited` standing in
+   * for the parent thread's selection.
+   */
+  const resolveScheduledTaskModelSelection = (input: {
+    readonly projectId: ProjectId;
+    readonly inherited: ModelSelection;
+    readonly target: OrchestratorMcpTarget;
+    readonly keepInheritedModelAcrossProviders?: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const { modelSelection } = yield* resolveTargetRechecking({
+        parent: { thread: { projectId: input.projectId, modelSelection: input.inherited } },
+        target: input.target,
+        providers: yield* loadProviders,
+        ...(input.keepInheritedModelAcrossProviders === true
+          ? { keepInheritedModelAcrossProviders: true }
+          : {}),
+      });
+      const enabled = yield* threadManagement.isProviderInstanceEnabledForProject({
+        projectId: input.projectId,
+        instanceId: modelSelection.instanceId,
+      });
+      if (!enabled) {
+        return yield* threadManagementFailure(
+          new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+            projectId: input.projectId,
+            instanceId: modelSelection.instanceId,
+          }),
+        );
+      }
+      return modelSelection;
     });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
@@ -1657,8 +1724,16 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
-        const modelSelection =
+        const inherited =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        const modelSelection =
+          input.target === undefined
+            ? inherited
+            : yield* resolveScheduledTaskModelSelection({
+                projectId,
+                inherited,
+                target: input.target,
+              });
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1736,6 +1811,15 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        const modelSelection =
+          input.target === undefined
+            ? existing.modelSelection
+            : yield* resolveScheduledTaskModelSelection({
+                projectId: existing.projectId,
+                inherited: existing.modelSelection,
+                target: input.target,
+                keepInheritedModelAcrossProviders: true,
+              });
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
@@ -1752,7 +1836,7 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

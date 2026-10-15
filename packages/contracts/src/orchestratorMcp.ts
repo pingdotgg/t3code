@@ -554,6 +554,12 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  /**
+   * Provider, model, and options each run uses. Resolved like a delegated
+   * task's target, against the calling thread's selection (or the project
+   * default when there is no calling thread). Omit to copy that selection.
+   */
+  target: Schema.optional(OrchestratorMcpTarget),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -569,6 +575,11 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
   /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
@@ -607,6 +618,16 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  /**
+   * Changes the provider, model, or options the task's runs use. Resolved
+   * like a delegated task's target, against the task's stored selection. A
+   * provider-only change keeps the stored model when the new provider
+   * advertises it and fails with `model_unavailable` otherwise. Omitted
+   * options are retained only when both the provider and the model stay the
+   * same.
+   * Omit to leave the selection unchanged.
+   */
+  target: Schema.optional(OrchestratorMcpTarget),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
