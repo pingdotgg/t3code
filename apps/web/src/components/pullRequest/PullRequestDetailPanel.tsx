@@ -1,3 +1,4 @@
+import { reviewCommentContextId } from "~/lib/composerContextRecords";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -145,6 +146,7 @@ import {
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
   handoffPrompt,
+  type HandoffPromptInsertion,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
@@ -258,11 +260,11 @@ const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
 
 /**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
+ * What the last hand-off wrote and which prose preceded it, kept outside React because its panel
+ * may close before the next one opens. Citation insertions may shift it; identical paragraphs
+ * elsewhere still belong to the reader.
  */
-const lastHandoffPromptByDraft = new Map<string, string>();
+const lastHandoffPromptByDraft = new Map<string, HandoffPromptInsertion>();
 
 const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
   typeof target === "string" ? target : scopedThreadKey(target);
@@ -1111,6 +1113,7 @@ export function PullRequestDetailPanel({
   type ThreadTask = {
     prompt: string;
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
+    append?: boolean;
   };
 
   const attachTarget = composerDraftTarget ?? null;
@@ -1132,38 +1135,41 @@ export function PullRequestDetailPanel({
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
+    // Line comments accumulate in the draft, including their citations.
+    if (task.append) {
+      store.setPrompt(
+        target,
+        handoffPrompt({ prompt: draft?.prompt ?? "", lastHandoffPrompt: undefined }, task.prompt),
+      );
+      for (const comment of task.reviewComments ?? []) {
+        store.addReviewComment(target, comment, {
+          allowDuplicateReference: true,
+          insertAtCaret: false,
+        });
+      }
+      return;
+    }
     const key = composerTargetKey(target);
-    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
-    const repeatedCommentIds = new Set(
-      (task.reviewComments ?? [])
-        .filter((comment) => previousCommentIds.has(comment.id))
-        .map((comment) => comment.id),
-    );
-    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
-      draft?.prompt ?? "",
+    const prompt = stripPullRequestHandoffReferences(
+      handoffPrompt(
+        {
+          prompt: draft?.prompt ?? "",
+          lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+        },
+        task.prompt,
+      ),
       draft?.reviewComments ?? [],
-      repeatedCommentIds,
     );
-    const prompt = handoffPrompt(
-      {
-        prompt: promptWithoutPreviousHandoff,
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
-      },
-      task.prompt,
-    );
-    lastHandoffPromptByDraft.set(key, task.prompt);
+    lastHandoffPromptByDraft.set(key, {
+      text: task.prompt,
+      prefix: prompt.slice(0, prompt.length - task.prompt.length),
+      contextIds: (task.reviewComments ?? []).map((comment) => reviewCommentContextId(comment.id)),
+    });
     store.setPrompt(target, prompt);
     store.setReviewComments(
       target,
       handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
     );
-    for (const comment of task.reviewComments ?? []) {
-      if (!repeatedCommentIds.has(comment.id)) continue;
-      store.addReviewComment(target, comment, {
-        allowDuplicateReference: true,
-        insertAtCaret: false,
-      });
-    }
   };
 
   /**
@@ -1186,10 +1192,8 @@ export function PullRequestDetailPanel({
       ));
     if (session === null) return null;
     if (task === null) return session;
-    // The latest press is the ask: it takes over what an earlier hand-off left, prompt and chips
-    // both, rather than stacking a second one under the first. What the reader typed themselves
-    // survives — the composer they are handed is not always a fresh one, and a prompt they have
-    // since edited is theirs rather than the hand-off's.
+    // General asks replace the previous handoff; line comments append to the draft.
+    // Text the reader typed or edited survives either kind of handoff.
     writeTaskToComposer(session.draftId, task);
     return session;
   };
@@ -1467,17 +1471,20 @@ export function PullRequestDetailPanel({
     if (!detail) return;
     void startAsk(
       `selection:${selection.comment.id}`,
-      buildAddSelectionToAgentHandoff({
-        number: detail.number,
-        title: detail.title,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-        state: detail.state,
-        isDraft: detail.isDraft,
-        comment: selection.comment,
-        request: selection.request,
-      }),
+      {
+        ...buildAddSelectionToAgentHandoff({
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          isDraft: detail.isDraft,
+          comment: selection.comment,
+          request: selection.request,
+        }),
+        append: true,
+      },
       options,
     );
   };

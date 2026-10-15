@@ -1,3 +1,4 @@
+import { reviewCommentContextId } from "~/lib/composerContextRecords";
 import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The actions a pull request offers, extracted from the detail panel so smaller surfaces — the
@@ -34,7 +35,13 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
-import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
+import {
+  handoffPrompt,
+  handoffReviewComments,
+  readableFailure,
+  stripPullRequestHandoffReferences,
+  type HandoffPromptInsertion,
+} from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 /** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
@@ -251,11 +258,11 @@ export type PullRequestHandoffDetail = Pick<
 >;
 
 /**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
+ * What the last hand-off wrote and which prose preceded it, kept outside React because its panel
+ * may close before the next one opens. Citation insertions may shift it; identical paragraphs
+ * elsewhere still belong to the reader.
  */
-const lastHandoffPromptByDraft = new Map<DraftId, string>();
+const lastHandoffPromptByDraft = new Map<DraftId, HandoffPromptInsertion>();
 
 /**
  * The hand-offs from a pull request into a thread: a question that needs nothing checked out, and
@@ -305,16 +312,23 @@ export function usePullRequestHandoffs({
     // since edited is theirs rather than the hand-off's.
     const draft = store.getComposerDraft(session.draftId);
     const existingComments = draft?.reviewComments ?? [];
-    const prompt = handoffPrompt(
-      {
-        prompt: draft?.prompt ?? "",
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
-      },
-      task.prompt,
+    const prompt = stripPullRequestHandoffReferences(
+      handoffPrompt(
+        {
+          prompt: draft?.prompt ?? "",
+          lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
+        },
+        task.prompt,
+      ),
+      existingComments,
     );
     // Remember the hand-off's own contribution, not the merged prompt: only that sentence is
     // this session's to take back next time, and the reader's text around it is not.
-    lastHandoffPromptByDraft.set(session.draftId, task.prompt);
+    lastHandoffPromptByDraft.set(session.draftId, {
+      text: task.prompt,
+      prefix: prompt.slice(0, prompt.length - task.prompt.length),
+      contextIds: (task.reviewComments ?? []).map((comment) => reviewCommentContextId(comment.id)),
+    });
     store.setPrompt(session.draftId, prompt);
     store.setReviewComments(
       session.draftId,

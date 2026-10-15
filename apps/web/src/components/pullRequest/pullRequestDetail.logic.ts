@@ -1,3 +1,4 @@
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
@@ -36,7 +37,10 @@ import {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";
-import { removeInlineContextReference } from "~/lib/composerContextReferences";
+import {
+  removeInlineContextReference,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",
@@ -789,9 +793,8 @@ export interface FixFindingsHandoff {
 }
 
 /**
- * Every chip a hand-off leaves in the composer is named after the pull request it came from —
- * `pull-request-context:`, `pull-request-finding:`, `pull-request-selection:` — which is what
- * tells them apart from the ones a reader marked up in the thread's own diff.
+ * General handoffs own `pull-request-` chips. Line comments use `pr-line-`, so replacing a
+ * general request keeps the lines the reader added, just as it keeps their own diff annotations.
  */
 const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
 
@@ -809,15 +812,28 @@ export function stripPullRequestHandoffReferences(
   return next;
 }
 
+export interface HandoffPromptInsertion {
+  readonly text: string;
+  /** The text preceding this insertion, before later caret citations add their own padding. */
+  readonly prefix: string;
+  /** Chips generated with this request, used to disambiguate identical reader paragraphs. */
+  readonly contextIds?: ReadonlyArray<string>;
+}
+
+/** Citation links and their whitespace padding do not change which request follows this prose. */
+function handoffPrefixProse(prefix: string): string {
+  return stripInlineContextReferences(prefix).replace(/\s/gu, "");
+}
+
 /**
  * The prompt the composer should hold once a hand-off lands there.
  *
  * A hand-off owns what an earlier hand-off wrote and nothing else: pressing Ask and then Explain
  * used to stack both in the composer, and the reader sent a question nobody wrote. What says an
- * earlier one wrote it is the text itself — the caller remembers what it last put in this draft,
- * and only that exact sentence is replaced. A reader who typed their own question, or edited the
- * one they were given, has written something no hand-off may take away: an empty ask leaves it
- * alone, and one carrying a prompt goes underneath it.
+ * earlier one wrote it is the recorded text and preceding prose — only that unchanged insertion is
+ * replaced. A reader who typed their own question, or edited the one they were given, has written
+ * something no hand-off may take away: an empty ask leaves it alone, and one carrying a prompt
+ * goes underneath it.
  */
 export function handoffPrompt(
   existing: {
@@ -827,22 +843,56 @@ export function handoffPrompt(
      * merged prompt it landed in, or a draft that held the reader's text before the first
      * hand-off would read as all hand-off and be replaced wholesale by the second.
      */
-    readonly lastHandoffPrompt: string | undefined;
+    readonly lastHandoffPrompt: HandoffPromptInsertion | undefined;
   },
   incoming: string,
 ): string {
   if (existing.prompt.trim().length === 0) return incoming;
-  const last = existing.lastHandoffPrompt ?? "";
-  // Only the sentence the last hand-off wrote is taken back: alone, or off the end of the
-  // reader's own text it was appended under.
-  const kept =
-    last.length === 0
-      ? existing.prompt
-      : existing.prompt === last
-        ? ""
-        : existing.prompt.endsWith(`\n\n${last}`)
-          ? existing.prompt.slice(0, -(last.length + 2))
-          : existing.prompt;
+  const last = existing.lastHandoffPrompt;
+  let kept = existing.prompt;
+  const expectedPrefix = last ? handoffPrefixProse(last.prefix) : "";
+  const previousText = last?.text ?? "";
+  const contextIds = new Set(last?.contextIds ?? []);
+  const paragraphs = [];
+  let start = previousText.length > 0 ? existing.prompt.indexOf(previousText) : -1;
+  while (start >= 0) {
+    const before = existing.prompt.slice(0, start);
+    const after = existing.prompt.slice(start + previousText.length);
+    const beforeProse = stripInlineContextReferences(before).replace(/[ \t]+$/u, "");
+    if (
+      (beforeProse.length === 0 || beforeProse.endsWith("\n\n")) &&
+      /^[ \t]*(?:\n\n|$)/u.test(stripInlineContextReferences(after))
+    ) {
+      const separator = after.indexOf("\n\n");
+      const attached = after.slice(0, separator < 0 ? undefined : separator);
+      paragraphs.push({
+        before,
+        after,
+        ownsContext: collectComposerContextReferences(attached).some((reference) =>
+          contextIds.has(reference.contextId),
+        ),
+      });
+    }
+    start = existing.prompt.indexOf(previousText, start + previousText.length);
+  }
+  // An earlier reader copy can occupy the original prose position. Only a unique attached
+  // handoff citation distinguishes identical paragraphs; otherwise keep all ambiguous text.
+  const anchored = paragraphs.filter((paragraph) => paragraph.ownsContext);
+  const paragraph =
+    paragraphs.length === 1 ? paragraphs[0] : anchored.length === 1 ? anchored[0] : undefined;
+  if (paragraph && handoffPrefixProse(paragraph.before) === expectedPrefix) {
+    // Remove the separators around our insertion, preserving citations, indentation and
+    // trailing spaces on both sides.
+    const prefix = paragraph.before.endsWith("\n\n")
+      ? paragraph.before.slice(0, -2)
+      : paragraph.before;
+    let after = paragraph.after;
+    for (const contextId of contextIds) {
+      after = removeInlineContextReference(after, contextId).prompt;
+    }
+    const suffix = after.replace(/^[ \t]*(?:\n\n|$)/u, "");
+    kept = [prefix, suffix].filter(Boolean).join("\n\n");
+  }
   if (kept.trim().length === 0) return incoming;
   return incoming.length === 0 ? kept : `${kept}\n\n${incoming}`;
 }
@@ -1072,7 +1122,7 @@ function pullRequestContextComment(
   instructions: ReadonlyArray<string>,
 ): ReviewCommentContext {
   return {
-    id: `pull-request-context:${input.number}`,
+    id: `pull-request-context:${encodeURIComponent(input.url)}`,
     sectionId: `pull-request:${input.number}`,
     sectionTitle: `PR #${input.number}`,
     // The chip wears `filePath rangeLabel`, so those two are what it reads as: which pull
@@ -1175,7 +1225,20 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    // A line comment belongs to the reader's draft, so general handoff replacement must keep it.
+    // The URL scopes both chips by host, repository and PR, including when Code and Guide share
+    // a composer. Keep the producer's file/range ID within that scope.
+    reviewComments: [
+      {
+        ...pullRequestContextComment(input, []),
+        id: `pr-line-context:${encodeURIComponent(input.url)}`,
+      },
+      {
+        ...input.comment,
+        id: `pr-line-selection:${encodeURIComponent(input.url)}:${input.comment.id}`,
+        text: "",
+      },
+    ],
   };
 }
 
