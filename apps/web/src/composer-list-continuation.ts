@@ -119,6 +119,8 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   if (cursor < markerEnd) return null;
   if (isInsideInlineToken(value, cursor)) return null;
   if (value.slice(markerEnd, line.end).trim() === "") {
+    // A bare "2." or "-" is text still being typed, not an item to exit.
+    if (parsed.marker.space === "") return null;
     // Empty item: Enter exits the list by removing the marker.
     return { start: line.start, end: Math.max(cursor, markerEnd), replacement: "" };
   }
