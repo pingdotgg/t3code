@@ -25,6 +25,17 @@ export const DesktopBrowserEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("detached"), ...TabKey }),
   /** One CDP message from the tab's relay. */
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
+  /**
+   * The tab's page failed to load. The desktop starts a tab's first load before
+   * the server connects, so the server cannot always observe the failure itself.
+   */
+  Schema.Struct({
+    type: Schema.Literal("loadFailed"),
+    ...TabKey,
+    url: Schema.String,
+    code: Schema.Int,
+    description: Schema.String,
+  }),
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 

@@ -64,6 +64,23 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("reports load failures only for attached tabs", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const failure = { url: "https://device.local/", code: -202, description: "ERR_CERT" };
+      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+      // Wait until the reader is subscribed, so an event for the unattached tab would reach it.
+      yield* Effect.yieldNow;
+      host.loadFailed(key, failure);
+      host.attach(key, makeDebuggee().tab);
+      host.loadFailed(key, failure);
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...key },
+        { type: "loadFailed", ...key, ...failure },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("drops replies from a relay the server released", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;

@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../../serverSettings.ts";
@@ -16,6 +17,7 @@ import * as DesktopTelemetryReceiver from "../../resourceTelemetry/DesktopTeleme
 import * as DesktopBrowserChannel from "../DesktopBrowserChannel.ts";
 
 const key = { threadId: "thread-1", tabId: "tab-1" };
+const loadFailure = { url: "https://device.local/", code: -202, description: "ERR_CERT" };
 
 Effect.gen(function* () {
   const base = yield* ServerConfig.ServerConfig.pipe(
@@ -48,9 +50,21 @@ Effect.gen(function* () {
   if (!(yield* browser.awaitAttached(key, "5 seconds"))) {
     return yield* Effect.die("The browser attach message was not received.");
   }
+  // The parent sends the failure before the attach, and lines are handled in order.
+  const reported = Option.getOrUndefined(yield* browser.loadFailure(key));
+  if (
+    reported?.url !== loadFailure.url ||
+    reported.code !== loadFailure.code ||
+    reported.description !== loadFailure.description
+  ) {
+    return yield* Effect.die("The desktop's load failure was not kept for the tab.");
+  }
   yield* Fiber.join(healthy);
   yield* Console.log("attached");
   yield* Fiber.join(detached);
+  if (Option.isSome(yield* browser.loadFailure(key))) {
+    return yield* Effect.die("A detached tab kept its load failure.");
+  }
   const endpoint = yield* Effect.exit(Effect.scoped(browser.endpoint(key)));
   if (Exit.isSuccess(endpoint)) return yield* Effect.die("A detached tab received an endpoint.");
   yield* Console.log("verified");

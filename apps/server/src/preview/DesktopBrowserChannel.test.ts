@@ -25,6 +25,7 @@ it("receives desktop messages and exits while the parent keeps both input pipes 
     stream.write(`${JSON.stringify(value)}\n`);
   };
   const key = { threadId: "thread-1", tabId: "tab-1" };
+  const loadFailure = { url: "https://device.local/", code: -202, description: "ERR_CERT" };
   child.stdout?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
     let end: number;
@@ -32,6 +33,7 @@ it("receives desktop messages and exits while the parent keeps both input pipes 
       const line = output.slice(0, end);
       output = output.slice(end + 1);
       if (line === "ready") {
+        write(3, { type: "loadFailed", ...key, ...loadFailure });
         write(3, { type: "attached", ...key });
         write(5, { version: 1, type: "desktopTelemetryHello", electronPid: process.pid });
       } else if (line === "attached") {
