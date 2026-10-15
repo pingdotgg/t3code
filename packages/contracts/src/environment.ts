@@ -129,6 +129,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server checks OTLP endpoints for the telemetry export settings. */
   otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Server can exclude PR-linked threads from inactivity settlement. */

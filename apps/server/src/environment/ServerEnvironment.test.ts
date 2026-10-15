@@ -118,6 +118,13 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",
         );
+        expect(descriptor.capabilities).toMatchObject({
+          settledWorktreeCleanup: true,
+          storageCleanupRun: true,
+          projectWorktreeCleanup: true,
+          worktreesDirectory: true,
+          threadAutoSettlementScope: true,
+        });
       }
     }),
   );
