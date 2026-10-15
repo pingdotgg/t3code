@@ -1,10 +1,11 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { Menu } from "../../components/Menu";
@@ -261,7 +262,7 @@ export function usePullRequestFilesContent(props: {
             className="min-h-11 items-center justify-center rounded-xl bg-grouped-card px-4 py-3"
           >
             {result.isPending ? (
-              <ActivityIndicator />
+              <AppActivityIndicator />
             ) : (
               <Text className="text-sm font-t3-medium">
                 {result.error ? "Retry loading files" : "Load more files"}

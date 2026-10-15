@@ -1,9 +1,10 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -163,7 +164,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
             }}
           >
-            {activity.isPending && !thread ? <ActivityIndicator /> : null}
+            {activity.isPending && !thread ? <AppActivityIndicator /> : null}
             {thread ? (
               <View className="gap-2 pb-4">
                 <Text selectable className="font-mono text-xs text-foreground-muted">

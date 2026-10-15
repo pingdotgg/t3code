@@ -1,6 +1,7 @@
+import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { useId } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../native/StackHeader";
@@ -155,7 +156,7 @@ export function AppBar(props: AppBarProps) {
                   accessibilityLabel={action.accessibilityLabel}
                   className="size-9 items-center justify-center"
                 >
-                  <ActivityIndicator color={action.tintColor} />
+                  <AppActivityIndicator color={action.tintColor} />
                 </View>
               </NativeHeaderToolbar.Custom>
             ) : (

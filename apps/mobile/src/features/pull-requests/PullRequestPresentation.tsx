@@ -1,6 +1,7 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import type { PullRequestActor } from "@t3tools/contracts";
 import { Image } from "expo-image";
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
@@ -11,7 +12,7 @@ export function PullRequestReadStatus(props: {
   readonly error: string | null;
 }) {
   return props.pending ? (
-    <ActivityIndicator className="my-12" colorClassName="accent-icon" />
+    <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
   ) : props.error ? (
     <EmptyState title="Couldn't load this pull request" detail={props.error} variant="plain" />
   ) : null;

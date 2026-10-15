@@ -1,3 +1,4 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -5,7 +6,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -231,7 +231,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   </Text>
                 </View>
                 {pending === id ? (
-                  <ActivityIndicator />
+                  <AppActivityIndicator />
                 ) : item.isRequested ? (
                   <View className="flex-row items-center gap-1.5">
                     <Text className="text-xs text-foreground-muted">Requested</Text>
@@ -245,7 +245,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           }}
           ListEmptyComponent={
             result.isPending && !result.data ? (
-              <ActivityIndicator className="my-8" />
+              <AppActivityIndicator className="my-8" />
             ) : (
               <View className="px-4 py-6">
                 <EmptyState
@@ -281,7 +281,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         >
           {!pr ? (
             detail.isPending ? (
-              <ActivityIndicator />
+              <AppActivityIndicator />
             ) : (
               <Text className="text-danger-foreground">
                 {detail.error ?? "Couldn't load this pull request."}

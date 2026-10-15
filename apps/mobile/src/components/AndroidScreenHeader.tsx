@@ -1,6 +1,7 @@
+import { AppActivityIndicator } from "./AppActivityIndicator";
 import { Column, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { useState, type ReactNode } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
 import { NativeAppBar } from "./NativeAppBar.android";
@@ -127,7 +128,7 @@ export function AndroidScreenHeader(props: {
                     accessibilityLabel={action.accessibilityLabel}
                     className="size-12 items-center justify-center"
                   >
-                    <ActivityIndicator colorClassName="accent-header-foreground" />
+                    <AppActivityIndicator colorClassName="accent-header-foreground" />
                   </View>
                 ) : (
                   <AndroidHeaderIconButton

@@ -1,12 +1,6 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Linking, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   Extrapolation,
@@ -154,7 +148,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
                   />
                 </>
               ) : (
-                <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+                <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
               )}
             </Pressable>
           </Animated.View>
@@ -243,7 +237,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
                 accessibilityLabel={presentation.statusLabel ?? undefined}
                 className="size-[30px] items-center justify-center"
               >
-                <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+                <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
               </View>
             )}
           </Animated.View>
