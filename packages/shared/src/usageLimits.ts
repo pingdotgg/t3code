@@ -384,7 +384,7 @@ export interface LimitPoolWindow {
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
-    /** Points of the pool the reset restores: the member's used share over the member count. */
+    /** Points of the pool the reset restores: the member's used share, weighted by plan size. */
     readonly restoresPercent: number;
   }>;
 }
@@ -471,6 +471,11 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
+/** Relative plan size read from labels like `Pro 5x` or `Max 20x`; unknown plans count as 1. */
+export function planWeight(account: LimitAccount): number {
+  return Number(account.plan?.match(/\b(\d+)x\b/i)?.[1]) || 1;
+}
+
 /**
  * Codex ids are slots, not allowances: a weekly-only plan reports its weekly
  * window as `primary`, other plans as `secondary`. Its windows pool by kind;
@@ -497,20 +502,30 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
+    // A 20x plan holds four times the quota of a 5x one, so it moves the pool
+    // four times as much.
+    const totalWeight = members.reduce((sum, m) => sum + planWeight(m.account), 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * planWeight(m.account), 0) /
+      totalWeight;
     // Pooled Codex slots take the pool's own key, so the id stays the same
     // whichever account sorts first.
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
     // members that have a clock; a window with no reset would otherwise
     // count as spend with no time elapsed and skew the verdict.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: planWeight(m.account) }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -520,7 +535,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.window.usedPercent / members.length),
+                restoresPercent: Math.round(
+                  (member.window.usedPercent * planWeight(member.account)) / totalWeight,
+                ),
               },
             ];
       })
