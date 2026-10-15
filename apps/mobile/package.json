@@ -42,6 +42,7 @@
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
+    "eas-build-on-success": "node scripts/upload-sourcemaps.mts build",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc-rs --noEmit"
   },
@@ -105,6 +106,7 @@
     "expo-linking": "~58.0.10",
     "expo-network": "~58.0.3",
     "expo-notifications": "~58.0.11",
+    "expo-observe": "~58.0.13",
     "expo-paste-input": "^0.1.15",
     "expo-quick-actions": "^6.0.2",
     "expo-secure-store": "~58.0.2",
@@ -144,6 +146,7 @@
     "@types/mdast": "^4.0.4",
     "@types/react": "~19.3.0",
     "@types/react-dom": "~19.2.3",
+    "aws4fetch": "1.0.20",
     "babel-preset-expo": "~58.0.8",
     "jsdom": "^30.0.1",
     "tailwindcss": "^4.0.0",

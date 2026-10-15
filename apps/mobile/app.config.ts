@@ -17,6 +17,14 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
+// expo-observe sends crashes, errors, and startup metrics here; the relay
+// forwards them to Axiom (infra/relay/src/mobileTelemetry). Observe compiles
+// this into the native project, so changing it takes a new build. Without a
+// relay the app keeps its telemetry: see src/features/observability/observe.ts.
+const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
+  ? new URL("/v1/mobile/observe", repoEnv.T3CODE_RELAY_URL.trim()).toString()
+  : undefined;
+
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 // Android layers are rendered by scripts/export-android-icons.ts from the Icon Composer sources.
 // The wordmark sits inside the adaptive safe zone; the variant artwork is a full-bleed background.
@@ -494,6 +502,7 @@ const config: ExpoConfig = {
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      ...(observeEndpointUrl ? { observe: { endpointUrl: observeEndpointUrl } } : {}),
     },
   },
   owner: "pingdotgg",

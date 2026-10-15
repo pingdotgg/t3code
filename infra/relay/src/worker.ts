@@ -68,6 +68,7 @@ import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -134,7 +135,7 @@ export const layer = Api.make(
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
-    yield* RelayObservability;
+    const observability = yield* RelayObservability;
 
     //
     // 2. Create bindings
@@ -202,6 +203,21 @@ export const layer = Api.make(
       },
     });
     const hookInboxes = yield* HookInboxObject.HookInboxObject;
+    const mobileTelemetryRateLimit = yield* Cloudflare.RateLimit("MOBILE_TELEMETRY_RATE_LIMIT", {
+      namespaceId: 1003,
+      simple: {
+        limit: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.limit,
+        period: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const mobileSourceMaps = yield* Cloudflare.R2.ReadBucket(observability.mobileSourceMaps);
+    const mobileTelemetryToken = yield* observability.mobileTelemetryIngestToken.token;
+    const mobileTracesUrl = yield* observability.traces.otelTracesEndpoint;
+    const mobileTracesDataset = yield* observability.traces.name;
+    const mobileLogsUrl = yield* observability.mobileLogs.otelLogsEndpoint;
+    const mobileLogsDataset = yield* observability.mobileLogs.name;
+    const mobileMetricsUrl = yield* observability.mobileMetrics.otelMetricsEndpoint;
+    const mobileMetricsDataset = yield* observability.mobileMetrics.name;
 
     //
     // 3. Runtime layers and app construction
@@ -318,19 +334,21 @@ export const layer = Api.make(
       Layer.provideMerge(layerWebcrypto),
     );
 
-    // Fails open: a limiter outage must not drop webhooks the environment would accept.
+    // Fails open: a limiter outage must not drop webhooks the environment
+    // would accept, or app telemetry Axiom would.
     const allowWith =
-      (limiter: typeof hookRateLimit) =>
+      (
+        limiter: typeof hookRateLimit,
+        failedOpenAttribute = "relay.hook.rate_limiter_failed_open",
+      ) =>
       (key: string): Effect.Effect<boolean> =>
         limiter.limit({ key }).pipe(
           Effect.map((result) => result.success),
           Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
           Effect.catch((error) =>
-            Effect.logWarning("Hook rate limiter unavailable", { error: error.message }).pipe(
-              // Visible on the forward span, so an outage that disables limits shows up.
-              Effect.andThen(
-                Effect.annotateCurrentSpan({ "relay.hook.rate_limiter_failed_open": true }),
-              ),
+            Effect.logWarning("Rate limiter unavailable", { error: error.message }).pipe(
+              // Visible on the request span, so an outage that disables limits shows up.
+              Effect.andThen(Effect.annotateCurrentSpan({ [failedOpenAttribute]: true })),
               Effect.as(true),
             ),
           ),
@@ -340,12 +358,60 @@ export const layer = Api.make(
       allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
-    const layerApp = Layer.merge(
+    // Built here, once per isolate, so decoded maps outlive a request.
+    const mobileSourceMapLookups = yield* MobileTelemetry.makeSourceMaps((key) =>
+      mobileSourceMaps.get(key).pipe(
+        Effect.map((object) =>
+          object === null
+            ? undefined
+            : {
+                size: object.size,
+                text: object.text().pipe(
+                  Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+                  Effect.mapError(
+                    (cause) => new MobileTelemetry.SourceMapObjectError({ key, cause }),
+                  ),
+                ),
+              },
+        ),
+        Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+        Effect.mapError((cause) => new MobileTelemetry.SourceMapObjectError({ key, cause })),
+      ),
+    );
+    const layerMobileTelemetry = MobileTelemetry.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            MobileTelemetry.MobileTelemetrySettings,
+            Effect.gen(function* () {
+              return MobileTelemetry.MobileTelemetrySettings.of({
+                axiomToken: yield* mobileTelemetryToken,
+                destinations: {
+                  traces: { url: yield* mobileTracesUrl, dataset: yield* mobileTracesDataset },
+                  logs: { url: yield* mobileLogsUrl, dataset: yield* mobileLogsDataset },
+                  metrics: { url: yield* mobileMetricsUrl, dataset: yield* mobileMetricsDataset },
+                },
+              });
+            }),
+          ),
+          Layer.succeed(MobileTelemetry.MobileTelemetryRateLimiter, {
+            allow: allowWith(
+              mobileTelemetryRateLimit,
+              "relay.mobile_telemetry.rate_limiter_failed_open",
+            ),
+          }),
+          Layer.succeed(MobileTelemetry.SourceMaps, mobileSourceMapLookups),
+        ),
+      ),
+    );
+
+    const layerApp = Layer.mergeAll(
       layerRelayApi,
       HookForwarder.layerApi.pipe(
         Layer.provide(HookForwarder.layer),
         Layer.provide(layerHookRateLimiter),
       ),
+      MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
@@ -468,6 +534,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
+        Layer.provideMerge(Cloudflare.R2.ReadBucketBinding),
         Layer.provideMerge(HookInboxObject.layer),
         // The worker runtime opens its own HTTP span around ours. Ours carries
         // the route, header redaction and webhook URL redaction, and drops a

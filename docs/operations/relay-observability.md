@@ -10,6 +10,11 @@ The relay Alchemy stack owns a shared Axiom trace setup:
 - `t3-code-mobile-otel-ingest-prod`, the dataset-scoped mobile ingest token
 - `t3-code-relay-client-otel-ingest-prod`, the dataset-scoped first-party relay-client ingest token
 - `t3-code-relay-recent-spans-prod`, a view of recent request and endpoint spans
+- `t3-code-mobile-logs-prod` and `t3-code-mobile-metrics-prod`, the mobile app's crash, error, and
+  startup data from `expo-observe` (see [Mobile crashes and errors](#mobile-crashes-and-errors))
+- `t3-code-mobile-telemetry-ingest-prod`, the ingest token the Worker forwards that data with
+- `t3-code-mobile-sourcemaps-prod`, the R2 bucket of mobile JavaScript source maps, and
+  `t3-code-mobile-sourcemaps-upload-prod`, a Cloudflare token that can only write objects to it
 
 Alchemy stages append their sanitized stage name to isolate resources, for example
 `t3-code-relay-traces-dev-julius` for a personal stage.
@@ -108,3 +113,45 @@ Questions these answer:
   ) on trace_id
 | summarize runs = count(), failures = max(failures), backlog = max(backlog) by endpoint
 ```
+
+## Mobile crashes and errors
+
+The mobile app reports through [`expo-observe`](https://docs.expo.dev/eas/observe/). Its
+`endpointUrl` points at the relay (`/v1/mobile/observe`, set in `apps/mobile/app.config.ts` from
+`T3CODE_RELAY_URL`), because Observe cannot send auth headers and prefixes every path with the EAS
+project id. The relay forwards each request to Axiom with its own token: logs (JavaScript errors,
+native crashes, log events) to `t3-code-mobile-logs-*`, metrics to `t3-code-mobile-metrics-*`, and
+spans to the shared traces dataset. Expo's Observe dashboard receives nothing. The endpoint URL is
+compiled into the native app, so pointing it elsewhere takes a store build.
+
+Hermes stacks from release builds are minified bytecode offsets. On the way through, the relay
+rewrites each JavaScript exception's `exception.stacktrace` with the bundle's source map from R2
+and records the outcome on the log record:
+
+- `relay.symbolication.status`: `symbolicated`, `source_map_missing`, or `no_bundle_frames`
+- `relay.symbolication.source_map`: the R2 key used
+- `relay.symbolication.raw_stacktrace`: the original stack, when it was rewritten
+
+Native crash stacks (`expo.error.source == 'nativeCrash'`) are not symbolicated.
+
+Maps are keyed by the bundle that crashed: `<platform>/ota/<updateId>.map` for OTA updates and
+`<platform>/build/<easBuildId>.map` for the bundle embedded in a store build. The production
+mobile workflow uploads OTA maps after `eas update`, and the `eas-build-on-success` hook in
+`apps/mobile/package.json` uploads a build's map, both with `apps/mobile/scripts/upload-sourcemaps.mts`.
+They need the `MOBILE_SOURCEMAPS_R2` secret, a JSON value the stack outputs as
+`mobileSourceMapsUploadCredentials` from a token that can only write to the bucket. Creating that
+token needs **Account API Tokens: Edit** on the deploy token. Deploy output shows it redacted; read
+it from state, where it is under `__redacted__`:
+
+```sh
+cd infra/relay && vp exec alchemy state read T3CodeRelay/prod/output
+```
+
+Set it as a GitHub Actions secret, for OTA updates, and as an EAS environment variable with
+`secret` visibility in the `production` environment only, for builds. Keep it out of `preview`:
+PR preview builds run the PR's code in that environment. In CI only the upload step gets it, not
+`eas update` and the dependencies it runs. If the deploy replaces the token, update both.
+
+Without it, uploads are skipped with a warning and stacks stay minified. Each ingest request is one
+`relay.mobile_telemetry.ingest` span; `relay.mobile_telemetry.outcome` is `forwarded`,
+`rate_limited`, `body_too_large`, `upstream_unavailable`, or `upstream_timeout`.
