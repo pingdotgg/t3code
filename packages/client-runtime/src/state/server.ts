@@ -1148,6 +1148,16 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
     }),
     configProjection,
+    runStartedAt: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:run-started-at",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" ? Result.succeed(event.payload.at) : Result.failVoid,
+          ),
+        ),
+    }),
     welcome,
     legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:legacy-thread-migration",
