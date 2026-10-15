@@ -139,6 +139,7 @@ import {
 } from "./pendingUserInputLayout";
 import {
   COMPOSER_COLLAPSED_CHROME,
+  COMPOSER_DICTATION_REVIEW_CHROME,
   COMPOSER_EXPANDED_CHROME,
   COMPOSER_LAYOUT_TRANSITION,
   COMPOSER_TRANSITION_DURATION_MS,
@@ -440,8 +441,23 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
+  const composerFocusedRef = useRef(false);
+  // A transcript dictated into the collapsed composer opens it for reading with the
+  // keyboard down. Focusing the editor, tapping the feed, or sending ends the review.
+  const [dictationReviewThreadKey, setDictationReviewThreadKey] = useState<string | null>(null);
+  const isReviewingDictation =
+    dictationReviewThreadKey === selectedThreadKey &&
+    props.draftMessage.trim().length > 0 &&
+    !composerFocused;
+  // Dictation keeps the callback it started with, and a focus event may not have rendered
+  // yet, so the ref carries the latest focus for the moment the transcript lands.
+  const handleDictationComplete = useCallback(() => {
+    if (!composerFocusedRef.current) setDictationReviewThreadKey(selectedThreadKey);
+  }, [selectedThreadKey]);
   const handleComposerFocusChange = useCallback(
     (focused: boolean) => {
+      composerFocusedRef.current = focused;
+      if (focused) setDictationReviewThreadKey(null);
       setComposerFocused(focused);
       handleOwnedInputFocusChange(focused);
     },
@@ -458,8 +474,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // then snap up into the inset. On iOS blur precedes the hide, so the
   // focus-keyed inset is already in place while the composer rides down.
   // Dictation keeps that focus while the composer switches to its compact pill.
+  // A dictation review is expanded with the keyboard down, so it keeps the inset.
   const composerBottomInset = (
-    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
+    Platform.OS === "android"
+      ? isKeyboardVisible
+      : !isReviewingDictation && (composerExpanded || composerFocused)
   )
     ? 0
     : Math.max(insets.bottom, 12);
@@ -583,7 +602,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     ) ||
     (props.historyControls?.hasMoreHistory === true &&
       props.selectedThread.latestUserMessageAt !== null);
-  const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
+  const composerChrome = isReviewingDictation
+    ? COMPOSER_DICTATION_REVIEW_CHROME
+    : composerExpanded
+      ? COMPOSER_EXPANDED_CHROME
+      : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
   // composer slot outright: expanded it is the full card, collapsed it is a
@@ -883,6 +906,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
     // A replaced or unmounted native editor may not emit a blur event.
+    composerFocusedRef.current = false;
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
 
@@ -1019,6 +1043,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
       // A sent message makes the snapshot stale; a refused send leaves it in place.
       clearUsageLimitsFor(targetThreadKey);
+      setDictationReviewThreadKey(null);
 
       setSubmittedMessageId(messageId);
       setAnchorMessageId(
@@ -1061,6 +1086,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   const collapseComposer = useCallback(() => {
+    setDictationReviewThreadKey(null);
     composerEditorRef.current?.blur();
   }, []);
 
@@ -1466,6 +1492,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         }
                         bottomInset={composerBottomInset}
                         onChangeDraftMessage={props.onChangeDraftMessage}
+                        isReviewingDictation={isReviewingDictation}
+                        onDictationComplete={handleDictationComplete}
                         onPickDraftMedia={props.onPickDraftMedia}
                         onPickDraftFiles={props.onPickDraftFiles}
                         onNativePasteImages={props.onNativePasteImages}

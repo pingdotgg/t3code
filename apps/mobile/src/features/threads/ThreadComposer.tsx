@@ -143,6 +143,16 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  */
 export const COMPOSER_EXPANDED_CHROME = 156;
 
+const EXPANDED_EDITOR_MIN_HEIGHT = 72;
+const EXPANDED_EDITOR_MAX_HEIGHT = 160;
+
+/**
+ * Height of the composer while a dictated draft is held open for review: the expanded
+ * composer with its editor at full height.
+ */
+export const COMPOSER_DICTATION_REVIEW_CHROME =
+  COMPOSER_EXPANDED_CHROME + EXPANDED_EDITOR_MAX_HEIGHT - EXPANDED_EDITOR_MIN_HEIGHT;
+
 export interface ThreadComposerProps {
   readonly canOperateThread: boolean;
   readonly draftMessage: string;
@@ -187,6 +197,10 @@ export interface ThreadComposerProps {
   readonly canSteerActiveTurn: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
+  /** Holds the composer open at full editor height, unfocused, so a dictated draft can be read. */
+  readonly isReviewingDictation: boolean;
+  /** Called when a finished transcript lands in the draft. */
+  readonly onDictationComplete: () => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -523,7 +537,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
-    onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
+    onChangeDraftMessage: (text) => {
+      setComposerDraftText(composerDraftKey, text);
+      props.onDictationComplete();
+    },
     onChangeSelection: composerMenu.onSelectionChange,
   });
   const voicePresentation = resolveVoiceComposerPresentation(
@@ -532,7 +549,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
+  const isExpanded =
+    isFocused || props.isReviewingDictation || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -604,11 +622,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.keepsComposerExpanded) {
+    if (!props.isReviewingDictation && !settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
+  }, [
+    onEditorFocusChange,
+    onExpandedChange,
+    props.isReviewingDictation,
+    settingsSheetPresentation.keepsComposerExpanded,
+  ]);
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
@@ -1038,8 +1061,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 style={
                   isExpanded
                     ? {
-                        minHeight: 72,
-                        maxHeight: 160,
+                        minHeight: props.isReviewingDictation
+                          ? EXPANDED_EDITOR_MAX_HEIGHT
+                          : EXPANDED_EDITOR_MIN_HEIGHT,
+                        maxHeight: EXPANDED_EDITOR_MAX_HEIGHT,
                         paddingVertical: 4,
                       }
                     : {
