@@ -9,8 +9,8 @@ and enable **Muse Code**. Set **Binary path** if Muse is not on the host's `PATH
 Refresh provider status after installation or login, then select Muse in a
 thread's model picker.
 
-Provider status does not check your login. If you are signed out, messages
-fail until you run `muse login` on the host.
+Provider status shows when Muse is signed out. Run `muse login` on the host,
+then refresh its status.
 
 ## Sign-in and API keys
 
@@ -42,6 +42,16 @@ unavailable, select an available model before sending another message.
 Muse can list models that your account cannot use. If a message fails with
 "does not exist or you lack access", pick another model, or add one your account
 can use under **Custom models** in the instance settings.
+
+## Usage limits
+
+**Usage → Limits** shows your Meta subscription's session and weekly windows.
+Muse reports them with each reply, so they appear after Muse's first reply
+since the T3 server started. The same Meta account signed in on several hosts
+counts once.
+
+With an API key, Limits shows none: a key names no Meta account to count
+them against.
 
 ## Permissions and limitations
 

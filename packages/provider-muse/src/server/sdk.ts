@@ -51,6 +51,8 @@ export interface MuseSdkHostOptions {
   readonly readOnly?: boolean;
   /** Read-only generation needs durable logging for turn/item notifications (verified through 1.1.1). */
   readonly sessionLogging?: boolean;
+  /** Opts into MSP's experimental methods, such as `account/read`. */
+  readonly experimentalApi?: boolean;
   readonly signal?: AbortSignal;
   readonly startupTimeoutMs?: number;
 }
@@ -163,10 +165,13 @@ export function museServeArgs(
 }
 
 /** What T3 sends in MSP `initialize`; only full hosts ask for session MCP servers. */
-export function museInitializeParams(readOnly = false) {
+export function museInitializeParams(readOnly = false, experimentalApi = false) {
   return {
     clientInfo: { name: "t3_code", title: "T3 Code", version: "1" },
-    capabilities: { requestedCapabilities: readOnly ? [] : ["sessionMcp"] },
+    capabilities: {
+      requestedCapabilities: readOnly ? [] : ["sessionMcp"],
+      ...(experimentalApi ? { experimentalApi: true } : {}),
+    },
   };
 }
 
@@ -208,7 +213,7 @@ export async function createMuseSdkHost(
   timer.unref();
   try {
     const host = await Promise.race([
-      handshake.initialize(museInitializeParams(options.readOnly)),
+      handshake.initialize(museInitializeParams(options.readOnly, options.experimentalApi)),
       interrupted,
     ]);
     if (host.initializeResult.schema?.version !== 1) {
