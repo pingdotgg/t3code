@@ -674,6 +674,53 @@ export const layer = Layer.effect(
         ),
       );
 
+    // A launch is accepted before its workspace is prepared, so a run counts as
+    // succeeded first. The first time the launched run leaves preparation says
+    // how preparation ended; a later retry or provider failure is not about the
+    // workspace. A failure is recorded against this run only: last_run_at is
+    // the run's identity, so a later run's status is never overwritten.
+    const recordFailedPreparation = Effect.fn("ScheduledTaskService.recordFailedPreparation")(
+      function* (input: {
+        readonly id: ScheduledTaskId;
+        readonly startedAtIso: string;
+        readonly threadId: ThreadId;
+        readonly messageId: MessageId;
+      }) {
+        // The thread is new, so replaying its run updates from the start is cheap.
+        const leftPreparation = yield* threadManagement
+          .streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence: 0,
+            eventType: "run.updated",
+          })
+          .pipe(
+            Stream.map((stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.userMessageId === input.messageId
+                ? stored.event.payload.status
+                : "preparing",
+            ),
+            Stream.filter((status) => status !== "preparing"),
+            Stream.runHead,
+          );
+        if (Option.getOrUndefined(leftPreparation) !== "failed") return;
+        yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed',
+              last_run_error = ${`Workspace preparation failed. See thread ${input.threadId}.`}
+          WHERE task_id = ${input.id}
+            AND last_run_status = 'succeeded'
+            AND last_run_at = ${input.startedAtIso}
+        `;
+        yield* notifyChanged;
+      },
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("Could not record a failed workspace preparation", { cause }),
+      ),
+    );
+
     // Best-effort escape hatch: if anything fails between markRunning and
     // markCompleted, write a full terminal record so runDueTasks neither skips
     // the task forever (it filters out 'running' rows) nor re-fires it
@@ -791,43 +838,56 @@ export const layer = Layer.effect(
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
-        // aborting before markCompleted.
+        // aborting before markCompleted. A launch is accepted before its
+        // worktree exists, so a worktree that cannot be made is checked first;
+        // otherwise the run would count as succeeded and fail inside its thread.
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
+                (active.workspaceStrategy.type === "worktree"
+                  ? threadLaunch.checkWorktreeBase(active)
+                  : Effect.void
+                ).pipe(
+                  Effect.andThen(
+                    threadLaunch
+                      .launch({
+                        commandId,
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection: active.modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          scheduledTaskId: active.id,
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      })
+                      .pipe(Effect.map((launched) => launched.threadId)),
+                  ),
+                ),
+              )
+            : yield* Effect.exit(
+                threadManagement
+                  .sendToThread({
+                    projectId: active.projectId,
+                    commandId,
+                    threadId: ThreadId.make(active.threadId),
                     messageId,
                     scheduledTaskId: active.id,
                     text: prompt,
                     attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              )
-            : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                    modelSelection: active.modelSelection,
+                    // Scheduled prompts must not interrupt tools in the bound thread.
+                    mode: "queue",
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(Effect.as(null)),
               );
 
         const completedAt = yield* localNow;
@@ -860,6 +920,15 @@ export const layer = Layer.effect(
             startedAtIso,
           });
           yield* notifyChanged;
+          const launchedThreadId = result._tag === "Success" ? result.value : null;
+          if (launchedThreadId !== null) {
+            yield* recordFailedPreparation({
+              id: task.id,
+              startedAtIso,
+              threadId: launchedThreadId,
+              messageId,
+            }).pipe(Effect.forkIn(serviceScope));
+          }
         }
         return completed;
       }).pipe(

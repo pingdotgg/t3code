@@ -230,19 +230,6 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
- */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
-/**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
  * run it: a webhook's URL carries the secret that starts the task's runs, so
  * only such a caller sees it.
@@ -255,6 +242,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     enabled: task.enabled,
     projectId: task.projectId,
     boundThreadId: task.threadId,
+    workspace: task.workspaceStrategy.type,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -1635,6 +1623,31 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  /**
+   * Workspace strategy for a scheduled task created/updated over MCP. Bound
+   * runs post into the existing thread, so the strategy is unused and stays
+   * root. Unbound runs get a fresh worktree unless root is asked for; an
+   * explicit worktree is refused up front when one cannot be made.
+   */
+  const scheduledTaskWorkspaceStrategy = (
+    projectId: ScheduledTask["projectId"],
+    boundToThread: boolean,
+    workspace: "root" | "worktree" | undefined,
+  ): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> => {
+    if (boundToThread || workspace === "root") return Effect.succeed({ type: "root" });
+    const worktree = { type: "worktree", baseRef: "main", startFromOrigin: true } as const;
+    if (workspace === undefined) return Effect.succeed(worktree);
+    return threadLaunch.checkWorktreeBase({ projectId, workspaceStrategy: worktree }).pipe(
+      Effect.as(worktree),
+      Effect.mapError((error) =>
+        failure(
+          "invalid_request",
+          `${error.message} Pass workspace:"root" to run in the project folder.`,
+        ),
+      ),
+    );
+  };
+
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
@@ -1669,7 +1682,11 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(
+            projectId,
+            bindToCurrentThread,
+            input.workspace,
+          ),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -1739,10 +1756,15 @@ const make = Effect.gen(function* () {
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
+        const rebound = (threadId === null) !== (existing.threadId === null);
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          !rebound && input.workspace === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(
+                existing.projectId,
+                threadId !== null,
+                input.workspace,
+              );
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,

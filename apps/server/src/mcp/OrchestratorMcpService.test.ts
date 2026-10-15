@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import {
@@ -2173,6 +2174,103 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+      }),
+    );
+
+    // Saves echo the task back; the project folder is a Git repository or not.
+    const workspaceService = (repo: boolean, tasks: ReadonlyArray<ScheduledTask>) =>
+      OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () =>
+              repo
+                ? Effect.void
+                : Effect.fail(
+                    new ThreadLaunchService.ThreadLaunchNotRepositoryError({
+                      projectId,
+                      projectTitle: "No project",
+                      workspaceRoot: "/scratch",
+                    }),
+                  ),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) =>
+                Effect.succeed(
+                  Option.some({ id, defaultModelSelection: task({}).modelSelection } as never),
+                ),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              list: () => Effect.succeed({ tasks }),
+              upsert: (input) =>
+                Effect.succeed({ task: task({ workspaceStrategy: input.workspaceStrategy }) }),
+            }),
+          ),
+        ),
+      );
+
+    it.effect.each([
+      {
+        name: "a worktree in a Git repository",
+        repo: true,
+        workspace: "worktree",
+        want: "worktree",
+      },
+      { name: "root when asked for", repo: true, workspace: "root", want: "root" },
+      {
+        name: "a worktree in a plain folder is refused",
+        repo: false,
+        workspace: "worktree",
+        want: "invalid_request",
+      },
+    ] as const)("an unbound task over MCP: $name", (testCase) =>
+      Effect.gen(function* () {
+        const outcome = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) =>
+            mcp.scheduleTask(supervisedClient, {
+              projectId,
+              prompt: "Check the inbox.",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+              workspace: testCase.workspace,
+            }),
+          ),
+          Effect.map((summary) => summary.workspace),
+          Effect.catch((error) => Effect.succeed(error.code)),
+          Effect.provide(workspaceService(testCase.repo, [])),
+        );
+        assert.equal(outcome, testCase.want);
+      }),
+    );
+
+    it.effect("an update keeps the workspace unless the binding or the workspace changes", () =>
+      Effect.gen(function* () {
+        // An unbound task that chose root in a Git repository.
+        const existing = task({ workspaceStrategy: { type: "root" } });
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(workspaceService(true, [existing])),
+        );
+        const repeated = yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: existing.id,
+          prompt: "Check the inbox again.",
+          bindToCurrentThread: false,
+        });
+        assert.equal(repeated.workspace, "root");
+        const switched = yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: existing.id,
+          workspace: "worktree",
+        });
+        assert.equal(switched.workspace, "worktree");
       }),
     );
   });

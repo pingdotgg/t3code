@@ -35,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -113,6 +114,8 @@ interface HarnessOptions {
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  /** Paths that exist on disk, as far as the launch service can see. */
+  readonly existingPaths?: ReadonlyArray<string>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -182,6 +185,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      isRepository: () => Effect.succeed(true),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -211,6 +215,10 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(options.existingPaths?.includes(path) === true),
+        }),
+        Path.layer,
       ),
     ),
   );
@@ -2525,12 +2533,6 @@ it.effect.each([
     startFromOrigin: true,
     origin: false,
   },
-  {
-    name: "is a previous checkout there never was",
-    baseRef: "-",
-    startFromOrigin: false,
-    origin: true,
-  },
 ])("refuses a new worktree whose base ref $name", (testCase) =>
   Effect.gen(function* () {
     const harness = makeHarness({
@@ -2565,8 +2567,41 @@ it.effect.each([
   }),
 );
 
+it.effect("refuses a new worktree in a folder that is not a Git repository", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({ git: { isRepository: () => Effect.succeed(false) } });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .checkWorktreeBase({
+          projectId,
+          // A commit search skips the base ref check, but not this one.
+          workspaceStrategy: { type: "worktree", baseRef: ":/fix", startFromOrigin: true },
+        })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, { _tag: "ThreadLaunchNotRepositoryError", projectId });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("leaves a repository Git refuses to read to the launch", () =>
+  Effect.gen(function* () {
+    // Git says "not a repository" for one owned by another user, but its `.git` is there.
+    const harness = makeHarness({
+      git: { isRepository: () => Effect.succeed(false) },
+      existingPaths: ["/.git"],
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: ":/fix", startFromOrigin: true },
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each([
-  { name: "a base ref that resolves", baseRef: "main", commits: ["main", "HEAD"] },
   // Provisioning fetches it; the ref may exist nowhere else yet.
   {
     name: "a base ref only origin has",
@@ -2585,7 +2620,7 @@ it.effect.each([
   { name: "a repository with no commits yet", baseRef: "main", commits: [] },
   { name: "the previous checkout", baseRef: "-", commits: ["@{-1}", "HEAD"] },
   { name: "a commit search", baseRef: ":/fix", commits: ["HEAD"] },
-  { name: "a folder that is not a repository", baseRef: "main", commits: null },
+  { name: "a Git that cannot answer", baseRef: "main", commits: null },
 ])("leaves $name to the launch", (testCase) =>
   Effect.gen(function* () {
     const { commits } = testCase;
@@ -2598,7 +2633,7 @@ it.effect.each([
                 operation: "GitWorkflowService.hasCommit",
                 command: "git rev-parse",
                 cwd: "/repo",
-                detail: "Not a Git repository.",
+                detail: "fatal: bad object",
               }),
             )
           : Effect.succeed(commits.includes(refName)),
