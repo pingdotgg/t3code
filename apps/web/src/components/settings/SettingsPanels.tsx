@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -3443,7 +3444,7 @@ export function GeneralSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
-  const { scope } = useSettingsScope();
+  const { scope, groups: projectGroups, environments } = useSettingsScope();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const {
     snapshots: archivedSnapshots,
@@ -3452,7 +3453,7 @@ export function ArchivedThreadsPanel() {
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(scope.environmentIds);
 
-  const archivedGroups = useMemo(() => {
+  const { groups: archivedGroups, hasMultipleEnvironments } = useMemo(() => {
     const selectedProjectKeys =
       scope.kind === "project" || scope.kind === "checkout"
         ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
@@ -3470,15 +3471,43 @@ export function ArchivedThreadsPanel() {
           ),
       ),
     );
+    const environmentLabels = new Map(
+      environments.map((environment) => {
+        const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+        return [environment.environmentId, secondary ? `${primary} (${secondary})` : primary];
+      }),
+    );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+      snapshot.threads.map((thread) => ({
+        ...presentThreadShell(environmentId, thread),
+        environmentLabel: environmentLabels.get(environmentId) ?? environmentId,
+      })),
+    );
+    const hasMultipleEnvironments =
+      new Set(
+        threads
+          .filter((thread) =>
+            projectsByEnvironmentAndId.has(`${thread.environmentId}:${thread.projectId}`),
+          )
+          .map((thread) => thread.environmentId),
+      ).size > 1;
+    const logicalGroupsByProjectKey = new Map(
+      projectGroups.flatMap((group) =>
+        group.memberProjectRefs.map(
+          (member) => [`${member.environmentId}:${member.projectId}`, group] as const,
+        ),
+      ),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
-    const groups: Array<{
-      readonly project: (typeof archivedProjects)[number];
-      readonly threads: Array<(typeof threads)[number]>;
-    }> = [];
+    const groups = new Map<
+      string,
+      {
+        readonly project: (typeof archivedProjects)[number];
+        readonly title: string;
+        readonly threads: Array<(typeof threads)[number]>;
+      }
+    >();
     for (const project of archivedProjects) {
       const projectThreads: Array<(typeof threads)[number]> = [];
       for (const thread of threads) {
@@ -3487,18 +3516,34 @@ export function ArchivedThreadsPanel() {
         }
       }
       if (projectThreads.length > 0) {
-        groups.push({
-          project,
-          threads: projectThreads.toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-          }),
-        });
+        const physicalProjectKey = `${project.environmentId}:${project.id}` as const;
+        const logicalGroup = hasMultipleEnvironments
+          ? logicalGroupsByProjectKey.get(physicalProjectKey)
+          : undefined;
+        const groupKey = logicalGroup?.projectKey ?? physicalProjectKey;
+        const group = groups.get(groupKey);
+        if (group) {
+          group.threads.push(...projectThreads);
+        } else {
+          groups.set(groupKey, {
+            project,
+            title: logicalGroup?.displayName ?? project.title,
+            threads: projectThreads,
+          });
+        }
       }
     }
-    return groups;
-  }, [archivedSnapshots, scope]);
+    const sortedGroups = Array.from(groups, ([key, group]) => ({
+      ...group,
+      key,
+      threads: group.threads.toSorted((left, right) => {
+        const leftKey = left.archivedAt ?? left.createdAt;
+        const rightKey = right.archivedAt ?? right.createdAt;
+        return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+      }),
+    }));
+    return { groups: sortedGroups, hasMultipleEnvironments };
+  }, [archivedSnapshots, environments, projectGroups, scope]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -3578,16 +3623,16 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }, index) => (
+        archivedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
           <SettingsSection
-            key={`${project.environmentId}:${project.id}`}
+            key={key}
             id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={project.title}
+            title={title}
             icon={<ProjectFavicon project={project} />}
           >
             {projectThreads.map((thread) => (
               <SettingsRow
-                key={thread.id}
+                key={`${thread.environmentId}:${thread.id}`}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   void (async () => {
@@ -3615,11 +3660,12 @@ export function ArchivedThreadsPanel() {
                 }}
                 title={thread.title}
                 description={
-                  <>
+                  <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
+                    {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
                     {" \u00b7 Created "}
                     {formatRelativeTimeLabel(thread.createdAt)}
-                  </>
+                  </span>
                 }
                 control={
                   <Button

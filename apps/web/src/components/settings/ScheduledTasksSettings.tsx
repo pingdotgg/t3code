@@ -1,4 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
+import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   Clock3Icon,
   CopyIcon,
@@ -54,14 +57,18 @@ import {
   type EnvironmentPresentation,
 } from "../../state/environments";
 import { useProjects } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
+import { SettingsGroup } from "./SettingsGroup";
+import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   matchesScheduledTaskScope,
@@ -94,6 +101,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -285,6 +293,13 @@ export function ScheduledTasksSettings(target: {
               <EmptyDescription>Connect an environment to manage scheduled tasks.</EmptyDescription>
             </EmptyHeader>
           </Empty>
+        ) : environments.length > 1 ? (
+          <ScheduledTaskEnvironmentList
+            key={`${target.environmentId ?? defaultEnvironment?.environmentId}:${target.taskId ?? ""}`}
+            environmentId={target.environmentId ?? defaultEnvironment?.environmentId}
+            taskId={target.taskId}
+            onEdit={openForEdit}
+          />
         ) : (
           <div className="space-y-8">
             {environments.map((entry) => (
@@ -313,6 +328,153 @@ export function ScheduledTasksSettings(target: {
         />
       ) : null}
     </SettingsPageContainer>
+  );
+}
+
+function ScheduledTaskEnvironmentList({
+  environmentId,
+  taskId,
+  onEdit,
+}: {
+  readonly environmentId: EnvironmentId | undefined;
+  readonly taskId: ScheduledTaskId | undefined;
+  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
+}) {
+  const { scope, environments } = useSettingsScope();
+  const states = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make((get) =>
+          environments.map((environment) => {
+            const connected =
+              environment.connection.phase === "connected" && environment.serverConfig !== null;
+            const query = connected
+              ? get(
+                  serverEnvironment.scheduledTasksLive({
+                    environmentId: environment.environmentId,
+                    input: {},
+                  }),
+                )
+              : null;
+            const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
+            return {
+              environment,
+              connected,
+              tasks: data?.tasks.filter((task) =>
+                matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
+              ),
+              error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
+            };
+          }),
+        ),
+      [environments, scope],
+    ),
+  );
+  const linkedState = states.find((state) => state.environment.environmentId === environmentId);
+  const linkedTask = linkedState?.tasks?.find((task) => task.id === taskId);
+  const openedLink = useRef(false);
+  useEffect(() => {
+    if (!openedLink.current && environmentId && linkedTask) {
+      openedLink.current = true;
+      onEdit(environmentId, linkedTask);
+    }
+  }, [environmentId, linkedTask, onEdit]);
+  useRelativeTimeTick(60_000);
+
+  const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
+  const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
+  const summaries: Record<string, string[]> = {
+    "Not connected:": [],
+    "Loading scheduled tasks on": [],
+    "Could not load scheduled tasks:": [],
+    "No tasks on": [],
+  };
+  for (const { environment, connected, tasks, error } of states) {
+    const label = settingsScopeEnvironmentLabel(environment, environments);
+    if (!connected) {
+      summaries["Not connected:"]!.push(
+        `${label} (${connectionStatusTitle(environment.connection)})`,
+      );
+    } else if (error !== null) {
+      summaries["Could not load scheduled tasks:"]!.push(`${label}: ${error}`);
+    } else if (!tasks) {
+      summaries["Loading scheduled tasks on"]!.push(label);
+    } else if (tasks.length === 0 && populated.length > 0) {
+      summaries["No tasks on"]!.push(label);
+    }
+  }
+
+  return (
+    <SettingsGroup>
+      {populated.map(({ environment, tasks }) => {
+        const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+        const transport = environmentTransportLabel(environment);
+        return (
+          <div key={environment.environmentId} className="divide-y divide-border/50">
+            <EnvironmentRow
+              kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+              label={primary}
+              subtitle={
+                <>
+                  {secondary && secondary !== transport ? (
+                    <span className="block truncate">{secondary}</span>
+                  ) : null}
+                  <span className="block truncate">{transport}</span>
+                </>
+              }
+            >
+              <ConnectionStatusDot
+                dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
+                tooltipText={connectionStatusTitle(environment.connection)}
+              />
+              <span className="text-xs text-muted-foreground">
+                {connectionStatusTitle(environment.connection)}
+              </span>
+            </EnvironmentRow>
+            {tasks?.map((task) => (
+              <ScheduledTaskRow
+                key={task.id}
+                environmentId={environment.environmentId}
+                task={task}
+                onEdit={() => onEdit(environment.environmentId, task)}
+              />
+            ))}
+          </div>
+        );
+      })}
+      {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
+        <SettingsRow
+          title="Task unavailable"
+          description="This task no longer exists or is outside the selected project scope."
+          role="status"
+        />
+      ) : null}
+      {populated.length === 0 && loaded.length > 0 ? (
+        <SettingsRow
+          title="No scheduled tasks"
+          description="No tasks match this environment and project selection."
+        />
+      ) : null}
+      {Object.entries(summaries).map(([label, entries]) => {
+        if (entries.length === 0) return null;
+        const summary = `${label} ${entries.join(", ")}`;
+        return (
+          <Tooltip key={label}>
+            <TooltipTrigger
+              render={
+                <p
+                  className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
+                  role="status"
+                />
+              }
+            >
+              {summary}
+            </TooltipTrigger>
+            <TooltipPopup>{summary}</TooltipPopup>
+          </Tooltip>
+        );
+      })}
+    </SettingsGroup>
   );
 }
 
@@ -1009,15 +1171,34 @@ function ScheduledTaskEditorDialog({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {connectedEnvironments.map((entry) => (
-                    <SelectItem key={entry.environmentId} value={entry.environmentId}>
-                      <EnvironmentMachineIcon
-                        kind={resolveEnvironmentMachineKind(entry.serverConfig)}
-                        className="size-4"
-                      />
-                      {entry.label}
-                    </SelectItem>
-                  ))}
+                  {connectedEnvironments.map((entry) => {
+                    const { secondary } = settingsScopeEnvironmentLabels(
+                      entry,
+                      connectedEnvironments,
+                    );
+                    return (
+                      <SelectItem
+                        key={entry.environmentId}
+                        value={entry.environmentId}
+                        label={entry.label}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <EnvironmentMachineIcon
+                            kind={resolveEnvironmentMachineKind(entry.serverConfig)}
+                            className="size-4"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate">{entry.label}</span>
+                            {secondary ? (
+                              <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                                {secondary}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectPopup>
               </Select>
             </Field>
@@ -1057,8 +1238,18 @@ function ScheduledTaskEditorDialog({
                   </SelectTrigger>
                   <SelectPopup>
                     {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.title}
+                      <SelectItem key={project.id} value={project.id} label={project.title}>
+                        <span className="block truncate">{project.title}</span>
+                        {allProjects.some(
+                          (other) =>
+                            other.title === project.title &&
+                            (other.environmentId !== project.environmentId ||
+                              other.id !== project.id),
+                        ) ? (
+                          <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                            {project.workspaceRoot}
+                          </span>
+                        ) : null}
                       </SelectItem>
                     ))}
                   </SelectPopup>

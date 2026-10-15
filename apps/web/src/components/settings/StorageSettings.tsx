@@ -47,6 +47,7 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 
 function WorktreesDirectoryRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
@@ -171,6 +172,20 @@ const KEEP_WHEN_LABELS = {
   "tracked-changes": "Edited tracked files",
 } as const;
 
+/** One line for the last-run fold; identical results across machines collapse into one. */
+function lastRunSummary(
+  entries: readonly { readonly label: string; readonly counts: string }[],
+  machineCount: number,
+) {
+  const first = entries[0];
+  if (!first) return "";
+  if (machineCount <= 1) return first.counts;
+  if (entries.length === machineCount && entries.every((entry) => entry.counts === first.counts)) {
+    return `${first.counts} on every machine`;
+  }
+  return entries.map((entry) => `${entry.label}: ${entry.counts}`).join(" · ");
+}
+
 function CleanupResults({
   report,
   environmentLabel,
@@ -294,6 +309,10 @@ function CleanupSection() {
     return {
       environment,
       report,
+      label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
+      counts: report
+        ? `${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`
+        : "",
       description: report
         ? `Last run ${formatRelativeTimeLabel(report.finishedAt)}. ${formatBytes(report.bytesFreed)} recovered.${report.counts.failed > 0 ? ` ${report.counts.failed} ${report.counts.failed === 1 ? "item" : "items"} couldn't be removed.` : ""}`
         : query?.failed
@@ -346,9 +365,9 @@ function CleanupSection() {
             <span>
               {!hasRules
                 ? "Turn on a cleanup rule to use this."
-                : summaries.map(({ environment, description }) => (
+                : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
-                      {supported.length > 1 ? `${environment.label}: ` : ""}
+                      {supported.length > 1 ? `${label}: ` : ""}
                       {description}
                     </span>
                   ))}
@@ -371,25 +390,18 @@ function CleanupSection() {
           id="storage-cleanup-last-run"
           title="Last run"
           headerPlacement="inside"
-          summary={summaries
-            .flatMap(({ environment, report }) =>
-              report
-                ? [
-                    `${connectedEnvironments.length > 1 ? `${environment.label}: ` : ""}${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`,
-                  ]
-                : [],
-            )
-            .join(" · ")}
+          summary={lastRunSummary(
+            summaries.filter(({ report }) => report !== null),
+            connectedEnvironments.length,
+          )}
         >
           {summaries.map(
-            ({ environment, report }) =>
+            ({ environment, label, report }) =>
               report && (
                 <CleanupResults
                   key={environment.environmentId}
                   report={report}
-                  environmentLabel={
-                    connectedEnvironments.length > 1 ? environment.label : undefined
-                  }
+                  environmentLabel={connectedEnvironments.length > 1 ? label : undefined}
                 />
               ),
           )}
