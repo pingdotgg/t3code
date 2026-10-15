@@ -225,6 +225,20 @@ export function ComponentCatalogScreen() {
               <Button label="Sheet" onPress={() => setSheet(true)} />
               <Button label="Dialog" onPress={confirm} />
               <Button
+                label="Alert"
+                onPress={() =>
+                  Dialog.alert("Example alert", "Choose an action.", [
+                    {
+                      text: "More info",
+                      onPress: () =>
+                        Dialog.alert("More information", "This second alert stays open."),
+                    },
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Continue", onPress: announceAction },
+                  ])
+                }
+              />
+              <Button
                 label="Prompt"
                 onPress={() =>
                   Dialog.prompt({

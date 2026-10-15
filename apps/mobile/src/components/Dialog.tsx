@@ -3,6 +3,11 @@ import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.type
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
+/** Informational and multi-action alerts share the same platform presenter. */
+export function alert(...args: Parameters<typeof Alert.alert>): void {
+  Alert.alert(...args);
+}
+
 export function confirm(request: ConfirmDialogRequest): void {
   Alert.alert(request.title, request.message, [
     { text: request.cancelText ?? "Cancel", style: "cancel", onPress: request.onCancel },
