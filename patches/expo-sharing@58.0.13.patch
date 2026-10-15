@@ -108,6 +108,74 @@ index 74544e0728d5f845351693d8d90596abae42eaea..92bd2f53108ac717f1ef7292fe89aea0
  };
  export type BaseResolvedSharePayload = SharePayload & {
      /**
+diff --git a/plugin/build/ios/xcode/addPbxGroup.js b/plugin/build/ios/xcode/addPbxGroup.js
+index 0867938bdc6df7aeba560cb84dc9c9156c842d95..a4dad486cccc6d64c5df79cbaa0fb0904b8ee720 100644
+--- a/plugin/build/ios/xcode/addPbxGroup.js
++++ b/plugin/build/ios/xcode/addPbxGroup.js
+@@ -29,9 +29,24 @@ function addPbxGroup(xcodeProject, targetName, shareExtensionFiles, platformProj
+     }).flat();
+     // Add generated files
+     targetFiles.push(`${targetName}.entitlements`);
+-    targetFiles.push(`Info.plist`);
+     const sharedFiles = Object.values(shareExtensionFiles.sharedFiles ?? []).flat().map((file)=>_path().default.join(sharedFilesPath, file)).map((file)=>_path().default.relative(_path().default.join(platformProjectRoot, targetName, 'shared'), file));
+-    const { uuid: mainGroupUuid } = xcodeProject.addPbxGroup(targetFiles, targetName, targetName);
++    const { uuid: mainGroupUuid, pbxGroup: mainGroup } = xcodeProject.addPbxGroup(targetFiles, targetName, targetName);
++    // `addPbxGroup` reuses any file reference with the same path, so "Info.plist"
++    // would join the reference expo-widgets made for its own target. Xcode 27.2
++    // rejects a reference that belongs to two groups, so this target adds its own.
++    const infoPlistReference = xcodeProject.generateUuid();
++    const fileReferences = xcodeProject.hash.project.objects['PBXFileReference'];
++    fileReferences[infoPlistReference] = {
++        isa: 'PBXFileReference',
++        lastKnownFileType: 'text.plist.xml',
++        path: 'Info.plist',
++        sourceTree: '"<group>"'
++    };
++    fileReferences[`${infoPlistReference}_comment`] = 'Info.plist';
++    mainGroup.children.push({
++        value: infoPlistReference,
++        comment: 'Info.plist'
++    });
+     const { uuid: sharedGroupUuid } = xcodeProject.addPbxGroup(sharedFiles, 'shared', 'shared');
+     if (mainGroupUuid && sharedGroupUuid) {
+         // @ts-expect-error: TODO(@kitten): This used to be untyped, and is failing now
+diff --git a/plugin/src/ios/xcode/addPbxGroup.ts b/plugin/src/ios/xcode/addPbxGroup.ts
+index 943c263c0cf58be595bfc9745c91827da81befec..3e87ef812917651b76d1414b1ee73990e2a00161 100644
+--- a/plugin/src/ios/xcode/addPbxGroup.ts
++++ b/plugin/src/ios/xcode/addPbxGroup.ts
+@@ -19,14 +19,30 @@ export function addPbxGroup(
+ 
+   // Add generated files
+   targetFiles.push(`${targetName}.entitlements`);
+-  targetFiles.push(`Info.plist`);
+ 
+   const sharedFiles = Object.values(shareExtensionFiles.sharedFiles ?? [])
+     .flat()
+     .map((file) => path.join(sharedFilesPath, file))
+     .map((file) => path.relative(path.join(platformProjectRoot, targetName, 'shared'), file));
+ 
+-  const { uuid: mainGroupUuid } = xcodeProject.addPbxGroup(targetFiles, targetName, targetName);
++  const { uuid: mainGroupUuid, pbxGroup: mainGroup } = xcodeProject.addPbxGroup(
++    targetFiles,
++    targetName,
++    targetName
++  );
++  // `addPbxGroup` reuses any file reference with the same path, so "Info.plist"
++  // would join the reference expo-widgets made for its own target. Xcode 27.2
++  // rejects a reference that belongs to two groups, so this target adds its own.
++  const infoPlistReference = xcodeProject.generateUuid();
++  const fileReferences = xcodeProject.hash.project.objects['PBXFileReference'];
++  fileReferences[infoPlistReference] = {
++    isa: 'PBXFileReference',
++    lastKnownFileType: 'text.plist.xml',
++    path: 'Info.plist',
++    sourceTree: '"<group>"',
++  };
++  fileReferences[`${infoPlistReference}_comment`] = 'Info.plist';
++  mainGroup.children.push({ value: infoPlistReference, comment: 'Info.plist' });
+   const { uuid: sharedGroupUuid } = xcodeProject.addPbxGroup(sharedFiles, 'shared', 'shared');
+ 
+   if (mainGroupUuid && sharedGroupUuid) {
 diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
 index 18af320420e7c01a8ffbd7fa5347320409f905d8..3a52b70a20efbc588ad5ca974c38c951e5757c97 100644
 --- a/src/Sharing.types.ts

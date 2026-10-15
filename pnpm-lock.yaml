@@ -157,7 +157,7 @@ patchedDependencies:
   expo-audio@58.0.4: c20cb927d6848c53e7bf6ec14fe12f19daae9210165d2dbaf4e0f97ce31e8742
   expo-blur@58.0.3: d0311b0c0b05bd94393bd9a84653cb42503d5f3c8a19eb2627c34ace08bedf18
   expo-glass-effect@58.0.3: f750041c45ab838a3530451dc7b50d6640a79141037a1b0499c5e3412a860c57
-  expo-sharing@58.0.13: fe40d857765bcd6a77aac1fed275e5b8f9415c29b972decdce05fb96de5665e6
+  expo-sharing@58.0.13: a2e7576b78aa5578cbb0eeb150ad401653f0405cef02b9f191745040ecdf6083
   expo-widgets@58.0.11: d00838b5b215a4c45f89b8b7d34878d158528756fbcf281bae1cbd6f0752deed
   node-pty@1.2.0-beta.15: f2fe901c61cde17986240002d05c172d5d0272d83ffaab8d0ebeb922763be414
   react-native-gesture-handler@3.2.1: 3037216c0dd1b14e8877441bde1a7404d1c6e9c09f835bd184c3cdba4aa066ad
@@ -493,7 +493,7 @@ importers:
         version: 58.0.1(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))
       expo-sharing:
         specifier: 58.0.13
-        version: 58.0.13(patch_hash=fe40d857765bcd6a77aac1fed275e5b8f9415c29b972decdce05fb96de5665e6)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
+        version: 58.0.13(patch_hash=a2e7576b78aa5578cbb0eeb150ad401653f0405cef02b9f191745040ecdf6083)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
       expo-splash-screen:
         specifier: ~58.0.4
         version: 58.0.4(expo@58.0.2)(typescript@7.0.2)
@@ -19352,7 +19352,7 @@ snapshots:
 
   expo-server@58.0.2: {}
 
-  expo-sharing@58.0.13(patch_hash=fe40d857765bcd6a77aac1fed275e5b8f9415c29b972decdce05fb96de5665e6)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2):
+  expo-sharing@58.0.13(patch_hash=a2e7576b78aa5578cbb0eeb150ad401653f0405cef02b9f191745040ecdf6083)(expo@58.0.2)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2):
     dependencies:
       '@expo/config-plugins': 58.0.4(typescript@7.0.2)
       '@expo/config-types': 58.0.2
