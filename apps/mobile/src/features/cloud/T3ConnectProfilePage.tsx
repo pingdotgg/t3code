@@ -11,7 +11,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from "react-
 
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import * as Dialog from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,14 +38,7 @@ function endpointLabel(environment: RelayClientEnvironmentRecord): string {
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
   const title = "Deregister server?";
   const message = `“${environment.label}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
-  if (process.env.EXPO_OS === "ios") {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Deregister", style: "destructive", onPress: onConfirm },
-    ]);
-    return;
-  }
-  showConfirmDialog({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
+  Dialog.confirm({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
 }
 
 /**

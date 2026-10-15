@@ -5,10 +5,10 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
-import { Alert, Platform } from "react-native";
+import { Alert } from "react-native";
 
 import { withThreadDismissal } from "./thread-dismissal";
-import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
+import * as Dialog from "../../components/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
@@ -217,20 +217,7 @@ function useConfirmDeleteThread(
       if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
       const title = "Delete thread?";
       const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
-      if (process.env.EXPO_OS === "ios") {
-        Alert.alert(title, message, [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: () => {
-              void executeAction("delete", thread);
-            },
-          },
-        ]);
-        return;
-      }
-      showConfirmDialog({
+      Dialog.confirm({
         title,
         message,
         confirmText: "Delete",
@@ -560,17 +547,7 @@ export function useThreadListActions(): {
         });
       };
 
-      if (Platform.OS === "ios") {
-        Alert.prompt(
-          "Rename thread",
-          undefined,
-          (title) => commit(title ?? ""),
-          "plain-text",
-          thread.title,
-        );
-        return;
-      }
-      showTextInputDialog({
+      Dialog.prompt({
         title: "Rename thread",
         initialValue: thread.title,
         confirmText: "Rename",

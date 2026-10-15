@@ -1,9 +1,9 @@
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
-import { Alert, Platform, View, type TextInputInstance } from "react-native";
+import { View, type TextInputInstance } from "react-native";
 
 import { AppText, AppTextInput } from "../../components/AppText";
-import { AppSheet } from "../../components/AppSheet";
+import { Sheet } from "../../components/Sheet";
 import { Chip } from "../../components/Chip";
 import { Menu } from "../../components/Menu";
 import { ListActionRow } from "../../components/ListActionRow";
@@ -22,7 +22,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { SliderRow } from "../../components/SliderRow";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import * as Dialog from "../../components/Dialog";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
 
@@ -46,19 +46,13 @@ export function ComponentCatalogScreen() {
   const searchRef = useRef<TextInputInstance>(null);
   const announceAction = () => setNotice(true);
   const confirm = () => {
-    if (Platform.OS === "ios")
-      Alert.alert("Discard changes?", "This example only changes local catalog state.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Discard", style: "destructive", onPress: () => setText("") },
-      ]);
-    else
-      showConfirmDialog({
-        title: "Discard changes?",
-        message: "This example only changes local catalog state.",
-        confirmText: "Discard",
-        destructive: true,
-        onConfirm: () => setText(""),
-      });
+    Dialog.confirm({
+      title: "Discard changes?",
+      message: "This example only changes local catalog state.",
+      confirmText: "Discard",
+      destructive: true,
+      onConfirm: () => setText(""),
+    });
   };
   return (
     <View className="flex-1 bg-screen">
@@ -221,6 +215,17 @@ export function ComponentCatalogScreen() {
             <View className="flex-row flex-wrap gap-2">
               <Button label="Sheet" onPress={() => setSheet(true)} />
               <Button label="Dialog" onPress={confirm} />
+              <Button
+                label="Prompt"
+                onPress={() =>
+                  Dialog.prompt({
+                    title: "Rename example",
+                    initialValue: text,
+                    confirmText: "Rename",
+                    onConfirm: setText,
+                  })
+                }
+              />
               <Menu
                 title="Example menu"
                 actions={[
@@ -250,8 +255,11 @@ export function ComponentCatalogScreen() {
         ) : null}
       </ScreenScrollView>
       {sheet ? (
-        <AppSheet title="Example sheet" onClose={() => setSheet(false)}>
-          <View className="p-4">
+        <Sheet title="Example sheet" onClose={() => setSheet(false)}>
+          <ScreenScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerClassName="p-4"
+          >
             <ListSection>
               <ListChoiceRow
                 label="Overview"
@@ -264,8 +272,8 @@ export function ComponentCatalogScreen() {
                 onPress={() => setTab("activity")}
               />
             </ListSection>
-          </View>
-        </AppSheet>
+          </ScreenScrollView>
+        </Sheet>
       ) : null}
     </View>
   );

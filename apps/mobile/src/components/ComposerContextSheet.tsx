@@ -24,7 +24,7 @@ import { FilePreviewModal } from "./FilePreviewModal";
 import { VideoPreviewModal } from "./VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./AppText";
-import { AppSheet } from "./AppSheet";
+import { Sheet } from "./Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
 
@@ -183,7 +183,7 @@ export function ComposerContextSheet(props: {
       : undefined;
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
-    <AppSheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
+    <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
@@ -390,6 +390,6 @@ export function ComposerContextSheet(props: {
           </Pressable>
         ) : null}
       </ScrollView>
-    </AppSheet>
+    </Sheet>
   );
 }

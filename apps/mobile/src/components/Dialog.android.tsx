@@ -9,9 +9,75 @@ import {
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import type { MaterialConfirmDialogProps } from "./MaterialConfirmDialog";
 
-export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+
+export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+
+type DialogRequest =
+  | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
+  | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
+
+let presentRequest: ((request: DialogRequest) => void) | null = null;
+
+export function confirm(request: ConfirmDialogRequest): void {
+  presentRequest?.({ kind: "confirm", request });
+}
+
+export function prompt(request: TextInputDialogRequest): void {
+  presentRequest?.({ kind: "text-input", request });
+}
+
+/** Android presenter for Dialog.confirm and Dialog.prompt; mounted once at the app root. */
+export function Host() {
+  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
+    null,
+  );
+  const [inputValue, setInputValue] = useState("");
+  const nextPresentationId = useRef(0);
+  useEffect(() => {
+    presentRequest = (request) => {
+      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
+      setPresented({ ...request, id: ++nextPresentationId.current });
+    };
+    return () => {
+      presentRequest = null;
+    };
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    setPresented(null);
+    presented?.request.onCancel?.();
+  }, [presented]);
+
+  const handleConfirm = useCallback(
+    (nativeInputValue?: string) => {
+      setPresented(null);
+      if (presented?.kind === "confirm") {
+        presented.request.onConfirm();
+      } else if (presented?.kind === "text-input") {
+        presented.request.onConfirm(nativeInputValue ?? inputValue);
+      }
+    },
+    [inputValue, presented],
+  );
+
+  return presented ? (
+    <DialogPresentation
+      key={presented.id}
+      request={presented.request}
+      inputInitialValue={
+        presented.kind === "text-input" ? presented.request.initialValue : undefined
+      }
+      onInputChange={setInputValue}
+      onCancel={handleCancel}
+      onConfirm={handleConfirm}
+    />
+  ) : null;
+}
+
+function DialogPresentation(props: DialogPresentationProps) {
   const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");
   const bodyTypography = useScaledTextRole("footnote");
@@ -19,9 +85,7 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
   const inputState = useNativeState(props.inputInitialValue ?? "");
   const inputSelection = useNativeState({ start: 0, end: props.inputInitialValue?.length ?? 0 });
   const confirm = () => {
-    if (props.confirmDisabled) return;
     const value = props.inputInitialValue === undefined ? undefined : inputState.get();
-    if (value !== undefined && !value.trim()) return;
     props.onConfirm(value);
   };
   return (
@@ -80,7 +144,6 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
         <AlertDialog.ConfirmButton>
           <TextButton
             onClick={confirm}
-            enabled={!props.confirmDisabled}
             colors={{
               contentColor:
                 colors[
@@ -94,4 +157,15 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
       </AlertDialog>
     </NativeThemeHost>
   );
+}
+
+interface DialogPresentationProps {
+  readonly request: Pick<
+    ConfirmDialogRequest,
+    "title" | "message" | "cancelText" | "confirmText" | "destructive"
+  >;
+  readonly inputInitialValue?: string;
+  readonly onInputChange?: (value: string) => void;
+  readonly onCancel: () => void;
+  readonly onConfirm: (inputValue?: string) => void;
 }

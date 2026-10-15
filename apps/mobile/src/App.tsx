@@ -10,7 +10,7 @@ import { createStaticNavigation } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
-import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
+import * as Dialog from "./components/Dialog";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
@@ -96,7 +96,7 @@ function AppContent() {
                   <IncomingShareProvider>
                     <Navigation linking={appLinking} theme={navigationTheme} />
                   </IncomingShareProvider>
-                  <ConfirmDialogHost />
+                  <Dialog.Host />
                   <ThreadArrangementHost />
                 </NativeLayoutMetricsProvider>
               </GlobalVoiceInputControl>
