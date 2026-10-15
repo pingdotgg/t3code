@@ -1,4 +1,4 @@
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -802,7 +802,8 @@ export function PullRequestDetailPanel({
   useEffect(() => {
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }, [detail?.autoMergeMethod, pullRequestKey]);
-  const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const repositoryUrl =
+    detail === null ? null : changeRequestRepositoryUrl(detail.url, providerUrlHosts(detail.url));
   const hostClient = sourceControlClients.get(detail?.provider);
   const markdownContext = useMemo(
     () => ({
@@ -822,7 +823,7 @@ export function PullRequestDetailPanel({
         handoffSummary.number,
         handoffSummary.headBranch,
         detail?.headRepositoryNameWithOwner,
-        changeRequestRepositoryUrl(handoffSummary.url),
+        changeRequestRepositoryUrl(handoffSummary.url, providerUrlHosts(handoffSummary.url)),
       )
     : loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
   const onCheckoutCommandError = useCallback((error: Error) => {
@@ -854,7 +855,12 @@ export function PullRequestDetailPanel({
     () =>
       detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
         ? null
-        : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host },
+        : {
+            ...reference,
+            host:
+              reference.host ??
+              parseChangeRequestUrl(detail.url, providerUrlHosts(detail.url))?.host,
+          },
     [detail, reference, supportsThreadPullRequests],
   );
   const nativeStackQuery = usePullRequestStack(environmentId, stackReference);

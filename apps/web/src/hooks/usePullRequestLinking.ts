@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { gitHubHostsOf } from "@t3tools/shared/changeRequestUrl";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type {
   EnvironmentId,
@@ -61,8 +62,10 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
     const environmentProjects = projects.filter(
       (project) => project.environmentId === environmentId,
     );
+    const gitHubHosts = gitHubHostsOf(environmentProjects);
+    const parse = (url: string) => parseChangeRequestUrl(url, gitHubHosts);
     const canLink = (url: string) => {
-      const parsed = parseChangeRequestUrl(url);
+      const parsed = parse(url);
       return parsed !== null && canLinkChangeRequest(mode, environmentProjects, parsed);
     };
     const isLinked = (
@@ -76,9 +79,9 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       if (mode !== "multiple")
         return (
           thread.linkedPullRequest != null &&
-          matchesLinkedPullRequestUrl(thread.linkedPullRequest, url)
+          matchesLinkedPullRequestUrl(thread.linkedPullRequest, url, gitHubHosts)
         );
-      const parsed = parseChangeRequestUrl(url);
+      const parsed = parse(url);
       return (
         parsed !== null &&
         visibleThreadPullRequests(thread.pullRequests ?? []).some((entry) =>
@@ -87,7 +90,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       );
     };
     const changeLink = async (threadRef: ScopedThreadRef, url: string, linked: boolean) => {
-      const parsed = parseChangeRequestUrl(url);
+      const parsed = parse(url);
       if (parsed === null || threadRef.environmentId !== environmentId || (linked && !canLink(url)))
         throw new Error("The pull request is not available in this environment.");
       const legacyProject = findProjectForChangeRequest(environmentProjects, parsed);
@@ -112,6 +115,6 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
         throw squashAtomCommandFailure(result);
       }
     };
-    return { mode, canLink, isLinked, changeLink };
+    return { mode, parse, canLink, isLinked, changeLink };
   }, [capabilities, environmentId, link, mode, projects, unlink, updateMetadata]);
 }

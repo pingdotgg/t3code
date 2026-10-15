@@ -80,13 +80,16 @@ export function resolveLinkPullRequestInput(input: {
     readonly webUrl: (number: number) => string | null;
   } | null;
   readonly hasProject: (reference: ResolvedLink) => boolean;
+  /** Reads a change request URL with the environment's GitHub hosts. */
+  readonly parse?: (url: string) => ReturnType<typeof parseChangeRequestUrl>;
 }): { link: ResolvedLink } | { error: string } | null {
+  const parse = input.parse ?? ((url: string) => parseChangeRequestUrl(url));
   const parsed =
-    parseChangeRequestUrl(input.reference.trim()) !== null
+    parse(input.reference.trim()) !== null
       ? input.reference.trim()
       : parsePullRequestReference(input.reference);
   if (parsed === null) return null;
-  const url = parseChangeRequestUrl(parsed);
+  const url = parse(parsed);
   if (url !== null) {
     if (!input.hasProject({ ...url, url: parsed })) {
       return { error: `No project in this environment can read ${url.host}/${url.repository}.` };
@@ -101,7 +104,7 @@ export function resolveLinkPullRequestInput(input: {
     return { error: "Paste a full URL to link a pull request from another repository." };
   }
   const webUrl = input.project.webUrl(number);
-  const webReference = webUrl === null ? null : parseChangeRequestUrl(webUrl);
+  const webReference = webUrl === null ? null : parse(webUrl);
   if (webUrl === null || webReference === null) {
     return { error: "Paste a full URL; this project's host has no known pull request URL." };
   }
@@ -166,6 +169,7 @@ function LinkPullRequestDialog({
         reference,
         project: ownProject,
         hasProject: (reference) => linking.canLink(reference.url),
+        parse: linking.parse,
       }),
     [linking, ownProject, reference],
   );

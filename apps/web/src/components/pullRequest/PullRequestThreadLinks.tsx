@@ -6,7 +6,6 @@ import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
-import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -49,10 +48,10 @@ function EnabledPullRequestThreadLinks({
   display,
   onPickerOpenChange,
 }: PullRequestThreadLinksProps) {
-  const parsed = parseChangeRequestUrl(url);
+  const linking = usePullRequestLinking(environmentId);
+  const parsed = linking.parse(url);
   const thread = useThreadShell(threadRef?.environmentId === environmentId ? threadRef : null);
   const currentThreadRef = thread === null ? null : threadRef;
-  const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"

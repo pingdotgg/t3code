@@ -4,7 +4,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
+import {
+  gitHubHostsOf,
+  parseChangeRequestUrl,
+  type ChangeRequestLink,
+} from "@t3tools/shared/changeRequestUrl";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { useOpenLink } from "../browser/useOpenLink";
@@ -57,12 +61,12 @@ export function resolvePullRequestPreviewTarget({
   url: string;
 }): { environmentId: EnvironmentId; input: PullRequestRef } | null {
   if (!pullRequestsEnabled || environmentId === null) return null;
-  const parsed = parseChangeRequestUrl(url);
-  if (parsed === null) return null;
-  const project = findProjectForChangeRequest(
-    projects.filter((candidate) => candidate.environmentId === environmentId),
-    parsed,
+  const environmentProjects = projects.filter(
+    (candidate) => candidate.environmentId === environmentId,
   );
+  const parsed = parseChangeRequestUrl(url, gitHubHostsOf(environmentProjects));
+  if (parsed === null) return null;
+  const project = findProjectForChangeRequest(environmentProjects, parsed);
   if (project === undefined) return null;
   return {
     environmentId,
@@ -156,8 +160,6 @@ export function useOpenChangeRequestLink(
       if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
-      const parsed = parseChangeRequestUrl(targetUrl);
-      if (parsed === null) return false;
       const reads = (environmentId: string) =>
         serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
         true;
@@ -178,6 +180,8 @@ export function useOpenChangeRequestLink(
                   Number(right.environmentId === primaryEnvironmentId) -
                   Number(left.environmentId === primaryEnvironmentId),
               );
+      const parsed = parseChangeRequestUrl(targetUrl, gitHubHostsOf(projects));
+      if (parsed === null) return false;
       const exactProject = findProjectForChangeRequest(projects, parsed);
       const project =
         exactProject ??

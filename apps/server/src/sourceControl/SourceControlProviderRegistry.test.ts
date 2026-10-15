@@ -632,3 +632,29 @@ it.effect("asks again once Settings change", () =>
     assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "github");
   }),
 );
+
+it.effect("marks a GitHub Enterprise identity GitHub through the real discovery", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "git@githubenterprise.dev.example.com:team/workspace.git";
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: remoteUrl }],
+      githubApi: {
+        credential: (host) =>
+          Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` }),
+      },
+    });
+    const github = yield* registry.get(SourceControlProviderKind.make("github"));
+    const refined = yield* github.refineRepositoryIdentity!({
+      identity: {
+        canonicalKey: "githubenterprise.dev.example.com/team/workspace",
+        locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+        rootPath: "/repo",
+        displayName: "team/workspace",
+        provider: "unknown",
+      },
+      resolveContext: (input) =>
+        registry.resolveHandle(input).pipe(Effect.map((handle) => handle.context)),
+    });
+    assert.strictEqual(refined.provider, "github");
+  }),
+);
