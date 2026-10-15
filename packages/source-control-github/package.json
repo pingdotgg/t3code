@@ -31,6 +31,14 @@
       "types": "./src/server/GitHubCredentials.ts",
       "import": "./src/server/GitHubCredentials.ts"
     },
+    "./server/GitHubIssueTracker": {
+      "types": "./src/server/GitHubIssueTracker.ts",
+      "import": "./src/server/GitHubIssueTracker.ts"
+    },
+    "./server/gitHubIssueJson": {
+      "types": "./src/server/gitHubIssueJson.ts",
+      "import": "./src/server/gitHubIssueJson.ts"
+    },
     "./server/githubGraphQl": {
       "types": "./src/server/githubGraphQl.ts",
       "import": "./src/server/githubGraphQl.ts"
@@ -70,6 +78,10 @@
     "./server/githubStackRebase": {
       "types": "./src/server/githubStackRebase.ts",
       "import": "./src/server/githubStackRebase.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
     }
   },
   "scripts": {
@@ -78,6 +90,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",

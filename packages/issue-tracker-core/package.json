@@ -1,0 +1,25 @@
+{
+  "name": "@t3tools/issue-tracker-core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/IssueTracker": {
+      "types": "./src/server/IssueTracker.ts",
+      "import": "./src/server/IssueTracker.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

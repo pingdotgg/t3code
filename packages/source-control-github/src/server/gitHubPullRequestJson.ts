@@ -299,7 +299,7 @@ const REACTORS_PER_GROUP = 10;
  * A reaction group as every reactable node reports it. `reactors` is bounded rather than paged:
  * a hover says who reacted, and a hundred and forty names is a count, not a sentence.
  */
-const REACTION_GROUPS_FIELDS = `reactionGroups {
+export const REACTION_GROUPS_FIELDS = `reactionGroups {
   content
   viewerHasReacted
   reactors(first: ${REACTORS_PER_GROUP}) {
@@ -340,7 +340,7 @@ export function gitHubReactionContent(content: PullRequestReactionContent): stri
   return GITHUB_REACTION_BY_CONTENT[content];
 }
 
-const RawReactionGroupsSchema = Schema.optional(
+export const RawReactionGroupsSchema = Schema.optional(
   Schema.NullOr(
     Schema.Array(
       Schema.Struct({
@@ -375,7 +375,7 @@ type RawReactionGroups = typeof RawReactionGroupsSchema.Type;
  * viewer's own login is left out of `actors` — the page names them "You" instead, and leaving it
  * in would name them twice — but `count` still counts them along with everyone else.
  */
-function toReactions(
+export function toReactions(
   groups: RawReactionGroups,
   viewer: string | null,
 ): ReadonlyArray<PullRequestReaction> {

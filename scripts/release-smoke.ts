@@ -37,6 +37,7 @@ const workspaceFiles = [
   "packages/provider-grok/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/issue-tracker-core/package.json",
   "packages/source-control-azure-devops/package.json",
   "packages/source-control-bitbucket/package.json",
   "packages/source-control-core/package.json",

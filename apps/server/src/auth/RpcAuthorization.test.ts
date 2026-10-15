@@ -127,6 +127,27 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("reads issues under the orchestration read scope and writes them like pull requests", () => {
+    for (const method of [
+      WS_METHODS.issuesList,
+      WS_METHODS.issuesDetail,
+      WS_METHODS.issuesComments,
+      WS_METHODS.issuesTemplates,
+      WS_METHODS.issuesCandidates,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.issuesCreate,
+      WS_METHODS.issuesComment,
+      WS_METHODS.issuesUpdate,
+      WS_METHODS.issuesSetState,
+      WS_METHODS.issuesReact,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
+    }
+  });
+
   it("requires source control writes to start, retry, or cancel project clones", () => {
     for (const method of [
       WS_METHODS.projectCloneStart,
