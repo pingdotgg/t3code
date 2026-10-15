@@ -188,6 +188,7 @@ export function makeAcpReplayRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
+  readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
   readonly initializeMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["initializeMeta"];
   readonly replayGate?: ProviderReplayGate;
 }): (
@@ -229,6 +230,7 @@ export function makeAcpReplayRuntime(input: {
           },
           authMethodId: "replay",
           ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
+          ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
           ...(input.initializeMeta === undefined ? {} : { initializeMeta: input.initializeMeta }),
           ...(input.replayGate === undefined
             ? {}

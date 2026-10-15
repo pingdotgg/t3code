@@ -383,6 +383,9 @@ importers:
       '@t3tools/provider-cursor':
         specifier: workspace:*
         version: link:../../packages/provider-cursor
+      '@t3tools/provider-fx':
+        specifier: workspace:*
+        version: link:../../packages/provider-fx
       '@t3tools/provider-grok':
         specifier: workspace:*
         version: link:../../packages/provider-grok
@@ -645,6 +648,9 @@ importers:
       '@t3tools/provider-cursor':
         specifier: workspace:*
         version: link:../../packages/provider-cursor
+      '@t3tools/provider-fx':
+        specifier: workspace:*
+        version: link:../../packages/provider-fx
       '@t3tools/provider-grok':
         specifier: workspace:*
         version: link:../../packages/provider-grok
@@ -814,6 +820,9 @@ importers:
       '@t3tools/provider-cursor':
         specifier: workspace:*
         version: link:../../packages/provider-cursor
+      '@t3tools/provider-fx':
+        specifier: workspace:*
+        version: link:../../packages/provider-fx
       '@t3tools/provider-grok':
         specifier: workspace:*
         version: link:../../packages/provider-grok
@@ -1323,6 +1332,40 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
+  packages/provider-fx:
+    dependencies:
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/provider-acp':
+        specifier: workspace:*
+        version: link:../provider-acp
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
+      effect:
+        specifier: 4.0.4
+        version: 4.0.4
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.4
+        version: 4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6)
+      '@effect/vitest':
+        specifier: 4.0.4
+        version: 4.0.4(patch_hash=ebaec66c6bdd25e1b8d5bfd4a14f25ab959bdcca6e22ed8871d061e50e2db0ad)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.4)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      effect-acp:
+        specifier: workspace:*
+        version: link:../effect-acp
       vite-plus:
         specifier: 1.0.0
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)

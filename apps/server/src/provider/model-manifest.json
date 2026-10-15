@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T23:31:10Z",
+  "updatedAt": "2026-10-11T13:56:56Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -94,6 +94,15 @@
       "ranges": [
         { "range": ">=1.4.2", "status": "supported" },
         { "range": "<1.4.2", "status": "unknown" }
+      ]
+    },
+    {
+      "driver": "fx",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.0.13",
+      "ranges": [
+        { "range": ">=0.0.13", "status": "supported" },
+        { "range": "<0.0.13", "status": "unsupported" }
       ]
     }
   ],
