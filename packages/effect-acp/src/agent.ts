@@ -436,9 +436,8 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
     Effect.forkScoped,
   );
 
-  let nextRpcRequestId = 2 ** 32;
   const rpc = yield* RpcClient.make(AcpRpcs.ClientRpcs, {
-    generateRequestId: () => RpcMessage.RequestId(nextRpcRequestId++),
+    generateRequestId: () => RpcMessage.RequestId(transport.nextRequestId()),
   }).pipe(Effect.provideService(RpcClient.Protocol, transport.clientProtocol));
 
   return AcpAgent.of({

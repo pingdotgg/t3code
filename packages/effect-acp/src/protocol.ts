@@ -121,6 +121,15 @@ export interface AcpPatchedProtocol {
   readonly incoming: Stream.Stream<AcpIncomingNotification>;
   readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
+  /**
+   * Allocates the next outbound request id. Pass it to `RpcClient.make` as
+   * `generateRequestId` so typed calls and `request` share one counter and ids
+   * stay unique per connection. Ids count up from 1, so they start small enough
+   * for peers built on the Kotlin ACP SDK (Junie), which decode them as signed
+   * 32-bit integers. The counter is not bounded; only a connection that sends
+   * over 2^31 - 1 requests would leave that range.
+   */
+  readonly nextRequestId: () => number;
 }
 
 interface AcpPendingRequest {
@@ -222,7 +231,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     intentionalEnd: false,
     outstandingAcknowledgements: new Set(),
   });
-  const nextRequestId = yield* Ref.make(1);
+  let lastRequestId = 0;
+  const nextRequestId = () => ++lastRequestId;
   const terminationHandled = yield* Ref.make(false);
   const terminationFailure = yield* Deferred.make<never, AcpError.AcpError>();
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
@@ -946,10 +956,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {
     yield* ensureActive;
-    const requestId = yield* Ref.modify(
-      nextRequestId,
-      (current) => [current, current + 1] as const,
-    );
+    const requestId = nextRequestId();
     const deferred = yield* Deferred.make<unknown, AcpError.AcpError>();
     yield* Ref.update(extPending, (pending) =>
       new Map(pending).set(acpRequestIdentity(requestId), { deferred, method }),
@@ -974,6 +981,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     },
     request: sendRequest,
     notify: sendNotification,
+    nextRequestId,
   } satisfies AcpPatchedProtocol;
 });
 

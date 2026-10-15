@@ -42,6 +42,8 @@ const PromptRequestV1 = jsonRpcRequest("session/prompt", AcpSchemaV1.PromptReque
 const PromptResponseV1 = jsonRpcResponse(AcpSchemaV1.PromptResponse);
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
+/** Peers on the Kotlin ACP SDK (Junie) decode numeric request ids as a signed 32-bit Int. */
+const isInt32RequestId = Schema.is(Schema.Number.check(Schema.isInt32()));
 const PromptRequest = jsonRpcRequest("session/prompt", AcpSchema.PromptRequest);
 const PromptResponse = jsonRpcResponse(AcpSchema.PromptResponse);
 const SessionUpdateNotification = jsonRpcNotification("session/update", Schema.Unknown);
@@ -755,7 +757,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
-  it.effect("uses distinct ids for RPC calls and extension requests", () =>
+  it.effect("keeps RPC and extension ids distinct and within signed 32-bit", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
       const scope = yield* Scope.make();
@@ -796,6 +798,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         : yield* decodedExt(firstOutbound);
 
       assert.notEqual(initializeRequest.id, extRequest.id);
+      assert.isTrue(isInt32RequestId(initializeRequest.id) && isInt32RequestId(extRequest.id));
 
       yield* Queue.offer(
         input,

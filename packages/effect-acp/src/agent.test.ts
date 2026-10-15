@@ -35,6 +35,8 @@ const SessionCancelNotification = jsonRpcNotification(
 const ExtPingNotification = jsonRpcNotification("x/ping", Schema.Struct({ count: Schema.Number }));
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
+/** Peers on the Kotlin ACP SDK (Junie) decode numeric request ids as a signed 32-bit Int. */
+const isInt32RequestId = Schema.is(Schema.Number.check(Schema.isInt32()));
 /** A response whose cause is a handler's defect, as RpcServer encodes it. */
 const DieResponse = Schema.Struct({
   id: Schema.Number,
@@ -226,7 +228,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
   }),
 );
 
-it.effect("effect-acp agent uses distinct ids for RPC calls and extension requests", () =>
+it.effect("effect-acp agent keeps RPC and extension ids distinct and within signed 32-bit", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
     const scope = yield* Scope.make();
@@ -275,6 +277,7 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
         : yield* decodedExt(firstOutbound);
 
       assert.notEqual(permissionRequest.id, extRequest.id);
+      assert.isTrue(isInt32RequestId(permissionRequest.id) && isInt32RequestId(extRequest.id));
 
       yield* Queue.offer(
         input,
