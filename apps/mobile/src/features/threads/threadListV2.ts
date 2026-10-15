@@ -532,11 +532,11 @@ export function buildThreadListV2ListItems(input: {
     // snooze menu actually shows preset times. The swipe-revealed snooze menu
     // exists on slim rows too (the variant only swaps the primary action),
     // so the gate follows actual snooze availability, not the variant.
+    // Snoozed rows show the same presets under Reschedule.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
-      canSnooze(item.thread, { now: input.snoozeLabelNow })
+      (item.snoozed || canSnooze(item.thread, { now: input.snoozeLabelNow }))
         ? input.snoozeLabelNow
         : undefined;
     const move =

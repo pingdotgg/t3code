@@ -55,6 +55,7 @@ describe("buildThreadActionMenuItems", () => {
             "unpin",
             "unsettle",
             "unsnooze",
+            "snooze",
             "rename",
             "regenerate-title",
             "auto-settle",
@@ -170,6 +171,18 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({ ...baseState, supports: { ...baseState.supports, autoSettleOptOut: false } }),
     ).not.toContain("auto-settle");
+  });
+
+  it("offers reschedule beside wake on a snoozed thread, with the same presets", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, isSnoozed: true });
+    const wakeIndex = items.findIndex((item) => item.id === "unsnooze");
+    expect(items[wakeIndex]).toMatchObject({ label: "Wake thread" });
+    expect(items[wakeIndex + 1]).toMatchObject({ id: "snooze", label: "Reschedule" });
+    expect(items[wakeIndex + 1]?.children?.map((child) => child.id)).toEqual([
+      "snooze:hour",
+      "snooze:custom",
+    ]);
+    expect(ids(baseState)).not.toContain("unsnooze");
   });
 
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {

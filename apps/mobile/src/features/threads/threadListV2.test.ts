@@ -1999,9 +1999,9 @@ describe("buildThreadListV2ListItems clock scoping", () => {
     // The swipe-revealed snooze action exists on slim rows too (the variant
     // only swaps the primary action), so settled rows need the fresh clock.
     expect(settled.type === "v2-thread" && settled.snoozePresetMinute).toBe(NOW);
-    // Approval rows are never snoozable; snoozed rows only offer Wake.
+    // Snoozed rows offer the presets under Reschedule; approval rows are never snoozable.
+    expect(snoozed.type === "v2-thread" && snoozed.snoozePresetMinute).toBe(NOW);
     expect(approval.type === "v2-thread" && approval.snoozePresetMinute).toBeUndefined();
-    expect(snoozed.type === "v2-thread" && snoozed.snoozePresetMinute).toBeUndefined();
   });
 
   it("keeps the snooze menu clock off rows on servers without the capability", () => {
@@ -2071,13 +2071,14 @@ describe("thread list v2 minute tick invalidation", () => {
         }
       }
       // The ready row draws a minute-granular time and carries the snooze
-      // menu, and the settled slim row's swipe-revealed snooze menu shows
-      // preset times too, so both rows' menu content moved. Every other row
-      // — the approval card (status label, never snoozable), the snoozed
-      // shelf row ("2h" unchanged, Wake only), the shelf headers, and the
-      // queued row — survives the tick untouched.
+      // menu, the settled slim row's swipe-revealed snooze menu shows preset
+      // times too, and the snoozed row's Reschedule menu shows the same
+      // presets, so all three rows' menu content moved. Every other row —
+      // the approval card (status label, never snoozable), the shelf
+      // headers, and the queued row — survives the tick untouched.
       expect(invalidated).toEqual([
         `v2-thread:${environmentId}:tick-ready`,
+        `v2-thread:${environmentId}:tick-snoozed`,
         `v2-thread:${environmentId}:tick-settled`,
       ]);
     } finally {
@@ -2140,14 +2141,14 @@ describe("thread list v2 minute tick invalidation", () => {
       });
       const wakeKey = `v2-thread:${environmentId}:tick-wake`;
       const wakeRow = (items: ThreadListV2ListItem[]) => itemsByThreadKey(items).get(wakeKey)!;
-      vi.setSystemTime(BASE_MS);
-      const atStart = buildTickList([snoozed], BASE_MS, []);
       vi.setSystemTime(BASE_MS + MINUTE_MS);
       const stillTwoHours = buildTickList([snoozed], BASE_MS + MINUTE_MS, []);
-      expect(threadListV2ListItemsAreEqual(wakeRow(atStart), wakeRow(stillTwoHours))).toBe(true);
+      const stillTwoHoursRow = wakeRow(stillTwoHours);
       // Minutes round up, so the countdown holds "2h" until the remaining
-      // time drops to the hour boundary — and only that row flips when it
-      // finally moves to minute granularity.
+      // time drops to the hour boundary, then moves to minute granularity.
+      expect(stillTwoHoursRow.type === "v2-thread" && stillTwoHoursRow.snoozeWakeLabelText).toBe(
+        "2h",
+      );
       vi.setSystemTime(BASE_MS + 61 * MINUTE_MS);
       const oneHour = buildTickList([snoozed], BASE_MS + 61 * MINUTE_MS, []);
       const oneHourRow = wakeRow(oneHour);
