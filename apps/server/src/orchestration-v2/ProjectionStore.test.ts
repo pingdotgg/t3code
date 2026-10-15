@@ -2923,32 +2923,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       // A held queue waits for the user, so both shells present the run before
       // it rather than reporting queued work.
-      yield* projectionStore.apply({
-        id: EventId.make("event:clock:newer:held"),
-        type: "run.updated",
-        threadId,
-        occurredAt: later,
-        payload: {
-          ...run,
-          id: RunId.make("run:clock:newer"),
-          ordinal: 2,
-          status: "queued",
-          queueHeld: true,
-          requestedAt: later,
-          startedAt: null,
-          completedAt: null,
-        },
-      });
-      const heldProjection = yield* projectionStore.getThreadProjection(threadId);
-      const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (row) => row.id === threadId,
-      )!;
-      for (const heldShell of [
-        heldSqlShell,
-        ProjectionStore.threadShellFromProjection(heldProjection),
+      for (const hold of [
+        { queueHeld: true },
+        { queueHeld: false, queueEditId: CommandId.make("clock-edit") },
       ]) {
-        assert.equal(heldShell.latestRunId, runId);
-        assert.equal(heldShell.status, "completed");
+        yield* projectionStore.apply({
+          id: EventId.make(`event:clock:newer:held:${hold.queueHeld}`),
+          type: "run.updated",
+          threadId,
+          occurredAt: later,
+          payload: {
+            ...run,
+            id: RunId.make("run:clock:newer"),
+            ordinal: 2,
+            status: "queued",
+            ...hold,
+            requestedAt: later,
+            startedAt: null,
+            completedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:clock:behind:${hold.queueHeld}`),
+          type: "run.updated",
+          threadId,
+          occurredAt: later,
+          payload: {
+            ...run,
+            id: RunId.make("run:clock:behind"),
+            ordinal: 3,
+            status: "queued",
+            queueHeld: hold.queueHeld,
+            startedAt: null,
+            completedAt: null,
+          },
+        });
+        const heldProjection = yield* projectionStore.getThreadProjection(threadId);
+        const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const heldShell of [
+          heldSqlShell,
+          ProjectionStore.threadShellFromProjection(heldProjection),
+        ]) {
+          assert.equal(heldShell.latestRunId, runId);
+          assert.equal(heldShell.status, "completed");
+        }
       }
 
       // With only held runs, nothing has executed: both shells read idle.

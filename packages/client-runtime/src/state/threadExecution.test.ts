@@ -1,4 +1,5 @@
 import {
+  CommandId,
   TurnItemId,
   NodeId,
   MessageId,
@@ -215,6 +216,36 @@ describe("thread execution presentation", () => {
     };
     expect(deriveLatestThreadRun(onlyHeld)).toBeNull();
     expect(deriveThreadRuntime(onlyHeld)).toBeNull();
+  });
+
+  it("settles behind an edit hold without hiding a genuinely executing run", () => {
+    const completed = { ...run("done", 1, "completed"), completedAt: now };
+    const edited = { ...run("edited", 2, "queued"), queueEditId: CommandId.make("edit") };
+    const later = run("later", 3, "queued");
+    const projection = { ...v2Projection, runs: [completed, edited, later], updatedAt: now };
+    expect(deriveLatestThreadRun(projection)?.runId).toBe(completed.id);
+    expect(deriveThreadRuntime(projection)).toMatchObject({
+      status: "completed",
+      activeRunId: null,
+    });
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        runs: [{ ...completed, status: "running" }, edited, later],
+      }),
+    ).toMatchObject({ status: "running", activeRunId: completed.id });
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        runs: [completed, { ...edited, queueEditId: null }, later],
+      }),
+    ).toMatchObject({ status: "queued" });
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        runs: [completed, { ...edited, queuePosition: 4 }, later],
+      }),
+    ).toMatchObject({ status: "queued" });
   });
 
   it("does not expose a queued-only run as interruptible", () => {

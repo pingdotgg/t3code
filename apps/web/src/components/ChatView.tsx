@@ -1,4 +1,5 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import * as Option from "effect/Option";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -114,6 +115,7 @@ import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
+  queuedRunEditOwnership,
   shouldShowLoadEarlierControl,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -432,7 +434,7 @@ import {
   useEnvironmentSupportsServerBrowser,
   useProject,
   useProjects,
-  useThreadProjection,
+  useThreadState,
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
@@ -1686,6 +1688,8 @@ export default function ChatView(props: ChatViewProps) {
   // untouched; `existingAttachments` tracks which stored attachments the edit
   // keeps (removal is client state until save).
   const [editingQueuedRun, setEditingQueuedRun] = useState<{
+    readonly editId: CommandId;
+    readonly sequence: number;
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly messageId: MessageId;
@@ -1715,8 +1719,8 @@ export default function ChatView(props: ChatViewProps) {
     shellExists: serverThread !== null,
     waitForShell: draftThread !== null,
   });
-  const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
-  const serverProjection = serverThreadProjection?.projection ?? null;
+  const serverThreadState = useThreadState(routeThreadDetailRef);
+  const serverProjection = Option.getOrNull(serverThreadState.data);
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -4673,6 +4677,8 @@ export default function ChatView(props: ChatViewProps) {
   const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
     reportFailure: false,
   });
+  const beginQueuedRunEditCommand = useAtomCommand(threadEnvironment.beginQueuedRunEdit);
+  const cancelQueuedRunEditCommand = useAtomCommand(threadEnvironment.cancelQueuedRunEdit);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
   const queuedEditSaveInFlightRef = useRef(false);
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
@@ -4698,28 +4704,54 @@ export default function ChatView(props: ChatViewProps) {
     }));
   }, [editingQueuedRun, queuedEditImageResources, queuedEditImageUrls]);
   const beginEditingQueuedRun = useCallback(
-    (request: EditQueuedRunRequest) => {
-      if (!activeThread) return;
-      if (editingQueuedRun !== null && editingQueuedRun.runId !== request.runId) {
-        clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
+    async (request: EditQueuedRunRequest) => {
+      if (!activeThread || queuedEditSaveInFlightRef.current) return;
+      if (editingQueuedRun !== null) {
+        if (editingQueuedRun.runId !== request.runId) {
+          toastManager.add({
+            type: "info",
+            title: "Save or cancel your current queued edit first.",
+          });
+        }
+        scheduleComposerFocus();
+        return;
       }
-      const target = queuedEditDraftTargetFor(request.runId);
-      clearComposerDraftContent(target);
-      setComposerDraftPrompt(target, request.text);
-      setEditingQueuedRun({
-        threadId: activeThread.id,
-        runId: request.runId,
-        messageId: request.messageId,
-        originalText: request.text,
-        existingAttachments: request.attachments,
-        context: serverProjection?.messages.find((message) => message.id === request.messageId)
-          ?.context,
-      });
-      scheduleComposerFocus();
+      queuedEditSaveInFlightRef.current = true;
+      try {
+        const result = await beginQueuedRunEditCommand({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: activeThread.id,
+            runId: request.runId,
+            previousEditId:
+              serverProjection?.runs.find((run) => run.id === request.runId)?.queueEditId ?? null,
+          },
+        });
+        if (result._tag !== "Success") return;
+        const target = queuedEditDraftTargetFor(request.runId);
+        if (
+          !composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(target))
+        ) {
+          setComposerDraftPrompt(target, request.text);
+        }
+        setEditingQueuedRun({
+          ...result.value,
+          threadId: activeThread.id,
+          runId: request.runId,
+          messageId: request.messageId,
+          originalText: request.text,
+          existingAttachments: request.attachments,
+          context: serverProjection?.messages.find((message) => message.id === request.messageId)
+            ?.context,
+        });
+        scheduleComposerFocus();
+      } finally {
+        queuedEditSaveInFlightRef.current = false;
+      }
     },
     [
       activeThread,
-      clearComposerDraftContent,
+      beginQueuedRunEditCommand,
       editingQueuedRun,
       queuedEditDraftTargetFor,
       serverProjection,
@@ -4727,12 +4759,34 @@ export default function ChatView(props: ChatViewProps) {
       setComposerDraftPrompt,
     ],
   );
-  const cancelEditingQueuedRun = useCallback(() => {
-    if (editingQueuedRun === null) return;
-    clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
-    setEditingQueuedRun(null);
-    scheduleComposerFocus();
+  const cancelEditingQueuedRun = useCallback(async () => {
+    if (editingQueuedRun === null || queuedEditSaveInFlightRef.current) return;
+    queuedEditSaveInFlightRef.current = true;
+    setIsSavingQueuedEdit(true);
+    try {
+      const result =
+        queuedRunEditOwnership(serverThreadState, editingQueuedRun) === "lost"
+          ? null
+          : await cancelQueuedRunEditCommand({
+              environmentId,
+              input: {
+                threadId: editingQueuedRun.threadId,
+                runId: editingQueuedRun.runId,
+                editId: editingQueuedRun.editId,
+              },
+            });
+      if (result !== null && result._tag !== "Success") return;
+      clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
+      setEditingQueuedRun(null);
+      scheduleComposerFocus();
+    } finally {
+      queuedEditSaveInFlightRef.current = false;
+      setIsSavingQueuedEdit(false);
+    }
   }, [
+    cancelQueuedRunEditCommand,
+    environmentId,
+    serverThreadState,
     clearComposerDraftContent,
     editingQueuedRun,
     queuedEditDraftTargetFor,
@@ -4750,8 +4804,8 @@ export default function ChatView(props: ChatViewProps) {
           },
     );
   }, []);
-  // Exit edit mode when the edited run leaves the queue (it started, or was
-  // cancelled from another client). A dirty edit moves into the thread's own
+  // Exit edit mode when the run leaves the queue or another client ends or
+  // takes over its edit. A dirty edit moves into the thread's own
   // draft when that draft is empty; otherwise it is dropped with a toast.
   useEffect(() => {
     if (editingQueuedRun === null) return;
@@ -4759,9 +4813,9 @@ export default function ChatView(props: ChatViewProps) {
       setEditingQueuedRun(null);
       return;
     }
-    if (serverProjection === null) return;
-    const run = serverProjection.runs.find((candidate) => candidate.id === editingQueuedRun.runId);
-    if (run !== undefined && run.status === "queued") return;
+    if (serverProjection === null || isSavingQueuedEdit || queuedEditSaveInFlightRef.current)
+      return;
+    if (queuedRunEditOwnership(serverThreadState, editingQueuedRun) !== "lost") return;
     const recovery = recoverQueuedMessageEdit({
       editTarget: queuedEditDraftTargetFor(editingQueuedRun.runId),
       threadTarget: baseComposerDraftTarget,
@@ -4771,7 +4825,7 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "Queued message is no longer queued",
+          title: "Queued message edit ended",
           description: "Your unsaved edit was kept in the composer.",
         }),
       );
@@ -4779,7 +4833,7 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Queued message is no longer queued",
+          title: "Queued message edit ended",
           description: "Your unsaved edit was discarded.",
         }),
       );
@@ -4789,8 +4843,10 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.id,
     baseComposerDraftTarget,
     editingQueuedRun,
+    isSavingQueuedEdit,
     queuedEditDraftTargetFor,
     serverProjection,
+    serverThreadState,
   ]);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
@@ -9071,6 +9127,7 @@ export default function ChatView(props: ChatViewProps) {
           input: {
             threadId: editingQueuedRun.threadId,
             runId: editingQueuedRun.runId,
+            editId: editingQueuedRun.editId,
             text: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
             edit: {
               messageId: editingQueuedRun.messageId,

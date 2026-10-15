@@ -487,6 +487,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
+    case "queued-run.edit.begin":
+    case "queued-run.edit.cancel":
     case "runtime-request.respond":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
@@ -1291,10 +1293,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
-  const startNextQueuedRun = (
-    threadId: ThreadId,
-    options?: { readonly failedRunId?: RunId; readonly endedRunId?: RunId },
-  ) =>
+  const startNextQueuedRun = (threadId: ThreadId, options?: { readonly resume?: boolean }) =>
     Effect.gen(function* () {
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
@@ -1331,14 +1330,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // and a message queued for another provider is how users recover.
       // A message queued behind a worktree that was cancelled or never created
       // would run in the project checkout instead, so it waits for the user.
-      const failedRun = latestExecutedRun(projection.runs);
+      // Commands can make the queue eligible before the terminal listener
+      // handles the last run. Only an explicit Resume bypasses its pause.
+      const latestRun = latestExecutedRun(projection.runs);
       const failureClass =
-        failedRun?.id === options?.failedRunId
-          ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
+        options?.resume !== true
+          ? latestRootProviderFailure(latestRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
-        failedRun?.workspacePreparation?.type === "worktree" &&
+        options?.resume !== true &&
+        latestRun?.workspacePreparation?.type === "worktree" &&
         projection.thread.worktreePath === null;
       // A project can turn a provider off while a message waits in the queue,
       // including between a run ending and this check, or while the queue is
@@ -1365,7 +1366,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         instanceDisabledForProject ||
         (failureClass !== undefined &&
           failureClass !== "validation_error" &&
-          failedRun?.providerInstanceId === queuedRun.providerInstanceId)
+          latestRun?.providerInstanceId === queuedRun.providerInstanceId)
       ) {
         const now = yield* DateTime.now;
         yield* writeSystemEvents(
@@ -1382,6 +1383,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      if (queuedRun.queueEditId != null) return;
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
       const providerThreadId = queuedRun.providerThreadId;
@@ -7655,11 +7657,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const queuedRun = projection.runs.find((candidate) => candidate.id === command.queuedRunId);
-      if (queuedRun === undefined || queuedRun.status !== "queued") {
+      if (
+        queuedRun === undefined ||
+        queuedRun.status !== "queued" ||
+        queuedRun.queueEditId != null
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Queued run ${command.queuedRunId} is not queued.`,
+          cause: `Queued run ${command.queuedRunId} is not queued or is being edited.`,
         });
       }
       const queuedRootNode =
@@ -7946,6 +7952,57 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  /** Persist edits under the dispatch lock so completion cannot send the old message. */
+  const dispatchQueuedRunEditState = Effect.fn("Orchestrator.dispatchQueuedRunEditState")(
+    function* (
+      command: Extract<
+        OrchestrationV2Command,
+        { readonly type: "queued-run.edit.begin" | "queued-run.edit.cancel" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "messages"], { messageRoles: ["user"] })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      const message = projection.messages.find((candidate) => candidate.id === run?.userMessageId);
+      const expectedEditId =
+        command.type === "queued-run.edit.begin" ? command.previousEditId : command.editId;
+      if (
+        run === undefined ||
+        run.status !== "queued" ||
+        message === undefined ||
+        message.delegatedCompletion !== undefined ||
+        message.notification !== undefined ||
+        (run.queueEditId ?? null) !== expectedEditId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The queued message changed. Reopen it before editing.",
+        });
+      }
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: {
+          ...run,
+          queueEditId: command.type === "queued-run.edit.begin" ? command.commandId : null,
+        },
+      });
+    },
+  );
+
   const dispatchQueuedRunEdit = (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -7977,6 +8034,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === queuedRun.userMessageId,
       );
+      if ((queuedRun.queueEditId ?? null) !== (command.editId ?? null)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The queued message is being edited elsewhere. Reopen it before saving.",
+        });
+      }
       if (queuedMessage === undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -8003,6 +8067,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const emitEvent = emit(events, command);
       const editedAttachments =
         command.attachments === undefined ? {} : { attachments: command.attachments };
+      if (command.editId !== undefined) {
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: queuedRun.id,
+          providerInstanceId: queuedRun.providerInstanceId,
+          occurredAt: now,
+          payload: { ...queuedRun, queueEditId: null },
+        });
+      }
       yield* emitEvent({
         type: "message.updated",
         threadId: command.threadId,
@@ -10988,6 +11062,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events);
         break;
+      case "queued-run.edit.begin":
+      case "queued-run.edit.cancel":
+        yield* dispatchQueuedRunEditState(command, events);
+        break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);
         break;
@@ -11082,8 +11160,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") {
-        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      if (
+        command.type === "queue.resume" ||
+        command.type === "queued-run.reorder" ||
+        command.type === "queued-run.edit.cancel" ||
+        (command.type === "queued-run.edit" && command.editId !== undefined)
+      ) {
+        yield* mapDispatchError(command)(
+          startNextQueuedRun(command.threadId, { resume: command.type === "queue.resume" }),
+        );
       }
       return {
         sequence: receipt.resultSequence,
@@ -11220,8 +11305,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") {
-      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    if (
+      command.type === "queue.resume" ||
+      command.type === "queued-run.reorder" ||
+      command.type === "queued-run.edit.cancel" ||
+      (command.type === "queued-run.edit" && command.editId !== undefined)
+    ) {
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(command.threadId, { resume: command.type === "queue.resume" }),
+      );
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
@@ -11274,20 +11366,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       yield* threadDispatch
-        .withLock(
-          threadId,
-          startNextQueuedRun(
-            threadId,
-            stored.event.type === "run.updated"
-              ? {
-                  endedRunId: stored.event.payload.id,
-                  ...(stored.event.payload.status === "failed"
-                    ? { failedRunId: stored.event.payload.id }
-                    : {}),
-                }
-              : undefined,
-          ),
-        )
+        .withLock(threadId, startNextQueuedRun(threadId))
         .pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),

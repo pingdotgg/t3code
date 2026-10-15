@@ -115,9 +115,20 @@ export function usageLimitRunPresentedAsLatest(
 export function latestUnheldRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
+  const editPosition = runs.reduce(
+    (position, run) =>
+      run.status === "queued" && run.queueEditId != null
+        ? Math.min(position, run.queuePosition ?? run.ordinal)
+        : position,
+    Infinity,
+  );
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
-    if (run.status === "queued" && run.queueHeld === true) continue;
+    if (
+      run.status === "queued" &&
+      (run.queueHeld === true || (run.queuePosition ?? run.ordinal) >= editPosition)
+    )
+      continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;

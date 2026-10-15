@@ -10,8 +10,8 @@ import {
 } from "./baseSchemas.ts";
 
 /** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
-export const ORCHESTRATION_PROTOCOL_VERSION = 2;
-export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
+export const ORCHESTRATION_PROTOCOL_VERSION = 3;
+export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "3";
 export const ORCHESTRATION_PROTOCOL_QUERY_PARAM = "orchestrationProtocol";
 export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
 

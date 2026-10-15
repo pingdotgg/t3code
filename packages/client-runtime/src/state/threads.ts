@@ -203,9 +203,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         )
       : Option.none<OrchestrationV2ThreadDetailSnapshot>();
   const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
+  const initialSequence =
+    retained?.sequence ??
+    Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
   const initialState: EnvironmentThreadState = retained
     ? cachedThreadState(retained.state)
     : {
+        sequence: initialSequence,
         data: cachedThread,
         status: statusWithoutLiveData(cachedThread),
         error: Option.none(),
@@ -221,9 +225,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
-  const initialSequence =
-    retained?.sequence ??
-    Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
   const lastSequence = yield* SubscriptionRef.make(initialSequence);
   let committed: ThreadResumeSnapshot = {
     state: initialState,
@@ -367,6 +368,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     },
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
+    const sequence = yield* SubscriptionRef.get(lastSequence);
     // Atomic with concurrent history meta updates: never get-then-set the whole
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
@@ -379,6 +381,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             : previous.history;
       return {
         ...previous,
+        sequence,
         data: Option.some(thread),
         // Buffered values from a failed attempt can arrive after its error.
         status: Option.isSome(previous.error)
@@ -416,6 +419,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* SubscriptionRef.set(state, {
+      sequence: yield* SubscriptionRef.get(lastSequence),
       data: Option.none(),
       status: "deleted",
       error: Option.none(),
@@ -467,7 +471,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
     if (sequence === appliedSequence) return;
     yield* SubscriptionRef.set(lastSequence, sequence);
-    if (fresh.length === 0) return;
 
     const waiting = yield* Ref.get(awaitingCompletion);
     // Apply against the latest projection/history in one update so a concurrent
@@ -546,7 +549,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           if (applied._tag !== "noop") result = applied;
           if (applied._tag === "delete") break;
         }
-        return [result, current];
+        return [result, { ...current, sequence }];
       },
     );
 

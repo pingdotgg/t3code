@@ -554,6 +554,7 @@ export const OrchestrationV2Run = Schema.Struct({
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   /** Restart recovery holds the queue until the user explicitly resumes it. */
   queueHeld: Schema.optional(Schema.Boolean),
+  queueEditId: Schema.optional(Schema.NullOr(CommandId)),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3056,12 +3057,27 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
   }),
   Schema.Struct({
+    type: Schema.Literal("queued-run.edit.begin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    previousEditId: Schema.NullOr(CommandId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.edit.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    editId: CommandId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
     context: Schema.optional(OrchestrationMessageContext),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
     text: Schema.String,
+    editId: Schema.optional(CommandId),
     // Full replacement list. Absent = leave the message's attachments as-is,
     // so pre-attachment clients editing text keep the original attachments.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),

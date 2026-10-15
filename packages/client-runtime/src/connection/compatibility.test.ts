@@ -20,6 +20,12 @@ const descriptor = (orchestrationProtocolVersion?: number): ExecutionEnvironment
 });
 
 describe("orchestration protocol compatibility", () => {
+  it("requires an update for protocol 2 servers without queued-edit holds", () => {
+    const error = orchestrationProtocolCompatibilityError(descriptor(2));
+    expect(error).toMatchObject({ reason: "unsupported" });
+    expect(error?.message).toContain("This client requires a newer server");
+  });
+
   it("accepts the current protocol and announces it without disturbing socket credentials", () => {
     expect(
       orchestrationProtocolCompatibilityError(descriptor(ORCHESTRATION_PROTOCOL_VERSION)),

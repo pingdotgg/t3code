@@ -85,8 +85,12 @@ vi.mock("./use-thread-detail", () => ({
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { EMPTY_ENVIRONMENT_THREAD_STATE } = await import("@t3tools/client-runtime/state/threads");
   return {
-    environmentThreadDetails: { queueWorkflowAtom: () => Atom.make(null) },
+    environmentThreadDetails: {
+      queueWorkflowAtom: () => Atom.make(null),
+      stateAtom: () => Atom.make(EMPTY_ENVIRONMENT_THREAD_STATE),
+    },
     threadEnvironment: {
       respondToApproval: state.approve,
       respondToUserInput: state.answer,

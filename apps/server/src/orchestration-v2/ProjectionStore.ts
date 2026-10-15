@@ -5456,7 +5456,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE candidate.thread_id = t.thread_id
                 AND NOT (
                   candidate.status = 'queued'
-                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                  AND (
+                    json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                    OR EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs edited
+                      WHERE edited.thread_id = candidate.thread_id
+                        AND edited.status = 'queued'
+                        AND json_extract(edited.payload_json, '$.queueEditId') IS NOT NULL
+                        AND COALESCE(json_extract(edited.payload_json, '$.queuePosition'), edited.ordinal)
+                          <= COALESCE(json_extract(candidate.payload_json, '$.queuePosition'), candidate.ordinal)
+                    )
+                  )
                 )
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1

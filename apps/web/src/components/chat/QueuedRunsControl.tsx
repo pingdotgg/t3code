@@ -135,6 +135,7 @@ export function QueuedRunsControl({
       key: run.id,
       runId: run.id,
       messageId: run.userMessageId,
+      heldForEdit: run.queueEditId != null,
       serverIndex,
       text,
       attachments,
@@ -151,6 +152,7 @@ export function QueuedRunsControl({
       key: message.id,
       runId: null,
       messageId: null,
+      heldForEdit: false,
       serverIndex: null,
       text: message.text,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
@@ -207,7 +209,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (!next || next.run.queueEditId != null || !workflow?.canPromoteToSteer) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
@@ -402,6 +404,7 @@ export function QueuedRunsControl({
                         {previewText}
                       </TooltipPopup>
                     </Tooltip>
+                    {item.heldForEdit ? <span className="shrink-0 text-xs">Editing</span> : null}
                   </ComposerBanner.Content>
                   <ComposerBanner.Actions>
                     {isEditing ? (
@@ -450,7 +453,8 @@ export function QueuedRunsControl({
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
+                                !workflow?.canPromoteToSteer ||
+                                item.heldForEdit
                               }
                               onClick={() => {
                                 if (item.runId !== null) {

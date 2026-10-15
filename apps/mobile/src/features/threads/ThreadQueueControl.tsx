@@ -4,7 +4,7 @@ import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/co
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, View } from "react-native";
+import { Alert, Animated, Platform, Pressable, ScrollView, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
@@ -65,6 +65,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
+  const beginEdit = useAtomCommand(threadEnvironment.beginQueuedRunEdit, "edit queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -130,16 +131,38 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       return;
     }
     if (action === "edit") {
+      if (editing !== null) {
+        if (editing.runId !== runId) Alert.alert("Save or cancel your current queued edit first.");
+        navigation.goBack();
+        return;
+      }
       const entry = queuedRuns[index]!;
-      void Haptics.selectionAsync();
-      beginQueuedRunEdit(threadKey, {
-        runId,
-        messageId: entry.messageId,
-        originalText: entry.text,
-        existingAttachments: entry.attachments,
-        ...(entry.context ? { context: entry.context } : {}),
-      });
-      navigation.goBack();
+      busyRef.current = true;
+      setBusyRunId(runId);
+      try {
+        const result = await beginEdit({
+          ...target,
+          input: {
+            threadId: target.threadId,
+            runId,
+            previousEditId: entry.run.queueEditId ?? null,
+          },
+        });
+        if (result._tag !== "Success") return;
+        void Haptics.selectionAsync();
+        beginQueuedRunEdit(threadKey, {
+          ...result.value,
+          runId,
+          messageId: entry.messageId,
+          originalText: entry.text,
+          existingAttachments: entry.attachments,
+          ...(entry.context ? { context: entry.context } : {}),
+        });
+        navigation.goBack();
+      } finally {
+        busyRef.current = false;
+        setBusyRunId(null);
+      }
       return;
     }
     if (action !== "steer" && action !== "remove") return;
@@ -149,7 +172,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     try {
       if (action === "remove") {
         await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-      } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
+      } else if (
+        workflow?.activeRun &&
+        workflow.canPromoteToSteer &&
+        queuedRuns[index]!.run.queueEditId == null
+      ) {
         await promote({
           ...target,
           input: {
@@ -225,7 +252,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             : 0;
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null || draggedRunId !== null,
-          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canPromoteToSteer: workflow?.canPromoteToSteer === true && run.queueEditId == null,
           canReorder: workflow?.canReorder ?? false,
           index,
           isEditing: editing?.runId === run.id,
@@ -386,7 +413,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     >
                       {title}
                     </Text>
-                    {controls.isEditing ? (
+                    {controls.isEditing || run.queueEditId != null ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
                         Editing
                       </Text>
@@ -395,7 +422,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Steer with message ${index + 1} now`}
-                        disabled={!controls.canSteer}
+                        disabled={!controls.canSteer || run.queueEditId != null}
                         onPress={() => void act(run.id, "steer")}
                         className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
                       >
