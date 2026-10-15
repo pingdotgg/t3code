@@ -90,6 +90,7 @@ export function HomeRouteScreen() {
     settleThread,
     snoozeThread,
     unsnoozeThread,
+    dismissThreadWoke,
     pinThread,
     unpinThread,
     setThreadAutoSettle,
@@ -271,6 +272,7 @@ export function HomeRouteScreen() {
           onSettleThread={settleThread}
           onSnoozeThread={snoozeThread}
           onUnsnoozeThread={unsnoozeThread}
+          onDismissThreadWoke={dismissThreadWoke}
           onUnsettleThread={unsettleThread}
           onPinThread={pinThread}
           onUnpinThread={unpinThread}

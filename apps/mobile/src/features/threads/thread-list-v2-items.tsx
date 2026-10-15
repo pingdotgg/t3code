@@ -18,6 +18,10 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
@@ -115,6 +119,30 @@ const DONE_STATUS_LABEL: StatusLabel = {
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
+const WOKE_STATUS_LABEL: StatusLabel = {
+  label: "Woke",
+  icon: "alarm",
+  className: "text-warning-foreground",
+  iconTintClassName: "accent-warning-foreground",
+};
+
+// Same "42s" / "5m" / "1h 30m" label as the web sidebar. Ticks on its own so
+// only this text re-renders, and only when the label changes: every second
+// for the first minute, then on each minute boundary. Key it by `startedAt`
+// so a recycled cell starts from a fresh clock.
+function ThreadListV2WorkingDuration(props: { readonly startedAt: string }) {
+  const startedAtMs = Date.parse(props.startedAt);
+  const [nowMs, setNowMs] = useState(Date.now);
+  useEffect(() => {
+    if (Number.isNaN(startedAtMs)) return;
+    const elapsedMs = Math.max(0, nowMs - startedAtMs);
+    const stepMs = elapsedMs < 60_000 ? 1_000 : 60_000;
+    const id = setTimeout(() => setNowMs(Date.now()), stepMs - (elapsedMs % stepMs));
+    return () => clearTimeout(id);
+  }, [nowMs, startedAtMs]);
+  if (Number.isNaN(startedAtMs)) return null;
+  return ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}`;
+}
 
 // Menus keep lifecycle and title regeneration together. Archive keeps its
 // own surface (thread screen / settings) rather than crowding v2 rows.
@@ -127,6 +155,14 @@ const SLIM_MENU_ACTIONS: MenuAction[] = [
   { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
+
+// The web sidebar dismisses Woke from the label itself. Here a tap anywhere on
+// the row opens the thread, so the row menu carries it.
+const DISMISS_WOKE_MENU_ACTION: MenuAction = {
+  id: "dismiss-woke",
+  title: "Dismiss Woke",
+  image: "bell.slash",
+};
 
 const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "unsnooze", title: "Wake thread", image: "clock" },
@@ -502,6 +538,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
   readonly pinned?: boolean;
+  /** Back from a snooze and not yet re-engaged: shows Woke and offers
+      Dismiss Woke. Resolved by the list so the wake clock stays out of the row. */
+  readonly woke?: boolean;
   /** Preformatted against the parent minute tick so this memoized row's
       countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
@@ -549,6 +588,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
+  readonly onDismissThreadWoke: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
@@ -595,6 +635,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onSettleThread,
     onSnoozeThread,
     onUnsnoozeThread,
+    onDismissThreadWoke,
     onUnsettleThread,
     onArchiveThread,
     onPinThread,
@@ -627,17 +668,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
-  // "Done" marks a completion the user has not opened yet — same emerald
-  // label as the web sidebar, sourced from the server-side visited watermark
-  // so checking a thread on any device clears it everywhere.
+  // Woke and Done read the server-side visited watermark, so acknowledging a
+  // thread on any device clears them everywhere. Same precedence as the web
+  // sidebar: live status, then Woke (the row is back at its old position and
+  // the label has to carry that), then an unopened completion. Dismiss Woke
+  // follows the label: a woke thread that is working again shows Working and
+  // does not offer it.
+  const liveStatusLabel = STATUS_LABEL_BY_STATUS[status];
+  const showsWoke = liveStatusLabel === undefined && props.woke === true;
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
-  const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const statusLabel =
     // A native /goal keeps the agent going across turns until it is met.
-    (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
-      ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+    (status === "working" && liveStatusLabel !== undefined && thread.goal?.status === "active"
+      ? { ...liveStatusLabel, label: "Goal" }
+      : liveStatusLabel) ??
+    (showsWoke ? WOKE_STATUS_LABEL : isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
+  const workingStartedAt = status === "working" ? resolveThreadWorkingStartedAt(thread) : null;
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.
   const timeLabel = props.timeLabel;
@@ -669,6 +716,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [onSnoozeThread, thread],
   );
   const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
+  const handleDismissWoke = useCallback(
+    () => onDismissThreadWoke(thread),
+    [onDismissThreadWoke, thread],
+  );
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
@@ -855,6 +906,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
+      if (nativeEvent.event === "dismiss-woke") handleDismissWoke();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
@@ -900,6 +952,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
+      handleDismissWoke,
       setCustomSnoozeOpen,
       snoozePresets,
     ],
@@ -1015,11 +1068,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               className={cn(
-                "text-xs font-t3-bold",
+                "text-xs font-t3-bold tabular-nums",
                 selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
               )}
             >
               {statusLabel.label}
+              {workingStartedAt !== null ? (
+                <ThreadListV2WorkingDuration key={workingStartedAt} startedAt={workingStartedAt} />
+              ) : null}
             </Text>
           </View>
         ) : (
@@ -1341,6 +1397,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ]
                 : []),
               { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              ...(showsWoke ? [DISMISS_WOKE_MENU_ACTION] : []),
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported
