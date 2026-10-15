@@ -11,6 +11,8 @@ import { createRoot, type Root } from "react-dom/client";
 const refreshProviders = vi.hoisted(() => vi.fn());
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
+vi.mock("../../state/threads", () => ({ environmentThreadShells: {} }));
+
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
