@@ -704,6 +704,7 @@ export const OrchestrationV2WorkflowAgent = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
   queuedAt: Schema.optional(NonNegativeInt),
   startedAt: Schema.optional(NonNegativeInt),
+  completedAt: Schema.optional(NonNegativeInt),
   /**
    * Prompt and result excerpts. A workflow member's whole conversation is one
    * prompt and one answer, so together these are its transcript as far as the

@@ -157,11 +157,8 @@ function workflowMembersToRuntime(
           : agent.state;
     const failed = status === "failed";
     const startedAt = isoFromEpochMillis(agent.startedAt);
-    // The provider reports a settled member's duration, not its end instant.
     const completedAt = isTerminalSubagentStatus(status)
-      ? agent.startedAt !== undefined && agent.durationMs !== undefined
-        ? isoFromEpochMillis(agent.startedAt + agent.durationMs)
-        : coordinator.completedAt
+      ? (isoFromEpochMillis(agent.completedAt) ?? coordinator.completedAt)
       : null;
     return {
       // Members share the run's handles: the transcript directory is what

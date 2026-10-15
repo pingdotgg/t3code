@@ -171,6 +171,22 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(second?.phases.map((entry) => entry.title)).toEqual(["Alpha", "Beta", "Gamma"]);
   });
 
+  it.each(["done", "error", "start", "progress", "queued"])(
+    "uses terminal wall-clock progress for a %s member",
+    (state) => {
+      const workflow = mergeClaudeWorkflowProgress({
+        previous: undefined,
+        message: snapshotFrame([
+          agent({ state, startedAt: 1000, durationMs: 500, lastProgressAt: 4432 }),
+        ]),
+      });
+      expect(workflow?.agents[0]?.completedAt).toBe(
+        state === "done" || state === "error" ? 4432 : undefined,
+      );
+      expect(workflow?.agents[0]?.durationMs).toBe(500);
+    },
+  );
+
   it("keeps other members and phase links when a sparse frame starts a new attempt", () => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
@@ -186,6 +202,7 @@ describe("mergeClaudeWorkflowProgress", () => {
           durationMs: 50,
           queuedAt: 1000,
           startedAt: 1010,
+          lastProgressAt: 2010,
         }),
         agent({ index: 2, state: "done" }),
       ]),
@@ -293,12 +310,18 @@ describe("mergeClaudeWorkflowProgress", () => {
     const workflow = mergeClaudeWorkflowProgress({
       previous: undefined,
       message: snapshotFrame([
-        agent({ startedAt: 8_640_000_000_000_001, queuedAt: Number.MAX_SAFE_INTEGER }),
+        agent({
+          state: "done",
+          lastProgressAt: 8_640_000_000_000_001,
+          startedAt: 8_640_000_000_000_001,
+          queuedAt: Number.MAX_SAFE_INTEGER,
+        }),
         agent({ index: 2, startedAt: 8_640_000_000_000_000, queuedAt: 0 }),
       ]),
     });
     expect(workflow?.agents[0]).not.toHaveProperty("startedAt");
     expect(workflow?.agents[0]).not.toHaveProperty("queuedAt");
+    expect(workflow?.agents[0]).not.toHaveProperty("completedAt");
     expect(workflow?.agents[1]?.startedAt).toBe(8_640_000_000_000_000);
     expect(workflow?.agents[1]?.queuedAt).toBe(0);
   });

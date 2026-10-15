@@ -11641,6 +11641,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly state: "queued" | "start" | "done";
     readonly secondState?: "queued" | "start" | "done";
     readonly startedAt?: number;
+    readonly lastProgressAt?: number;
+    readonly durationMs?: number;
     readonly label?: string;
     readonly prompt?: string;
     readonly model?: string;
@@ -11666,6 +11668,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           model: input.model ?? "claude-opus-5[1m]",
           promptPreview: input.prompt ?? "Reply with exactly: A1",
           ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
+          ...(input.lastProgressAt === undefined ? {} : { lastProgressAt: input.lastProgressAt }),
+          ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
           ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
           ...(input.state === "done" && input.omitResult !== true
             ? { resultPreview: "A1 excerpt" }
@@ -13841,6 +13845,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "00000000-0000-4000-8000-000000001018",
             state: "done",
             attempt: 2,
+            startedAt: 1000,
+            durationMs: 500,
+            lastProgressAt: 4432,
           }),
         );
         yield* awaitUntil(
@@ -13848,6 +13855,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "two-turn workflow member answer",
         );
         assert.equal(currentAssistantAnswers().join("\n\n"), "First answer\n\nSecond answer");
+        const completedMember = workflowMemberEvents(harness.events, 1).at(-1)?.subagent;
+        assert.equal(
+          completedMember?.completedAt && DateTime.toEpochMillis(completedMember.completedAt),
+          4432,
+        );
         assert.notDeepEqual(
           workflowMemberEvents(harness.events, 1).at(-1)?.subagent.startedAt,
           previousStartedAt,
