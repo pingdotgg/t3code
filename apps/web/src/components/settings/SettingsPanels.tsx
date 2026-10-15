@@ -596,6 +596,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Snooze limited threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
+        ? ["Render math"]
+        : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
         ? ["Composer context"]
@@ -726,6 +729,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
+      settings.mathRenderingEnabled,
       followSystem,
       theme,
       themeHalves,
@@ -802,6 +806,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1746,6 +1751,38 @@ function WordWrapRow() {
   );
 }
 
+function MathRenderingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("render-math")}
+      description={
+        "Typeset TeX in chat: \\(…\\) inline; \\[ and \\] or $$ on their own lines for display."
+      }
+      resetAction={
+        settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled ? (
+          <SettingResetButton
+            label="math rendering"
+            onClick={() =>
+              updateSettings({
+                mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.mathRenderingEnabled}
+          onCheckedChange={(checked) => updateSettings({ mathRenderingEnabled: Boolean(checked) })}
+          aria-label="Render math in chat"
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1844,6 +1881,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <MathRenderingRow />
     </SettingsSection>
   );
 }

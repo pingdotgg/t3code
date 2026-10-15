@@ -327,6 +327,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "render-math",
+    title: "Render math",
+    to: "/settings/appearance",
+    searchTerms: ["latex tex katex equations formulas"],
+  },
+  {
     id: "composer-context",
     title: "Composer context",
     to: "/settings/appearance",
