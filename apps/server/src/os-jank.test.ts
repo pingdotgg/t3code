@@ -130,15 +130,17 @@ effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
   ),
 );
 
-effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", () =>
+effectIt.effect("keeps the prepared Windows PATH without probing", () =>
   Effect.gen(function* () {
-    const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+    const env: NodeJS.ProcessEnv = { PATH: "C:\\Prepared\\Bin;C:\\Windows" };
     const commands: string[] = [];
 
     yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(WindowsShellEnvironment, () => ({ PATH: "C:\\Tools" })),
+      Effect.provideService(WindowsShellEnvironment, () => {
+        throw new Error("The prepared environment must not launch another shell");
+      }),
       Effect.provideService(CommandAvailability, (command) =>
         Effect.sync(() => {
           commands.push(command);
@@ -148,8 +150,8 @@ effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", 
       Effect.provide(NodeServices.layer),
     );
 
-    assert.deepEqual(commands, ["node"]);
-    assert.equal(env.PATH, "C:\\Tools;C:\\Windows");
+    assert.deepEqual(commands, []);
+    assert.equal(env.PATH, "C:\\Prepared\\Bin;C:\\Windows");
   }),
 );
 

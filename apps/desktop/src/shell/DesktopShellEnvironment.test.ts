@@ -98,7 +98,9 @@ function runShellEnvironment(input: {
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
-    yield* shellEnvironment.installIntoProcess;
+    const prepared = yield* shellEnvironment.installIntoProcess;
+    assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
+    return prepared;
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
@@ -446,7 +448,7 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
-      yield* runShellEnvironment({
+      const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
@@ -462,6 +464,7 @@ describe("DesktopShellEnvironment", () => {
         },
       });
 
+      assert.isTrue(prepared);
       assert.equal(
         env.PATH,
         [
@@ -484,6 +487,30 @@ describe("DesktopShellEnvironment", () => {
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
     }),
+  );
+
+  it.effect.each([false, true])(
+    "leaves Windows preparation incomplete when loadProfile=%s fails",
+    (loadProfile) =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+        let calls = 0;
+        const prepared = yield* runShellEnvironment({
+          env,
+          platform: "win32",
+          handler: (command) => {
+            calls++;
+            if (command._tag !== "StandardCommand") return "";
+            return !command.args.includes("-NoProfile") === loadProfile
+              ? { output: "", exitCode: 1 }
+              : envOutput({ PATH: "C:\\Working" });
+          },
+        }).pipe(Effect.provide(Logger.layer([])));
+        assert.isFalse(prepared);
+        assert.equal(calls, 3);
+        assert.include(env.PATH, "C:\\Working");
+        assert.include(env.PATH, "C:\\Windows\\System32");
+      }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
