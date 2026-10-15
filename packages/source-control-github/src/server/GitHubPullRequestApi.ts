@@ -102,11 +102,11 @@ import {
   REVERT_PULL_REQUEST_GRAPHQL_MUTATION,
   gitHubReactionContent,
   RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
-  REVIEWER_CANDIDATES_GRAPHQL_QUERY,
+  reviewerCandidatesGraphQlQuery,
   REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
   REVIEW_DISMISSALS_GRAPHQL_QUERY,
   REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
-  REVIEW_THREADS_GRAPHQL_QUERY,
+  reviewThreadsGraphQlQuery,
   reviewThreadConversation,
   UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
   UPDATE_ISSUE_COMMENT_GRAPHQL_MUTATION,
@@ -1019,18 +1019,25 @@ const decodeMergeMessage = (raw: string) =>
   Result.map(decodeMergeMessageResponse(raw), (response) => response.data.repository.pullRequest);
 
 /** What `gh pr merge` and `gh pr update-branch` read before they act. */
-const ACTION_STATE_GRAPHQL_QUERY = `
-query PullRequestActionState($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+const actionStateGraphQlQuery = (host: string) => {
+  const githubCom = host.toLowerCase() === "github.com";
+  const headRefVariable = githubCom ? ", $headRef: String!" : "";
+  const comparison = githubCom
+    ? "baseRef { compare(headRef: $headRef) { behindBy } }"
+    : "baseRefOid";
+  return `
+query PullRequestActionState($owner: String!, $name: String!, $number: Int!${headRefVariable}) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id
       headRefOid
       isMergeQueueEnabled
       mergeStateStatus
-      baseRef { compare(headRef: $headRef) { behindBy } }
+      ${comparison}
     }
   }
 }`;
+};
 
 const decodeActionStateResponse = Schema.decodeUnknownResult(
   Schema.fromJsonString(
@@ -1040,6 +1047,7 @@ const decodeActionStateResponse = Schema.decodeUnknownResult(
           pullRequest: Schema.Struct({
             id: Schema.String,
             headRefOid: Schema.String,
+            baseRefOid: Schema.optional(Schema.NullOr(Schema.String)),
             isMergeQueueEnabled: Schema.optional(Schema.Boolean),
             mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
             baseRef: Schema.optional(
@@ -1055,6 +1063,12 @@ const decodeActionStateResponse = Schema.decodeUnknownResult(
 );
 const decodeActionState = (raw: string) =>
   Result.map(decodeActionStateResponse(raw), (response) => response.data.repository.pullRequest);
+
+const decodeRefComparisonResponse = Schema.decodeUnknownResult(
+  Schema.fromJsonString(Schema.Struct({ behind_by: Schema.Int })),
+);
+const decodeRefComparison = (raw: string) =>
+  Result.map(decodeRefComparisonResponse(raw), (response) => response.behind_by);
 
 const MERGE_PULL_REQUEST_GRAPHQL_MUTATION = `mutation($input: MergePullRequestInput!) {
   mergePullRequest(input: $input) { clientMutationId }
@@ -1537,7 +1551,9 @@ export const make = Effect.gen(function* () {
             owner,
             name,
             number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
+            ...(input.host.toLowerCase() === "github.com"
+              ? { headRef: `refs/pull/${input.number}/head` }
+              : {}),
           },
           query: pullRequestCoreGraphQlQuery(input.host),
           decode: decodePullRequestCoreJson,
@@ -2298,7 +2314,7 @@ export const make = Effect.gen(function* () {
             host: input.host,
             operation: "listReviewThreadComments",
             variables: { owner, name, number: input.number, cursor },
-            query: REVIEW_THREADS_GRAPHQL_QUERY,
+            query: reviewThreadsGraphQlQuery(input.host),
             decode: decodeReviewThreadsJson,
           });
         const entries: GitHubReviewThreadEntry[] = [];
@@ -2430,7 +2446,7 @@ export const make = Effect.gen(function* () {
         operation: "listReviewerCandidates",
         allowReserve: true,
         variables: { owner, name, number: input.number },
-        query: REVIEWER_CANDIDATES_GRAPHQL_QUERY,
+        query: reviewerCandidatesGraphQlQuery(input.host),
         decode: decodeReviewerCandidatesJson,
       });
     },
@@ -2613,18 +2629,47 @@ export const make = Effect.gen(function* () {
           host: input.host,
           operation: "runPullRequestAction",
           allowReserve: true,
-          query: ACTION_STATE_GRAPHQL_QUERY,
+          query: actionStateGraphQlQuery(input.host),
           variables: {
             owner,
             name,
             number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
+            ...(input.host.toLowerCase() === "github.com"
+              ? { headRef: `refs/pull/${input.number}/head` }
+              : {}),
           },
           decode: decodeActionState,
         });
         if (action === "update-branch") {
           // Already current is done, the way `gh pr update-branch` reports it.
           if (state.baseRef?.compare?.behindBy === 0) return;
+          if (input.host.toLowerCase() !== "github.com") {
+            const baseRefOid = state.baseRefOid;
+            if (baseRefOid === undefined || baseRefOid === null) {
+              return yield* new GitHubPullRequestReadError({
+                cwd: input.cwd,
+                operation: "runPullRequestAction",
+                cause: new Error("Enterprise pull request did not include baseRefOid"),
+              });
+            }
+            const behindBy = yield* restRead({
+              cwd: input.cwd,
+              host: input.host,
+              operation: "runPullRequestAction",
+              path:
+                "repos/" +
+                owner +
+                "/" +
+                name +
+                "/compare/" +
+                baseRefOid +
+                "..." +
+                state.headRefOid +
+                "?per_page=1",
+              decode: decodeRefComparison,
+            });
+            if (behindBy === 0) return;
+          }
           // GitHub updates with a merge commit unless asked to rebase, which is its own default.
           return yield* graphql({
             host: input.host,

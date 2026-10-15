@@ -722,11 +722,13 @@ const RawCoreSchema = Schema.Struct({
       pullRequest: Schema.Struct({
         ...RawDetailSchema.fields,
         ...RawViewerFieldsSchema.fields,
-        viewerCanUpdateBranch: Schema.Boolean,
-        baseRef: Schema.NullOr(
-          Schema.Struct({
-            compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
-          }),
+        viewerCanUpdateBranch: Schema.optional(Schema.Boolean),
+        baseRef: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              compare: Schema.optional(Schema.NullOr(Schema.Struct({ behindBy: Schema.Int }))),
+            }),
+          ),
         ),
         reviewRequests: Schema.Struct({
           nodes: Schema.Array(
@@ -833,8 +835,20 @@ function checkContextNodesSelection(host: string): string {
           }`;
 }
 
+function requestedReviewerActorFragment(host: string, fields: string): string {
+  return host.toLowerCase() === "github.com"
+    ? `... on Bot { ${fields} }`
+    : `... on Actor { ${fields} }`;
+}
+
 export const pullRequestCoreGraphQlQuery = (host: string) => {
-  return `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+  const githubCom = host.toLowerCase() === "github.com";
+  const headRefVariable = githubCom ? ", $headRef: String!" : "";
+  const comparison = githubCom
+    ? `viewerCanUpdateBranch
+      baseRef { compare(headRef: $headRef) { behindBy } }`
+    : "";
+  return `query($owner: String!, $name: String!, $number: Int!${headRefVariable}) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
@@ -844,10 +858,9 @@ export const pullRequestCoreGraphQlQuery = (host: string) => {
       headRepositoryOwner { login }
       author { login avatarUrl ... on User { id name } }
       autoMergeRequest { mergeMethod }
-      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
-      baseRef { compare(headRef: $headRef) { behindBy } }
+      viewerCanUpdate viewerDidAuthor ${comparison}
       reviewRequests(first: 100) {
-        nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug combinedSlug name avatarUrl } } }
+        nodes { requestedReviewer { ... on User { login name } ${requestedReviewerActorFragment(host, "login")} ... on Team { slug combinedSlug name avatarUrl } } }
       }
       labels(first: 100) { nodes { name color } }
       commits(last: 1) {
@@ -1030,7 +1043,9 @@ function pullRequestRowSelection(includeStacks: boolean, includeStats: boolean):
  * view entirely. This query gives back the newest hundred, which is what a reader scoping a diff
  * wants, and stands in for the `gh` list wherever it came back non-empty.
  */
-export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+export const reviewThreadsGraphQlQuery = (
+  host: string,
+) => `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -1063,7 +1078,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
         nodes {
           requestedReviewer {
             ... on User { login name avatarUrl }
-            ... on Bot { __typename login avatarUrl }
+            ${requestedReviewerActorFragment(host, "__typename login avatarUrl")}
             ... on Team { combinedSlug name avatarUrl }
           }
         }
@@ -2373,7 +2388,7 @@ export function decodePullRequestCoreJson(
         ? null
         : {
             behindBy: pr.baseRef.compare.behindBy,
-            viewerCanUpdate: pr.viewerCanUpdateBranch,
+            viewerCanUpdate: pr.viewerCanUpdateBranch ?? false,
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   });
@@ -2959,7 +2974,9 @@ export interface GitHubBaseComparison {
   readonly viewerCanUpdate: boolean;
 }
 
-export const REVIEWER_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+export const reviewerCandidatesGraphQlQuery = (
+  host: string,
+) => `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     assignableUsers(first: ${GRAPHQL_PAGE_SIZE}) {
       pageInfo { hasNextPage }
@@ -2972,7 +2989,7 @@ export const REVIEWER_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: 
           requestedReviewer {
             ... on User { login name avatarUrl }
             ... on Team { slug combinedSlug name avatarUrl }
-            ... on Bot { login avatarUrl }
+            ${requestedReviewerActorFragment(host, "login avatarUrl")}
           }
         }
       }

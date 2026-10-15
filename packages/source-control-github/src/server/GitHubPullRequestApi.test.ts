@@ -2205,6 +2205,116 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("updates an Enterprise branch after reading its supported comparison", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ baseRef: undefined, baseRefOid: "def456" })],
+        ["compare/", { behind_by: 2 }],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "ghe.example.test",
+        number: 7,
+        action: "update-branch",
+      });
+
+      expect(varsAt(0)).not.toHaveProperty("headRef");
+      expect(queryAt(0)).not.toContain("compare(headRef:");
+      expect(pathAt(1)).toBe("repos/acme/web/compare/def456...abc123?per_page=1");
+      expect(variablesOf("updatePullRequestBranch(")).toEqual([
+        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
+      ]);
+    }),
+  );
+
+  it.effect("treats an already-current Enterprise branch update as a successful no-op", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJson(actionState({ baseRef: undefined, baseRefOid: "def456" }))),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson({ behind_by: 0 }))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "ghe.example.test",
+        number: 7,
+        action: "update-branch",
+      });
+
+      expect(pathAt(1)).toBe("repos/acme/web/compare/def456...abc123?per_page=1");
+      expect(variablesOf("updatePullRequestBranch(")).toEqual([]);
+    }),
+  );
+
+  it.effect("does not update an Enterprise branch when comparison fails", () =>
+    Effect.gen(function* () {
+      const failure = new GitHubApi.GitHubApiResponseError({
+        host: "ghe.example.test",
+        operation: "runPullRequestAction",
+        status: 503,
+        githubErrors: ["comparison unavailable"],
+      });
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJson(actionState({ baseRef: undefined, baseRefOid: "def456" }))),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "ghe.example.test",
+          number: 7,
+          action: "update-branch",
+        }),
+      );
+
+      expect(error).toBe(failure);
+      expect(variablesOf("updatePullRequestBranch(")).toEqual([]);
+    }),
+  );
+
+  it.effect("does not hide genuine Enterprise branch update errors", () =>
+    Effect.gen(function* () {
+      const failure = new GitHubApi.GitHubApiResponseError({
+        host: "ghe.example.test",
+        operation: "runPullRequestAction",
+        status: 422,
+        githubErrors: ["merge conflict between base and head (updatePullRequestBranch)"],
+      });
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJson(actionState({ baseRef: undefined, baseRefOid: "def456" }))),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson({ behind_by: 2 }))));
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "ghe.example.test",
+          number: 7,
+          action: "update-branch",
+        }),
+      );
+
+      expect(error).toBe(failure);
+    }),
+  );
+
   it.effect("merges with the strategy it was asked for", () =>
     Effect.gen(function* () {
       route(["query PullRequestActionState", actionState()]);
@@ -2860,6 +2970,61 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       expect(callAt(0).host).toBe("github.acme.dev");
       expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
+    }),
+  );
+
+  it.effect("decodes GitHub Enterprise requested users and teams from review activity", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: { totalCount: 0, pageInfo: { hasNextPage: false }, nodes: [] },
+                    author: null,
+                    reviewRequests: {
+                      nodes: [
+                        {
+                          requestedReviewer: {
+                            __typename: "User",
+                            login: "reviewer",
+                            avatarUrl: "https://avatars/reviewer",
+                          },
+                        },
+                        {
+                          requestedReviewer: {
+                            __typename: "Team",
+                            combinedSlug: "acme/reviewers",
+                            name: "Reviewers",
+                            avatarUrl: "https://avatars/team",
+                          },
+                        },
+                      ],
+                    },
+                    latestReviews: { nodes: [] },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const conversation = yield* cli.listReviewThreadComments({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.acme.dev",
+        number: 7,
+      });
+
+      expect(queryAt(0)).toContain("... on Actor { __typename login avatarUrl }");
+      expect(conversation.reviewers).toEqual([
+        { login: "reviewer", name: null, avatarUrl: "https://avatars/reviewer" },
+        { login: "acme/reviewers", name: "Reviewers", avatarUrl: "https://avatars/team" },
+      ]);
     }),
   );
 
@@ -3680,6 +3845,36 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("omits unsupported Enterprise comparison fields from detail reads", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson(
+              coreResponse({
+                viewerCanUpdateBranch: undefined,
+                baseRef: undefined,
+              }),
+            ),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "ghe.example.test",
+        number: 7,
+      });
+
+      expect(detail.comparison).toBeNull();
+      expect(varsAt(0)).not.toHaveProperty("headRef");
+      expect(queryAt(0)).not.toContain("viewerCanUpdateBranch");
+      expect(queryAt(0)).not.toContain("compare(headRef:");
+      expect(queryAt(0)).toContain("... on Actor { login }");
+    }),
+  );
+
   it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -4308,6 +4503,87 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
         ["octocat", true],
         ["hubot", false],
+      ]);
+    }),
+  );
+
+  it.effect("decodes GitHub Enterprise requested teams alongside user candidates", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  assignableUsers: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ login: "reviewer", name: "Reviewer", avatarUrl: null }],
+                  },
+                  pullRequest: {
+                    author: { login: "author" },
+                    reviewRequests: {
+                      nodes: [
+                        {
+                          requestedReviewer: {
+                            __typename: "Team",
+                            slug: "reviewers",
+                            combinedSlug: "acme/reviewers",
+                            name: "Reviewers",
+                            avatarUrl: "https://avatars/team",
+                          },
+                        },
+                        {
+                          requestedReviewer: {
+                            __typename: "User",
+                            login: "requested",
+                            name: "Requested",
+                            avatarUrl: "https://avatars/requested",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.acme.dev",
+        number: 7,
+      });
+
+      expect(queryAt(0)).toContain("... on Actor { login avatarUrl }");
+      expect(list.candidates).toEqual([
+        {
+          id: "reviewers",
+          kind: "team",
+          login: "acme/reviewers",
+          name: "Reviewers",
+          avatarUrl: "https://avatars/team",
+          isRequested: true,
+        },
+        {
+          id: "requested",
+          kind: "user",
+          login: "requested",
+          name: "Requested",
+          avatarUrl: "https://avatars/requested",
+          isRequested: true,
+        },
+        {
+          id: "reviewer",
+          kind: "user",
+          login: "reviewer",
+          name: "Reviewer",
+          avatarUrl: null,
+          isRequested: false,
+        },
       ]);
     }),
   );

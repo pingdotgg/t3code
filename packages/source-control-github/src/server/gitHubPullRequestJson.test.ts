@@ -25,8 +25,9 @@ import {
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
   decodeWorkflowRunsJson,
+  reviewerCandidatesGraphQlQuery,
   reviewThreadConversation,
-  REVIEW_THREADS_GRAPHQL_QUERY,
+  reviewThreadsGraphQlQuery,
   pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
@@ -341,6 +342,24 @@ describe("pull request detail decoding", () => {
     expect(detail.checks.map((check) => check.required)).toEqual([true, false, undefined]);
     expect(pullRequestCoreGraphQlQuery("github.com")).toContain("isRequired");
     expect(pullRequestCoreGraphQlQuery("github.example.com")).not.toContain("isRequired");
+  });
+
+  it("avoids unsupported Enterprise comparison fields while retaining reviewer actors", () => {
+    const enterpriseQuery = pullRequestCoreGraphQlQuery("ghe.example.com");
+    expect(enterpriseQuery).not.toContain("viewerCanUpdateBranch");
+    expect(enterpriseQuery).not.toContain("compare(headRef:");
+    expect(enterpriseQuery).not.toContain("$headRef");
+    expect(enterpriseQuery).toContain("... on Actor { login }");
+    expect(pullRequestCoreGraphQlQuery("github.com")).toContain("... on Bot { login }");
+    expect(reviewThreadsGraphQlQuery("ghe.example.com")).toContain(
+      "... on Actor { __typename login avatarUrl }",
+    );
+    expect(reviewerCandidatesGraphQlQuery("ghe.example.com")).toContain(
+      "... on Actor { login avatarUrl }",
+    );
+    expect(reviewThreadsGraphQlQuery("github.com")).toContain(
+      "... on Bot { __typename login avatarUrl }",
+    );
   });
 
   it("keeps a workflow waiting for approval out of the passing state", () => {
@@ -1414,9 +1433,9 @@ describe("decodePullRequestNodeIdJson", () => {
   });
 });
 
-describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
+describe("reviewThreadsGraphQlQuery", () => {
   it("caps the initial query after the 104-point rate-limit regression", () => {
-    const match = REVIEW_THREADS_GRAPHQL_QUERY.match(
+    const match = reviewThreadsGraphQlQuery("github.com").match(
       /reviewThreads\(first: (\d+)[\s\S]*?comments\(first: (\d+)\)/u,
     );
 
@@ -1426,9 +1445,9 @@ describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
   });
 
   it("asks for reactionGroups on the pull request itself, its comments, its reviews and each thread's comments", () => {
-    expect(REVIEW_THREADS_GRAPHQL_QUERY.match(/reactionGroups/g)).toHaveLength(4);
+    expect(reviewThreadsGraphQlQuery("github.com").match(/reactionGroups/g)).toHaveLength(4);
     // The reviews connection is new: only reactions were ever wanted off it.
-    expect(REVIEW_THREADS_GRAPHQL_QUERY).toContain("reviews(first:");
+    expect(reviewThreadsGraphQlQuery("github.com")).toContain("reviews(first:");
   });
 });
 
