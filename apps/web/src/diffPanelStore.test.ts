@@ -11,6 +11,7 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryByThreadKey: {},
     }),
   );
 
@@ -105,6 +106,20 @@ describe("diffPanelStore", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("goes back to the automatic base when switching repositories", () => {
+    useDiffPanelStore.getState().selectRepository(THREAD_REF, "api");
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/develop");
+    useDiffPanelStore.getState().selectRepository(THREAD_REF, "api");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/develop" });
+
+    useDiffPanelStore.getState().selectRepository(THREAD_REF, "web");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: null });
   });
 
   it("reconciles a missing turn selection to the latest available turn", () => {

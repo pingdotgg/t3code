@@ -13,8 +13,13 @@ import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "./WorkspaceWorktrees.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+
+const notAContainer = Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+  isContainer: () => Effect.succeed(false),
+});
 
 function layer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
@@ -27,6 +32,7 @@ function layer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(notAContainer),
   );
 }
 
@@ -136,6 +142,7 @@ describe("GitWorkflowService", () => {
           status,
         }),
       ),
+      Layer.provide(notAContainer),
     );
 
     return Effect.gen(function* () {
@@ -256,6 +263,7 @@ describe("GitWorkflowService", () => {
             }),
           ),
           Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provide(notAContainer),
           Layer.provideMerge(GitVcsDriver.layer),
           Layer.provideMerge(VcsProcess.layer),
           Layer.provideMerge(

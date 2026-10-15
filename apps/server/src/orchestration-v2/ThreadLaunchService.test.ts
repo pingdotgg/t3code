@@ -25,6 +25,7 @@ import {
   OrchestrationV2ThreadProjectionJson,
   ScheduledTaskId,
   type ServerProvider,
+  type VcsRepository,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -41,6 +42,8 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "../git/WorkspaceWorktrees.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -113,6 +116,8 @@ interface HarnessOptions {
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  /** Repositories the project folder holds, making it a multi-repo workspace. */
+  readonly repositories?: ReadonlyArray<VcsRepository>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -149,6 +154,13 @@ function makeHarness(options: HarnessOptions = {}) {
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
   );
   const closeTerminal = vi.fn(options.closeTerminal ?? (() => Effect.void));
+  const createWorkspaceWorktree = vi.fn((input: WorkspaceWorktrees.CreateWorkspaceWorktreeInput) =>
+    Effect.succeed({ path: "/repo-worktrees/workspace", branch: input.branch }),
+  );
+  const renameWorkspaceBranch = vi.fn(
+    (input: Parameters<WorkspaceWorktrees.WorkspaceWorktrees["Service"]["renameBranch"]>[0]) =>
+      Effect.succeed({ branch: input.newBranch }),
+  );
   const generateBranchName = vi.fn(
     options.generateBranchName ?? (() => Effect.succeed({ branch: "generated-branch" })),
   );
@@ -191,6 +203,13 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
       runForThread: runSetup,
+    }),
+    Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({
+      list: () => Effect.succeed(options.repositories ?? []),
+    }),
+    Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+      create: createWorkspaceWorktree,
+      renameBranch: renameWorkspaceBranch,
     }),
     Layer.mock(TextGeneration.TextGeneration)({
       generateThreadTitle,
@@ -257,6 +276,8 @@ function makeHarness(options: HarnessOptions = {}) {
     generateThreadTitle,
     runSetup,
     closeTerminal,
+    createWorkspaceWorktree,
+    renameWorkspaceBranch,
   };
 }
 
@@ -1226,6 +1247,51 @@ it.effect("provisions under t3-<hash> when a plain t3 branch blocks t3/*", () =>
       );
       assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "t3-abcd1234");
       assert.equal(harness.renameBranch.mock.calls[0]?.[0]?.oldBranch, "t3-abcd1234");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("gives a multi-repo project one container with a worktree per repository", () =>
+  Effect.gen(function* () {
+    const repositories = [
+      { relativePath: "api", name: "api" },
+      { relativePath: "web", name: "web" },
+    ];
+    const harness = makeHarness({ repositories });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:multi-repo",
+          thread: "thread:launch:multi-repo",
+          message: "Build the feature",
+          workspace: { type: "worktree", baseRef: "main", branch: "t3/abcd1234" },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
+      );
+
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.deepEqual(harness.createWorkspaceWorktree.mock.calls[0]?.[0], {
+        workspaceRoot: project.workspaceRoot,
+        repositories,
+        branch: "t3/abcd1234",
+        startFromOrigin: false,
+      });
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+        "/repo-worktrees/workspace",
+      );
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.deepEqual(harness.renameWorkspaceBranch.mock.calls[0]?.[0], {
+        path: "/repo-worktrees/workspace",
+        oldBranch: "t3/abcd1234",
+        newBranch: "generated-branch",
+      });
     }).pipe(Effect.provide(harness.layer));
   }),
 );

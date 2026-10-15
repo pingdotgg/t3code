@@ -17,6 +17,7 @@ import { assert, it } from "@effect/vitest";
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
@@ -60,6 +61,10 @@ const makeCaptureStore = Effect.fn("test.makeCaptureStore")(function* (
       get: () => Effect.succeed(driver),
       detect: () => Effect.succeed(handle),
       resolve: () => Effect.succeed(handle),
+    }),
+    Effect.provideService(WorkspaceRepositories.WorkspaceRepositories, {
+      list: () => Effect.succeed([]),
+      describe: () => Effect.succeed({ repositories: [], listedFolders: null }),
     }),
   );
 });

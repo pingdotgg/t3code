@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
+  buildCodexRepositoriesContext,
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexDeveloperInstructions", () => {
@@ -101,6 +102,16 @@ describe("T3 browser developer instructions", () => {
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
     NodeAssert.match(toolInstructions(runtime, true), /preview_open/);
     NodeAssert.doesNotMatch(toolInstructions(runtime, false), /preview_open/);
+  });
+});
+
+describe("buildCodexRepositoriesContext", () => {
+  it("sends only the repository list, and nothing outside a multi-repo workspace", () => {
+    const context = buildCodexRepositoriesContext([{ relativePath: "api", name: "api" }]);
+    NodeAssert.deepStrictEqual(Object.keys(context ?? {}), ["t3_code_repositories"]);
+    NodeAssert.match(context!.t3_code_repositories!.value, /^<workspace_repositories>/);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext([]), undefined);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext(undefined), undefined);
   });
 });
 

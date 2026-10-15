@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
@@ -78,6 +79,19 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
 
 const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(
+    Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({
+      list: (cwd) =>
+        Effect.succeed(
+          cwd === "/multi-repo-root"
+            ? [
+                { relativePath: "api", name: "api" },
+                { relativePath: "web", name: "Web" },
+              ]
+            : [],
+        ),
+    }),
+  ),
+  Layer.provide(
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
       listInstances: Effect.succeed([]),
@@ -131,6 +145,26 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-worktree");
+    }),
+  );
+
+  it.effect("lists the repositories a multi-repo cwd holds", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const multiRepo = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: "/multi-repo-root" }),
+        modelSelection,
+      });
+      const singleRepo = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: "/project-worktree" }),
+        modelSelection,
+      });
+      assert.deepEqual(multiRepo.repositories, [
+        { relativePath: "api", name: "api" },
+        { relativePath: "web", name: "Web" },
+      ]);
+      assert.isUndefined(singleRepo.repositories);
     }),
   );
 
