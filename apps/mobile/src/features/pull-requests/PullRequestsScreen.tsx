@@ -43,7 +43,7 @@ import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSe
 function PullRequestScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
   return (
-    <ScrollViewMarker>
+    <ScrollViewMarker style={{ flex: 1 }}>
       <ScrollView
         {...props}
         automaticallyAdjustContentInsets={false}
