@@ -10,6 +10,7 @@ import { SymbolView } from "./AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
+import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../lib/videoAudioSession";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 
 /** Loads only after Play or opening the viewer. Source replacement never starts playback itself. */
@@ -20,6 +21,8 @@ function LoadedMediaVideo(props: {
   readonly paused: boolean;
 }) {
   const focused = useIsFocused();
+  const fullscreenVideoOpen = useFullscreenVideoOpen();
+  const paused = props.paused || fullscreenVideoOpen;
   const active = useRef(focused && AppState.currentState === "active");
   const fullscreen = useRef(false);
   const [attempt, setAttempt] = useState(0);
@@ -30,6 +33,8 @@ function LoadedMediaVideo(props: {
     player.bufferOptions = { preferredForwardBufferDuration: 5 };
   });
   const { status } = useEvent(player, "statusChange", { status: player.status });
+  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+  useMediaAudioSessionHold(isPlaying);
   const loadSource = useEffectEvent(async (signal: AbortSignal) => {
     const uri = props.resolvePlaybackUri ? await props.resolvePlaybackUri() : props.uri;
     if (signal.aborted) return;
@@ -40,16 +45,16 @@ function LoadedMediaVideo(props: {
   });
 
   useEffect(() => {
-    active.current = focused && !props.paused && AppState.currentState === "active";
-    if (!focused || props.paused || (!active.current && !fullscreen.current)) player.pause();
+    active.current = focused && !paused && AppState.currentState === "active";
+    if (!focused || paused || (!active.current && !fullscreen.current)) player.pause();
     // Native background handling distinguishes Android's fullscreen activity
     // from leaving the app; React Native reports both as background.
     const subscription = AppState.addEventListener("change", (state) => {
-      active.current = focused && !props.paused && state === "active";
+      active.current = focused && !paused && state === "active";
       if (state === "inactive" || (state === "background" && !fullscreen.current)) player.pause();
     });
     return () => subscription.remove();
-  }, [focused, player, props.paused]);
+  }, [focused, player, paused]);
 
   useEffect(() => {
     const controller = new AbortController();

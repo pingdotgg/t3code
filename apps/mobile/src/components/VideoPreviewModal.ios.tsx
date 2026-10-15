@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { fullscreenVideoClosed, fullscreenVideoOpened } from "../lib/videoAudioSession";
 import { mediaVideoPreviewUri, type VideoPreviewSource } from "../lib/videoPreviewSource";
 import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
@@ -51,6 +52,10 @@ function NativeVideoPreview(props: {
       : null;
 
   useEffect(() => Keyboard.dismiss(), []);
+  useEffect(() => {
+    fullscreenVideoOpened();
+    return () => fullscreenVideoClosed();
+  }, []);
   useEffect(() => {
     if (playbackUrl === null && resolvedUrl !== null) setPlaybackUrl(resolvedUrl);
   }, [playbackUrl, resolvedUrl]);
