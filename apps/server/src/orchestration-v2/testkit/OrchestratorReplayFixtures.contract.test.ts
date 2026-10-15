@@ -74,8 +74,9 @@ describe("orchestrator replay fixture contract", () => {
               throw new Error(`${fixture.name}/${provider.driver} must start with thread.create`);
             }
             assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
-            // These fixture steps coordinate the test runtime; every other
-            // input step dispatches a command.
+            // These fixture steps coordinate the test runtime, or dispatch a
+            // command for a thread they find while it runs; every other input
+            // step dispatches a command.
             const commandProducingSteps = fixture
               .buildInput()
               .steps.filter(
@@ -85,7 +86,8 @@ describe("orchestrator replay fixture contract", () => {
                   step.type !== "finish_held_run" &&
                   step.type !== "capture_shell_snapshot" &&
                   step.type !== "release_replay_gate" &&
-                  step.type !== "release_replay_gate_after_waiting",
+                  step.type !== "release_replay_gate_after_waiting" &&
+                  step.type !== "rename_subagent_thread",
               );
             assert.equal(materialized.commands.length, commandProducingSteps.length + 1);
             assert.isAtLeast(materialized.steps.length, materialized.commands.length);

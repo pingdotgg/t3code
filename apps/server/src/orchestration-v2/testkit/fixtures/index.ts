@@ -1,5 +1,47 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { acpClaudeBackgroundReplyInput } from "./acp_claude_background_reply/input.ts";
+import { assertAcpClaudeBackgroundReplyOutput } from "./acp_claude_background_reply/output.ts";
+import { acpClaudePromptDuringAgentCycleInput } from "./acp_claude_prompt_during_agent_cycle/input.ts";
+import { assertAcpClaudePromptDuringAgentCycleOutput } from "./acp_claude_prompt_during_agent_cycle/output.ts";
+import { acpClaudeBackgroundApprovalInput } from "./acp_claude_background_approval/input.ts";
+import { assertAcpClaudeBackgroundApprovalOutput } from "./acp_claude_background_approval/output.ts";
+import { acpClaudeExitAfterPromptInput } from "./acp_claude_exit_after_prompt/input.ts";
+import { assertAcpClaudeExitAfterPromptOutput } from "./acp_claude_exit_after_prompt/output.ts";
+import { acpClaudeExitDuringContinuationInput } from "./acp_claude_exit_during_continuation/input.ts";
+import { assertAcpClaudeExitDuringContinuationOutput } from "./acp_claude_exit_during_continuation/output.ts";
+import {
+  acpClaudeBackgroundQuestionInput,
+  acpClaudeBackgroundQuestionStopInput,
+} from "./acp_claude_background_question/input.ts";
+import {
+  assertAcpClaudeBackgroundQuestionOutput,
+  assertAcpClaudeBackgroundQuestionStopOutput,
+} from "./acp_claude_background_question/output.ts";
+import { acpClaudeFailedContinuationInput } from "./acp_claude_failed_continuation/input.ts";
+import { assertAcpClaudeFailedContinuationOutput } from "./acp_claude_failed_continuation/output.ts";
+import { acpClaudeFailedPromptInput } from "./acp_claude_failed_prompt/input.ts";
+import { assertAcpClaudeFailedPromptOutput } from "./acp_claude_failed_prompt/output.ts";
+import { acpClaudeNestedSubagentInput } from "./acp_claude_nested_subagent/input.ts";
+import { acpClaudeFailedPromptBackgroundSubagentInput } from "./acp_claude_failed_prompt_background_subagent/input.ts";
+import { assertAcpClaudeFailedPromptBackgroundSubagentOutput } from "./acp_claude_failed_prompt_background_subagent/output.ts";
+import { assertAcpClaudeNestedBackgroundSubagentOutput } from "./acp_claude_nested_background_subagent/output.ts";
+import { acpClaudeSteerBackgroundSubagentInput } from "./acp_claude_steer_background_subagent/input.ts";
+import { assertAcpClaudeSteerBackgroundSubagentOutput } from "./acp_claude_steer_background_subagent/output.ts";
+import { assertAcpClaudeSubagentCancelledOutput } from "./acp_claude_subagent_cancelled/output.ts";
+import { acpClaudeSubagentFailedInput } from "./acp_claude_subagent_failed/input.ts";
+import { assertAcpClaudeSubagentFailedOutput } from "./acp_claude_subagent_failed/output.ts";
+import { assertAcpClaudeSubagentLateToolOutput } from "./acp_claude_subagent_late_tool/output.ts";
+import { assertAcpClaudeNestedSubagentOutput } from "./acp_claude_nested_subagent/output.ts";
+import { assertAcpClaudeNestedSubagentFailedOutput } from "./acp_claude_nested_subagent_failed/output.ts";
+import { acpClaudeStopBackgroundSubagentInput } from "./acp_claude_stop_background_subagent/input.ts";
+import { assertAcpClaudeStopBackgroundSubagentOutput } from "./acp_claude_stop_background_subagent/output.ts";
+import { acpClaudeSubagentLineageInput } from "./acp_claude_subagent_lineage/input.ts";
+import { assertAcpClaudeSubagentLineageOutput } from "./acp_claude_subagent_lineage/output.ts";
+import { acpClaudeSubagentResumeInput } from "./acp_claude_subagent_resume/input.ts";
+import { assertAcpClaudeSubagentResumeOutput } from "./acp_claude_subagent_resume/output.ts";
+import { acpClaudeSubagentResumeLateToolInput } from "./acp_claude_subagent_resume_late_tool/input.ts";
+import { assertAcpClaudeSubagentResumeLateToolOutput } from "./acp_claude_subagent_resume_late_tool/output.ts";
 import { claudeBackgroundSubagentAfterRootInput } from "./claude_background_subagent_after_root/input.ts";
 import { assertClaudeBackgroundSubagentAfterRootOutput } from "./claude_background_subagent_after_root/output.ts";
 import { claudeBackgroundTaskAfterRootInput } from "./claude_background_task_after_root/input.ts";
@@ -574,6 +616,358 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           model: "grok-composer-2.5-fast",
         },
         assertOutput: assertGrokSubagentLineageOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_background_reply",
+    buildInput: acpClaudeBackgroundReplyInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_background_reply/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeBackgroundReplyOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_prompt_during_agent_cycle",
+    buildInput: acpClaudePromptDuringAgentCycleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_prompt_during_agent_cycle/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudePromptDuringAgentCycleOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_background_approval",
+    buildInput: acpClaudeBackgroundApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_background_approval/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeBackgroundApprovalOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_exit_after_prompt",
+    buildInput: acpClaudeExitAfterPromptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_exit_after_prompt/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeExitAfterPromptOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_exit_during_continuation",
+    buildInput: acpClaudeExitDuringContinuationInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_exit_during_continuation/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeExitDuringContinuationOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_failed_prompt",
+    buildInput: acpClaudeFailedPromptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_failed_prompt/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeFailedPromptOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_failed_continuation",
+    buildInput: acpClaudeFailedContinuationInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_failed_continuation/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeFailedContinuationOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_lineage",
+    buildInput: acpClaudeSubagentLineageInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_lineage/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentLineageOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_resume",
+    buildInput: acpClaudeSubagentResumeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_resume/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_resume_late_tool",
+    buildInput: acpClaudeSubagentResumeLateToolInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_resume_late_tool/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentResumeLateToolOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_subagent",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_subagent/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_background_subagent",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_background_subagent/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_subagent_failed",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_subagent_failed/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedSubagentFailedOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_subagent_cancelled",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_subagent_cancelled/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedSubagentFailedOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_late_tool",
+    buildInput: acpClaudeBackgroundReplyInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_late_tool/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentLateToolOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_failed",
+    buildInput: acpClaudeSubagentFailedInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_failed/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentFailedOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_cancelled",
+    buildInput: acpClaudeBackgroundReplyInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_cancelled/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentCancelledOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_failed_prompt_background_subagent",
+    buildInput: acpClaudeFailedPromptBackgroundSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_failed_prompt_background_subagent/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeFailedPromptBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_steer_background_subagent",
+    buildInput: acpClaudeSteerBackgroundSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_steer_background_subagent/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSteerBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_stop_background_subagent",
+    buildInput: acpClaudeStopBackgroundSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_stop_background_subagent/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeStopBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_background_question",
+    buildInput: acpClaudeBackgroundQuestionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_background_question/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeBackgroundQuestionOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_background_question_stop",
+    buildInput: acpClaudeBackgroundQuestionStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_background_question_stop/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeBackgroundQuestionStopOutput,
       },
     ],
   },

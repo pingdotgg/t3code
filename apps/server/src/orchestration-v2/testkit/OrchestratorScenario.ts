@@ -95,6 +95,14 @@ export type OrchestratorV2ScenarioStep =
       readonly key: string;
     }
   | {
+      /** Renames the child thread of `threadId`'s subagent `nativeTaskId`, as a user can. */
+      readonly type: "rename_subagent_thread";
+      readonly threadId: ThreadId;
+      readonly nativeTaskId: string;
+      readonly title: string;
+      readonly commandId: CommandId;
+    }
+  | {
       readonly type: "respond_to_next_runtime_request";
       readonly threadId: ThreadId;
       readonly commandId: CommandId;
@@ -679,6 +687,26 @@ export function runOrchestratorV2Scenario(
           case "capture_shell_snapshot":
             capturedShellSnapshots.set(step.key, yield* orchestrator.getShellSnapshot());
             break;
+          case "rename_subagent_thread": {
+            const projection = yield* orchestrator.getThreadProjection(step.threadId);
+            const childThreadId = projection.subagents.find(
+              (subagent) => subagent.nativeTaskRef?.nativeId === step.nativeTaskId,
+            )?.childThreadId;
+            if (childThreadId == null) {
+              return yield* new OrchestratorV2ScenarioStepError({
+                scenario: scenario.name,
+                step: `rename_subagent_thread:${step.nativeTaskId}`,
+              });
+            }
+            const result = yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: step.commandId,
+              threadId: childThreadId,
+              title: step.title,
+            });
+            storedEventGroups.push(result.storedEvents);
+            break;
+          }
           case "respond_to_next_runtime_request": {
             const request = yield* waitForPendingRuntimeRequest(step.threadId);
             if (step.shellSnapshotKeyWhilePending !== undefined) {

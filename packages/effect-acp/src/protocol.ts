@@ -87,7 +87,10 @@ export interface AcpPatchedProtocolOptions {
   ) => Effect.Effect<void, never>;
 
   readonly transformSessionUpdate?: (
-    notification: AcpSchema.UpdateSessionNotification | AcpSchemaV1.SessionNotification,
+    notification:
+      | AcpSchema.UpdateSessionNotification
+      | AcpSchemaV1.SessionNotification
+      | AcpCompat.SessionNotification,
   ) =>
     | AcpSchema.UpdateSessionNotification
     | AcpSchemaV1.SessionNotification
@@ -142,6 +145,34 @@ interface AcpOutgoingWriterState {
 const decodeSessionUpdate = Schema.decodeUnknownEffect(
   Schema.Union([AcpSchema.UpdateSessionNotification, AcpSchemaV1.SessionNotification]),
 );
+const decodeFailedIdle = Schema.decodeUnknownOption(
+  Schema.Struct({
+    update: Schema.Struct({
+      sessionUpdate: Schema.Literal("state_update"),
+      state: Schema.Literal("idle"),
+      error: AcpSchema.Error,
+    }),
+  }),
+);
+
+/**
+ * Keeps the JSON-RPC `error` of a failed idle `state_update`
+ * (`AcpCompat.SessionUpdate`), which the generated ACP v2 alpha.3 schema drops.
+ */
+function withFailedIdleError(
+  notification: AcpSchema.UpdateSessionNotification | AcpSchemaV1.SessionNotification,
+  payload: unknown,
+):
+  | AcpSchema.UpdateSessionNotification
+  | AcpSchemaV1.SessionNotification
+  | AcpCompat.SessionNotification {
+  const update = notification.update;
+  if (update.sessionUpdate !== "state_update" || update.state !== "idle") return notification;
+  const failed = decodeFailedIdle(payload);
+  return Option.isNone(failed)
+    ? notification
+    : { ...notification, update: { ...update, error: failed.value.update.error } };
+}
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.CompleteElicitationNotification,
 );
@@ -503,14 +534,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     if (message.id === "") {
       if (message.tag === CLIENT_METHODS.session_update) {
         return decodeSessionUpdate(message.payload).pipe(
-          Effect.map(
-            (params) =>
-              ({
-                _tag: "SessionUpdate",
-                method: CLIENT_METHODS.session_update,
-                params: options.transformSessionUpdate?.(params) ?? params,
-              }) satisfies AcpIncomingNotification,
-          ),
+          Effect.map((decoded) => {
+            const params = withFailedIdleError(decoded, message.payload);
+            return {
+              _tag: "SessionUpdate",
+              method: CLIENT_METHODS.session_update,
+              params: options.transformSessionUpdate?.(params) ?? params,
+            } satisfies AcpIncomingNotification;
+          }),
           Effect.mapError((cause) =>
             AcpError.AcpProtocolParseError.fromSchemaError(
               "decode-notification-payload",

@@ -318,6 +318,13 @@ export type SessionUpdate =
       readonly state: "idle";
       readonly stopReason?: StopReason | null;
       readonly usage?: Usage | null;
+      /**
+       * Why failed work (`stopReason: "error"`) failed: the JSON-RPC error a v1
+       * prompt fails with. claude-agent-acp's v2 sends it (the subagents RFD);
+       * ACP v2 alpha.3 has no such field, so the protocol reads it from the raw
+       * frame.
+       */
+      readonly error?: V2.Error | null;
       readonly _meta?: Meta;
     }
   | {

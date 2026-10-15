@@ -8,6 +8,7 @@ import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import { extractClaudeSubagentDelegation, extractClaudeSubagentUpdate } from "./claudeAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -25,6 +26,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   normalizeAcpRegistryCommands,
@@ -72,6 +74,7 @@ export interface AcpRegistryAdapterV2Options {
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
 }
 
 // ─── Per-agent exceptions ────────────────────────────────────────────────────
@@ -79,7 +82,8 @@ export interface AcpRegistryAdapterV2Options {
 // Agent-specific behavior does not belong here: an agent that needs it gets a
 // dedicated driver (as Grok and Antigravity have). The few exceptions below
 // predate that rule and are small presentation hooks, not permission or tool
-// behavior. Copilot's subagent routing was approved later on the same terms.
+// behavior. Copilot's subagent routing and Claude Agent's ACP v2 work state
+// and subagent sessions were approved later on the same terms.
 //
 // Agents changing this file: do NOT add another `agentId === "..."` branch,
 // agent table, or agent-specific hook without explicit approval from the
@@ -115,6 +119,30 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
       }),
   );
 }
+
+/**
+ * Claude Agent (claude-agent-acp): the official registry entry or a local
+ * `claude-agent-acp` command. On ACP v1 it holds a turn's prompt open until
+ * the background subagents it started finish, so the run and its reply look
+ * stuck (#17203). Its opt-in ACP v2 ends the turn at the result and reports
+ * later background work as work states, which the adapter follows
+ * (`followAgentWorkState`).
+ */
+function isClaudeAgentAcp(settings: AcpRegistrySettings): boolean {
+  return settings.source === "local"
+    ? /^claude-agent-acp(\.exe|\.cmd)?$/i.test(settings.commandPath.split(/[\\/]/).pop() ?? "")
+    : settings.agentId === "claude-acp";
+}
+
+/** Opts Claude Agent into ACP v2 unless the instance environment sets the switch itself. */
+function acpRegistryLaunchEnvironment(
+  settings: AcpRegistrySettings,
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return isClaudeAgentAcp(settings)
+    ? { CLAUDE_AGENT_ACP_EXPERIMENTAL_V2: "1", ...environment }
+    : environment;
+}
 // ─── End per-agent exceptions (Devin's gates are marked in makeAcpRegistryAdapterV2) ───
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
@@ -148,7 +176,11 @@ function makeAcpRegistryRuntime(
     Effect.gen(function* () {
       const { processEnvironment, ...runtimeInput } = input;
       const resolved = yield* catalog
-        .resolve(options.settings, input.cwd, options.environment)
+        .resolve(
+          options.settings,
+          input.cwd,
+          acpRegistryLaunchEnvironment(options.settings, options.environment),
+        )
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -201,10 +233,17 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
-    // Per-agent exceptions (Mistral Vibe, Devin, Copilot): see the note above
+    // Per-agent exceptions (Mistral Vibe, Claude, Devin, Copilot): see the note above
     // registerMistralVibeAcpExtensions before adding any more.
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
+      : {}),
+    ...(isClaudeAgentAcp(options.settings)
+      ? {
+          followAgentWorkState: true,
+          extractSubagentUpdate: extractClaudeSubagentUpdate,
+          extractSubagentDelegation: extractClaudeSubagentDelegation,
+        }
       : {}),
     ...(isDevin
       ? {
@@ -271,6 +310,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }
       : {}),
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
+    ...(options.continuationRequests === undefined
+      ? {}
+      : { continuationRequests: options.continuationRequests }),
   });
 });
 
@@ -303,6 +345,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
+        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

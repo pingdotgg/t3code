@@ -10,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -27,10 +28,16 @@ import {
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
-const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
-  agentId: "replay-agent",
-  authMethodId: "replay",
-});
+const decodeReplaySettings = Schema.decodeSync(AcpRegistrySettings);
+
+/** Replays as `metadata.registryAgentId` when a transcript names the agent it records. */
+function replaySettings(transcript: AcpReplayTranscript) {
+  const agentId = transcript.metadata?.registryAgentId;
+  return decodeReplaySettings({
+    agentId: typeof agentId === "string" ? agentId : "replay-agent",
+    authMethodId: "replay",
+  });
+}
 
 function layerAcpRegistryProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
@@ -43,6 +50,8 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Same queue the continuation worker drains when the fixture runs it.
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
@@ -55,8 +64,9 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
         .pipe(Effect.orDie);
       const adapter = yield* makeAcpRegistryAdapterV2({
         instanceId: ACP_REGISTRY_DEFAULT_INSTANCE_ID,
-        settings: REPLAY_SETTINGS,
+        settings: replaySettings(transcript),
         environment: {},
+        continuationRequests,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,

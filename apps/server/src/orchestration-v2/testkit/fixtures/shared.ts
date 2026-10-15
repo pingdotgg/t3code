@@ -246,6 +246,12 @@ export type OrchestratorFixtureInputStep =
       readonly label: string;
     }
   | {
+      /** The user renames the child thread of the subagent of the Agent call `nativeTaskId`. */
+      readonly type: "rename_subagent_thread";
+      readonly nativeTaskId: string;
+      readonly title: string;
+    }
+  | {
       readonly type: "steer";
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -705,6 +711,18 @@ export function materializeFixtureInput(input: {
           break;
         case "release_replay_gate":
           steps.push({ type: "release_replay_gate", label: step.label });
+          break;
+        case "rename_subagent_thread":
+          steps.push({
+            type: "rename_subagent_thread",
+            threadId: ids.threadId,
+            nativeTaskId: step.nativeTaskId,
+            title: step.title,
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `rename-subagent-thread-${step.nativeTaskId}`,
+            }),
+          });
           break;
         case "answer_next_user_input_request":
           pushDispatch(

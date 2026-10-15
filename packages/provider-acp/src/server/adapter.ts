@@ -48,6 +48,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -322,6 +323,20 @@ export interface AcpAdapterV2Flavor {
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
   /**
+   * With `followAgentWorkState`: a delegation to a child session, the message
+   * that gives it work. `delegationId` is the id of the tool call that sent
+   * it: the subagent's `nativeTaskId` for its launch, which links the two.
+   * Claude Agent's delegation messages carry the id of their Agent or
+   * SendMessage call.
+   */
+  readonly extractSubagentDelegation?: (notification: EffectAcpSchema.SessionNotification) =>
+    | {
+        readonly childSessionId: string;
+        readonly delegationId: string;
+        readonly prompt: string;
+      }
+    | undefined;
+  /**
    * Optional Grok-style rewrite before tool projection (e.g. keep monitor start
    * ACKs in the running state until stream end).
    */
@@ -425,6 +440,26 @@ export interface AcpAdapterV2Flavor {
    * only appended to loaded history.
    */
   readonly enablePostSettleContinuation?: boolean;
+  /**
+   * For an ACP v2 agent whose background work outlives the turn that started
+   * it (claude-agent-acp), follow the work state the agent reports:
+   * - a turn ends at the agent's `idle`, accepted only once the prompt's
+   *   `user_message` echo arrived, so the idle of earlier work cannot end it;
+   * - foreground work the agent starts on its own (`running` with no T3
+   *   turn) opens a continuation run that ends at the agent's next `idle`;
+   * - running subagents (subagents RFD) and the agent's own work count as
+   *   pending background work, so idle release keeps the process;
+   * - a subagent's child session streams into the subagent's child thread,
+   *   also after the turn that started it settled, and its idle
+   *   `subagent_update` ends the subagent. A resumed child reopens its row in
+   *   the turn that runs, and a nested child shows in its parent's thread;
+   * - an idle with the `error` stop reason fails the turn;
+   * - approvals and questions the agent asks while no turn runs (a background
+   *   subagent's) open a continuation run that shows them;
+   * - the agent's process exiting fails the open turn, since no idle follows.
+   * Needs `continuationRequests`. Inert when the agent negotiates ACP v1.
+   */
+  readonly followAgentWorkState?: boolean;
   /**
    * When true, send image attachment content blocks even if the ACP agent
    * advertises `promptCapabilities.image: false`. Grok CLI currently accepts
@@ -1202,6 +1237,12 @@ interface ActiveAcpTurn {
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   /**
+   * With `followAgentWorkState`: the agent has taken this turn's work in (its
+   * `user_message` echo arrived, or the continuation drained the work the
+   * agent started itself), so its next `idle` ends the turn.
+   */
+  workTakenIn: boolean;
+  /**
    * Completed the moment `runtime.prompt` resolves on the wire, before the
    * completion callback requests `runtimeCallbackPermit`. Failure does not
    * complete this; settled-soft classification ORs it with `promptSettled`.
@@ -1331,6 +1372,18 @@ export function acpIsAppOwnedWakeTurn(message: {
   return message.createdBy === "agent" && message.creationSource === "server";
 }
 
+/** The work state of a subagent, from its subagents-RFD `subagent_update` on the parent. */
+const decodeAcpSubagentStateUpdate = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sessionId: Schema.String,
+    state: Schema.Struct({
+      state: Schema.String,
+      stopReason: Schema.optional(Schema.NullOr(Schema.String)),
+      error: Schema.optional(Schema.NullOr(Schema.Struct({ message: Schema.String }))),
+    }),
+  }),
+);
+
 /** A continuation run attaches to wake traffic the agent produced on its own. */
 function acpIsProviderContinuationMessage(message: {
   readonly createdBy: string;
@@ -1378,7 +1431,8 @@ export function acpCompletedTurnShouldTerminalizeTool(
 interface ActiveAcpSubagent {
   task: OrchestrationV2Subagent;
   readonly childThreadId: ThreadId;
-  readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
+  /** The child thread's root turn: each run of the child (a resume reopens it) has its own. */
+  childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
   /** Turn that spawned the subagent; carryover updates keep this lineage. */
@@ -1389,6 +1443,10 @@ interface ActiveAcpSubagent {
   readonly assistantMessages: Map<string, string>;
   readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
+  /** The child session's tools, kept with the subagent across turns. */
+  readonly toolState: AcpToolUpdateState;
+  /** The session that opened each tool of `toolState`: its child's, or a nested child's. */
+  readonly toolSessionIds: Map<string, string>;
   /**
    * Whether a terminal carryover status has been projected to events.
    * Completed roots project post-settle terminals immediately while their
@@ -1428,6 +1486,48 @@ type AcpCarryoverSubagents = {
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
 };
 
+/**
+ * With `followAgentWorkState`: the root work state the agent reported last.
+ * An idle keeps how the work ended, which ends the turn that took it in.
+ */
+type AcpAgentWork =
+  | { readonly state: "running" }
+  | { readonly state: "idle"; readonly status: "completed" }
+  | { readonly state: "idle"; readonly status: "cancelled" }
+  | {
+      readonly state: "idle";
+      readonly status: "failed";
+      readonly failure: OrchestrationV2ProviderFailure;
+    };
+
+/**
+ * With `followAgentWorkState`: a child session the agent announced on its
+ * parent (subagents RFD `subagent_update`).
+ */
+interface AcpAgentChild {
+  /** The root session, or the child whose Agent call started this one. */
+  readonly parentSessionId: string;
+  /** The work state its parent last reported. */
+  running: boolean;
+  /**
+   * How its own work ended, held while a subagent it started still runs: its
+   * row ends once that work ended too (`settleAgentRow`).
+   */
+  ended: {
+    readonly status: "completed" | "failed" | "cancelled";
+    readonly result: string | null;
+  } | null;
+  /** The call that delegated to it, until that links its subagent row. */
+  delegationId: string | null;
+  /** Its row, once linked. A nested child has none and shows in its parent's. */
+  subagent: ActiveAcpSubagent | null;
+  /**
+   * Frames held until a row can show them: before the link, and while its row
+   * waits for the turn that takes it over (`awaitsRun`). Replayed in order.
+   */
+  readonly pending: Array<EffectAcpSchema.SessionNotification>;
+}
+
 type PendingRuntimeRequest = {
   readonly generation: number;
   readonly nativeResponseAcknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>;
@@ -1457,6 +1557,9 @@ interface SnapshotMessageState {
 
 const TOOL_UPDATE_PERSIST_EVERY = 10;
 
+/** Merged tool states (a turn's, or a subagent's child tools) and their persistence throttle. */
+type AcpToolUpdateState = Pick<ActiveAcpTurn, "tools" | "toolStartedAt" | "toolUpdatesSkipped">;
+
 /**
  * Some agents stream a tool's arguments (a file write's diff, `rawInput`) and
  * resend the whole call each time. Persist every 10th of those. Status, title,
@@ -1464,7 +1567,7 @@ const TOOL_UPDATE_PERSIST_EVERY = 10;
  * completed/failed when a flavor normalizes it to a non-terminal status.
  */
 function shouldPersistToolUpdate(
-  context: ActiveAcpTurn,
+  context: AcpToolUpdateState,
   key: string,
   previous: AcpToolCallState | undefined,
   next: AcpToolCallState,
@@ -1967,6 +2070,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly providerThreadId: ProviderThreadId;
         } | null>(null);
         const wakeBuffer = yield* Ref.make<Array<EffectAcpSchema.SessionNotification>>([]);
+        // flavor.followAgentWorkState, once the agent negotiated ACP v2 (set
+        // after the runtime starts): the root work state the agent last
+        // reported, its child sessions by session id, and the approvals and
+        // questions it awaits, which keep the turn that shows them open.
+        // Mutated under runtimeCallbackPermit; Stop, exit and session
+        // activation reset them (`resetAgentWorkState`).
+        let followsAgentWorkState = false;
+        const agentWorkCompleted: AcpAgentWork = { state: "idle", status: "completed" };
+        const agentWork = yield* Ref.make<AcpAgentWork>(agentWorkCompleted);
+        const agentChildren = new Map<string, AcpAgentChild>();
+        const agentRequests = new Set<object>();
+        // The signal of the next turn, for requests waiting for one.
+        const turnAttached = yield* Ref.make(yield* Deferred.make<void>());
+        const resetAgentWorkState = (work: AcpAgentWork) =>
+          Effect.gen(function* () {
+            yield* Ref.set(agentWork, work);
+            agentChildren.clear();
+            agentRequests.clear();
+          });
         // Background work that ended after the prompt settled, keyed by task or
         // child session id. The next continuation offer names it for the user;
         // `offered` holds the keys that offer named. Work that ends while the
@@ -2097,7 +2219,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
-            Ref.set(runtimeRestartRequired, true),
+            Effect.gen(function* () {
+              yield* Ref.set(runtimeRestartRequired, true);
+              if (!followsAgentWorkState) return;
+              // Only the agent's idle ends a turn here, and an agent that exited
+              // sends none. Its work, and its subagents' work, ended with it.
+              const exited = makeProviderFailure({
+                message: "The agent exited before it finished the turn.",
+                class: "transport_error",
+              });
+              const context = yield* Ref.get(activeTurn);
+              if (context !== null && !context.finalized) {
+                yield* terminalizeOpenRunOwnedItems(context, { terminalizeSubagents: true });
+                yield* finalizeTurn(context, "failed", exited);
+              }
+              // Work the agent started itself died with it: its own, a
+              // subagent's, or a request it awaited while idle. A continuation
+              // not dispatched yet is dropped, and one already dispatched shows
+              // that the work failed, not that it ended.
+              const work = yield* Ref.get(agentWork);
+              const workDied =
+                work.state === "running" ||
+                agentRequests.size > 0 ||
+                [...agentChildren.values()].some((child) => child.running);
+              yield* resetAgentWorkState(
+                workDied ? { state: "idle", status: "failed", failure: exited } : work,
+              );
+              yield* continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* Ref.update(continuationGeneration, (value) => value + 1);
+                  yield* Ref.set(continuationRequested, false);
+                  yield* Ref.set(wakeBuffer, []);
+                }),
+              );
+              yield* terminalizeCarryoverSubagents(yield* Ref.getAndSet(carryoverSubagents, null));
+            }),
           ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
           runtimeGeneration: number,
@@ -2690,6 +2846,201 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        /**
+         * Emits a tool of a subagent's child session (`key` in its tool state)
+         * into its child thread. `sessionIds` are the sessions whose embedded
+         * terminals can belong to it.
+         */
+        const emitSubagentTool = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          key: string,
+          merged: AcpToolCallState,
+          status: ProjectedToolStatus,
+          sessionIds: ReadonlyArray<string>,
+        ) {
+          // Terminals are remembered under the raw session id: the child's
+          // own session, or the root one when the flavor routes child
+          // updates out of it (Devin).
+          const mcpIdentity = extractMcpToolCallIdentity(merged, {
+            embeddedTerminalCommands: sessionIds.flatMap((sessionId) =>
+              embeddedTerminalCommands(sessionId, merged.toolCallId),
+            ),
+          });
+          const now = yield* DateTime.now;
+          const startedAt = subagent.toolState.toolStartedAt.get(key) ?? now;
+          subagent.toolState.toolStartedAt.set(key, startedAt);
+          const ordinal = resolveSubagentChildOrdinal(subagent, key);
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: providerTurnItemId(key),
+              threadId: subagent.childThreadId,
+              runId: null,
+              nodeId: subagent.childRootNodeId,
+              providerThreadId: subagent.task.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: { driver, nativeId: key, strength: "strong" },
+              parentItemId: null,
+              ordinal,
+              status,
+              title: merged.title ?? merged.kind ?? "Tool",
+              startedAt,
+              completedAt: completedAtForStatus(status, now),
+              updatedAt: now,
+              type: "dynamic_tool",
+              ...(mcpIdentity === undefined
+                ? {}
+                : mcpToolPresentation({
+                    serverName: mcpIdentity.server,
+                    toolName: mcpIdentity.tool,
+                    source: unknownRecord(
+                      (
+                        unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
+                        unknownRecord(merged.data.rawOutput)
+                      )?._meta,
+                    )?.source,
+                  })),
+              toolName:
+                mcpIdentity === undefined
+                  ? (merged.title ?? merged.kind ?? "Tool")
+                  : `${mcpIdentity.server}.${mcpIdentity.tool}`,
+              input: merged.data.rawInput ?? null,
+              output: merged.data.rawOutput ?? merged.data.content ?? null,
+            },
+          });
+        });
+
+        /** Merges a tool call of a subagent's child session and projects it into its child thread. */
+        const projectSubagentToolCall = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          childSessionId: string,
+          rootSessionId: string | null,
+          toolCall: AcpToolCallState,
+        ) {
+          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+          const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
+          const previous = subagent.toolState.tools.get(key);
+          const merged = mergeToolCallState(previous, toolCall);
+          subagent.toolState.tools.set(key, merged);
+          subagent.toolSessionIds.set(key, childSessionId);
+          if (!shouldPersistToolUpdate(subagent.toolState, key, previous, merged, merged.status)) {
+            return;
+          }
+          yield* emitSubagentTool(
+            subagent,
+            key,
+            merged,
+            toolStatus(merged.status),
+            rootSessionId === null ? [childSessionId] : [childSessionId, rootSessionId],
+          );
+        });
+
+        /** The sessions whose embedded terminals can belong to a tool `openedBy` opened. */
+        const subagentToolSessionIds = (
+          subagent: ActiveAcpSubagent,
+          openedBy: string | undefined,
+          rootSessionId: string | null,
+        ) => [
+          ...new Set(
+            [openedBy, subagent.childSessionId, rootSessionId].filter(
+              (candidate) => candidate != null,
+            ),
+          ),
+        ];
+
+        /**
+         * Interrupts the open tools of a subagent's child session, which end
+         * with it, or only those `sessionId` opened: a nested child's, which
+         * end with that child while the rest of the row works on.
+         */
+        const terminalizeSubagentTools = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          sessionId?: string,
+        ) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          for (const [key, tool] of subagent.toolState.tools) {
+            const status = toolStatus(tool.status);
+            if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            const openedBy = subagent.toolSessionIds.get(key);
+            if (sessionId !== undefined && openedBy !== sessionId) continue;
+            subagent.toolState.tools.delete(key);
+            subagent.toolSessionIds.delete(key);
+            yield* emitSubagentTool(
+              subagent,
+              key,
+              tool,
+              "interrupted",
+              subagentToolSessionIds(subagent, openedBy, rootSessionId),
+            );
+          }
+        });
+
+        /**
+         * Shows the open tools of a subagent's child session again, as they
+         * are, so the run its row moves to (`handAgentRow`) takes their ends.
+         */
+        const announceOpenSubagentTools = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+        ) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          for (const [key, tool] of subagent.toolState.tools) {
+            const status = toolStatus(tool.status);
+            if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            yield* emitSubagentTool(
+              subagent,
+              key,
+              tool,
+              status,
+              subagentToolSessionIds(subagent, subagent.toolSessionIds.get(key), rootSessionId),
+            );
+          }
+        });
+
+        /** Whether the child session of `subagent` left the tool `toolCallId` open. */
+        const subagentToolIsOpen = (subagent: ActiveAcpSubagent, toolCallId: string) => {
+          const tool = subagent.toolState.tools.get(
+            `${subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id)}:tool:${toolCallId}`,
+          );
+          const status = tool === undefined ? undefined : toolStatus(tool.status);
+          return status === "pending" || status === "running" || status === "waiting";
+        };
+
+        /**
+         * Gives a subagent its child session: the provider thread of its child
+         * thread, forked from the turn that spawned it. Its later frames stream
+         * into that thread.
+         */
+        const linkSubagentSession = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          childSessionId: string,
+        ) {
+          subagent.childSessionId = childSessionId;
+          const providerThread = makeProviderThread({
+            driver,
+            providerInstanceId: subagent.task.providerInstanceId,
+            idAllocator,
+            appThreadId: subagent.childThreadId,
+            providerSessionId: input.providerSessionId,
+            nativeThreadId: childSessionId,
+            ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
+            forkedFrom: {
+              providerThreadId: subagent.parentProviderThreadId,
+              providerTurnId: subagent.providerTurnId,
+            },
+            now: yield* DateTime.now,
+          });
+          subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(childSessionId, providerThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread: { ...providerThread, status: "idle" },
+          });
+        });
+
         const emitSubagent = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           update: AcpAdapterV2SubagentUpdate,
@@ -2785,6 +3136,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             assistantMessages: new Map(),
             childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
+            toolState: {
+              tools: new Map(),
+              toolStartedAt: new Map(),
+              toolUpdatesSkipped: new Map(),
+            },
+            toolSessionIds: new Map(),
             terminalStatusProjected: false,
           };
           subagent.task = task;
@@ -2844,31 +3201,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
           const childSessionId = update.childSessionId;
           if (childSessionId !== null && subagent.childSessionId === null) {
-            subagent.childSessionId = childSessionId;
+            yield* linkSubagentSession(subagent, childSessionId);
             context.subagentsBySessionId.set(childSessionId, subagent);
-            const providerThread = makeProviderThread({
-              driver,
-              providerInstanceId: context.input.modelSelection.instanceId,
-              idAllocator,
-              appThreadId: childThreadId,
-              providerSessionId: input.providerSessionId,
-              nativeThreadId: childSessionId,
-              ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
-              forkedFrom: {
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-              },
-              now,
-            });
-            subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
-            yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-              new Map(current).set(childSessionId, providerThread),
-            );
-            yield* emitProviderEvent({
-              type: "provider_thread.updated",
-              driver,
-              providerThread: { ...providerThread, status: "idle" },
-            });
             const buffered = context.pendingSubagentNotifications.get(childSessionId) ?? [];
             context.pendingSubagentNotifications.delete(childSessionId);
             yield* Effect.forEach(
@@ -2967,6 +3301,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           if (acpSubagentStatusIsTerminal(taskStatus)) {
             subagent.terminalStatusProjected = true;
+          }
+          // A child the agent announced before this Agent call reached us
+          // waited for this row.
+          if (followsAgentWorkState && existing === undefined) {
+            yield* linkDelegatedAgentChild(nativeTaskId);
           }
         });
 
@@ -4109,6 +4448,622 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        /** The provider failure of a failed prompt, or of failed work the agent reported. */
+        const promptFailure = (cause: unknown) =>
+          flavor.promptFailure?.(cause) ?? makeProviderFailure({ cause, class: "provider_error" });
+
+        /** The work state an agent's `state_update` reports (see `AcpAgentWork`). */
+        const agentWorkOf = (
+          update: Extract<
+            EffectAcpSchema.SessionUpdate,
+            { readonly sessionUpdate: "state_update" }
+          >,
+        ): AcpAgentWork => {
+          if (update.state !== "idle") return { state: "running" };
+          if (update.stopReason === "cancelled") return { state: "idle", status: "cancelled" };
+          if (update.stopReason !== "error") return agentWorkCompleted;
+          // The JSON-RPC error a failed v1 prompt answers with: its message and
+          // code go through the prompt's failure mapping.
+          return {
+            state: "idle",
+            status: "failed",
+            failure: promptFailure(
+              update.error == null
+                ? undefined
+                : EffectAcpErrors.AcpRequestError.fromProtocolError(update.error, {
+                    method: "session/prompt",
+                  }),
+            ),
+          };
+        };
+
+        /**
+         * With `followAgentWorkState`: ends a turn the agent took in once the
+         * agent is idle, as its work ended. A request the agent awaits (an
+         * approval or a question) keeps the turn that shows it open until it is
+         * answered; a cancel does not wait, since Stop cancels those requests.
+         * The turn takes the outcome, so a later run does not end with it too.
+         */
+        const endIdleTurn = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          if (context.finalized || !context.workTakenIn) return;
+          const work = yield* Ref.get(agentWork);
+          if (work.state === "running") return;
+          if (
+            work.status !== "cancelled" &&
+            (agentRequests.size > 0 || (yield* Ref.get(pendingRuntimeRequests)).size > 0)
+          ) {
+            return;
+          }
+          yield* Ref.set(agentWork, agentWorkCompleted);
+          if (work.status === "cancelled") return yield* finalizeTurn(context, "cancelled");
+          if (work.status === "completed") return yield* finalizeTurn(context, "completed");
+          yield* terminalizeOpenRunOwnedItems(context, { terminalizeSubagents: false });
+          yield* finalizeTurn(context, "failed", work.failure);
+        });
+
+        /**
+         * With `followAgentWorkState`: a request the agent sends while no turn
+         * runs (a background subagent's) opens a continuation run, since the
+         * request belongs to a run, and waits until a turn is live. Fails when
+         * no run can open, as a request without a turn does elsewhere.
+         */
+        const awaitRequestTurn = (generation: number) =>
+          Effect.gen(function* () {
+            while (true) {
+              const waiting = yield* runRuntimeCallbackAtGeneration(
+                generation,
+                Effect.gen(function* () {
+                  if ((yield* liveTurn) !== null) return Option.none();
+                  const attached = yield* Ref.get(turnAttached);
+                  const sessionId = yield* Ref.get(activeSessionId);
+                  if (
+                    sessionId === null ||
+                    (!(yield* offerContinuationRun(sessionId)) &&
+                      !(yield* Ref.get(continuationRequested)))
+                  ) {
+                    return yield* new EffectAcpErrors.AcpTransportError({
+                      detail: "ACP agent requested input without an active turn",
+                      cause: "No active ACP turn",
+                    });
+                  }
+                  return Option.some(attached);
+                }),
+              );
+              if (Option.isNone(waiting)) return yield* Effect.never;
+              if (Option.isNone(waiting.value)) return;
+              yield* Deferred.await(waiting.value.value);
+            }
+          });
+
+        /**
+         * With `followAgentWorkState`: runs the handler of a request the agent
+         * awaits (an approval or a question), so that the turn that shows it
+         * stays open (`endIdleTurn`) until the handler answered. Stop and the
+         * agent's exit forget held requests.
+         */
+        const holdingTurnForRequest =
+          (generation: number) =>
+          <A, E, R>(handler: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+            followsAgentWorkState
+              ? Effect.acquireUseRelease(
+                  runRuntimeCallbackAtGeneration(
+                    generation,
+                    Effect.sync(() => {
+                      const hold = {};
+                      agentRequests.add(hold);
+                      return hold;
+                    }),
+                  ),
+                  () => handler,
+                  (hold) =>
+                    Option.isNone(hold)
+                      ? Effect.void
+                      : runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            agentRequests.delete(hold.value);
+                            const context = yield* Ref.get(activeTurn);
+                            if (context !== null) yield* endIdleTurn(context);
+                          }),
+                        ),
+                )
+              : handler;
+
+        const liveTurn = Effect.gen(function* () {
+          const context = yield* Ref.get(activeTurn);
+          return context !== null && !context.finalized ? context : null;
+        });
+
+        const subagentNativeId = (subagent: ActiveAcpSubagent) =>
+          subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+
+        /**
+         * Whether no run shows `child`'s row, so what changes it waits in
+         * `pending` for the turn that takes it over (`handAgentRow`): a
+         * finished row its child resumed or that holds a late state, or a row
+         * carried over from a run that ended otherwise than completed, which
+         * takes no more events.
+         */
+        const awaitsRun = Effect.fnUntraced(function* (child: AcpAgentChild) {
+          const subagent = child.subagent;
+          if (subagent === null) return false;
+          if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+            return child.running || child.pending.length > 0;
+          }
+          const carryover = yield* Ref.get(carryoverSubagents);
+          return (
+            carryover !== null &&
+            carryover.rootTerminalStatus !== "completed" &&
+            carryover.subagents.includes(subagent)
+          );
+        });
+
+        /** Whether a child that `sessionId` started, or one of theirs, still runs. */
+        const hasRunningDescendant = (sessionId: string) => {
+          for (const candidate of agentChildren.values()) {
+            if (!candidate.running) continue;
+            for (
+              let parent: AcpAgentChild | undefined = candidate;
+              parent !== undefined;
+              parent = agentChildren.get(parent.parentSessionId)
+            ) {
+              if (parent.parentSessionId === sessionId) return true;
+            }
+          }
+          return false;
+        };
+
+        /**
+         * The child whose row shows `child`'s work: itself, or its nearest
+         * ancestor with a row. A child of the root without a row yet is its own.
+         */
+        const agentChildShownBy = (
+          sessionId: string,
+          child: AcpAgentChild,
+          rootSessionId: string | null,
+        ) => {
+          let shownBy = { sessionId, child };
+          while (
+            shownBy.child.subagent === null &&
+            shownBy.child.parentSessionId !== rootSessionId
+          ) {
+            const parent = agentChildren.get(shownBy.child.parentSessionId);
+            if (parent === undefined) return undefined;
+            shownBy = { sessionId: shownBy.child.parentSessionId, child: parent };
+          }
+          return shownBy;
+        };
+
+        /** The row of the Agent call `nativeTaskId` with no child session yet: the live turn's, or carried over. */
+        const unlinkedSubagentRow = Effect.fnUntraced(function* (nativeTaskId: string) {
+          const live = yield* liveTurn;
+          const carryover = yield* Ref.get(carryoverSubagents);
+          const subagent =
+            live?.subagents.get(nativeTaskId) ??
+            (carryover !== null && carryover.sessionId === (yield* Ref.get(activeSessionId))
+              ? carryover.subagents.find(
+                  (candidate) => subagentNativeId(candidate) === nativeTaskId,
+                )
+              : undefined);
+          return subagent?.childSessionId === null ? subagent : undefined;
+        });
+
+        const replayAgentChild = Effect.fnUntraced(function* (child: AcpAgentChild) {
+          for (const notification of child.pending.splice(0)) {
+            yield* followAgentChildFrame(notification);
+          }
+        });
+
+        /** Links a child of the root to the row of the Agent call that delegated to it. */
+        const linkAgentChild = Effect.fnUntraced(function* (
+          childSessionId: string,
+          child: AcpAgentChild,
+          subagent: ActiveAcpSubagent,
+        ) {
+          child.subagent = subagent;
+          child.delegationId = null;
+          yield* linkSubagentSession(subagent, childSessionId);
+          const live = yield* liveTurn;
+          if (live?.subagents.get(subagentNativeId(subagent)) === subagent) {
+            live.subagentsBySessionId.set(childSessionId, subagent);
+          }
+          if (!acpSubagentStatusIsTerminal(subagent.task.status)) {
+            yield* projectCarryoverSubagentStatus(subagent, subagent.task.status);
+          }
+          yield* replayAgentChild(child);
+        });
+
+        /** Links the root's child whose delegation came before the row of its Agent call. */
+        const linkDelegatedAgentChild = Effect.fnUntraced(function* (nativeTaskId: string) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          for (const [childSessionId, child] of agentChildren) {
+            if (child.delegationId !== nativeTaskId || child.parentSessionId !== rootSessionId) {
+              continue;
+            }
+            const subagent = yield* unlinkedSubagentRow(nativeTaskId);
+            if (subagent !== undefined) yield* linkAgentChild(childSessionId, child, subagent);
+            return;
+          }
+        });
+
+        /**
+         * Hands a row no run shows (`awaitsRun`) to `context`, the turn that
+         * runs, as a resumed native Claude subagent moves to the run that
+         * resumes it. The row naming that run moves its child thread to it
+         * (`routeProviderEvent`), so one run takes its events, and learns the
+         * tools the child left open. A child that works in another run than
+         * before (a resume always does) gets its own child root turn there.
+         * Then replays what `linked` held.
+         */
+        const handAgentRow = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          subagent: ActiveAcpSubagent,
+          linked: { readonly sessionId: string; readonly child: AcpAgentChild } | undefined,
+        ) {
+          const finished = acpSubagentStatusIsTerminal(subagent.task.status);
+          const resumed = finished && linked?.child.running === true;
+          const movesRun = subagent.task.runId !== context.input.runId;
+          subagent.task = {
+            ...subagent.task,
+            runId: context.input.runId,
+            ...(resumed
+              ? {
+                  status: "running" as const,
+                  result: null,
+                  completedAt: null,
+                  startedAt: yield* DateTime.now,
+                }
+              : {}),
+          };
+          if (resumed) {
+            subagent.assistantText = "";
+            subagent.terminalStatusProjected = false;
+          }
+          if (resumed || (!finished && movesRun)) {
+            subagent.childRootNodeId = providerNodeId(
+              `${subagentNativeId(subagent)}:child-root:${subagent.nextChildOrdinal}`,
+            );
+          }
+          context.subagents.set(subagentNativeId(subagent), subagent);
+          if (linked !== undefined) context.subagentsBySessionId.set(linked.sessionId, subagent);
+          if (movesRun)
+            yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
+          if (!acpSubagentStatusIsTerminal(subagent.task.status)) {
+            yield* projectCarryoverSubagentStatus(subagent, subagent.task.status);
+          }
+          if (movesRun) yield* announceOpenSubagentTools(subagent);
+          if (linked !== undefined) yield* replayAgentChild(linked.child);
+        });
+
+        /**
+         * Hands `context` the rows that wait for a turn, and `carried`, the rows
+         * carried over from a run that ended otherwise than completed.
+         */
+        const handOverAgentRows = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          carried: ReadonlyArray<ActiveAcpSubagent>,
+        ) {
+          for (const [sessionId, child] of agentChildren) {
+            const subagent = child.subagent;
+            if (subagent === null) continue;
+            if (carried.includes(subagent) || (yield* awaitsRun(child))) {
+              yield* handAgentRow(context, subagent, { sessionId, child });
+            }
+          }
+          for (const subagent of carried) {
+            if (subagent.childSessionId === null) yield* handAgentRow(context, subagent, undefined);
+          }
+        });
+
+        /**
+         * Shows `notification`, which changes `shownBy`'s row, through a run
+         * that takes the row's events: a row no run shows moves to the live
+         * turn, or, with none, `notification` waits for the turn that takes it
+         * over. That is a continuation run, except for the rows of a turn a
+         * restart interrupted, which its next attempt takes over. Returns
+         * whether `notification` applies now.
+         */
+        const showAgentRow = Effect.fnUntraced(function* (
+          shownBy: { readonly sessionId: string; readonly child: AcpAgentChild },
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const subagent = shownBy.child.subagent;
+          if (subagent === null || !(yield* awaitsRun(shownBy.child))) return true;
+          const live = yield* liveTurn;
+          if (live !== null) {
+            yield* handAgentRow(live, subagent, shownBy);
+            return true;
+          }
+          shownBy.child.pending.push(notification);
+          const carryover = yield* Ref.get(carryoverSubagents);
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (
+            rootSessionId !== null &&
+            (carryover?.rootTerminalStatus !== "interrupted" ||
+              !carryover.subagents.includes(subagent))
+          ) {
+            yield* offerContinuationRun(rootSessionId);
+          }
+          return false;
+        });
+
+        /**
+         * Ends the row of `child` with how its work ended, once no subagent it
+         * started runs any more. A failed or cancelled child's open tools end
+         * with it.
+         */
+        const settleAgentRow = Effect.fnUntraced(function* (
+          sessionId: string,
+          child: AcpAgentChild,
+        ) {
+          const ended = child.ended;
+          if (child.running || ended === null || child.subagent === null) return;
+          if (hasRunningDescendant(sessionId)) return;
+          child.ended = null;
+          if (ended.status !== "completed") yield* terminalizeSubagentTools(child.subagent);
+          yield* finishSubagentFromNotice({ childSessionId: sessionId, ...ended });
+        });
+
+        /** Shows the message that resumed a child as the next prompt in its child thread. */
+        const emitSubagentResumePrompt = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          delegationId: string,
+          prompt: string,
+        ) {
+          const nativeItemId = `${subagentNativeId(subagent)}:prompt:${delegationId}`;
+          if (subagent.childItemOrdinals.has(nativeItemId)) return;
+          const artifacts = makeSubagentConversationArtifacts({
+            senderThreadId: subagent.task.threadId,
+            messageId: providerMessageId(nativeItemId),
+            turnItemId: providerTurnItemId(nativeItemId),
+            threadId: subagent.childThreadId,
+            rootNodeId: subagent.childRootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+            role: "user",
+            text: prompt,
+            ordinal: resolveSubagentChildOrdinal(subagent, nativeItemId),
+            now: yield* DateTime.now,
+          });
+          yield* emitProviderEvent({ type: "message.updated", driver, message: artifacts.message });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: artifacts.turnItem,
+          });
+          subagent.task = { ...subagent.task, prompt };
+          yield* projectCarryoverSubagentStatus(subagent, subagent.task.status);
+        });
+
+        /**
+         * A child's work state, reported on its parent (subagents RFD
+         * `subagent_update`). It announces an unknown child of a known session
+         * (never one under two parents). A running child pins idle release,
+         * and a finished row running again was resumed and moves to the turn
+         * that runs. An ended child ends its row once the subagents it started
+         * ended too (`settleAgentRow`), and a nested one's end can let the row
+         * that shows it end. A later failed state with the error the first one
+         * lacked (claude-agent-acp's `supplyError`) refines a failed row.
+         */
+        const applyAgentChildState = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          raw: unknown,
+        ) {
+          const decoded = decodeAcpSubagentStateUpdate(raw);
+          if (Option.isNone(decoded)) return;
+          const { sessionId: childSessionId, state } = decoded.value;
+          const parentSessionId = notification.sessionId;
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          const ended = state.state === "idle" || state.state === "unknown";
+          const known = agentChildren.get(childSessionId);
+          if (known === undefined) {
+            if (ended) return;
+            if (parentSessionId !== rootSessionId && !agentChildren.has(parentSessionId)) return;
+          } else if (known.parentSessionId !== parentSessionId) {
+            return;
+          }
+          const child = known ?? {
+            parentSessionId,
+            running: false,
+            ended: null,
+            delegationId: null,
+            subagent: null,
+            pending: [],
+          };
+          agentChildren.set(childSessionId, child);
+          const shownBy = agentChildShownBy(childSessionId, child, rootSessionId);
+          if (shownBy === undefined || !(yield* showAgentRow(shownBy, notification))) return;
+          const subagent = child.subagent;
+          if (!ended) {
+            child.running = true;
+            child.ended = null;
+            if (subagent === null || !acpSubagentStatusIsTerminal(subagent.task.status)) return;
+            const live = yield* liveTurn;
+            if (live !== null) {
+              yield* handAgentRow(live, subagent, { sessionId: childSessionId, child });
+            } else if (rootSessionId !== null) {
+              yield* offerContinuationRun(rootSessionId);
+            }
+            return;
+          }
+          child.running = false;
+          const status =
+            state.state === "unknown" ||
+            state.stopReason === "error" ||
+            state.stopReason === "refusal"
+              ? "failed"
+              : state.stopReason === "cancelled"
+                ? "cancelled"
+                : "completed";
+          const result = state.error?.message ?? null;
+          if (subagent === null) {
+            // A child of the root that ends unlinked shows nowhere.
+            if (child.parentSessionId === rootSessionId) {
+              agentChildren.delete(childSessionId);
+              return;
+            }
+            // A nested child shows in its ancestor's row, which can work on:
+            // only the tools this child left open end with it.
+            const owner = shownBy.child.subagent;
+            if (status !== "completed" && owner !== null) {
+              yield* terminalizeSubagentTools(owner, childSessionId);
+            }
+            return yield* settleAgentRow(shownBy.sessionId, shownBy.child);
+          }
+          if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+            if (
+              status !== "failed" ||
+              subagent.task.status !== "failed" ||
+              result === null ||
+              result === subagent.task.result
+            ) {
+              return;
+            }
+            // Its run may take no more events: the run that runs shows it.
+            const live = yield* liveTurn;
+            if (live === null) {
+              child.pending.push(notification);
+              if (rootSessionId !== null) yield* offerContinuationRun(rootSessionId);
+              return;
+            }
+            if (subagent.task.runId !== live.input.runId) {
+              yield* handAgentRow(live, subagent, { sessionId: childSessionId, child });
+            }
+            return yield* projectCarryoverSubagentStatus(subagent, "failed", result);
+          }
+          child.ended = { status, result: result ?? child.ended?.result ?? null };
+          yield* settleAgentRow(childSessionId, child);
+        });
+
+        /**
+         * A frame of a child session, or a child's `subagent_update`. It shows
+         * in the child thread of the child's row, or of its nearest linked
+         * ancestor's for a nested child, never in the root. A frame of a session
+         * no known parent announced is dropped. A child's delegation links its
+         * row; until a row can show them, its frames wait (`AcpAgentChild`).
+         */
+        const followAgentChildFrame: (
+          notification: EffectAcpSchema.SessionNotification,
+        ) => Effect.Effect<void> = Effect.fnUntraced(function* (notification) {
+          const update = notification.update;
+          if (
+            update.sessionUpdate === "_t3_unknown" &&
+            update.originalSessionUpdate === "subagent_update"
+          ) {
+            return yield* applyAgentChildState(notification, update.raw);
+          }
+          const child = agentChildren.get(notification.sessionId);
+          if (child === undefined) return;
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          const delegation = flavor.extractSubagentDelegation?.(notification);
+          if (
+            delegation !== undefined &&
+            child.subagent === null &&
+            child.parentSessionId === rootSessionId
+          ) {
+            child.delegationId = delegation.delegationId;
+            const subagent = yield* unlinkedSubagentRow(delegation.delegationId);
+            if (subagent !== undefined) {
+              yield* linkAgentChild(notification.sessionId, child, subagent);
+            }
+          }
+          const shownBy = agentChildShownBy(notification.sessionId, child, rootSessionId);
+          if (shownBy === undefined) return;
+          const { sessionId: ownerSessionId, child: owner } = shownBy;
+          const subagent = owner.subagent;
+          if (subagent === null) {
+            owner.pending.push(notification);
+            return;
+          }
+          if (!(yield* showAgentRow(shownBy, notification))) return;
+          const finished = acpSubagentStatusIsTerminal(subagent.task.status);
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              // A finished child's late frames have no run that shows them,
+              // except the end of a tool it left open: that tool's item keeps
+              // its run taking events.
+              if (finished && !subagentToolIsOpen(subagent, toolCall.toolCallId)) continue;
+              yield* projectSubagentToolCall(
+                subagent,
+                notification.sessionId,
+                rootSessionId,
+                toolCall,
+              );
+            }
+            return;
+          }
+          if (finished) return;
+          if (delegation !== undefined) {
+            // The launch prompt already shows, and a nested child's shows as its
+            // parent's Agent call. A later one resumed the child.
+            if (
+              notification.sessionId === ownerSessionId &&
+              delegation.delegationId !== subagentNativeId(subagent)
+            ) {
+              yield* emitSubagentResumePrompt(subagent, delegation.delegationId, delegation.prompt);
+            }
+            return;
+          }
+          yield* projectSubagentNotification(subagent, notification);
+        });
+
+        /**
+         * Applies a frame to the work state the agent reports (see
+         * `AcpAdapterV2Flavor.followAgentWorkState`). Returns whether the frame
+         * is fully handled here.
+         */
+        const followAgentWork = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          context: ActiveAcpTurn | null,
+        ) {
+          if (!followsAgentWorkState) return false;
+          const update = notification.update;
+          // A stopped run's children, and their work states on the root, show
+          // nowhere: Stop ended them, or failed to and says so.
+          const isChildState =
+            update.sessionUpdate === "_t3_unknown" &&
+            update.originalSessionUpdate === "subagent_update";
+          if (notification.sessionId !== (yield* Ref.get(activeSessionId)) || isChildState) {
+            if (!(yield* Ref.get(stoppedRunQuarantine))) yield* followAgentChildFrame(notification);
+            return true;
+          }
+          if (update.sessionUpdate === "state_update") {
+            yield* Ref.set(agentWork, agentWorkOf(update));
+          }
+          if (context !== null && !context.finalized) {
+            if (
+              update.sessionUpdate === "user_message" ||
+              update.sessionUpdate === "user_message_chunk"
+            ) {
+              // The prompt's echo: the agent took it in and works on it.
+              // startTurn already projected the prompt.
+              context.workTakenIn = true;
+              yield* Ref.set(agentWork, { state: "running" });
+              return true;
+            }
+            if (
+              update.sessionUpdate === "state_update" &&
+              update.state === "idle" &&
+              context.workTakenIn
+            ) {
+              yield* endIdleTurn(context);
+              return true;
+            }
+            return false;
+          }
+          // No turn: output of foreground work the agent started itself. A
+          // continuation run drains it; the live state ends that run.
+          if ((yield* Ref.get(agentWork)).state !== "running") return false;
+          if (yield* Ref.get(stoppedRunQuarantine)) return true;
+          if (update.sessionUpdate !== "state_update") {
+            yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+          }
+          yield* offerContinuationRun(notification.sessionId);
+          return true;
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
@@ -4171,8 +5126,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 providerThread,
               });
             }
-            return;
+            // An idle that reports usage still ends the agent's work.
+            if (!followsAgentWorkState || update.sessionUpdate !== "state_update") return;
           }
+          if (yield* followAgentWork(notification, context)) return;
           if (
             context?.finalized === true &&
             (yield* applyFinalizedActiveTurnSubagentTerminal(context, notification))
@@ -4414,67 +5371,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   continue;
                 }
-                const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
-                const previous = context.tools.get(key);
-                const merged = mergeToolCallState(previous, toolCall);
-                context.tools.set(key, merged);
-                if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status))
-                  continue;
-                // Terminals are remembered under the raw session id: the child's
-                // own session, or the root one when the flavor routes child
-                // updates out of it (Devin).
-                const mcpIdentity = extractMcpToolCallIdentity(merged, {
-                  embeddedTerminalCommands: [
-                    ...embeddedTerminalCommands(notification.sessionId, toolCall.toolCallId),
-                    ...(rootSessionId === null
-                      ? []
-                      : embeddedTerminalCommands(rootSessionId, toolCall.toolCallId)),
-                  ],
-                });
-                const now = yield* DateTime.now;
-                const status = toolStatus(merged.status);
-                const startedAt = context.toolStartedAt.get(key) ?? now;
-                context.toolStartedAt.set(key, startedAt);
-                const ordinal = resolveSubagentChildOrdinal(subagent, key);
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: {
-                    id: providerTurnItemId(key),
-                    threadId: subagent.childThreadId,
-                    runId: null,
-                    nodeId: subagent.childRootNodeId,
-                    providerThreadId: subagent.task.providerThreadId,
-                    providerTurnId: null,
-                    nativeItemRef: { driver, nativeId: key, strength: "strong" },
-                    parentItemId: null,
-                    ordinal,
-                    status,
-                    title: merged.title ?? merged.kind ?? "Tool",
-                    startedAt,
-                    completedAt: completedAtForStatus(status, now),
-                    updatedAt: now,
-                    type: "dynamic_tool",
-                    ...(mcpIdentity === undefined
-                      ? {}
-                      : mcpToolPresentation({
-                          serverName: mcpIdentity.server,
-                          toolName: mcpIdentity.tool,
-                          source: unknownRecord(
-                            (
-                              unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
-                              unknownRecord(merged.data.rawOutput)
-                            )?._meta,
-                          )?.source,
-                        })),
-                    toolName:
-                      mcpIdentity === undefined
-                        ? (merged.title ?? merged.kind ?? "Tool")
-                        : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-                    input: merged.data.rawInput ?? null,
-                    output: merged.data.rawOutput ?? merged.data.content ?? null,
-                  },
-                });
+                yield* projectSubagentToolCall(
+                  subagent,
+                  notification.sessionId,
+                  rootSessionId,
+                  toolCall,
+                );
               }
               return;
             }
@@ -5007,14 +5909,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           request: Effect.Effect<AcpAdapterV2UserInputRequest>,
           transportRequestId: string,
         ) =>
-          runRuntimeCallbackAtGeneration(
-            generation,
-            request.pipe(
-              Effect.flatMap((value) =>
-                beginUserInputRequest(value, generation, transportRequestId),
+          // A question always asks the user, so with followAgentWorkState one
+          // asked while no turn runs waits for the run that shows it.
+          (followsAgentWorkState ? awaitRequestTurn(generation) : Effect.void).pipe(
+            Effect.andThen(
+              runRuntimeCallbackAtGeneration(
+                generation,
+                request.pipe(
+                  Effect.flatMap((value) =>
+                    beginUserInputRequest(value, generation, transportRequestId),
+                  ),
+                ),
               ),
             ),
-          ).pipe(
             Effect.flatMap((pending) => {
               if (Option.isNone(pending)) return Effect.never;
               const { answers, requestId, transportRequestId } = pending.value;
@@ -5450,6 +6357,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (carryover === null) return;
           for (const subagent of carryover.subagents) {
+            yield* terminalizeSubagentTools(subagent);
             if (acpSubagentStatusIsTerminal(subagent.task.status)) {
               if (!subagent.terminalStatusProjected) {
                 yield* projectCarryoverSubagentStatus(
@@ -5680,13 +6588,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              const dispositionUnder = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+                (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, params);
+              // With followAgentWorkState a background subagent can ask while no
+              // turn runs. The latest turn's policy decides, and an approval
+              // waits for the continuation run that shows it.
+              const waitsForTurn =
+                followsAgentWorkState &&
+                Option.getOrElse(
+                  yield* runRuntimeCallbackAtGeneration(
+                    handlerGeneration,
+                    liveTurn.pipe(
+                      Effect.map(
+                        (live) => live === null && dispositionUnder(latestRuntimePolicy) === "ask",
+                      ),
+                    ),
+                  ),
+                  () => false,
+                );
+              if (waitsForTurn) yield* awaitRequestTurn(handlerGeneration);
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = yield* activeContext;
-                  const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
-                    context.input.runtimePolicy,
-                    params,
+                  const live = followsAgentWorkState ? yield* Ref.get(activeTurn) : null;
+                  const disposition = dispositionUnder(
+                    live?.input.runtimePolicy ??
+                      (followsAgentWorkState
+                        ? latestRuntimePolicy
+                        : (yield* activeContext).input.runtimePolicy),
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
@@ -5711,7 +6640,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return {
                     _tag: "Pending" as const,
                     pending: yield* beginApprovalRequest(
-                      context,
+                      yield* activeContext,
                       params,
                       handlerGeneration,
                       transportRequestId,
@@ -5796,6 +6725,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     cause,
                   }),
               ),
+              holdingTurnForRequest(handlerGeneration),
             ),
           );
           yield* targetRuntime.handleElicitation((params, requestContext) =>
@@ -5933,7 +6863,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     } as const);
               yield* userInput.acknowledgeNativeResponse;
               return response;
-            }),
+            }).pipe(holdingTurnForRequest(handlerGeneration)),
           );
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
@@ -6240,6 +7170,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
+        followsAgentWorkState =
+          flavor.followAgentWorkState === true &&
+          continuationRequests !== undefined &&
+          started.initializeResult.protocolVersion === 2;
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
@@ -6538,6 +7472,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (!options.terminalizeSubagents) return;
           for (const subagent of context.subagents.values()) {
+            yield* terminalizeSubagentTools(subagent);
             if (subagent.task.status !== "running" && subagent.task.status !== "pending") {
               continue;
             }
@@ -6563,7 +7498,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
-        const quarantineStoppedRun = Effect.fnUntraced(function* () {
+        /**
+         * With `followAgentWorkState`, Stop ends the work the agent runs past
+         * its turns. A cancel does not (Claude Agent's subagents RFD form keeps
+         * background subagents running), and its ACP v2 surface has no request
+         * that stops one. Closing the session tears down its query, which ends
+         * every subagent and background task, and the agent answers once it
+         * did. Only that answer forgets the agent's work: without it (an
+         * error, or no answer within the interrupt timeout) the work stays
+         * running and pinned, and a retried Stop closes again. The next turn
+         * starts a new process that resumes the session.
+         */
+        const closeAgentSession = Effect.gen(function* () {
+          yield* Ref.set(runtimeRestartRequired, true);
+          const sessionId = yield* Ref.get(activeSessionId);
+          const detail =
+            "The agent did not confirm it closed its session, so its background work may still run";
+          const closed = yield* runtime.closeSession(sessionId ?? undefined).pipe(
+            Effect.timeoutOption("10 seconds"),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail, cause }),
+            ),
+          );
+          if (Option.isNone(closed)) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail });
+          }
+          yield* runtimeCallbackPermit.withPermit(resetAgentWorkState(agentWorkCompleted));
+        });
+
+        /**
+         * Fences the stopped run's events off later runs. With
+         * `agentWorkEndsWithClose`, the agent's work stays known until
+         * `closeAgentSession` confirmed it ended.
+         */
+        const quarantineStoppedRun = Effect.fnUntraced(function* (agentWorkEndsWithClose = false) {
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -6575,6 +7544,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
+              if (!agentWorkEndsWithClose) yield* resetAgentWorkState(agentWorkCompleted);
             }),
           );
         });
@@ -6904,6 +7874,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
+              // The agent work state belongs to the session it was reported
+              // on; a replayed history must not count as live work either. A
+              // failure stays for the continuation that shows it.
+              const work = yield* Ref.get(agentWork);
+              yield* resetAgentWorkState(work.state === "running" ? agentWorkCompleted : work);
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(activeSessionSetup, activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
@@ -6942,7 +7917,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
-              postSettleContinuationEnabled && acpIsProviderContinuationMessage(turnInput.message);
+              (postSettleContinuationEnabled || followsAgentWorkState) &&
+              acpIsProviderContinuationMessage(turnInput.message);
             const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             // An app-owned wake reports on a sibling delegated child and owns
             // none of this session's background work, so it must not discard
@@ -7034,6 +8010,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               finalizedStatus: null,
               promptSettled: false,
               promptSettledStatus: null,
+              workTakenIn: false,
               promptWireSettled,
               backgroundFinalizeGeneration: 0,
             };
@@ -7103,6 +8080,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               createdAt: startedAt,
               updatedAt: startedAt,
             });
+            // Requests waiting for a turn can show in this one now that it is
+            // published.
+            yield* Deferred.succeed(
+              yield* Ref.getAndSet(turnAttached, yield* Deferred.make<void>()),
+              undefined,
+            );
+            // Rows no run shows move to this one: rows waiting for a turn, and
+            // rows carried over from a run that ended otherwise than completed,
+            // which takes no more events.
+            if (followsAgentWorkState) {
+              yield* runtimeCallbackPermit.withPermit(
+                handOverAgentRows(
+                  context,
+                  carryover !== null && carryover.rootTerminalStatus !== "completed"
+                    ? rehydratedCarryoverSubagents
+                    : [],
+                ),
+              );
+            }
             // Every attach ends the deferred-terminal contract, but only the
             // queued provider continuation owns wake traffic. A user turn may
             // start before that continuation and must leave its buffer intact.
@@ -7119,13 +8115,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 reports: new Map([...reports].filter(([key]) => !offered.has(key))),
                 offered: noWakeReports.offered,
               }));
-              const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
+              const takeWakeBuffer = Ref.modify(wakeBuffer, (current) => {
                 const next: Array<EffectAcpSchema.SessionNotification> = [];
                 return [
                   current.filter((notification) => notification.sessionId === requestedSessionId),
                   next,
                 ] as const;
-              }).pipe(
+              });
+              if (followsAgentWorkState) {
+                // Drain before live frames can project, then let the agent's
+                // live state decide: an idle seen meanwhile ended the work.
+                // The drained frames record work the agent reported already,
+                // so a user_message among them must not mark it running again.
+                yield* runtimeCallbackPermit.withPermit(
+                  Effect.gen(function* () {
+                    const liveWork = yield* Ref.get(agentWork);
+                    yield* Effect.forEach(yield* takeWakeBuffer, handleSessionUpdate, {
+                      discard: true,
+                    });
+                    yield* Ref.set(agentWork, liveWork);
+                    context.workTakenIn = true;
+                    yield* endIdleTurn(context);
+                  }),
+                );
+                return;
+              }
+              const drainedWakeCount = yield* takeWakeBuffer.pipe(
                 Effect.tap((drained) =>
                   Effect.forEach(drained, handleSessionUpdate, {
                     concurrency: 1,
@@ -7185,6 +8200,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    // The agent's idle ends the turn (followAgentWork). The
+                    // prompt can also complete on the idle of earlier work.
+                    if (followsAgentWorkState) return;
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted
@@ -7223,11 +8241,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
-                        makeProviderFailure({
-                          cause: Cause.squash(cause),
-                          class: "provider_error",
-                        }),
+                      promptFailure(Cause.squash(cause)),
                     ).pipe(
                       Effect.andThen(
                         Effect.logWarning("orchestration-v2.acp-prompt-failed", {
@@ -7356,7 +8370,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return false;
                 }),
               }
-            : {}),
+            : followsAgentWorkState
+              ? {
+                  // Background subagents and the agent's own work keep the
+                  // process, and with it that work, alive past idle release.
+                  hasPendingBackgroundWork: Effect.gen(function* () {
+                    for (const child of agentChildren.values()) {
+                      if (child.running) return true;
+                    }
+                    if ((yield* Ref.get(agentWork)).state === "running") return true;
+                    if (agentRequests.size > 0) return true;
+                    if (yield* Ref.get(continuationRequested)) return true;
+                    return (yield* Ref.get(wakeBuffer)).length > 0;
+                  }),
+                }
+              : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const now = yield* DateTime.now;
@@ -7535,6 +8563,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }
                       }
                       const context = interruptContext;
+                      // A cancel ends the agent's turn and its own cycle, not
+                      // the subagents running in the background.
+                      const closesAgentSession =
+                        followsAgentWorkState &&
+                        turnInput.requestRuntimeRestart === true &&
+                        (yield* runtimeCallbackPermit.withPermit(
+                          Effect.sync(() =>
+                            [...agentChildren.values()].some((child) => child.running),
+                          ),
+                        ));
+                      if (context === null && closesAgentSession) {
+                        // Stop of the work a settled run left running. Once the
+                        // agent confirmed, the orchestrator ends what still shows.
+                        yield* quarantineStoppedRun(true);
+                        yield* cancelPendingRuntimeRequests();
+                        yield* closeAgentSession;
+                        return undefined;
+                      }
                       if (context?.providerTurnId !== turnInput.providerTurnId) {
                         // A soft steering interrupt can clear the turn while
                         // intentionally leaving the process alive. A queued user
@@ -7643,6 +8689,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         hardRestart,
                         teardownBarrier,
                         settledSoftInterrupt,
+                        closesAgentSession,
                       };
                     });
                     // Concurrent hard teardown already completed above.
@@ -7653,6 +8700,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       hardRestart,
                       teardownBarrier,
                       settledSoftInterrupt,
+                      closesAgentSession,
                     } = transition;
                     const poisonTeardown = Effect.fnUntraced(function* (
                       detail: string,
@@ -7674,9 +8722,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       // carryoverSubagents so a still-running subagent can
                       // complete into the replacement turn.
                       if (hardRestart || turnInput.requestRuntimeRestart === true) {
-                        yield* quarantineStoppedRun();
+                        yield* quarantineStoppedRun(closesAgentSession && !hardRestart);
                       }
                       yield* cancelPendingRuntimeRequests();
+                      // Closing the session cancels its turn too; if it fails,
+                      // the turn still gets its cancel and Stop reports why.
+                      const closed = closesAgentSession
+                        ? yield* Effect.exit(closeAgentSession)
+                        : undefined;
                       // Finalize before process-group kill so projection/UI cannot
                       // lag a dead transport, and concurrent interrupt effects see
                       // activeTurn cleared (idempotent success) rather than racing.
@@ -7717,7 +8770,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         // acknowledge and would only threaten still-running
                         // background subagents. Skip it and leave the runtime
                         // untouched for the replacement turn.
-                        if (!settledSoftInterrupt) {
+                        if (closed !== undefined && Exit.isSuccess(closed)) {
+                          // The agent closed the session: its turn ended.
+                          if (!context.finalized) yield* finalizeTurn(context, "interrupted");
+                        } else if (!settledSoftInterrupt) {
                           yield* runtime.cancel;
                         }
                         if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
@@ -7727,6 +8783,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       const stopped = yield* Deferred.await(context.completed).pipe(
                         Effect.timeoutOption("10 seconds"),
                       );
+                      if (closed !== undefined && Exit.isFailure(closed)) return yield* closed;
                       if (Option.isNone(stopped)) {
                         if (!context.finalized) {
                           yield* finalizeTurn(context, "interrupted");

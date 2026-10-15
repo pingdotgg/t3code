@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -60,7 +61,8 @@ export interface ProviderEventRoutingState {
   /** Member thread id to the coordinator child thread that spawned it. */
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
-  readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
+  /** Owned provider turn id to the provider thread it runs on. */
+  readonly ownedProviderTurnIds: ReadonlyMap<ProviderTurnId, ProviderThreadId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
   readonly rootProviderTurnId: ProviderTurnId | null;
 }
@@ -344,7 +346,9 @@ export function makeProviderEventRoutingState(input: {
       ...(input.relatedProviderThreadIds ?? []),
     ]),
     ownedProviderTurnIds:
-      input.providerTurnId === null ? new Set() : new Set([input.providerTurnId]),
+      input.providerTurnId === null
+        ? new Map()
+        : new Map([[input.providerTurnId, input.identity.providerThreadId]]),
     inheritedBackgroundTurnItems: new Map(
       (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
     ),
@@ -366,12 +370,15 @@ export function routeProviderEvent(
     ownedProviderThreadIds: new Set([...state.ownedProviderThreadIds, providerThreadId]),
   });
   const addProviderTurn = (
-    providerTurnId: ProviderTurnId,
+    providerTurn: { readonly id: ProviderTurnId; readonly providerThreadId: ProviderThreadId },
     root: boolean,
   ): ProviderEventRoutingState => ({
     ...state,
-    ownedProviderTurnIds: new Set([...state.ownedProviderTurnIds, providerTurnId]),
-    rootProviderTurnId: root ? providerTurnId : state.rootProviderTurnId,
+    ownedProviderTurnIds: new Map(state.ownedProviderTurnIds).set(
+      providerTurn.id,
+      providerTurn.providerThreadId,
+    ),
+    rootProviderTurnId: root ? providerTurn.id : state.rootProviderTurnId,
   });
 
   switch (event.type) {
@@ -415,7 +422,7 @@ export function routeProviderEvent(
           state.ownedProviderThreadIds.has(event.providerTurn.providerThreadId)) ||
         state.ownedProviderTurnIds.has(event.providerTurn.id) ||
         (event.threadId !== undefined && ownsChildThread(event.threadId));
-      return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
+      return belongs ? [true, addProviderTurn(event.providerTurn, isRoot)] : [false, state];
     }
     case "node.updated": {
       const belongs = ownsRun(event.node.runId) || ownsChildThread(event.node.threadId);
@@ -425,22 +432,61 @@ export function routeProviderEvent(
       return [true, addProviderThread(event.node.providerThreadId)];
     }
     case "subagent.updated": {
+      const moved = event.subagent;
+      if (
+        state.rootTurnEnded &&
+        moved.threadId === input.threadId &&
+        moved.runId !== null &&
+        !ownsRun(moved.runId) &&
+        moved.childThreadId !== null &&
+        ownsChildThread(moved.childThreadId)
+      ) {
+        // Another run shows this subagent now (a resumed subagent moves to the
+        // run that resumes it) and takes its child thread and the child's
+        // provider thread, so one run ingests them at a time.
+        const ownedThreadIds = new Set(state.ownedThreadIds);
+        ownedThreadIds.delete(moved.childThreadId);
+        const releasedProviderThreadId =
+          moved.providerThreadId === input.providerThreadId ? null : moved.providerThreadId;
+        if (releasedProviderThreadId === null) {
+          return [false, { ...state, ownedThreadIds }];
+        }
+        const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
+        ownedProviderThreadIds.delete(releasedProviderThreadId);
+        const ownedProviderTurnIds = new Map(
+          [...state.ownedProviderTurnIds].filter(
+            ([, providerThreadId]) => providerThreadId !== releasedProviderThreadId,
+          ),
+        );
+        return [false, { ...state, ownedThreadIds, ownedProviderThreadIds, ownedProviderTurnIds }];
+      }
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
+      // The run that shows a subagent takes its child thread while the run's
+      // root turn works, as it does when the thread is created. This is how
+      // a moved subagent's thread reaches its new run.
+      const routed =
+        !state.rootTurnEnded &&
+        moved.threadId === input.threadId &&
+        ownsRun(moved.runId) &&
+        moved.childThreadId !== null &&
+        !ownsThread(moved.childThreadId)
+          ? { ...state, ownedThreadIds: new Set([...state.ownedThreadIds, moved.childThreadId]) }
+          : state;
       const coordinator = event.subagent;
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, state];
+        return [belongs, routed];
       }
-      const workflowMemberParents = new Map(state.workflowMemberParents);
+      const workflowMemberParents = new Map(routed.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
         if (member.childThreadId !== undefined) {
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...state, workflowMemberParents }];
+      return [true, { ...routed, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
@@ -977,10 +1023,15 @@ export const layer: Layer.Layer<
           const rootRunFinalized = yield* Ref.make(false);
           const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
-          const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
+          // Subagents and items map to the child thread this run holds them
+          // through, or to null when they are this run's (or inherited) by run
+          // id. A later run that takes a child thread over takes its entries.
+          const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId | null>>(
+            new Map(),
+          );
           const activeBackgroundTurnItems = yield* Ref.make<
-            ReadonlySet<OrchestrationV2TurnItem["id"]>
-          >(new Set(inheritedBackgroundTurnItemsById.keys()));
+            ReadonlyMap<OrchestrationV2TurnItem["id"], ThreadId | null>
+          >(new Map([...inheritedBackgroundTurnItemsById.keys()].map((id) => [id, null])));
           const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
           const finalizeRootRun = (terminal: ProviderTerminalEvent) =>
             Effect.gen(function* () {
@@ -1053,12 +1104,13 @@ export const layer: Layer.Layer<
                   event.subagent.threadId !== input.run.threadId &&
                   routing.ownedThreadIds.has(event.subagent.threadId);
                 if (belongsToRootRun || belongsToOwnedChildThread) {
+                  const heldBy = belongsToRootRun ? null : event.subagent.threadId;
                   yield* Ref.update(activeChildSubagents, (current) => {
-                    const next = new Set(current);
+                    const next = new Map(current);
                     if (isSettledSubagentStatus(event.subagent.status)) {
                       next.delete(event.subagent.id);
                     } else {
-                      next.add(event.subagent.id);
+                      next.set(event.subagent.id, heldBy);
                     }
                     return next;
                   });
@@ -1127,12 +1179,16 @@ export const layer: Layer.Layer<
                     belongsToOwnedChildThread ||
                     belongsToInheritedBackgroundItem)
                 ) {
+                  const heldBy =
+                    belongsToRootRun || belongsToInheritedBackgroundItem
+                      ? null
+                      : event.turnItem.threadId;
                   yield* Ref.update(activeBackgroundTurnItems, (current) => {
-                    const next = new Set(current);
+                    const next = new Map(current);
                     if (isSettledTurnItemStatus(event.turnItem.status)) {
                       next.delete(event.turnItem.id);
                     } else {
-                      next.add(event.turnItem.id);
+                      next.set(event.turnItem.id, heldBy);
                     }
                     return next;
                   });
@@ -1166,6 +1222,59 @@ export const layer: Layer.Layer<
                   });
                 }
               }
+            });
+          // A later run took over a subagent and its child thread (it resumed
+          // the child), and ingests the thread from now on. Forget the work this run
+          // held through that thread, whose remaining updates it no longer
+          // receives, so it does not wait for them. Work it holds by run id
+          // and its other children's work stay.
+          const releaseMovedSubagent = (subagentId: NodeId, childThreadId: ThreadId) =>
+            Effect.gen(function* () {
+              const { ownedProviderTurnIds } = yield* Ref.get(eventRouting);
+              const heldThroughChild = <K>(
+                current: ReadonlyMap<K, ThreadId | null>,
+              ): ReadonlyMap<K, ThreadId | null> =>
+                new Map([...current].filter(([, heldBy]) => heldBy !== childThreadId));
+              // Routing gave up the turns of the child's provider thread.
+              yield* Ref.update(
+                activeChildProviderTurns,
+                (current) => new Set([...current].filter((id) => ownedProviderTurnIds.has(id))),
+              );
+              yield* Ref.update(activeChildSubagents, (current) => {
+                const next = new Map(heldThroughChild(current));
+                next.delete(subagentId);
+                return next;
+              });
+              yield* Ref.update(activeBackgroundTurnItems, heldThroughChild);
+              yield* Ref.update(openRunOwnedSubagents, (current) => {
+                // Entries this run holds by its run id stay.
+                const outsideChild = <
+                  K,
+                  V extends {
+                    readonly threadId: ThreadId;
+                    readonly runId: OrchestrationV2Run["id"] | null;
+                  },
+                >(
+                  entries: ReadonlyMap<K, V>,
+                ) =>
+                  new Map(
+                    [...entries].filter(
+                      ([, entry]) =>
+                        entry.threadId !== childThreadId || entry.runId === input.run.id,
+                    ),
+                  );
+                const subagents = new Map(outsideChild(current.subagents));
+                subagents.delete(subagentId);
+                const linkedChildThreadIds = new Set(current.linkedChildThreadIds);
+                linkedChildThreadIds.delete(childThreadId);
+                return {
+                  ...current,
+                  subagents,
+                  childTurnItems: outsideChild(current.childTurnItems),
+                  nodes: outsideChild(current.nodes),
+                  linkedChildThreadIds,
+                };
+              });
             });
           const shouldStopProviderEventIngestion = Effect.gen(function* () {
             if (!(yield* Ref.get(rootTerminalSeen))) {
@@ -1225,11 +1334,31 @@ export const layer: Layer.Layer<
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const providerEventFiber = yield* eventSubscription.events.pipe(
-            Stream.filterEffect((event) =>
-              Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
+            Stream.filterMapEffect((event) =>
+              Ref.modify(eventRouting, (state) => {
+                const [routed, next] = routeProviderEvent(event, routeIdentity, state);
+                // A later run just took this subagent's child thread. Nothing of
+                // it is ingested here, but its leaving can end this run's work,
+                // so it still reaches the stop check.
+                const moved =
+                  !routed &&
+                  event.type === "subagent.updated" &&
+                  event.subagent.childThreadId !== null &&
+                  state.ownedThreadIds.has(event.subagent.childThreadId) &&
+                  !next.ownedThreadIds.has(event.subagent.childThreadId)
+                    ? { subagentId: event.subagent.id, childThreadId: event.subagent.childThreadId }
+                    : null;
+                return [
+                  routed || moved !== null ? Result.succeed({ event, moved }) : Result.failVoid,
+                  next,
+                ];
+              }),
             ),
-            Stream.tap((event) =>
+            Stream.tap(({ event, moved }) =>
               Effect.gen(function* () {
+                if (moved !== null) {
+                  return yield* releaseMovedSubagent(moved.subagentId, moved.childThreadId);
+                }
                 let storedEventCount = 0;
                 const deliveredEvent = filterAssistantEvent(
                   event,

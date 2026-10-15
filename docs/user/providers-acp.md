@@ -13,6 +13,13 @@ configuration, compaction, and agent-terminal updates when the agent supports th
 negotiates ACP v1 for Registry agents that have not migrated yet, so agents such as Pi continue to
 work through the same generic integration.
 
+Claude Agent (`claude-acp`, or a local `claude-agent-acp` command) starts with its opt-in ACP v2
+preview. A turn then ends when Claude finishes its reply, even while background subagents keep
+working. Each subagent streams into its own subagent thread, and an approval or question a
+background subagent asks for opens a run in the thread. Claude's own follow-up once they finish
+appears as a separate run. To keep ACP v1, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the
+instance's environment settings.
+
 ## Add an agent
 
 1. Open **Settings → Providers**.

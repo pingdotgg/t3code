@@ -1,22 +1,43 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  type ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { TestClock } from "effect/testing";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import {
+  makeProviderReplayGate,
+  type ProviderReplayGate,
+} from "@t3tools/provider-testing/replayGate";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
@@ -97,6 +118,258 @@ const layerTest = Layer.mergeAll(
   layerRegistry,
   ServerSettings.layerTest(),
 );
+
+const CLAUDE_ROOT_SESSION = "claude-session";
+
+/** Replay frames of Claude Agent (claude-agent-acp 0.90.0) on ACP v2. */
+const claudeFrames = {
+  open: [
+    { type: "expect_outbound", frame: { kind: "request", method: "initialize", params: "<any>" } },
+    {
+      type: "emit_inbound",
+      frame: {
+        kind: "response",
+        method: "initialize",
+        result: {
+          protocolVersion: 2,
+          info: { name: "@agentclientprotocol/claude-agent-acp", version: "0.90.0" },
+          capabilities: { session: {} },
+          authMethods: [],
+        },
+      },
+    },
+    { type: "expect_outbound", frame: { kind: "request", method: "session/new", params: "<any>" } },
+    {
+      type: "emit_inbound",
+      frame: {
+        kind: "response",
+        method: "session/new",
+        result: { sessionId: CLAUDE_ROOT_SESSION },
+      },
+    },
+  ],
+  update: (sessionId: string, sessionUpdate: Record<string, unknown>) => ({
+    type: "emit_inbound",
+    frame: {
+      kind: "notification",
+      method: "session/update",
+      params: { sessionId, update: sessionUpdate },
+    },
+  }),
+  childState: (parent: string, child: string, state: string) =>
+    claudeFrames.update(parent, {
+      sessionUpdate: "subagent_update",
+      sessionId: child,
+      state: { state },
+    }),
+  /** A prompt Claude takes in and works on. */
+  prompt: (ordinal: number) => [
+    {
+      type: "expect_outbound",
+      frame: { kind: "request", method: "session/prompt", params: "<any>" },
+    },
+    claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "user_message",
+      messageId: `user-${ordinal}`,
+      content: [{ type: "text", text: "test prompt" }],
+    }),
+    {
+      type: "emit_inbound",
+      frame: {
+        kind: "response",
+        method: "session/prompt",
+        result: { messageId: `user-${ordinal}` },
+      },
+    },
+    claudeFrames.update(CLAUDE_ROOT_SESSION, { sessionUpdate: "state_update", state: "running" }),
+  ],
+  idle: (stopReason: string) =>
+    claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "state_update",
+      state: "idle",
+      stopReason,
+    }),
+  closeRequest: {
+    type: "expect_outbound",
+    frame: {
+      kind: "request",
+      method: "session/close",
+      params: { sessionId: CLAUDE_ROOT_SESSION },
+    },
+  },
+  closed: {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "session/close", result: {} },
+  },
+};
+
+/**
+ * Opens a Claude Agent session over replayed agent processes: the first runs
+ * `entries`, and one that replaces it (after an exit or a Stop) runs
+ * `replacement`. Each turn of the session is a user turn unless it continues
+ * an offer the agent opened.
+ */
+const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (input: {
+  readonly scenario: string;
+  readonly entries: ReadonlyArray<unknown>;
+  readonly replacement?: ReadonlyArray<unknown>;
+  readonly replayGate?: ProviderReplayGate;
+  readonly runtimeMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"];
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+    prefix: `t3-acp-registry-${input.scenario}-`,
+  });
+  const decode = (scenario: string, entries: ReadonlyArray<unknown>) =>
+    decodeAcpReplayTranscript(
+      {
+        provider: ACP_REGISTRY_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario,
+        entries: entries as never,
+      },
+      ACP_REGISTRY_PROVIDER,
+    );
+  const transcript = yield* decode(input.scenario, input.entries);
+  const replacement =
+    input.replacement === undefined
+      ? undefined
+      : yield* decode(`${input.scenario}-replacement`, input.replacement);
+  const statusPath = path.join(replayDir, "status.json");
+  const scriptPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+  );
+  // The first agent process's exit, once the adapter handled it.
+  const exited = yield* Deferred.make<void>();
+  const offered = yield* Deferred.make<ProviderContinuationRequest>();
+  let starts = 0;
+  const instanceId = ProviderInstanceId.make(`acp-registry-${input.scenario}`);
+  const adapter = yield* makeAcpRegistryAdapterV2({
+    selfInvocation: yield* resolveSelfInvocation(),
+    instanceId,
+    settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+    environment: {},
+    continuationRequests: {
+      offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+    },
+    makeRuntime: (runtimeInput) => {
+      const first = starts++ === 0;
+      if (!first && replacement === undefined) {
+        return Effect.die(`${input.scenario} replays no replacement agent process`);
+      }
+      return makeAcpReplayRuntime({
+        transcript: first ? transcript : replacement!,
+        statusPath: first ? statusPath : path.join(replayDir, "replacement-status.json"),
+        scriptPath,
+        childProcessSpawner,
+        fileSystem,
+        ...(first && input.replayGate !== undefined ? { replayGate: input.replayGate } : {}),
+      })(
+        first
+          ? {
+              ...runtimeInput,
+              onTermination: (error) =>
+                runtimeInput
+                  .onTermination(error)
+                  .pipe(Effect.andThen(Deferred.succeed(exited, undefined))),
+            }
+          : runtimeInput,
+      );
+    },
+  }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+  const threadId = ThreadId.make(`thread-acp-registry-${input.scenario}`);
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtimeMode = input.runtimeMode ?? "full-access";
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode,
+    interactionMode: "default",
+    cwd: replayDir,
+  });
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`provider-session-${input.scenario}`),
+    modelSelection,
+    runtimePolicy,
+  });
+  const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+  if (hasPendingBackgroundWork === undefined) {
+    return yield* Effect.die("Claude Agent's runtime must report pending background work");
+  }
+  const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) => Queue.offer(events, event)),
+    Effect.forkScoped,
+  );
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const now = yield* DateTime.now;
+  const turnInput = (
+    ordinal: number,
+    options: { readonly continuation?: boolean } = {},
+  ): ProviderAdapter.ProviderAdapterV2TurnInput => ({
+    appThread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make(`project-${input.scenario}`),
+      title: "Claude Agent",
+      providerInstanceId: instanceId,
+      modelSelection,
+      runtimeMode,
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: providerThread.id,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    threadId,
+    runId: RunId.make(`run-${input.scenario}-${ordinal}`),
+    runOrdinal: ordinal,
+    providerTurnOrdinal: ordinal,
+    attemptId: RunAttemptId.make(`attempt-${input.scenario}-${ordinal}`),
+    rootNodeId: NodeId.make(`node-${input.scenario}-${ordinal}`),
+    providerThread,
+    message: {
+      ...(options.continuation === true
+        ? { createdBy: "agent" as const, creationSource: "provider" as const }
+        : { createdBy: "user" as const, creationSource: "web" as const }),
+      messageId: MessageId.make(`message-${input.scenario}-${ordinal}`),
+      text: "test prompt",
+      attachments: [],
+    },
+    modelSelection,
+    runtimePolicy,
+  });
+  /** Waits for the next turn to end. */
+  const turnEnd = Effect.gen(function* () {
+    while (true) {
+      const event = yield* Queue.take(events);
+      if (event.type === "turn.terminal") return event;
+    }
+  });
+  return {
+    runtime,
+    providerThread,
+    events,
+    hasPendingBackgroundWork,
+    turnInput,
+    turnEnd,
+    exited: Deferred.await(exited),
+    offered: Deferred.await(offered),
+    starts: () => starts,
+    assertReplayed: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
+  };
+});
 
 describe("AcpRegistryAdapterV2", () => {
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
@@ -230,8 +503,9 @@ describe("AcpRegistryAdapterV2", () => {
           }),
         })
         .pipe(Effect.scoped);
-      // Closing the session stops the agent, which writes its replay status in
-      // the same tick as its last answer. The script must be consumed exactly.
+      // Closing the session stops the agent. It records its replay status before
+      // sending each answer, so the status is final once T3 has read the last
+      // one. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
     });
 
@@ -332,6 +606,429 @@ describe("AcpRegistryAdapterV2", () => {
         terminal: false,
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("launches Claude Agent on ACP v2 unless its instance environment decides", () =>
+    Effect.gen(function* () {
+      const launchSwitch = Effect.fn("launchSwitch")(function* (
+        config: Record<string, unknown>,
+        environment: NodeJS.ProcessEnv = {},
+      ) {
+        let launched: NodeJS.ProcessEnv | undefined;
+        const instanceId = ProviderInstanceId.make("acp-registry-launch-environment");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment,
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+              resolve: (_settings, _cwd, launchEnvironment) => {
+                launched = launchEnvironment;
+                return Effect.fail(
+                  new AcpRegistrySupport.AcpRegistryError({
+                    reason: "runner_unavailable",
+                    detail: "Recorded the launch environment.",
+                  }),
+                );
+              },
+            }),
+          ),
+        );
+        yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-acp-registry-launch-environment"),
+            providerSessionId: ProviderSessionId.make("provider-session-launch-environment"),
+            modelSelection: { instanceId, model: "default" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.flip);
+        return launched?.CLAUDE_AGENT_ACP_EXPERIMENTAL_V2;
+      });
+
+      assert.equal(yield* launchSwitch({ agentId: "claude-acp" }), "1");
+      assert.equal(
+        yield* launchSwitch(
+          { source: "local", commandPath: "/opt/bin/claude-agent-acp" },
+          { PATH: "/opt/bin" },
+        ),
+        "1",
+      );
+      assert.equal(
+        yield* launchSwitch({ agentId: "claude-acp" }, { CLAUDE_AGENT_ACP_EXPERIMENTAL_V2: "0" }),
+        "0",
+      );
+      assert.isUndefined(yield* launchSwitch({ agentId: "gemini" }));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps Claude Agent's session while any subagent runs, until Stop ends them", () =>
+    Effect.gen(function* () {
+      const { childState, update, idle, prompt, closeRequest, closed } = claudeFrames;
+      const session = yield* openClaudeReplaySession({
+        scenario: "claude-pending-work",
+        entries: [
+          ...claudeFrames.open,
+          // Run 1 ends while only a nested subagent still runs.
+          ...prompt(1),
+          childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+          childState("child-1", "grandchild-1", "running"),
+          childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+          idle("end_turn"),
+          // Run 2 starts another subagent and is stopped with a restart.
+          ...prompt(2),
+          childState(CLAUDE_ROOT_SESSION, "child-2", "running"),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "msg-2",
+            content: { type: "text", text: "Working on it." },
+          }),
+          // Its subagents run on after a cancel, so Stop closes the session:
+          // Claude's teardown ends its query and with it every subagent,
+          // then answers.
+          closeRequest,
+          idle("cancelled"),
+          closed,
+          { type: "runtime_exit", status: "success" },
+        ],
+      });
+      const { runtime, events, hasPendingBackgroundWork, turnInput, turnEnd } = session;
+
+      yield* runtime.startTurn(turnInput(1));
+      assert.equal((yield* turnEnd).status, "completed");
+      assert.isTrue(yield* hasPendingBackgroundWork, "a running nested subagent keeps the session");
+
+      yield* runtime.startTurn(turnInput(2));
+      // Stop once Claude has taken the prompt in and is working on it.
+      let secondTurnId: ProviderTurnId | undefined;
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (event.type === "provider_turn.updated" && event.providerTurn.status === "running") {
+          secondTurnId = event.providerTurn.id;
+        }
+        if (event.type === "message.updated" && secondTurnId !== undefined) break;
+      }
+      yield* runtime.interruptTurn({
+        providerThread: session.providerThread,
+        providerTurnId: secondTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal((yield* turnEnd).status, "interrupted");
+      assert.isFalse(yield* hasPendingBackgroundWork, "Stop ended the subagents");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps Claude Agent's work after a refused close, until a retried Stop closes it", () =>
+    Effect.gen(function* () {
+      const { childState, idle, prompt, closeRequest, closed } = claudeFrames;
+      const session = yield* openClaudeReplaySession({
+        scenario: "claude-close-refused",
+        entries: [
+          ...claudeFrames.open,
+          ...prompt(1),
+          childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+          childState("child-1", "grandchild-1", "running"),
+          childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+          idle("end_turn"),
+          // The agent stays connected but refuses the first close.
+          closeRequest,
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/close",
+              error: { code: -32603, message: "Internal error" },
+            },
+          },
+          closeRequest,
+          closed,
+          { type: "runtime_exit", status: "success" },
+        ],
+      });
+      const { runtime, hasPendingBackgroundWork, turnInput, turnEnd } = session;
+
+      yield* runtime.startTurn(turnInput(1));
+      const ended = yield* turnEnd;
+      assert.equal(ended.status, "completed");
+      const stop = {
+        providerThread: session.providerThread,
+        providerTurnId: ended.providerTurnId,
+        requestRuntimeRestart: true,
+      };
+      const refused = yield* runtime.interruptTurn(stop).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(refused), "Stop fails while the agent's work may still run");
+      assert.isTrue(yield* hasPendingBackgroundWork, "the subagents still keep the session");
+      yield* runtime.interruptTurn(stop);
+      assert.isFalse(yield* hasPendingBackgroundWork, "the retried close ended the subagents");
+      yield* session.assertReplayed;
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("fails Stop when Claude Agent does not answer its close in time", () =>
+    Effect.gen(function* () {
+      const { childState, idle, prompt, closeRequest } = claudeFrames;
+      const replayGate = makeProviderReplayGate(["close.answer"]);
+      const session = yield* openClaudeReplaySession({
+        scenario: "claude-close-unanswered",
+        replayGate,
+        entries: [
+          ...claudeFrames.open,
+          ...prompt(1),
+          childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+          idle("end_turn"),
+          closeRequest,
+          // Held: the agent never answers in time.
+          { ...claudeFrames.closed, label: "close.answer" },
+        ],
+      });
+      const { runtime, hasPendingBackgroundWork, turnInput, turnEnd } = session;
+
+      yield* runtime.startTurn(turnInput(1));
+      const ended = yield* turnEnd;
+      const stop = yield* runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: ended.providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      // The agent got the close; the answer it writes waits at the gate.
+      assert.isTrue(yield* Effect.promise(() => replayGate.waitForReached("close.answer")));
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stop)));
+      assert.isTrue(yield* hasPendingBackgroundWork, "the subagent still keeps the session");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const cycleIdle = {
+    completed: claudeFrames.idle("end_turn"),
+    cancelled: claudeFrames.idle("cancelled"),
+    failed: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "state_update",
+      state: "idle",
+      stopReason: "error",
+      error: { code: -32603, message: "API Error: 529 overloaded" },
+    }),
+  };
+  const cycleEcho = {
+    user_message: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "user_message",
+      messageId: "user-cycle",
+      content: [{ type: "text", text: "Background work ended." }],
+    }),
+    user_message_chunk: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "user_message_chunk",
+      messageId: "user-cycle",
+      content: { type: "text", text: "Background work ended." },
+    }),
+  };
+
+  it.effect.each([
+    { ended: "completed", echo: "user_message", idleBeforeAttach: true },
+    { ended: "completed", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "cancelled", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "failed", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "completed", echo: "user_message_chunk", idleBeforeAttach: false },
+  ] as const)(
+    "ends a continuation $ended at Claude's own cycle idle (echo $echo, idle before attach: $idleBeforeAttach)",
+    (testCase) =>
+      Effect.gen(function* () {
+        const { update, idle, prompt } = claudeFrames;
+        // A session_info_update shows as provider_thread.updated once the
+        // adapter handled it and every frame before it.
+        const marker = (title: string) =>
+          update(CLAUDE_ROOT_SESSION, { sessionUpdate: "session_info_update", title });
+        const replayGate = makeProviderReplayGate(["attached"]);
+        const session = yield* openClaudeReplaySession({
+          scenario: `claude-cycle-${testCase.ended}-${testCase.echo}-${testCase.idleBeforeAttach}`,
+          replayGate,
+          entries: [
+            ...claudeFrames.open,
+            ...prompt(1),
+            idle("end_turn"),
+            // Claude's own cycle, with no turn to show it yet.
+            update(CLAUDE_ROOT_SESSION, { sessionUpdate: "state_update", state: "running" }),
+            cycleEcho[testCase.echo],
+            update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "msg-cycle",
+              content: { type: "text", text: "Reporting the result." },
+            }),
+            ...(testCase.idleBeforeAttach ? [cycleIdle[testCase.ended]] : []),
+            marker("cycle seen"),
+            { ...marker("attached"), label: "attached" },
+            ...(testCase.idleBeforeAttach ? [] : [cycleIdle[testCase.ended]]),
+          ],
+        });
+        const { runtime, events, turnInput, turnEnd } = session;
+        /** The turn ends seen until the marker titled `title`. */
+        const terminalsUntil = (title: string) =>
+          Effect.gen(function* () {
+            const terminals: Array<string> = [];
+            while (true) {
+              const event = yield* Queue.take(events);
+              if (event.type === "turn.terminal") terminals.push(event.status);
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.title === title
+              ) {
+                return terminals;
+              }
+            }
+          });
+
+        yield* runtime.startTurn(turnInput(1));
+        assert.equal((yield* turnEnd).status, "completed");
+        yield* session.offered;
+        assert.deepEqual(yield* terminalsUntil("cycle seen"), []);
+        yield* runtime.startTurn(turnInput(2, { continuation: true }));
+        replayGate.release("attached");
+        // An idle the cycle reported before the attach ends the run now; one
+        // still ahead ends it when it arrives.
+        assert.deepEqual(
+          yield* terminalsUntil("attached"),
+          testCase.idleBeforeAttach ? [testCase.ended] : [],
+        );
+        if (!testCase.idleBeforeAttach) {
+          assert.equal((yield* turnEnd).status, testCase.ended);
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const backgroundRequests = {
+    approval: {
+      type: "emit_inbound",
+      frame: {
+        kind: "request",
+        method: "session/request_permission",
+        params: {
+          sessionId: "child-1",
+          title: "Run sleep 300?",
+          subject: {
+            type: "tool_call",
+            toolCall: {
+              toolCallId: "toolu_child_bash",
+              name: "Bash",
+              title: "sleep 300",
+              kind: "execute",
+              status: "pending",
+              rawInput: { command: "sleep 300" },
+            },
+          },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        },
+      },
+    },
+    question: {
+      type: "emit_inbound",
+      frame: {
+        kind: "request",
+        method: "elicitation/create",
+        params: {
+          sessionId: "child-1",
+          mode: "form",
+          message: "Which file should I fix?",
+          requestedSchema: {
+            type: "object",
+            properties: { file: { type: "string", title: "File", enum: ["a.ts", "b.ts"] } },
+            required: ["file"],
+          },
+        },
+      },
+    },
+  };
+  it.effect.each(Object.entries(backgroundRequests))(
+    "fails the run of a background %s the agent's exit dropped",
+    ([kind, request]) =>
+      Effect.gen(function* () {
+        const { update, childState, idle, prompt } = claudeFrames;
+        const replayGate = makeProviderReplayGate(["before.exit"]);
+        const session = yield* openClaudeReplaySession({
+          scenario: `claude-${kind}-exit`,
+          runtimeMode: "approval-required",
+          replayGate,
+          entries: [
+            ...claudeFrames.open,
+            // Run 1 ends while its background subagent works.
+            ...prompt(1),
+            update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "toolu_agent_1",
+              name: "Agent",
+              title: "Background work",
+              kind: "think",
+              status: "in_progress",
+              rawInput: {
+                description: "Background work",
+                prompt: "Run sleep 300.",
+                run_in_background: true,
+              },
+            }),
+            childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+            update("child-1", {
+              sessionUpdate: "session_message",
+              messageId: "toolu_agent_1",
+              senderSessionId: CLAUDE_ROOT_SESSION,
+              recipientSessionId: "child-1",
+              content: [{ type: "text", text: "Run sleep 300." }],
+            }),
+            update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "toolu_agent_1",
+              status: "completed",
+              _meta: { claudeCode: { toolResponse: { status: "async_launched", isAsync: true } } },
+            }),
+            idle("end_turn"),
+            // The subagent asks while no turn runs, then the agent dies.
+            request,
+            {
+              ...update(CLAUDE_ROOT_SESSION, { sessionUpdate: "session_info_update", title: "x" }),
+              label: "before.exit",
+            },
+            { type: "runtime_exit", status: "error" },
+          ],
+          // The replacement resumes the session and has nothing to say.
+          replacement: [
+            ...claudeFrames.open,
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/resume", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/resume", result: {} },
+            },
+          ],
+        });
+        const { runtime, turnInput, turnEnd } = session;
+
+        yield* runtime.startTurn(turnInput(1));
+        assert.equal((yield* turnEnd).status, "completed");
+        // The request opened a continuation run, which is dispatched before
+        // the agent exits.
+        const offer = yield* session.offered;
+        if (offer.dispatchIfCurrent === undefined) {
+          return yield* Effect.die("a request's continuation offer is dispatched once");
+        }
+        const dispatched = yield* offer.dispatchIfCurrent(Effect.void);
+        assert.isTrue(Option.isSome(dispatched));
+        assert.isTrue(yield* Effect.promise(() => replayGate.waitForReached("before.exit")));
+        replayGate.release("before.exit");
+        yield* session.exited;
+
+        yield* runtime.startTurn(turnInput(2, { continuation: true }));
+        const ended = yield* turnEnd;
+        assert.equal(ended.status, "failed", "the request died with the agent");
+        assert.equal(session.starts(), 2);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
