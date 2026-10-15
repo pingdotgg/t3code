@@ -325,9 +325,32 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
-      - name: Install Chromium for server browser integration tests
+      # Cache the pinned browser and skip apt unless shared libraries are missing.
+      - name: Resolve Playwright version
+        id: playwright_version
         if: steps.changes.outputs.test_server != 'false'
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        if: steps.changes.outputs.test_server != 'false'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for server browser integration tests
+        if: steps.changes.outputs.test_server != 'false' && steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        if: steps.changes.outputs.test_server != 'false'
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
+          fi
 
       - name: Test
         if: steps.changes.outputs.test_server != 'false'
