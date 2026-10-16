@@ -1032,6 +1032,38 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("relaunches a host that died between turns and resumes the native session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse("first");
+      const recovery = yield* makeFakeMuse("second");
+      const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session", recovery);
+      yield* fake.takeCall("session/resume");
+      assert.strictEqual(harness.providerThread.nativeThreadRef?.nativeId, "saved-session");
+
+      // The host process dies on its own while no turn is running.
+      yield* fake.disconnect();
+      yield* harness.takeEvent(
+        "provider_session.updated",
+        (event) => event.providerSession.status === "error",
+      );
+
+      // The next registration relaunches the host and resumes the same
+      // session instead of failing with "Muse host is unavailable".
+      const reEnsured = yield* harness.runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection(INSTANCE_ID),
+        runtimePolicy,
+        existingProviderThread: harness.providerThread,
+      });
+      const resumed = yield* recovery.takeCall("session/resume");
+      assert.strictEqual(resumed.params.sessionId, "saved-session");
+      assert.strictEqual(reEnsured.nativeThreadRef?.nativeId, "saved-session");
+      // The event stream survived the failure, so the relaunched host's
+      // thread update still reaches the runtime consumer.
+      yield* harness.takeEvent("provider_thread.updated");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("serializes interruption behind pending turn admission without losing the target", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

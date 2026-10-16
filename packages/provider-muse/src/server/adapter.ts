@@ -331,6 +331,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let hostEpoch = 0;
       let closed = false;
       let broken = false;
+      // Set with `broken` when the host died without an active turn, so
+      // register can relaunch it instead of stranding the session.
+      let relaunchable = false;
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
@@ -1057,13 +1060,21 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           : failure instanceof Error
             ? failure.message
             : "Muse transport failed.";
-        if (active) yield* finish(active, "failed", detail, "broken");
-        else {
+        if (active) {
+          yield* finish(active, "failed", detail, "broken");
+          // A dead host cannot deliver further events, so end the stream and
+          // fail the run loudly instead of waiting on a session that is gone.
+          yield* Queue.fail(events, protocolError(detail, cause));
+        } else {
+          // No turn is running, so the session stays recoverable: register
+          // relaunches the host on its next call. Keep the event stream alive
+          // and report the failure as session state instead of ending a
+          // runtime that a retried registration can still use.
+          relaunchable = true;
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
         yield* settleObservedChildren("failed");
-        yield* Queue.fail(events, protocolError(detail, cause));
         // Report the failure first; a hung host can take a while to close.
         const failed = host;
         yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
@@ -1749,8 +1760,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const register = Effect.fnUntraced(function* (
         args: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
       ) {
-        if (broken || closed)
+        if (closed || (broken && !relaunchable))
           return yield* protocolError("Muse host is unavailable; reopen the session");
+        if (broken) {
+          // The previous host died while no turn was running (for example, a
+          // slow session resume outlived its request timeout). Relaunch it so
+          // session establishment retries instead of stranding the thread.
+          yield* Effect.logWarning("Relaunching the Muse host after a failure");
+          yield* launchHost();
+          broken = false;
+          relaunchable = false;
+          thread = undefined;
+          nativeSessionId = undefined;
+          yield* updateSession("ready", null);
+        }
         if (active)
           return yield* protocolError("Cannot change Muse sessions during an active turn");
         const existing = args.existingProviderThread;
