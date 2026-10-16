@@ -13,6 +13,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestratorMcpCapabilitiesInput,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -1083,6 +1084,187 @@ describe("OrchestratorMcpService provider resolution", () => {
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
+
+  describe("model scope", () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const catalog: ReadonlyArray<ServerProvider> = [
+      {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+        }),
+        models: [
+          // The caller's own model, which is not a favorite.
+          { slug: "gpt-5.4", name: "gpt-5.4", isCustom: false, capabilities: null },
+          {
+            slug: "gpt-5.5",
+            name: "GPT-5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  description: "How hard the model thinks.",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low", description: "Fast." },
+                    { id: "high", label: "High", isDefault: true },
+                  ],
+                  currentValue: "high",
+                  promptInjectedValues: ["high"],
+                },
+                { id: "fastMode", label: "Fast mode", type: "boolean", currentValue: false },
+              ],
+            },
+          },
+          { slug: "gpt-5.3", name: "gpt-5.3", isCustom: false, capabilities: null },
+          // Favorited but hidden: hiding wins.
+          { slug: "gpt-5.4-mini", name: "Mini", isCustom: false, capabilities: null },
+        ],
+      },
+      {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+        }),
+        models: [
+          { slug: "claude-opus", name: "claude-opus", isCustom: false, capabilities: null },
+          { slug: "claude-sonnet", name: "claude-sonnet", isCustom: false, capabilities: null },
+        ],
+      },
+    ];
+
+    const layerFor = (
+      favorites: ReadonlyArray<{
+        readonly provider: ProviderInstanceId;
+        readonly model: string;
+      }> | null,
+    ) =>
+      layerOrchestratorService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(parentProjection([])),
+            }),
+            ServerSettings.layerTest({
+              favorites,
+              providerModelPreferences: {
+                [codexInstanceId]: { hiddenModels: ["gpt-5.4-mini"], modelOrder: [] },
+              },
+            }),
+            providerRegistryLayer(catalog),
+            adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+
+    const modelIds = (input: {
+      readonly favorites: Parameters<typeof layerFor>[0];
+      readonly request?: OrchestratorMcpCapabilitiesInput;
+    }) =>
+      Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope, input.request);
+        return capabilities.providers.map((provider) => ({
+          id: provider.providerInstanceId,
+          models: provider.models.map((model) => model.id),
+          omittedModels: provider.omittedModels,
+        }));
+      }).pipe(Effect.provide(layerFor(input.favorites)));
+
+    const favorites = [
+      { provider: codexInstanceId, model: "gpt-5.5" },
+      { provider: codexInstanceId, model: "gpt-5.4-mini" },
+      { provider: claudeInstanceId, model: "claude-opus" },
+    ];
+
+    it.effect("lists favorites plus the caller's own model by default", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* modelIds({ favorites }), [
+          { id: codexInstanceId, models: ["gpt-5.4", "gpt-5.5"], omittedModels: 1 },
+          { id: claudeInstanceId, models: ["claude-opus"], omittedModels: 1 },
+        ]);
+      }),
+    );
+
+    it.effect("lists every visible model when asked for all, optionally for one provider", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* modelIds({ favorites, request: { models: "all" } }), [
+          {
+            id: codexInstanceId,
+            models: ["gpt-5.4", "gpt-5.5", "gpt-5.3"],
+            omittedModels: undefined,
+          },
+          {
+            id: claudeInstanceId,
+            models: ["claude-opus", "claude-sonnet"],
+            omittedModels: undefined,
+          },
+        ]);
+        assert.deepEqual(
+          yield* modelIds({
+            favorites,
+            request: { models: "all", providerInstanceId: claudeInstanceId },
+          }),
+          [
+            {
+              id: claudeInstanceId,
+              models: ["claude-opus", "claude-sonnet"],
+              omittedModels: undefined,
+            },
+          ],
+        );
+      }),
+    );
+
+    it.effect("lists every visible model when the user has no favorites", () =>
+      Effect.gen(function* () {
+        const everything = [
+          {
+            id: codexInstanceId,
+            models: ["gpt-5.4", "gpt-5.5", "gpt-5.3"],
+            omittedModels: undefined,
+          },
+          {
+            id: claudeInstanceId,
+            models: ["claude-opus", "claude-sonnet"],
+            omittedModels: undefined,
+          },
+        ];
+        assert.deepEqual(yield* modelIds({ favorites: null }), everything);
+        assert.deepEqual(yield* modelIds({ favorites: [] }), everything);
+      }),
+    );
+
+    it.effect("describes model options by id and value only", () =>
+      Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope);
+        const model = capabilities.providers[0]?.models.find((entry) => entry.id === "gpt-5.5");
+        assert.deepEqual(model, {
+          id: "gpt-5.5",
+          label: "GPT-5.5",
+          options: [
+            {
+              id: "effort",
+              type: "select",
+              values: ["low", "high"],
+              default: "high",
+              currentValue: "high",
+            },
+            { id: "fastMode", type: "boolean", currentValue: false },
+          ],
+        });
+        // Labels identical to the id are left out.
+        assert.notProperty(capabilities.providers[0]?.models[0], "label");
+      }).pipe(Effect.provide(layerFor(null))),
+    );
+  });
 
   it.effect(
     "delegates to an Antigravity instance whose adapter resolves through the registry",

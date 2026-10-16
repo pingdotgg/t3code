@@ -31,11 +31,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
-import {
-  ProviderOptionDescriptor,
-  ProviderOptionSelection,
-  ProviderOptionSelectionValue,
-} from "./model.ts";
+import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
@@ -491,6 +487,39 @@ export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
 
+export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
+  models: Schema.optional(
+    Schema.Literals(["favorites", "all"]).annotate({
+      description:
+        "favorites (default) lists the user's favorited models plus your own; all lists every model.",
+    }),
+  ),
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({ description: "Only list this provider instance." }),
+  ),
+});
+export type OrchestratorMcpCapabilitiesInput = typeof OrchestratorMcpCapabilitiesInput.Type;
+
+/**
+ * Agent-facing projection of a ProviderOptionDescriptor: only what is needed
+ * to build a target's options, without the composer's labels and descriptions.
+ */
+export const OrchestratorMcpModelOption = Schema.Union([
+  Schema.Struct({
+    id: Schema.String,
+    type: Schema.Literal("select"),
+    values: Schema.Array(Schema.String),
+    default: Schema.optional(Schema.String),
+    currentValue: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    id: Schema.String,
+    type: Schema.Literal("boolean"),
+    currentValue: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestratorMcpModelOption = typeof OrchestratorMcpModelOption.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -498,11 +527,14 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
-      label: Schema.NullOr(Schema.String),
+      /** Omitted when it is the same as the id. */
+      label: Schema.optional(Schema.String),
       /** Model options a target may select (for example reasoning effort). */
-      options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
     }),
   ),
+  /** Models left out because they are not favorites; models: "all" lists them. */
+  omittedModels: Schema.optional(NonNegativeInt),
   /** Runtime modes the provider offers; omitted when it offers all of them. */
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,

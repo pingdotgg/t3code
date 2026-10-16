@@ -13,7 +13,9 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
+  type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpModelOption,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
@@ -49,6 +51,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
+  type ProviderInstanceId,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
@@ -130,6 +133,7 @@ type TerminalTaskStatus = Extract<
 export interface OrchestratorMcpServiceShape {
   readonly capabilities: (
     scope: McpInvocationScope,
+    input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
@@ -263,6 +267,25 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
+  };
+}
+
+/** Drops the composer's labels and descriptions; agents only need ids and values. */
+function slimOptionDescriptor(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
+  if (descriptor.type === "boolean") {
+    return {
+      id: descriptor.id,
+      type: "boolean",
+      ...(descriptor.currentValue === undefined ? {} : { currentValue: descriptor.currentValue }),
+    };
+  }
+  const defaultValue = descriptor.options.find((choice) => choice.isDefault)?.id;
+  return {
+    id: descriptor.id,
+    type: "select",
+    values: descriptor.options.map((choice) => choice.id),
+    ...(defaultValue === undefined ? {} : { default: defaultValue }),
+    ...(descriptor.currentValue === undefined ? {} : { currentValue: descriptor.currentValue }),
   };
 }
 
@@ -1915,54 +1938,73 @@ const make = Effect.gen(function* () {
         return { status, secretRef: secretRef.value };
       }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
 
-    capabilities: (scope) =>
+    capabilities: (scope, input = {}) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-        // Models the user hid from pickers stay out of the catalog agents choose from.
-        const modelPreferences = yield* serverSettings.getSettings.pipe(
-          Effect.map((settings) => settings.providerModelPreferences ?? {}),
+        const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
         );
+        // Models the user hid from pickers stay out of the catalog agents choose from.
+        const modelPreferences = settings.providerModelPreferences ?? {};
+        // Without any favorites there is nothing to narrow to, so list everything.
+        const favorites =
+          input.models === "all" || settings.favorites === null || settings.favorites.length === 0
+            ? null
+            : settings.favorites;
+        const inherited = parent?.thread.modelSelection;
+        const isListed = (instanceId: ProviderInstanceId, slug: string) =>
+          favorites === null ||
+          (inherited?.instanceId === instanceId && inherited.model === slug) ||
+          favorites.some((favorite) => favorite.provider === instanceId && favorite.model === slug);
         return {
           parentThreadId: parent?.thread.id ?? null,
-          inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
-          inheritedModel: parent?.thread.modelSelection.model ?? null,
+          inheritedProviderInstanceId: inherited?.instanceId ?? null,
+          inheritedModel: inherited?.model ?? null,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
-          providers: providers.map((provider) => {
-            const constraints = providerConstraints(
-              provider,
-              orchestrationCapableInstanceIds.has(provider.instanceId),
-            );
-            return {
-              providerInstanceId: provider.instanceId,
-              driverKind: provider.driver,
-              displayName: provider?.displayName ?? null,
-              models:
-                provider?.models
-                  .filter(
-                    (model) =>
-                      model.isCustom ||
-                      !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
-                  )
-                  .map((model) => ({
-                    id: model.slug,
-                    label: model.name ?? null,
-                    ...(model.capabilities?.optionDescriptors === undefined
-                      ? {}
-                      : { options: model.capabilities.optionDescriptors }),
-                  })) ?? [],
-              ...(provider.supportedRuntimeModes === undefined ||
-              provider.supportedRuntimeModes.length === 0
-                ? {}
-                : { runtimeModes: [...provider.supportedRuntimeModes] }),
-              canRunChildTask: constraints.length === 0,
-              canRunCrossProviderChildTask: constraints.length === 0,
-              constraints: [...constraints],
-            };
-          }),
+          providers: providers
+            .filter(
+              (provider) =>
+                input.providerInstanceId === undefined ||
+                provider.instanceId === input.providerInstanceId,
+            )
+            .map((provider) => {
+              const constraints = providerConstraints(
+                provider,
+                orchestrationCapableInstanceIds.has(provider.instanceId),
+              );
+              const visibleModels = provider.models.filter(
+                (model) =>
+                  model.isCustom ||
+                  !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
+              );
+              const listedModels = visibleModels.filter((model) =>
+                isListed(provider.instanceId, model.slug),
+              );
+              const omittedModels = visibleModels.length - listedModels.length;
+              return {
+                providerInstanceId: provider.instanceId,
+                driverKind: provider.driver,
+                displayName: provider.displayName ?? null,
+                models: listedModels.map((model) => ({
+                  id: model.slug,
+                  ...(model.name === model.slug ? {} : { label: model.name }),
+                  ...(model.capabilities?.optionDescriptors === undefined
+                    ? {}
+                    : { options: model.capabilities.optionDescriptors.map(slimOptionDescriptor) }),
+                })),
+                ...(omittedModels === 0 ? {} : { omittedModels }),
+                ...(provider.supportedRuntimeModes === undefined ||
+                provider.supportedRuntimeModes.length === 0
+                  ? {}
+                  : { runtimeModes: [...provider.supportedRuntimeModes] }),
+                canRunChildTask: constraints.length === 0,
+                canRunCrossProviderChildTask: constraints.length === 0,
+                constraints: [...constraints],
+              };
+            }),
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,
