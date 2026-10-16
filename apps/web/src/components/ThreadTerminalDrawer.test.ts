@@ -8,6 +8,8 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
+  clampDrawerHeight,
+  resolveTerminalDrawerMaxHeight,
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   terminalContextMenuItems,
@@ -16,6 +18,67 @@ import {
   terminalSelectionMenuItems,
   terminalThemeFromApp,
 } from "./ThreadTerminalDrawer";
+
+describe("terminal drawer height", () => {
+  it("leaves room for the header and composer when the phone keyboard reduces the page", () => {
+    const layout = {
+      viewportHeight: 400,
+      chatColumnHeight: 360,
+      headerHeight: 52,
+      composerHeight: 108,
+    };
+    const height = clampDrawerHeight(280, resolveTerminalDrawerMaxHeight(layout));
+
+    expect(height).toBeLessThan(180);
+    expect(height + layout.headerHeight + layout.composerHeight).toBeLessThan(
+      layout.chatColumnHeight,
+    );
+  });
+
+  it("restores the preferred height when the keyboard closes", () => {
+    const preferredHeight = 280;
+    const controls = { headerHeight: 52, composerHeight: 108 };
+    const keyboardOpen = resolveTerminalDrawerMaxHeight({
+      ...controls,
+      viewportHeight: 400,
+      chatColumnHeight: 360,
+    });
+    const keyboardClosed = resolveTerminalDrawerMaxHeight({
+      ...controls,
+      viewportHeight: 800,
+      chatColumnHeight: 760,
+    });
+
+    expect(clampDrawerHeight(preferredHeight, keyboardOpen)).toBeLessThan(preferredHeight);
+    expect(clampDrawerHeight(preferredHeight, keyboardClosed)).toBe(preferredHeight);
+  });
+
+  it("uses the chat column's height rather than a taller window", () => {
+    const maxHeight = resolveTerminalDrawerMaxHeight({
+      viewportHeight: 900,
+      chatColumnHeight: 340,
+      headerHeight: 52,
+      composerHeight: 110,
+    });
+
+    expect(clampDrawerHeight(600, maxHeight) + 52 + 110).toBeLessThan(340);
+  });
+
+  it("does not force a minimum height when the controls take all available space", () => {
+    const maxHeight = resolveTerminalDrawerMaxHeight({
+      viewportHeight: 200,
+      chatColumnHeight: 160,
+      headerHeight: 52,
+      composerHeight: 120,
+    });
+
+    expect(clampDrawerHeight(280, maxHeight)).toBe(0);
+  });
+
+  it("keeps the window cap for terminals outside the chat drawer", () => {
+    expect(resolveTerminalDrawerMaxHeight({ viewportHeight: 800 })).toBe(600);
+  });
+});
 
 describe("terminal selection menus", () => {
   it("omits Add to chat when the terminal has no chat target", () => {

@@ -963,6 +963,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  composerHeight: number;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -977,6 +978,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   threadRef,
   threadId,
   active,
+  composerHeight,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -1335,6 +1337,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           runtimeEnv={runtimeEnv}
           visible={visible}
           height={terminalUiState.terminalHeight}
+          composerHeight={composerHeight}
           terminalIds={canOperateTerminal ? terminalUiState.terminalIds : serverOrderedTerminalIds}
           activeTerminalId={terminalUiState.activeTerminalId}
           terminalGroups={terminalUiState.terminalGroups}
@@ -2029,6 +2032,8 @@ export default function ChatView(props: ChatViewProps) {
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
+  const [composerReservedHeight, setComposerReservedHeight] = useState(0);
+  const composerReservedHeightRef = useRef(0);
   const composerRestingRef = useRef(false);
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
@@ -6669,6 +6674,30 @@ export default function ChatView(props: ChatViewProps) {
       composerMounted: composerMountedRef.current,
       composerReportedResting: composerRestingRef.current,
     });
+    const stack = composerOverlayElement?.querySelector<HTMLElement>(
+      '[data-chat-composer-stack="true"]',
+    );
+    if (stack && composerOverlayElement) {
+      const mobileCollapsed =
+        stack.querySelector('[data-chat-composer-mobile-collapsed="true"]') !== null;
+      // Keep room for the expanded composer while its controls collapse or
+      // move into a strip. Both the terminal and the empty placeholder need
+      // stable geometry when opening the drawer collapses the composer.
+      // Docked composers publish their destination overlay height before an
+      // animation. A draft's centered overlay fills the pane, so only its
+      // actual stack belongs in the reservation.
+      const stackHeight = isDraftHeroState
+        ? Math.ceil(stack.getBoundingClientRect().height)
+        : nextHeight;
+      const reservedHeight =
+        isResting || mobileCollapsed
+          ? Math.max(composerReservedHeightRef.current, stackHeight)
+          : stackHeight;
+      if (composerReservedHeightRef.current !== reservedHeight) {
+        composerReservedHeightRef.current = reservedHeight;
+        setComposerReservedHeight(reservedHeight);
+      }
+    }
     const modelStrip = composerOverlayElement?.querySelector<HTMLElement>(
       '[data-composer-model-strip="true"]',
     );
@@ -6722,8 +6751,8 @@ export default function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
-    publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
-  }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeightStable]);
+    composerReservedHeightRef.current = 0;
+  }, [activeThreadKey, composerOverlayElement]);
 
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
@@ -6733,13 +6762,26 @@ export default function ChatView(props: ChatViewProps) {
     };
 
     updateHeight();
-    return observeResize(composerOverlayElement, updateHeight);
-  }, [composerOverlayElement, publishComposerOverlayHeightStable, showScrollToBottom]);
+    const stack = isDraftHeroState
+      ? composerOverlayElement.querySelector<HTMLElement>('[data-chat-composer-stack="true"]')
+      : null;
+    return observeResize(
+      stack ? [composerOverlayElement, stack] : composerOverlayElement,
+      updateHeight,
+    );
+  }, [
+    activeThreadKey,
+    composerOverlayElement,
+    isDraftHeroState,
+    publishComposerOverlayHeightStable,
+    showScrollToBottom,
+  ]);
   useLayoutEffect(() => {
     if (composerMountedRef.current === composerMounted) return;
     composerMountedRef.current = composerMounted;
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
+    composerReservedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
   }, [composerMounted, composerOverlayElement, publishComposerOverlayHeightStable]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
@@ -10837,6 +10879,7 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column
       >
         <header
           ref={threadPanelPopoverAnchorRef}
@@ -11056,6 +11099,7 @@ export default function ChatView(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                emptyPlaceholderInset={composerReservedHeight}
                 topFadeEnabled={!hasTimelineTopBanner}
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
@@ -11478,6 +11522,7 @@ export default function ChatView(props: ChatViewProps) {
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}
             active={mountedThreadKey === activeThreadKey}
+            composerHeight={mountedThreadKey === activeThreadKey ? composerReservedHeight : 0}
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
             }
