@@ -16,6 +16,7 @@ github:aoright
 github:arhxam
 github:bil0000
 github:binbandit
+github:bompus
 github:Brechard
 github:btsouth
 github:cestercian
