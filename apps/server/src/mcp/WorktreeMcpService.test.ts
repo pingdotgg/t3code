@@ -108,6 +108,8 @@ interface HarnessOptions {
   readonly createWorktreeFails?: boolean;
   readonly fetchRemoteFails?: boolean;
   readonly resolveRemoteFails?: boolean;
+  /** What the base ref's remote resolves to; defaults to `origin` with the ref as the branch. */
+  readonly baseRemote?: { readonly remoteName: string; readonly branchName: string } | null;
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
@@ -210,6 +212,13 @@ const makeHarness = (options: HarnessOptions = {}) => {
   );
   const fetchRemote = vi.fn((_: unknown) =>
     options.fetchRemoteFails ? (Effect.fail("simulated fetch failure") as never) : Effect.void,
+  );
+  const resolveBaseRemote = vi.fn((input: { readonly refName: string }) =>
+    Effect.succeed(
+      options.baseRemote === undefined
+        ? { remoteName: "origin", branchName: input.refName }
+        : options.baseRemote,
+    ),
   );
   const resolveRemoteTrackingCommit = vi.fn((_: unknown) =>
     options.resolveRemoteFails
@@ -323,6 +332,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           listLocalBranchNames,
           localStatus,
           fetchRemote,
+          resolveBaseRemote,
           resolveRemoteTrackingCommit,
           createWorktree,
           removeWorktree,
@@ -345,6 +355,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     dispatch,
     sendToThread,
     fetchRemote,
+    resolveBaseRemote,
     resolveRemoteTrackingCommit,
     createWorktree,
     removeWorktree,
@@ -518,17 +529,18 @@ describe("t3_worktree_handoff", () => {
       expect(harness.fetchRemote).toHaveBeenCalledWith({
         cwd: workspaceRoot,
         remoteName: "origin",
+        refName: "origin/dev",
       });
       expect(harness.resolveRemoteTrackingCommit).toHaveBeenCalledWith({
         cwd: workspaceRoot,
-        refName: "dev",
+        refName: "origin/dev",
         fallbackRemoteName: "origin",
       });
       expect(harness.createWorktree).toHaveBeenCalledWith({
         cwd: workspaceRoot,
         refName: "abc123",
         newRefName: "feature/from-origin",
-        baseRefName: "dev",
+        baseRefName: "origin/dev",
         path: "/custom/worktree/location",
       });
       // localStatus is always consulted now (repo pre-check), but its branch
@@ -538,6 +550,52 @@ describe("t3_worktree_handoff", () => {
       expect(result.worktreePath).toBe("/custom/worktree/location");
       expect(result.startedFromOrigin).toBe(true);
       expect(result.setupScript).toEqual({ status: "skipped" });
+    });
+  });
+
+  it.effect("starts from the remote branch the base ref tracks on a fork checkout", () => {
+    const harness = makeHarness({ baseRemote: { remoteName: "upstream", branchName: "main" } });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, {
+        branch: "feature/from-upstream",
+        baseRef: "work",
+        startFromOrigin: true,
+        runSetupScript: false,
+      });
+
+      expect(harness.fetchRemote).toHaveBeenCalledWith({
+        cwd: workspaceRoot,
+        remoteName: "upstream",
+        refName: "upstream/main",
+      });
+      expect(harness.resolveRemoteTrackingCommit).toHaveBeenCalledWith({
+        cwd: workspaceRoot,
+        refName: "upstream/main",
+        fallbackRemoteName: "upstream",
+      });
+      expect(harness.createWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          newRefName: "feature/from-upstream",
+          baseRefName: "upstream/main",
+        }),
+      );
+      expect(result.startedFromOrigin).toBe(true);
+    });
+  });
+
+  it.effect("fails when the base ref has no remote to start from", () => {
+    const harness = makeHarness({ baseRemote: null });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runHandoff(harness, { branch: "feature/no-remote", baseRef: "dev", startFromOrigin: true }),
+      );
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "operation_failed",
+        message: "No remote to start from for 'dev'",
+      });
+      expect(harness.fetchRemote).not.toHaveBeenCalled();
+      expect(harness.createWorktree).not.toHaveBeenCalled();
     });
   });
 

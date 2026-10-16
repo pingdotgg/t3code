@@ -292,6 +292,16 @@ export interface GitResolveRemoteTrackingCommitResult {
   remoteRefName: string;
 }
 
+export interface GitResolveBaseRemoteInput {
+  cwd: string;
+  refName: string;
+}
+
+export interface GitResolveBaseRemoteResult {
+  remoteName: string;
+  branchName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -387,6 +397,13 @@ export class GitVcsDriver extends Context.Service<
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
+    /**
+     * Picks the remote a new branch based on `refName` should start from: the remote named by
+     * `<remote>/<branch>`, else the one `refName` tracks, else `origin`. Null when none applies.
+     */
+    readonly resolveBaseRemote: (
+      input: GitResolveBaseRemoteInput,
+    ) => Effect.Effect<GitResolveBaseRemoteResult | null, GitCommandError>;
     readonly fetchRemoteBranch: (
       input: GitFetchRemoteBranchInput,
     ) => Effect.Effect<void, GitCommandError>;

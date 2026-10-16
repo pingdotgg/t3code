@@ -103,6 +103,13 @@ export class GitWorkflowService extends Context.Service<
       { readonly commitSha: string; readonly remoteRefName: string },
       GitCommandError
     >;
+    readonly resolveBaseRemote: (input: {
+      readonly cwd: string;
+      readonly refName: string;
+    }) => Effect.Effect<
+      { readonly remoteName: string; readonly branchName: string } | null,
+      GitCommandError
+    >;
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -396,6 +403,10 @@ export const make = Effect.gen(function* () {
     resolveRemoteTrackingCommit: (input) =>
       ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
         Effect.andThen(git.resolveRemoteTrackingCommit(input)),
+      ),
+    resolveBaseRemote: (input) =>
+      ensureGitCommand("GitWorkflowService.resolveBaseRemote", input.cwd).pipe(
+        Effect.andThen(git.resolveBaseRemote(input)),
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(

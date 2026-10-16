@@ -3808,6 +3808,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { commitSha, remoteRefName };
     });
 
+  const resolveBaseRemote: GitVcsDriver.GitVcsDriver["Service"]["resolveBaseRemote"] = Effect.fn(
+    "resolveBaseRemote",
+  )(function* (input) {
+    const remoteNames = yield* listRemoteNames(input.cwd);
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+      input.refName,
+      remoteNames.toSorted((left, right) => right.length - left.length),
+    );
+    if (parsedRemoteRef) {
+      return { remoteName: parsedRemoteRef.remoteName, branchName: parsedRemoteRef.branchName };
+    }
+
+    const trackedRemote = yield* readConfigValue(input.cwd, `branch.${input.refName}.remote`);
+    if (trackedRemote !== null && remoteNames.includes(trackedRemote)) {
+      const merge = yield* readConfigValue(input.cwd, `branch.${input.refName}.merge`);
+      return {
+        remoteName: trackedRemote,
+        branchName: merge?.replace(/^refs\/heads\//, "") ?? input.refName,
+      };
+    }
+
+    return remoteNames.includes("origin")
+      ? { remoteName: "origin", branchName: input.refName }
+      : null;
+  });
+
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
@@ -4144,6 +4170,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,
+    resolveBaseRemote,
     fetchRemoteBranch: (input) => withListRefsInvalidation(input.cwd, fetchRemoteBranch(input)),
     fetchRemoteTrackingBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
