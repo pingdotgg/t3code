@@ -511,3 +511,19 @@ describe("OtelEnvironment", () => {
     );
   });
 });
+
+describe("isRelayTracingEnabled", () => {
+  it.each([
+    [{}, true],
+    [{ T3CODE_TELEMETRY_ENABLED: " FaLsE " }, false],
+    [{ T3CODE_TELEMETRY_ENABLED: "n", T3CODE_OTEL_SDK_DISABLED: "false" }, false],
+    [{ T3CODE_TELEMETRY_ENABLED: "invalid" }, true],
+    [{ T3CODE_OTEL_SDK_DISABLED: "yes" }, false],
+    [{ OTEL_SDK_DISABLED: " TrUe " }, false],
+    [{ OTEL_SDK_DISABLED: "1" }, true],
+    [{ T3CODE_OTEL_SDK_DISABLED: "off", OTEL_SDK_DISABLED: "true" }, true],
+    [{ T3CODE_OTEL_SDK_DISABLED: "invalid", OTEL_SDK_DISABLED: "true" }, false],
+  ])("reads %o as %s", (env, enabled) => {
+    assert.equal(OtelEnvironment.isRelayTracingEnabled(env), enabled);
+  });
+});

@@ -358,6 +358,20 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
   Effect.orDie,
 );
 
+/**
+ * Whether the built-in relay tracer may export. `T3CODE_TELEMETRY_ENABLED=false` turns it off
+ * along with product events, and `T3CODE_OTEL_SDK_DISABLED=false` cannot turn it back on.
+ */
+export const isRelayTracingEnabled = (env: Readonly<Record<string, string | undefined>>) =>
+  Effect.gen(function* () {
+    const telemetry = yield* flag("T3CODE_TELEMETRY_ENABLED", T3CODE_TRUE, T3CODE_FALSE, String);
+    return telemetry.value !== false && !(yield* load).disabled;
+  }).pipe(
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({ ...env }))),
+    Effect.orDie,
+    Effect.runSync,
+  );
+
 export type SignalName = "traces" | "metrics" | "logs";
 
 export interface SignalEndpoint {
