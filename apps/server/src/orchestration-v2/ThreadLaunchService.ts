@@ -518,12 +518,58 @@ const make = Effect.gen(function* () {
             }),
           ),
           Effect.flatMap((renamed) =>
-            threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`${input.commandId}:branch-rename`),
-              threadId,
-              branch: renamed.branch,
-              worktreePath: worktreeCwd,
+            Effect.gen(function* () {
+              yield* threads
+                .dispatch({
+                  type: "thread.metadata.update",
+                  commandId: CommandId.make(`${input.commandId}:branch-rename`),
+                  threadId,
+                  branch: renamed.branch,
+                  worktreePath: worktreeCwd,
+                  expectedBranch: oldBranch,
+                  expectedWorktreePath: worktreeCwd,
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Parent thread worktree branch update failed", {
+                      threadId,
+                      cause,
+                    }),
+                  ),
+                );
+              // Updating the parent first makes later subagents inherit the new name.
+              // Re-read after each pass for children of subagents updated in that pass.
+              const visited = new Set([threadId]);
+              while (true) {
+                const snapshot = yield* threads.getShellSnapshot();
+                const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
+                  (thread) =>
+                    !visited.has(thread.id) &&
+                    thread.worktreePath === worktreeCwd &&
+                    thread.branch === oldBranch,
+                );
+                if (sharing.length === 0) break;
+                for (const thread of sharing) {
+                  visited.add(thread.id);
+                  yield* threads
+                    .dispatch({
+                      type: "thread.metadata.update",
+                      commandId: CommandId.make(`${input.commandId}:branch-rename:${thread.id}`),
+                      threadId: thread.id,
+                      branch: renamed.branch,
+                      expectedBranch: oldBranch,
+                      expectedWorktreePath: worktreeCwd,
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("Shared thread worktree branch update failed", {
+                          threadId: thread.id,
+                          cause,
+                        }),
+                      ),
+                    );
+                }
+              }
             }),
           ),
           Effect.catchCause((cause) =>
