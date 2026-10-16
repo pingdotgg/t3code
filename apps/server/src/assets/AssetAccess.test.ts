@@ -35,7 +35,9 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from 
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -197,17 +199,21 @@ describe("AssetAccess", () => {
       expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubCredentials.GitHubCredentials)({
-          get: (host) =>
-            ++lookups === 1
-              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-              : Effect.succeed({
-                  host,
-                  token: Redacted.make("signed-in"),
-                  source: "gh" as const,
-                  fingerprint: "fingerprint",
-                }),
-        }),
+        Layer.mergeAll(
+          Layer.mock(GitHubApi.GitHubApi)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) =>
+              ++lookups === 1
+                ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+                : Effect.succeed({
+                    host,
+                    token: Redacted.make("signed-in"),
+                    source: "gh" as const,
+                    fingerprint: "fingerprint",
+                  }),
+          }),
+        ),
       ),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -220,6 +226,80 @@ describe("AssetAccess", () => {
                 status: request.headers.authorization ? 200 : 404,
                 headers: { "content-type": "image/png" },
               }),
+            ),
+          );
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("loads an SSO organization's uploads through the signed URL the API renders", () => {
+    const rendered: Array<unknown> = [];
+    const requests: Array<{ url: string; authorization: string | undefined }> = [];
+    const signed = "https://private-user-images.githubusercontent.com/1/2-sso.png?jwt=a.b&x=1";
+    return Effect.gen(function* () {
+      const asset = {
+        url: "https://github.com/user-attachments/assets/0f5c0e6e-sso",
+        cwd: "/sso-repo",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
+      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
+      // Rendered once with the checkout's repository as context, then reused.
+      expect(rendered).toEqual([
+        { text: `![](${asset.url})`, mode: "gfm", context: "owner/private" },
+      ]);
+      // github.com answers the token with the SSO sign-in page; the signed URL authorizes
+      // itself, so the token never leaves GitHub and a cached one skips the page entirely.
+      expect(requests).toEqual([
+        { url: asset.url, authorization: "Bearer signed-in" },
+        { url: signed, authorization: undefined },
+        { url: signed, authorization: undefined },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/owner/private",
+                locator: { source: "git-remote", remoteName: "origin", remoteUrl: "" },
+              }),
+          }),
+          Layer.mock(GitHubApi.GitHubApi)({
+            rest: (input) =>
+              Effect.sync(() => {
+                rendered.push(input.body);
+                return {
+                  status: 200,
+                  headers: {},
+                  body: `<p><img src="${signed.replace("&", "&amp;")}" alt=""></p>`,
+                  truncated: false,
+                  invalidUtf8: false,
+                };
+              }),
+          }),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) =>
+              Effect.succeed({
+                host,
+                token: Redacted.make("signed-in"),
+                source: "gh" as const,
+                fingerprint: "fingerprint",
+              }),
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push({ url: request.url, authorization: request.headers.authorization });
+          const contentType = request.url === signed ? "image/png" : "text/html; charset=utf-8";
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(null, { status: 200, headers: { "content-type": contentType } }),
             ),
           );
         }),

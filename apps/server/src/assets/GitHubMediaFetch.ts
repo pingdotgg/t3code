@@ -12,7 +12,10 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 
 /**
  * Exactly the hosts the credential is for. Everything a redirect leads to — the presigned
@@ -63,6 +66,67 @@ const githubToken = GitHubCredentials.GitHubCredentials.pipe(
   Effect.map((credential) => credential.token),
   Effect.orElseSucceed(() => null),
 );
+
+/**
+ * An upload in a body: `user-attachments`, or the older form that names its repository.
+ * github.com serves these to a browser session, so an organization that enforces SAML SSO answers
+ * an API token with its sign-in page instead of the bytes.
+ */
+const ATTACHMENT_URL_PATTERN =
+  /^https:\/\/github\.com\/(?:user-attachments\/assets\/|([^/]+\/[^/]+)\/assets\/\d+\/)/u;
+const SIGNED_ATTACHMENT_URL_PATTERN =
+  /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/u;
+/** GitHub signs these for five minutes; reuse one for less so a video seek never gets a stale one. */
+const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
+const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
+const signedUrlCache = new Map<string, { readonly at: number; readonly url: string }>();
+
+const cachedSignedUrl = (url: string, now: number) => {
+  const cached = signedUrlCache.get(url);
+  return cached !== undefined && now - cached.at < SIGNED_URL_CACHE_TTL_MS ? cached.url : null;
+};
+
+/**
+ * The signed `private-user-images` URL GitHub's own pages carry for an upload, or null. The API
+ * honours an SSO-authorized token where github.com does not, but only signs uploads in markdown
+ * rendered with a repository as context. Any repository the token can read works, so the
+ * checkout's own is enough even when the pull request lives on a fork's parent.
+ */
+const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(function* (
+  url: string,
+  cwd: string,
+  now: number,
+) {
+  const match = ATTACHMENT_URL_PATTERN.exec(url);
+  if (match === null) return null;
+  const identity = match[1]
+    ? null
+    : yield* (yield* RepositoryIdentityResolver.RepositoryIdentityResolver).resolve(cwd);
+  const repository =
+    match[1] ?? /^github\.com\/([^/]+\/[^/]+)$/u.exec(identity?.canonicalKey ?? "")?.[1];
+  if (repository === undefined) return null;
+  const api = yield* GitHubApi.GitHubApi;
+  const html = yield* api
+    .rest({
+      host: "github.com",
+      operation: "renderMarkdown",
+      method: "POST",
+      path: "markdown",
+      accept: "text/html",
+      body: { text: `![](${url})`, mode: "gfm", context: repository },
+    })
+    .pipe(
+      Effect.map((response) => response.body),
+      Effect.orElseSucceed(() => ""),
+    );
+  const signed = SIGNED_ATTACHMENT_URL_PATTERN.exec(html)?.[1]?.replaceAll("&amp;", "&");
+  if (signed === undefined) return null;
+  if (signedUrlCache.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
+    signedUrlCache.delete(signedUrlCache.keys().next().value!);
+  }
+  signedUrlCache.set(url, { at: now, url: signed });
+  return signed;
+});
 
 /**
  * Follows GitHub's redirect to the signed object itself, and never carries the credential off
@@ -119,7 +183,14 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
+  // A signed URL authorizes on its own, so it is fetched like any redirect target: no token.
+  const now = yield* Clock.currentTimeMillis;
+  const cached = cachedSignedUrl(asset.url, now);
+  let response = yield* fetchFollowingRedirects(cached ?? asset.url, forwarded, token);
+  if (cached === null && response?.headers["content-type"]?.startsWith("text/html")) {
+    const signed = yield* signedAttachmentUrl(asset.url, asset.cwd, now);
+    if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, token);
+  }
   // An upload GitHub hosts never changes under its URL, so the only thing a cached copy must
   // not outlive is the signed URL that granted it — which is the same bound the URL itself has.
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
