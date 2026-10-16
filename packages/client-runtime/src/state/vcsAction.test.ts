@@ -1,6 +1,7 @@
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   ThreadId,
   ProjectId,
@@ -721,8 +722,8 @@ describe("vcsActionState", () => {
   );
 });
 
-// Transport fixtures have a source-control-only session; authorization edge cases
-// are exercised by commandPermissions.test.ts.
+// Transport fixtures have a session that can read threads and write source control;
+// authorization edge cases are exercised by commandPermissions.test.ts.
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
 }));
@@ -736,7 +737,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope],
+      scopes: [AuthOrchestrationReadScope, AuthSourceControlWriteScope],
     }),
   ),
 );

@@ -22,6 +22,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
@@ -365,6 +366,40 @@ it.effect("requires task permission before attaching a prepared worktree to a th
       }).pipe(Effect.flip),
     ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
     expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires thread read access before a git action can draw on a thread", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.gitRunStackedAction
+        > => tag !== WS_METHODS.gitRunStackedAction,
+      ),
+    );
+    let handled = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.gitRunStackedAction, () =>
+            Stream.fromEffect(Effect.sync(() => handled++)).pipe(Stream.drain),
+          ),
+          RpcAuthorization.layer([AuthSourceControlWriteScope]),
+        ),
+      ),
+    );
+    const input = { actionId: "action", cwd: "/repo", action: "create_pr" as const };
+    yield* Stream.runDrain(client[WS_METHODS.gitRunStackedAction](input));
+    expect(
+      yield* Stream.runDrain(
+        client[WS_METHODS.gitRunStackedAction]({ ...input, threadId: ThreadId.make("thread") }),
+      ).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+    expect(handled).toBe(1);
   }).pipe(Effect.scoped),
 );
 

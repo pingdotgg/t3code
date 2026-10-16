@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
-import { GitPreparePullRequestThreadInput } from "./git.ts";
+import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -51,6 +52,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -60,6 +62,11 @@ export function clientRpcRequiredScopes(
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  // A generated pull request body can quote the thread's history.
+  if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {
+    if (decodeStackedAction(input).threadId !== undefined)
+      return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
