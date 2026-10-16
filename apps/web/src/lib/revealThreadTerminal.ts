@@ -3,7 +3,6 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
-/** Reveal an existing terminal in the panel that owns it, without opening another PTY. */
 export function revealThreadTerminal(threadRef: ScopedThreadRef, terminalId: string) {
   const panels = useRightPanelStore.getState();
   const surface = selectThreadRightPanelState(panels.byThreadKey, threadRef).surfaces.find(

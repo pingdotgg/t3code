@@ -24,10 +24,8 @@ const makeRepo = (
       if (kind === "worktree") {
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
       } else if (kind === "bare-repo-worktree") {
-        // `git worktree add` from a bare repo: the common dir is `<name>.git`.
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /srv/myrepo.git/worktrees/x\n");
       } else if (kind === "custom-common-dir-worktree") {
-        // $GIT_COMMON_DIR need not be named `.git` at all.
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /srv/store/worktrees/x\n");
       } else if (kind === "submodule") {
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: ../.git/modules/sub\n");

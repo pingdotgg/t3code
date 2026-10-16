@@ -429,8 +429,6 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
 import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
 
-// The accessibility reader normally runs in a worker with the real xa11y `App`.
-// Tests hand it this stand-in so the mocks above drive window lookups.
 const accessibilityApp = {
   byPid: accessibilityByPidMock,
   list: accessibilityListMock,

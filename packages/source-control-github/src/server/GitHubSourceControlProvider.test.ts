@@ -7,14 +7,19 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import * as GitHubQuota from "./GitHubQuota.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
@@ -50,7 +55,7 @@ const remotesOutput = (...entries: ReadonlyArray<readonly [string, string]>) =>
     .flatMap(([name, url]) => [`${name}\t${url} (fetch)`, `${name}\t${url} (push)`])
     .join("\n");
 
-const restResponse = (body: unknown, status = 200): GitHubApi.GitHubRestResponse => ({
+const restResponse = (body: unknown, status = 200): GitHubRest.GitHubRestResponse => ({
   status,
   headers: {},
   body: body === undefined ? "" : encodeJson(body),
@@ -64,26 +69,112 @@ const node = (number: number, headRefName: string, owner = "acme") => ({
   url: `https://github.com/acme/web/pull/${number}`,
   baseRefName: "main",
   headRefName,
+  headRefOid: "f".repeat(40),
   state: "OPEN",
+  isDraft: false,
+  mergedAt: null,
+  closedAt: null,
   isCrossRepository: owner !== "acme",
   updatedAt: "2026-01-02T00:00:00Z",
   headRepository: { name: "web", nameWithOwner: `${owner}/web` },
-  headRepositoryOwner: { login: owner },
+  headRepositoryOwner: { __typename: "User", login: owner },
 });
 
 /**
- * The provider over a mocked GitHubApi, git driver and process. `remotes` is what
- * `git remote -v` prints; `git` records every driver call.
+ * One GraphQL request as the fake GitHub saw it. An aliased batch is split back into its
+ * lookups, each with its own variables, in order.
+ */
+interface GraphQlCall {
+  readonly host: string;
+  readonly operationName: string;
+  readonly query: string;
+  readonly lookups: ReadonlyArray<Readonly<Record<string, unknown>>>;
+}
+
+/**
+ * What GitHub answers for one lookup: the `repository` it reads, or a whole HTTP response for the
+ * request (a refusal, a rate limit).
+ */
+type GraphQlAnswer = unknown;
+type GraphQlRespond = (
+  lookup: Readonly<Record<string, unknown>>,
+  call: GraphQlCall,
+) => GraphQlAnswer | Response;
+
+/** GitHub's GraphQL endpoint for the generated reads: answers each lookup with `respond`. */
+function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
+  return HttpClient.make((request) =>
+    Effect.sync(() => {
+      const sent =
+        request.body._tag === "Uint8Array"
+          ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              readonly query: string;
+              readonly operationName: string;
+              readonly variables: Readonly<Record<string, unknown>>;
+            })
+          : { query: "", operationName: "", variables: {} };
+      const prefixes = [
+        ...new Set(Object.keys(sent.variables).flatMap((key) => /^_\d+_/.exec(key) ?? [])),
+      ];
+      const lookups =
+        prefixes.length === 0
+          ? [sent.variables]
+          : prefixes.map((prefix) =>
+              Object.fromEntries(
+                Object.entries(sent.variables)
+                  .filter(([key]) => key.startsWith(prefix))
+                  .map(([key, value]) => [key.slice(prefix.length), value]),
+              ),
+            );
+      const call: GraphQlCall = {
+        host: new URL(request.url).hostname.replace(/^api\./, ""),
+        operationName: sent.operationName,
+        query: sent.query,
+        lookups,
+      };
+      calls.push(call);
+      const answers = lookups.map((lookup) => respond(lookup, call));
+      const refusal = answers.find((answer) => answer instanceof Response);
+      const response =
+        refusal ??
+        new Response(
+          encodeJson({
+            data: Object.fromEntries(
+              answers.map((answer, index) => [
+                prefixes.length === 0 ? "repository" : `${prefixes[index]}repository`,
+                answer,
+              ]),
+            ),
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      return HttpClientResponse.fromWeb(request, response);
+    }),
+  );
+}
+
+/**
+ * The provider over a mocked GitHubRest, git driver and process. `remotes` is what
+ * `git remote -v` prints; `git` records every driver call. GraphQL reads go over HTTP to
+ * `graphql`, through the real request policy; `graphqlCalls` records each request.
  */
 function harness(input: {
   readonly remotes: string;
-  readonly api: Partial<GitHubApi.GitHubApi["Service"]>;
+  readonly api?: Partial<GitHubRest.GitHubRest["Service"]>;
+  readonly graphql?: GraphQlRespond;
+  /** The credential a GraphQL read is sent with; github.com's token by default. */
+  readonly credential?: (
+    host: string,
+  ) => Effect.Effect<
+    GitHubCredentials.GitHubCredential,
+    GitHubCredentials.GitHubCredentialUnavailableError
+  >;
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
-  /** Fails the local branch listing, the first git read a checkout makes. */
   readonly gitFailure?: unknown;
 }) {
   const git: Array<readonly [string, unknown]> = [];
+  const graphqlCalls: Array<GraphQlCall> = [];
   const record =
     <A>(name: string, value: A) =>
     (args: unknown) =>
@@ -124,17 +215,44 @@ function harness(input: {
         ),
     },
   });
+  const graphql =
+    input.graphql ??
+    (() => {
+      throw new Error("Unexpected GraphQL read");
+    });
+  const policy = GitHubRequestPolicy.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(GitHubCredentials.GitHubCredentials, {
+          get:
+            input.credential ??
+            ((host) =>
+              Effect.succeed({
+                host,
+                token: Redacted.make("token"),
+                source: "gh" as const,
+                fingerprint: `${host}:token`,
+              })),
+          invalidate: () => Effect.void,
+        }),
+        GitHubQuota.layer,
+        SourceControlRateLimit.layer,
+      ),
+    ),
+  );
   const layer = Layer.mergeAll(
     host,
-    Layer.mock(GitHubApi.GitHubApi)(input.api),
+    Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
+    policy,
+    Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
   );
-  return { layer, git };
+  return { layer, git, graphqlCalls };
 }
 
 /** The provider context for a checkout whose remote is on `host`. */
-/** The provider over a mocked GitHubApi, for reads that never touch the checkout. */
-const makeProvider = (api: Partial<GitHubApi.GitHubApi["Service"]>) =>
+/** The provider over a mocked GitHubRest, for reads that never touch the checkout. */
+const makeProvider = (api: Partial<GitHubRest.GitHubRest["Service"]>) =>
   GitHubSourceControlProvider.make.pipe(Effect.provide(harness({ remotes: "", api }).layer));
 
 const githubContext = (host: string) => ({
@@ -195,7 +313,6 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
       yield* gh.getDefaultBranch({ cwd: "/repo" });
-      // A provider's host hint for the same alias (`github` here) resolves the same way.
       yield* gh.getDefaultBranch({ cwd: "/repo", context: githubContext("github") });
       assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
     }).pipe(Effect.provide(layer));
@@ -207,7 +324,10 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       api: {
         rest: (input) =>
           Effect.fail(
-            new GitHubApi.GitHubApiNotFoundError({ host: input.host, operation: input.operation }),
+            new GitHubRequestPolicy.GitHubApiNotFoundError({
+              host: input.host,
+              operation: input.operation,
+            }),
           ),
       },
     });
@@ -236,23 +356,16 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
   const remotes = remotesOutput(["origin", "git@github.com:acme/web.git"]);
 
   it.effect("reads a background sweep's staggered heads in one GraphQL document", () => {
-    const documents: Array<GitHubApi.GitHubGraphQlInput> = [];
-    const { layer } = harness({
+    const { layer, graphqlCalls } = harness({
       remotes,
-      api: {
-        graphql: (input) =>
-          Effect.sync(() => {
-            documents.push(input);
-            return encodeJson({
-              data: {
-                repository: {
-                  h0: { nodes: [{ ...node(7, "feature/a"), headRefOid: "a".repeat(40) }] },
-                  h1: { nodes: [] },
-                },
-              },
-            });
-          }),
-      },
+      graphql: (lookup) => ({
+        pullRequests: {
+          nodes:
+            lookup.head === "feature/a"
+              ? [{ ...node(7, "feature/a"), headRefOid: "a".repeat(40) }]
+              : [],
+        },
+      }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -266,7 +379,6 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
             context: githubContext("github.com"),
           })
           .pipe(Effect.forkChild);
-      // Each branch's own git reads come first, so a sweep's lookups arrive spread out.
       const firstLookup = yield* lookup("feature/a");
       yield* TestClock.adjust("200 millis");
       const secondLookup = yield* lookup("feature/b");
@@ -279,33 +391,70 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
       );
       assert.strictEqual(first?.[0]?.headSha, "a".repeat(40));
       assert.deepStrictEqual(second, []);
-      assert.strictEqual(documents.length, 1);
-      assert.include(documents[0]!.query, "headRefOid");
-      assert.deepStrictEqual(documents[0]!.variables, {
-        owner: "acme",
-        name: "web",
-        h0: "feature/a",
-        s0: ["OPEN", "CLOSED", "MERGED"],
-        h1: "feature/b",
-        s1: ["OPEN", "CLOSED", "MERGED"],
-      });
+      assert.strictEqual(graphqlCalls.length, 1);
+      assert.include(graphqlCalls[0]!.query, "headRefOid");
+      assert.deepStrictEqual(graphqlCalls[0]!.lookups, [
+        {
+          owner: "acme",
+          name: "web",
+          head: "feature/a",
+          states: ["OPEN", "CLOSED", "MERGED"],
+          first: 100,
+        },
+        {
+          owner: "acme",
+          name: "web",
+          head: "feature/b",
+          states: ["OPEN", "CLOSED", "MERGED"],
+          first: 100,
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips a row that does not decode and keeps the rest of the batch", () => {
+    const { layer, graphqlCalls } = harness({
+      remotes,
+      graphql: (lookup) => ({
+        pullRequests: {
+          nodes:
+            lookup.head === "feature/a"
+              ? [{ ...node(8, "feature/a"), number: "eight" }, node(7, "feature/a")]
+              : [node(9, "feature/b")],
+        },
+      }),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const lookup = (headSelector: string) =>
+        gh.listChangeRequests({
+          cwd: "/repo",
+          headSelector,
+          state: "all",
+          limit: 100,
+          context: githubContext("github.com"),
+        });
+      const both = yield* Effect.all([lookup("feature/a"), lookup("feature/b")], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("500 millis");
+      const [first, second] = yield* Fiber.join(both);
+      assert.strictEqual(graphqlCalls.length, 1);
+      assert.deepStrictEqual(
+        first.map((pr) => pr.number),
+        [7],
+      );
+      assert.deepStrictEqual(
+        second.map((pr) => pr.number),
+        [9],
+      );
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("caps a background document at twenty-five heads", () => {
-    const headCounts: Array<number> = [];
-    const { layer } = harness({
+    const { layer, graphqlCalls } = harness({
       remotes,
-      api: {
-        graphql: (input) =>
-          Effect.sync(() => {
-            const heads = Object.keys(input.variables ?? {}).filter((key) => /^h\d+$/.test(key));
-            headCounts.push(heads.length);
-            return encodeJson({
-              data: { repository: Object.fromEntries(heads.map((key) => [key, { nodes: [] }])) },
-            });
-          }),
-      },
+      graphql: () => ({ pullRequests: { nodes: [] } }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -324,7 +473,7 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
       yield* TestClock.adjust("500 millis");
       yield* Fiber.join(lookups);
       assert.deepStrictEqual(
-        headCounts.toSorted((a, b) => a - b),
+        graphqlCalls.map((call) => call.lookups.length).toSorted((a, b) => a - b),
         [1, 25],
       );
     }).pipe(Effect.provide(layer));
@@ -333,23 +482,14 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
   it.effect("matches an owner:branch selector on the head owner", () => {
     const { layer } = harness({
       remotes,
-      api: {
-        graphql: (input) =>
-          Effect.succeed(
-            encodeJson({
-              data: {
-                repository: {
-                  h0: {
-                    nodes:
-                      input.variables?.h0 === "main"
-                        ? [node(9, "main", "someone"), node(8, "main", "me"), node(7, "main", "me")]
-                        : [],
-                  },
-                },
-              },
-            }),
-          ),
-      },
+      graphql: (lookup) => ({
+        pullRequests: {
+          nodes:
+            lookup.head === "main"
+              ? [node(9, "main", "someone"), node(8, "main", "me"), node(7, "main", "me")]
+              : [],
+        },
+      }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -365,20 +505,23 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
   });
 
   it.effect("maps API failures onto the errors callers handle", () => {
+    let signedIn = false;
     const { layer } = harness({
       remotes,
-      api: {
-        graphql: (input) =>
-          Effect.fail(
-            input.variables?.h0 === "missing"
-              ? new GitHubCredentials.GitHubCliMissingError({ host: "github.com" })
-              : new GitHubApi.GitHubApiRateLimitError({
-                  host: "github.com",
-                  operation: "x",
-                  retryAt: 123,
-                }),
-          ),
-      },
+      credential: (host) =>
+        signedIn
+          ? Effect.succeed({
+              host,
+              token: Redacted.make("token"),
+              source: "gh" as const,
+              fingerprint: "fp",
+            })
+          : Effect.fail(new GitHubCredentials.GitHubCliMissingError({ host })),
+      graphql: () =>
+        new Response(encodeJson({ message: "API rate limit exceeded" }), {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "123" },
+        }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -389,27 +532,21 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
       const missing = yield* read("missing");
       yield* TestClock.adjust("500 millis");
       assert.include((yield* Fiber.join(missing)).detail, "No GitHub credential on the server");
+      signedIn = true;
       const limited = yield* read("limited");
       yield* TestClock.adjust("500 millis");
       const error = yield* Fiber.join(limited);
       assert.include(error.detail, "rate limit exceeded");
-      assert.propertyVal(error.cause, "retryAt", 123);
+      assert.propertyVal(error.cause, "retryAt", 123_000);
     }).pipe(Effect.provide(layer));
   });
 });
 
 describe("GitHubSourceControlProvider.getChangeRequest", () => {
   it.effect("reads a pull request by number, and by URL on its own repository", () => {
-    const variables: Array<unknown> = [];
-    const { layer } = harness({
+    const { layer, graphqlCalls } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
-      api: {
-        graphql: (input) =>
-          Effect.sync(() => {
-            variables.push(input.variables);
-            return encodeJson({ data: { repository: { pullRequest: node(42, "feature") } } });
-          }),
-      },
+      graphql: () => ({ pullRequest: node(42, "feature") }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -421,19 +558,20 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
         cwd: "/repo",
         reference: "https://github.com/other/thing/pull/42",
       });
-      assert.deepStrictEqual(variables, [
-        { owner: "acme", name: "web", number: 42 },
-        { owner: "other", name: "thing", number: 42 },
-      ]);
+      assert.deepStrictEqual(
+        graphqlCalls.flatMap((call) => call.lookups),
+        [
+          { owner: "acme", name: "web", number: 42 },
+          { owner: "other", name: "thing", number: 42 },
+        ],
+      );
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails a missing pull request as not found", () => {
     const { layer } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
-      api: {
-        graphql: () => Effect.succeed(encodeJson({ data: { repository: { pullRequest: null } } })),
-      },
+      graphql: () => ({ pullRequest: null }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -445,7 +583,7 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 
 describe("GitHubSourceControlProvider writes", () => {
   it.effect("creates a cross-repository pull request with an owner:branch head", () => {
-    const requests: Array<GitHubApi.GitHubRestInput> = [];
+    const requests: Array<GitHubRest.GitHubRestInput> = [];
     const { layer } = harness({
       remotes: remotesOutput(
         ["origin", "git@github.com:me/web.git"],
@@ -473,7 +611,6 @@ describe("GitHubSourceControlProvider writes", () => {
       });
       assert.strictEqual(requests[0]!.method, "POST");
       assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls");
-      // A user's own write, so the background's reserve is not held against it.
       assert.strictEqual(requests[0]!.allowReserve, true);
       assert.deepStrictEqual(requests[0]!.body, {
         base: "main",
@@ -551,7 +688,6 @@ describe("GitHubSourceControlProvider writes", () => {
         "code.example.test GET user",
         "code.example.test GET repos/me/notes",
       ]);
-      // Malformed names are still refused before any request.
       for (const repository of ["me/", "/notes", "a/b/c/d", "", "two words"]) {
         const error = yield* Effect.flip(gh.getRepositoryCloneUrls({ cwd: "/repo", repository }));
         assert.include(error.message, "Repositories are named owner/name.");
@@ -573,12 +709,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
   it.effect("checks a same-repository pull request out from its head branch", () => {
     const { layer, git } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
-      api: {
-        graphql: () =>
-          Effect.succeed(
-            encodeJson({ data: { repository: { pullRequest: node(5, "feature/x") } } }),
-          ),
-      },
+      graphql: () => ({ pullRequest: node(5, "feature/x") }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -602,14 +733,11 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
     const { layer, git } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
       localBranches: ["main"],
+      graphql: () => ({ pullRequest: node(6, "main", "someone") }),
       api: {
-        graphql: () =>
-          Effect.succeed(
-            encodeJson({ data: { repository: { pullRequest: node(6, "main", "someone") } } }),
-          ),
         rest: () =>
           Effect.fail(
-            new GitHubApi.GitHubApiRequestError({
+            new GitHubRequestPolicy.GitHubApiRequestError({
               host: "github.com",
               operation: "x",
               cause: "offline",
@@ -620,7 +748,6 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
       yield* Effect.flip(gh.checkoutChangeRequest({ cwd: "/repo", reference: "6", force: true }));
-      // Nothing touched the local branches: `main` must not be reset to the fork's commit.
       assert.deepStrictEqual(git, []);
     }).pipe(Effect.provide(layer));
   });
@@ -629,11 +756,8 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
     const { layer, git } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
       localBranches: ["someone/main"],
+      graphql: () => ({ pullRequest: node(6, "main", "someone") }),
       api: {
-        graphql: () =>
-          Effect.succeed(
-            encodeJson({ data: { repository: { pullRequest: node(6, "main", "someone") } } }),
-          ),
         rest: (input) =>
           Effect.succeed(repository(input.path === "repos/acme/web" ? "acme/web" : "someone/web")),
       },
@@ -664,12 +788,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
     const { layer } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
       gitFailure: new Error("fatal: /home/me/secret-path: permission denied"),
-      api: {
-        graphql: () =>
-          Effect.succeed(
-            encodeJson({ data: { repository: { pullRequest: node(5, "feature/x") } } }),
-          ),
-      },
+      graphql: () => ({ pullRequest: node(5, "feature/x") }),
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
@@ -924,7 +1043,7 @@ it.effect.each(["read", "decode"] as const)(
   "retains the %s failure without exposing its raw contents",
   (stage) =>
     Effect.gen(function* () {
-      const cause = new GitHubApi.GitHubApiResponseError({
+      const cause = new GitHubRequestPolicy.GitHubApiResponseError({
         host: "github.com",
         operation: "resolveLink",
         status: 500,
@@ -1026,26 +1145,15 @@ it.live.each([
   "ssh://git@code.example.test/team/project.git",
   "https://code.example.test/team/project.git",
 ])("keeps Enterprise operations on the selected remote: %s", (remoteUrl) => {
-  const graphql: GitHubApi.GitHubGraphQlInput[] = [];
-  const rest: GitHubApi.GitHubRestInput[] = [];
+  const rest: GitHubRest.GitHubRestInput[] = [];
+  const pr = {
+    ...node(42, "feature", "team"),
+    url: "https://code.example.test/team/project/pull/42",
+    isCrossRepository: false,
+    headRepository: { name: "project", nameWithOwner: "team/project" },
+  };
   const api = {
-    graphql: (input: GitHubApi.GitHubGraphQlInput) =>
-      Effect.sync(() => {
-        graphql.push(input);
-        const pr = {
-          ...node(42, "feature", "team"),
-          url: "https://code.example.test/team/project/pull/42",
-          isCrossRepository: false,
-          headRepository: { name: "project", nameWithOwner: "team/project" },
-        };
-        return encodeJson({
-          data: {
-            repository:
-              input.operation === "getPullRequest" ? { pullRequest: pr } : { h0: { nodes: [pr] } },
-          },
-        });
-      }),
-    rest: (input: GitHubApi.GitHubRestInput) =>
+    rest: (input: GitHubRest.GitHubRestInput) =>
       Effect.sync(() => {
         rest.push(input);
         return restResponse({
@@ -1056,12 +1164,16 @@ it.live.each([
         });
       }),
   };
-  const { layer, git } = harness({
+  const { layer, git, graphqlCalls } = harness({
     remotes: remotesOutput(
       ["origin", "git@github.com:team/project.git"],
       ["enterprise", remoteUrl],
     ),
     api,
+    graphql: (_, call) =>
+      call.operationName === "PullRequestByNumber"
+        ? { pullRequest: pr }
+        : { pullRequests: { nodes: [pr] } },
   });
   return Effect.gen(function* () {
     const provider = yield* GitHubSourceControlProvider.make;
@@ -1101,12 +1213,13 @@ it.live.each([
     yield* provider.checkoutChangeRequest({ ...input, reference: "42" });
     yield* provider.getRepositoryCloneUrls({ ...input, repository: "team/other" });
     yield* provider.getRepositoryCloneUrls({ ...input, repository: "github.com/team/explicit" });
-    assert.strictEqual(graphql.length, 5);
-    for (const request of graphql) {
-      assert.strictEqual(request.host, "code.example.test");
-      assert.strictEqual(request.variables?.owner, "team");
-      assert.strictEqual(request.variables?.name, "project");
-    }
+    const lookups = graphqlCalls.flatMap((call) =>
+      call.lookups.map(({ owner, name }) => [call.host, owner, name]),
+    );
+    assert.deepStrictEqual(
+      lookups,
+      Array.from({ length: 5 }, () => ["code.example.test", "team", "project"]),
+    );
     assert.deepStrictEqual(
       rest.map(({ host, path }) => [host, path]),
       [

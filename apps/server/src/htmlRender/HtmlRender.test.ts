@@ -26,8 +26,6 @@ import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "./HtmlRender.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 
-// Real-browser tests run only when this names a chrome-headless-shell, for
-// example one T3 installed under <T3 home>/tools/chrome-headless-shell.
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
 const layerHtmlRender = (
@@ -91,7 +89,6 @@ describe("HtmlRender", () => {
       expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
       expect(prepared).not.toContain(directory);
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
-      // The theme bootstrap opens the head, ahead of the page's own markup.
       expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="t3-theme">'));
       expect(prepared.indexOf('<style id="t3-theme">')).toBeLessThan(prepared.indexOf("<title>"));
     }).pipe(Effect.provide(layerTest)),
@@ -127,12 +124,10 @@ describe("HtmlRender", () => {
       const folder = path.join(directory, "folder.png");
       yield* fileSystem.makeDirectory(folder);
       const missing = path.join(directory, "missing.jpg");
-      // Named like an image, but a symlink or renamed file must not carry other data.
       const secret = path.join(directory, "secret.png");
       yield* fileSystem.writeFileString(secret, "API_KEY=abc123");
       const report = path.join(directory, "report.svg");
       yield* fileSystem.writeFileString(report, "<!doctype html><body><svg></svg>API_KEY=abc123");
-      // An <svg> inside a quoted entity, and a prolog shaped to stall a backtracking matcher.
       const config = path.join(directory, "config.svg");
       yield* fileSystem.writeFileString(
         config,
@@ -142,7 +137,6 @@ describe("HtmlRender", () => {
       yield* fileSystem.writeFileString(stalling, `${"<?p?>".repeat(40)}<config><svg/></config>`);
       const unclosed = path.join(directory, "unclosed.svg");
       yield* fileSystem.writeFileString(unclosed, '<!DOCTYPE svg [<!ENTITY a "x><svg/>');
-      // Roots named SVG or svgé are other elements.
       const upper = path.join(directory, "upper.svg");
       yield* fileSystem.writeFileString(upper, "<SVG/>API_KEY=abc123");
       const longer = path.join(directory, "longer.svg");
@@ -183,7 +177,6 @@ describe("HtmlRender", () => {
         height: 9_000,
       });
 
-      // Without an installed preview browser the page publishes unmeasured.
       expect(reference).toEqual({
         attachmentId: expect.any(String),
         title: "Revenue",
@@ -328,9 +321,6 @@ describe("HtmlRender", () => {
       Effect.gen(function* () {
         const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
-        // The page's connections go through a proxy that only reaches public
-        // addresses, and WebRTC is gone. Each line below is a way out that
-        // Chrome's own Local Network Access does not stop on its own.
         const requests: Array<string> = [];
         const server = yield* Effect.acquireRelease(
           Effect.callback<NodeHttp.Server>((resume) => {
@@ -388,10 +378,9 @@ describe("HtmlRender", () => {
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;
-          // Like a D3 chart, the page sizes itself from the width once, at load.
           const reference = yield* htmlRender.publish({
             threadId: ThreadId.make("thread-html-measure"),
-            html: '<div id="chart"></div><script>document.getElementById("chart").style.height = innerWidth / 2 + "px";</script>',
+            html: '<div id="chart" style="background:#888"></div><script>document.getElementById("chart").style.height = innerWidth / 2 + "px";</script>',
             title: "Chart",
             height: 600,
           });
@@ -399,6 +388,7 @@ describe("HtmlRender", () => {
           expect(reference.heights).toEqual(
             HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
           );
+          expect(reference.outline).toBe("m0,0,182,91,1");
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,

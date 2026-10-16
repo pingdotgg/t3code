@@ -1,17 +1,3 @@
-/**
- * ClaudeDriver — `ProviderDriver` for the Claude Agent SDK runtime.
- *
- * Mirrors `CodexDriver`: a plain value whose `create()` returns one
- * `ProviderInstance` bundling `snapshot` / `adapter` / `textGeneration`
- * closures captured over the per-instance `ClaudeSettings`.
- *
- * Unlike Codex, the Claude snapshot probe may invoke a secondary probe
- * (`probeClaudeCapabilities`) to read Anthropic account + slash-command
- * metadata. That probe is per-instance and keyed by binary + resolved HOME so
- * two concurrent Claude instances don't cross-contaminate account metadata.
- *
- * @module provider/Drivers/ClaudeDriver
- */
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -123,10 +109,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      // Instance-level probes are not tied to a project, so they run in the
-      // server's own state dir. The server cwd is $HOME in packaged desktop
-      // builds, and `claude` wrappers that scope themselves to their cwd refuse
-      // to run there. Workspace probes use the thread cwd via `snapshotForCwd`.
+      // The server cwd is $HOME in packaged desktop builds, and `claude`
+      // wrappers that scope themselves to their cwd refuse to run there.
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -224,8 +208,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         processEnv,
       );
 
-      // Start the TTL-gated refresh without delaying provider readiness. The
-      // next check observes a remote manifest after the background fetch lands.
       const checkProvider = catalogService.refreshInBackground.pipe(
         Effect.andThen(
           modelCatalog.pipe(
@@ -325,8 +307,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 cause,
               }),
           ),
-          // Re-probe after any answer, but only a reset claims the limits
-          // changed, so only a reset reports an unconfirmed refresh.
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;

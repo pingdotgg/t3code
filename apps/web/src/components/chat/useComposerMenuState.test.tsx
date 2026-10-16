@@ -30,7 +30,6 @@ async function renderMenu(hidden: boolean) {
 }
 
 beforeEach(() => {
-  // The probe renders no host nodes, but ReactDOM still needs an event target.
   const document = {
     nodeType: 9,
     addEventListener() {},

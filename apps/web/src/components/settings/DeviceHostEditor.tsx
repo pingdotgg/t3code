@@ -1,8 +1,9 @@
 import { useState } from "react";
 import * as Option from "effect/Option";
 import type { SshDeviceHostConfig } from "@t3tools/contracts";
-import { CheckIcon, MonitorIcon, XIcon } from "lucide-react";
-import { Button } from "../ui/button";
+import { CheckIcon, ChevronDownIcon, MonitorIcon, XIcon } from "lucide-react";
+import { Button, InlineButton } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import {
@@ -38,12 +39,24 @@ export function DeviceHostEditor({
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(host);
+  const [expandedChecks, setExpandedChecks] = useState<{ key: string; open: boolean } | null>(null);
   const { checks, testConnection } = useHostConnectionChecks(targets);
-  const results = checks[deviceHostConnectionKey(draft)];
+  const connectionKey = deviceHostConnectionKey(draft);
+  const results = checks[connectionKey];
   const checking = Object.values(results ?? {}).some((check) => check.status === "pending");
   const input = parseDeviceHostDraft({ ...draft, label: draft.label.trim() || draft.target });
   const valid = Option.isSome(input);
   const failed = Object.values(results ?? {}).filter((check) => check.status === "failed").length;
+  const checksOpen =
+    targets.length === 1 ||
+    (expandedChecks?.key === connectionKey ? expandedChecks.open : failed > 0);
+  const checkSummary = checking
+    ? "Checking environments…"
+    : results
+      ? failed
+        ? `${failed} of ${targets.length} failed`
+        : "Connection checks passed"
+      : "Check access before saving";
   return (
     <Dialog
       open
@@ -136,17 +149,34 @@ export function DeviceHostEditor({
               Optional. Resolved separately on each environment.
             </p>
           </details>
-          <div className="rounded-lg border border-border/60">
+          <Collapsible
+            open={checksOpen}
+            onOpenChange={(open) => setExpandedChecks({ key: connectionKey, open })}
+            render={<div className="rounded-lg border border-border/60" />}
+          >
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-              <p role="status" className="text-xs text-muted-foreground">
-                {checking
-                  ? "Checking environments…"
-                  : results
-                    ? failed
-                      ? `${failed} of ${targets.length} failed`
-                      : "Connection checks passed"
-                    : "Check access before saving"}
-              </p>
+              {targets.length === 1 ? (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {checkSummary}
+                </p>
+              ) : (
+                <div className="min-w-0 text-xs [--inline-button-white-space:normal]">
+                  <CollapsibleTrigger
+                    disabled={!results}
+                    aria-label={`${checkSummary}. Per-machine results`}
+                    render={<InlineButton tone="muted" />}
+                  >
+                    <span role="status" className="text-left">
+                      {checkSummary}
+                    </span>
+                    {results ? (
+                      <ChevronDownIcon
+                        className={`size-3 shrink-0 ${checksOpen ? "rotate-180" : ""}`}
+                      />
+                    ) : null}
+                  </CollapsibleTrigger>
+                </div>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -160,7 +190,9 @@ export function DeviceHostEditor({
               </Button>
             </div>
             {results ? (
-              <ul className="border-t border-border/60 divide-y divide-border/40">
+              <CollapsiblePanel
+                render={<ul className="border-t border-border/60 divide-y divide-border/40" />}
+              >
                 {targets.map((target) => {
                   const result = results[target.environmentId];
                   if (!result) return null;
@@ -206,9 +238,9 @@ export function DeviceHostEditor({
                     </li>
                   );
                 })}
-              </ul>
+              </CollapsiblePanel>
             ) : null}
-          </div>
+          </Collapsible>
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>

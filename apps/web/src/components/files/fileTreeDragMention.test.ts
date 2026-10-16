@@ -38,10 +38,20 @@ describe("createFileTreeDragMentionController", () => {
     expect(transfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toBe("[architecture](docs/architecture)");
   });
 
+  it("mentions rows of a host folder by their host path", () => {
+    const controller = createFileTreeDragMentionController({
+      deselect: () => {},
+      mentionPath: (path) => `/Users/me/scope/${path}`,
+    });
+    const transfer = makeTransfer();
+    controller.handleDragStart({
+      dataTransfer: transfer,
+      composedPath: () => [rowNode("notes/")],
+    });
+    expect(transfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toBe("[notes](/Users/me/scope/notes)");
+  });
+
   it("does not tag drags of selected text from the panel chrome", () => {
-    // Only a drag that originates on a tree row is a mention; dragging a text
-    // selection also carries text/plain, and tagging it would drop an invalid
-    // pill into the composer.
     const controller = createFileTreeDragMentionController({ deselect: () => {} });
     const transfer = makeTransfer("selected text");
     controller.handleDragStart({ dataTransfer: transfer, composedPath: () => [{}] });

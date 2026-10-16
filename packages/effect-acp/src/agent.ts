@@ -35,50 +35,23 @@ export class AcpAgent extends Context.Service<
   AcpAgent,
   {
     readonly raw: {
-      /**
-       * Stream of inbound ACP notifications observed on the connection.
-       */
       readonly notifications: Stream.Stream<AcpProtocol.AcpIncomingNotification>;
-      /**
-       * Sends a generic ACP extension request.
-       * @see https://agentclientprotocol.com/protocol/extensibility
-       */
       readonly request: (
         method: string,
         payload: unknown,
       ) => Effect.Effect<unknown, AcpError.AcpError>;
-      /**
-       * Sends a generic ACP extension notification.
-       * @see https://agentclientprotocol.com/protocol/extensibility
-       */
       readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
     };
     readonly client: {
-      /**
-       * Requests client permission for an operation.
-       * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
-       */
       readonly requestPermission: (
         payload: AcpSchema.RequestPermissionRequest,
       ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpError.AcpError>;
-      /**
-       * Requests structured user input from the client.
-       * @see https://agentclientprotocol.com/protocol/schema#elicitation/create
-       */
       readonly elicit: (
         payload: AcpSchema.CreateElicitationRequest,
       ) => Effect.Effect<AcpSchema.CreateElicitationResponse, AcpError.AcpError>;
-      /**
-       * Sends a `session/update` notification to the client.
-       * @see https://agentclientprotocol.com/protocol/schema#session/update
-       */
       readonly sessionUpdate: (
         payload: AcpSchema.SessionNotification,
       ) => Effect.Effect<void, AcpError.AcpError>;
-      /**
-       * Sends an `elicitation/complete` notification to the client.
-       * @see https://agentclientprotocol.com/protocol/schema#elicitation/complete
-       */
       readonly elicitationComplete: (
         payload: AcpSchema.CompleteElicitationNotification,
       ) => Effect.Effect<void, AcpError.AcpError>;
@@ -94,34 +67,18 @@ export class AcpAgent extends Context.Service<
       readonly notifyMcp: (
         payload: AcpSchema.MessageMcpNotification,
       ) => Effect.Effect<void, AcpError.AcpError>;
-      /**
-       * Sends an ACP extension request to the client.
-       * @see https://agentclientprotocol.com/protocol/extensibility
-       */
       readonly extRequest: (
         method: string,
         payload: unknown,
       ) => Effect.Effect<unknown, AcpError.AcpError>;
-      /**
-       * Sends an ACP extension notification to the client.
-       * @see https://agentclientprotocol.com/protocol/extensibility
-       */
       readonly extNotification: (
         method: string,
         payload: unknown,
       ) => Effect.Effect<void, AcpError.AcpError>;
     };
-    /**
-     * Registers a handler for `initialize`.
-     * @see https://agentclientprotocol.com/protocol/schema#initialize
-     */
     readonly handleInitialize: (
       handler: AcpRequestHandler<AcpSchema.InitializeRequest, AcpSchema.InitializeResponse>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `authenticate`.
-     * @see https://agentclientprotocol.com/protocol/schema#authenticate
-     */
     readonly handleAuthenticate: (
       handler: AcpRequestHandler<AcpSchema.AuthenticateRequest, AcpSchema.AuthenticateResponse>,
     ) => Effect.Effect<void>;
@@ -170,10 +127,6 @@ export class AcpAgent extends Context.Service<
     readonly handlePrompt: (
       handler: AcpRequestHandler<AcpSchema.PromptRequest, AcpSchema.PromptResponse>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `session/cancel`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/cancel
-     */
     readonly handleCancel: (
       handler: (
         notification: AcpSchema.CancelNotification,
@@ -428,8 +381,6 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
   );
 
   yield* RpcServer.make(AcpRpcs.AgentRpcs, { disableFatalDefects: true }).pipe(
-    // runHandler logs handler defects with their method. A reporter inherited
-    // from the caller (a WebSocket request, say) would log them again.
     Effect.provideService(ErrorReporter.CurrentErrorReporters, new Set()),
     Effect.provideService(RpcServer.Protocol, transport.serverProtocol),
     Effect.provide(layerAgentHandler),

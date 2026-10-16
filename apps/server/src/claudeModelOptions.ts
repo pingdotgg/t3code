@@ -24,7 +24,6 @@ export interface CompiledClaudeModelSelection {
   readonly queryIdentity: string;
 }
 
-/** Compile every Claude model option at the provider boundary. */
 export function compileClaudeModelSelection(
   selection: ModelSelection,
   catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,

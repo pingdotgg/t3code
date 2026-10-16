@@ -19,12 +19,9 @@ export interface ThreadPrPresentation {
   readonly kind: "pull-request" | "stack";
   readonly others: number;
   readonly isDraft: boolean;
-  /** Provider-side last activity, bounding when a terminal state landed. */
   readonly updatedAt: string | null;
   readonly url: string;
-  /** Compact pull request number or linked count, e.g. "3774" or "+2". */
   readonly label: string;
-  /** Full, provider-aware label for assistive technologies. */
   readonly accessibilityLabel: string;
   readonly textClassName: string;
 }
@@ -55,7 +52,6 @@ export function presentThreadPr(
   };
 }
 
-/** Persisted links render immediately, including links awaiting their first host sync. */
 export function presentThreadLinkedPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadPrPresentation | null {
@@ -103,7 +99,6 @@ export function presentThreadLinkedPullRequests(
   };
 }
 
-/** Only the array capability replaces legacy references with persisted snapshots. */
 export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
   capabilities:

@@ -116,7 +116,6 @@ function shouldDropMissingPartialTurnItem(
   ) {
     return false;
   }
-  // Later items of a run already in the window can raise the watermark first.
   if (
     projection.visibleTurnItems.some(
       (row) =>
@@ -190,7 +189,6 @@ function upsertVisibleTurnItem(
   return renumberVisibleItems(updated);
 }
 
-/** Applies one committed event to a matching thread projection. */
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,

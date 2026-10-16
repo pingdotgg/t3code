@@ -182,7 +182,6 @@ describe("applyShellStreamEvent", () => {
       threads: [{ ...v2ThreadShell, title: "Server thread" }],
     };
 
-    // Lower-sequence marked enrichment is identity-only and must not replace structure.
     const afterEnrichment = mergeShellSnapshotProjects(previous, serverSnapshot, {
       resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot],
     });
@@ -191,7 +190,6 @@ describe("applyShellStreamEvent", () => {
     expect(afterEnrichment.projects[0]?.repositoryIdentity).toBeNull();
     expect(afterEnrichment.threads[0]?.title).toBe("Local-only thread");
 
-    // Unmarked authoritative at the same lower sequence still performs the reset.
     const afterAuthoritative = mergeShellSnapshotProjects(afterEnrichment, serverSnapshot);
     expect(afterAuthoritative.snapshotSequence).toBe(3);
     expect(afterAuthoritative.projects[0]?.title).toBe("Server reset");

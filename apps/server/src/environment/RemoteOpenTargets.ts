@@ -1,14 +1,3 @@
-/**
- * RemoteOpenTargets - resolves the SSH hostnames this environment advertises
- * for remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`).
- *
- * The server can only check itself: sshd listening locally, tailscaled
- * reporting a MagicDNS name and whether Tailscale SSH is on, and the machine
- * hostname for mDNS. Whether a given name resolves from the viewer's machine
- * is inherently client-side.
- * Targets are ordered most-reachable first (tailnet name works from anywhere
- * on the tailnet; `<hostname>.local` only on the same LAN).
- */
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -40,7 +29,6 @@ export const make = Effect.gen(function* () {
       (ipv4, ipv6) => ipv4 || ipv6,
     );
 
-    // Tailscale absent or down is the common case, not an error.
     const magicDnsName = yield* readTailscaleStatus.pipe(
       Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
@@ -52,8 +40,6 @@ export const make = Effect.gen(function* () {
     if (!sshdListening) {
       // Tailscale SSH answers on the tailnet name with no local sshd, so only
       // that name can work. A running tailscaled alone is not an SSH route.
-      // With neither, advertise nothing so clients render a clear "no SSH
-      // route" state instead of links that hang.
       if (
         magicDnsName !== null &&
         (yield* readTailscaleSshEnabled.pipe(

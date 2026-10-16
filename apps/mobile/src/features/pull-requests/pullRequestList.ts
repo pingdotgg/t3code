@@ -15,6 +15,20 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   sort: "updated",
 };
 
+export function withoutScratchProjectScope(
+  controls: PullRequestListControls,
+  projects: readonly { id: string; environmentId: string; isScratch?: true }[],
+): PullRequestListControls {
+  return projects.some(
+    (project) =>
+      project.isScratch &&
+      project.id === controls.projectId &&
+      project.environmentId === controls.projectEnvironmentId,
+  )
+    ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
+    : controls;
+}
+
 export function pullRequestListKey(
   item: Pick<PullRequestListEntry, "host" | "repository" | "number">,
 ) {
@@ -28,7 +42,6 @@ export type EnvironmentPullRequestListEntry = PullRequestListEntry & {
 export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry) =>
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
-/** Provider refreshes and diff-count batches recreate entries; unchanged rows can stay mounted. */
 export function pullRequestListRowsAreEqual(
   previous: EnvironmentPullRequestListEntry,
   next: EnvironmentPullRequestListEntry,
@@ -62,7 +75,6 @@ export function pullRequestListRowsAreEqual(
   );
 }
 
-/** Keep cursors and viewer identities with the environment that issued them. */
 export function mergeEnvironmentPullRequestPages(
   sources: readonly { environmentId: EnvironmentId; pages: PullRequestListPages }[],
 ) {
@@ -195,7 +207,6 @@ export function filterPullRequestList<
       const author = filters.author === "me" ? viewer : filters.author;
       if (!author || normalize(entry.author?.login ?? "") !== normalize(author)) return false;
     }
-    // Hosts without a review rollup still perform their own review filtering.
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
@@ -211,8 +222,6 @@ export function filterPullRequestList<
     }
     return true;
   });
-  // The same repository can be available on multiple machines. Pick its first matching source,
-  // unless that machine is unreachable and another one can answer: its rows may only be cached.
   const reachable = (entry: Entry) =>
     !connectedEnvironmentIds ||
     (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));

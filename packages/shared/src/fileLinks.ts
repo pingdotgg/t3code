@@ -167,7 +167,6 @@ export function buildFileLinkParentSuffixByPath(
   return suffixByPath;
 }
 
-/** Visible text of a file chip, shared by Markdown rendering and thread search. */
 export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,

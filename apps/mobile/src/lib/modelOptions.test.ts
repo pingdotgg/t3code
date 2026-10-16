@@ -312,11 +312,8 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, usable, null)).toBe(usable);
     expect(resolveSelectableModelSelection(config, disabled, null)).toBeNull();
     expect(resolveSelectableModelSelection(config, removed, null)).toBeNull();
-    // Disabled is disabled even with no settings to consult; only a provider
-    // that is merely missing or unauthenticated falls through silently.
     expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
     expect(isModelSelectionUnavailable(config, removed, null)).toBe(false);
-    // An offline environment has no config to validate.
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
   });
 
@@ -494,9 +491,7 @@ describe("mobile model options", () => {
     const legacy = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
 
     expect(resolveDefaultableModelSelection(config, current, null)).toBe(current);
-    // A legacy last-used selection falls through to the provider default.
     expect(resolveDefaultableModelSelection(config, legacy, null)).toBeNull();
-    // Offline: nothing to validate against, selection passes through.
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
@@ -647,8 +642,6 @@ describe("mobile model options", () => {
         },
       };
 
-      // configWith's snapshot always reports enabled: true, standing in for
-      // the server keeping the instance alive to serve project-b's override.
       expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
     });
 
@@ -661,13 +654,10 @@ describe("mobile model options", () => {
       };
       const selection = { instanceId, model: "model-a" };
 
-      // configWith's snapshot always reports enabled: true, standing in for
-      // the server keeping the instance alive for another project's keep-alive.
       expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
       expect(
         describeUnavailableModelSelection(configWith(settings), selection, projectId).title,
       ).toBe("Model turned off for this project");
-      // With no project in scope, the machine value applies and is disabled.
       expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(true);
     });
 
@@ -760,9 +750,6 @@ describe("synchronized mobile model visibility", () => {
   const config = {
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
-      // A live snapshot entry always has a matching configured instance (or
-      // is a driver's own default id); these are stand-ins for neither, so
-      // the enablement fixture needs its own entry to read as enabled.
       providerInstances: {
         [provider]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         [other]: { driver: ProviderDriverKind.make("codex"), enabled: true },

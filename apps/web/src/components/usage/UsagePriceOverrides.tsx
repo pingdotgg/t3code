@@ -93,10 +93,6 @@ type SaveAttempt = {
   >;
 };
 
-/**
- * Edits custom model prices and mappings. A mapped model's usage counts as its
- * target model. `initialModel` opens with a new row for that model.
- */
 export function UsagePriceOverrides({
   usage,
   initialSelectedEnvironmentIds,
@@ -113,7 +109,6 @@ export function UsagePriceOverrides({
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
   );
-  // A model that already has a custom price or mapping is edited in its existing row.
   const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>(() =>
     initialModel === undefined ||
     selected.some(
@@ -147,7 +142,6 @@ export function UsagePriceOverrides({
         .flatMap((environment) => environment.summary?.buckets.map((bucket) => bucket.model) ?? []),
     ]),
   ].sort();
-  // Keep new rows in place while successful environments publish their updated settings.
   const newModels = new Set(
     drafts.filter((draft) => draft.isNew).map((draft) => draft.model.trim()),
   );
@@ -202,7 +196,6 @@ export function UsagePriceOverrides({
     );
     setAttempt(null);
   };
-  // An existing row edited back to its saved values has nothing left to save.
   const matchesSaved = (
     row: UsagePriceDraft,
     cell: { value: string; placeholder: string },

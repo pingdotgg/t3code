@@ -606,7 +606,7 @@ describe("V2 find state", () => {
     await act(async () => find.barProps.onQueryChange("different query"));
     expect(find.barProps.status).toBe("loading");
     expect(find.barProps.matchCount).toBe(0);
-    // Folded content stays expanded while the new query loads.
+
     expect(find.timelineProps.findQuery).toBe("");
     expect(find.timelineProps.findExpanded).toBe(true);
     await act(async () => find.barProps.onQueryChange(""));

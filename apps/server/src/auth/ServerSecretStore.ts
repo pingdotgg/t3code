@@ -138,7 +138,6 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
 export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
-    /** File-backed stores expose their directory for cross-process credential leases. */
     readonly directory?: string;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;

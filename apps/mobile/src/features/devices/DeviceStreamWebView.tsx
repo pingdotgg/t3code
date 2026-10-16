@@ -13,8 +13,8 @@ import { Platform, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText } from "../../components/AppText";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText } from "../../components/ui/AppText";
 
 import {
   deviceStreamDocument,
@@ -104,7 +104,6 @@ function DeviceStreamDocumentView({
     setError(message);
     setStatus("error");
   };
-  // The shared transport owns video timeouts once the document acknowledges startup.
   const bootstrapTimedOut = useEffectEvent(() =>
     fail("Device viewer could not start. Reconnect to try again."),
   );

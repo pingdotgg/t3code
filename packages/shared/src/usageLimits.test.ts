@@ -207,14 +207,12 @@ describe("pools", () => {
     expect(accounts[0]).toMatchObject({
       key: "env-a:claude",
       sourceLabel: null,
-      // Desktop's read is fresher, so its credits and its redeem are the ones on show.
       redeem: { environmentId: "env-b", input: { instanceId: "claude" } },
       environments: [
         { environmentId: "env-a", label: "Laptop" },
         { environmentId: "env-b", label: "Desktop" },
       ],
     });
-    // The fresher native snapshot wins; the hub row is pre-filtered by email.
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
@@ -371,12 +369,10 @@ describe("pools", () => {
       ],
     ]);
     const [account] = collectLimitAccounts(input);
-    // Only the hub path clears the routing cooldown it holds for this account.
     expect(account?.redeem).toEqual({
       environmentId: "env-a",
       input: { sourceId: "hub", accountId: "claude-same@example.com.json", creditId: "hub-credit" },
     });
-    // The fresher native balance is still the one shown.
     expect(account?.limits.resetCredits?.availableCount).toBe(3);
   });
 
@@ -532,8 +528,6 @@ describe("pools", () => {
           serverConfig: {
             providers: [login("business", "ws-business", 8), login("personal", "ws-plus", 26)],
             usageLimitSources: [
-              // A hub that names the workspace joins it; one that does not
-              // cannot say which of the two it read, so it keeps its own row.
               { ...source, accounts: [hubAccount("plus.json", "ws-plus"), hubAccount("x.json")] },
             ],
           },
@@ -554,8 +548,6 @@ describe("pools", () => {
       "hub:x.json",
     ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
-    // One hub file name in two workspaces stays two accounts, even without an
-    // email to tell them apart.
     const withoutEmail = (id: string, workspaceId: string) => {
       const { email: _email, ...account } = hubAccount(id, workspaceId);
       return account;
@@ -619,7 +611,6 @@ describe("pools", () => {
     expect(collectLimitAccounts(withOther(unrelated)).map((account) => account.key)).toEqual([
       "env-a:codex",
     ]);
-    // A second org whose limits could not be read still makes the hub ambiguous.
     const unreadable = provider({
       ...native,
       instanceId: ProviderInstanceId.make("team"),
@@ -693,8 +684,6 @@ describe("pools", () => {
         ),
         now,
       )[0]?.windows ?? [];
-    // A weekly-only plan reports weekly as `primary`. The pool keeps one id
-    // whichever account sorts first.
     for (const order of [
       [codexAccount("business", ["primary"]), codexAccount("plus", ["secondary"])],
       [codexAccount("plus", ["secondary"]), codexAccount("business", ["primary"])],
@@ -703,7 +692,6 @@ describe("pools", () => {
       expect(windows.map((window) => window.id)).toEqual(["weekly"]);
       expect(windows[0]?.members).toHaveLength(2);
     }
-    // A second window of the same kind on one account stays apart, with its own id.
     expect(
       pooled([codexAccount("a", ["secondary"]), codexAccount("b", ["primary", "secondary"])]).map(
         (window) => window.id,
@@ -769,7 +757,6 @@ describe("pools", () => {
       ["codex", 1],
     ]);
     const [session, week] = pools[0]!.windows;
-    // A member with no reset has no clock, so it does not vote on pace.
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
         account.key === "hub:b"
@@ -784,9 +771,7 @@ describe("pools", () => {
       ),
       now,
     );
-    // Only a votes: 80% used, 80% elapsed.
     expect(untimed[0]?.windows[0]?.pace).toBe("on");
-    // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,
@@ -836,7 +821,6 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    // Session resets determine the account order for every row.
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
   });
@@ -1143,14 +1127,11 @@ describe("/usage-limits", () => {
       },
     ];
     const report = collectProviderUsageLimits(fresher.instanceId, [fresher], stale, now);
-    // Only redeeming through the hub clears the routing cooldown it holds for
-    // this account, so the hub wins the path even with a staler balance.
     expect(report?.accounts[0]?.resetCreditInput).toEqual({
       sourceId: "hub",
       accountId: "duplicate",
       creditId: "hub-credit",
     });
-    // The fresher native balance is still the one shown.
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
@@ -1227,12 +1208,10 @@ describe("/usage-limits", () => {
     expect(
       collectProviderUsageLimits(selected.instanceId, [selected], [claudeOnly], now)?.notices,
     ).toEqual([]);
-    // A read failure clears the accounts, so the error must not depend on a match.
     const unreadable = { ...failing, accounts: [] };
     expect(
       collectProviderUsageLimits(selected.instanceId, [selected], [unreadable], now)?.notices,
     ).toEqual(["Accounts: token expired"]);
-    // A source-only provider still gets the report, carrying only the error.
     const sourceOnly = collectProviderUsageLimits(
       selected.instanceId,
       [provider({})],
@@ -1255,7 +1234,6 @@ describe("/usage-limits", () => {
       supported?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name),
     ).toEqual(["usage-limits"]);
     expect(withUsageLimitsCommands([withWorkspace], [])[0]?.slashCommands).toEqual([]);
-    // A provider's own command of the same name is left alone without coverage.
     const ownCommand = provider({
       slashCommands: [{ name: "usage-limits", description: "Provider's own" }],
     });

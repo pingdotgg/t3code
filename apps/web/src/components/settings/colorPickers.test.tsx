@@ -2,8 +2,6 @@ import { act, type ReactNode, type ReactElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-// Render popover content without portals so these tests exercise picker input
-// and persistence behavior without starting a browser.
 vi.mock("../ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => children,
   PopoverPopup: ({ children }: { children: ReactNode }) => children,
@@ -103,14 +101,12 @@ describe("shared color controls in settings", () => {
     expect(slider(brightness).props.value).toBe(90);
     expect(slider(brightness).props["aria-valuetext"]).toBe("90%");
     expect(slider(saturation).props.value).toBe(100);
-    // Up/Down on saturation must adjust the reported saturation, not brightness.
     await key(saturation, "ArrowDown", true);
     expect(onCommit).toHaveBeenLastCalledWith("#e61717");
     expect(slider(saturation).props.value).toBe(90);
     expect(slider(saturation).props["aria-valuetext"]).toBe("90%");
     await key(saturation, "ArrowUp", true);
     expect(onCommit).toHaveBeenLastCalledWith("#e60000");
-    // Left/Right on brightness must likewise leave saturation unchanged.
     await key(brightness, "ArrowLeft", true);
     expect(onCommit).toHaveBeenLastCalledWith("#cc0000");
     await key(brightness, "ArrowRight", true);
@@ -182,7 +178,6 @@ describe("shared color controls in settings", () => {
     await act(async () => slider(hue).props.onPointerMove(pointer(50)));
     expect(onChange).not.toHaveBeenCalled();
     expect(frames.size).toBe(1);
-    // A second pointer cannot change or end the active drag.
     await act(async () => slider(hue).props.onPointerMove(pointer(75, 0, 2)));
     await act(async () => slider(hue).props.onPointerUp(pointer(75, 0, 2)));
     expect(onChange).not.toHaveBeenCalled();

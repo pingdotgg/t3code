@@ -139,9 +139,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   options: {
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
-    /** Starts unlinked with publishing off when false. */
     readonly linked?: boolean;
-    /** Serves shells from this source instead of `currentShell`. */
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
@@ -178,7 +176,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
-  // Catch-up publishes read the whole shell once each.
   const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
     getThreadShell: (threadId) =>
@@ -203,6 +200,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
+    getThreadTranscript: unused,
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     getProjectThread: unused,
@@ -303,7 +301,6 @@ describe("AgentAwarenessRelay", () => {
       "run.created",
       "run.updated",
       "runtime-request.updated",
-      // Pending background work changes can release a held completion.
       "subagent.updated",
       "provider-thread.updated",
       "thread.metadata-updated",
@@ -463,7 +460,6 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
       yield* Ref.set(currentShell, shell({ title: "Latest title" }));
       yield* TestClock.adjust("1 millis");
-      // Assert progress before draining so the base fails instead of hanging.
       assert.isTrue(yield* Deferred.isDone(secondRead));
       yield* Fiber.join(first);
       yield* Fiber.join(second);
@@ -675,7 +671,6 @@ describe("AgentAwarenessRelay", () => {
             : Response.json({ ok: true, deliveries: [] }),
       });
       yield* relay.publishThread(THREAD_ID);
-      // Leave six obsolete confirmations at 5,000 through 5,005 milliseconds.
       for (let i = 0; i < 6; i++) {
         yield* Ref.set(currentShell, null);
         yield* relay.publishThread(THREAD_ID);
@@ -778,7 +773,6 @@ describe("AgentAwarenessRelay", () => {
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-      // The relay pulls the next event only after it has handled the previous one.
       const pulls = yield* Queue.unbounded<void>();
       const { relay, shellReads, publications } = yield* makeTestRelay({
         readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
@@ -906,7 +900,6 @@ describe("AgentAwarenessRelay", () => {
         ["running"],
       );
 
-      // Streaming output never reaches the shell read.
       const readsBeforeOutput = shellReads.length;
       yield* deliver(
         itemEvent(
@@ -957,7 +950,6 @@ describe("startup catch-up", { concurrent: false }, () => {
       yield* enablePublishing(secrets);
       yield* relay.start();
 
-      // Get past the backoff ramp, then count checks in a steady window.
       yield* TestClock.adjust("10 minutes");
       const checksBeforeWindow = linkChecks(secretReads);
       yield* TestClock.adjust("10 minutes");
@@ -976,7 +968,6 @@ describe("startup catch-up", { concurrent: false }, () => {
       yield* enablePublishing(secrets);
       yield* relay.start();
 
-      // Backed off to 60 s: the next check is still seconds away.
       yield* TestClock.adjust("10 minutes");
       yield* link(secrets);
       yield* TestClock.adjust("1 second");
@@ -997,7 +988,6 @@ describe("startup catch-up", { concurrent: false }, () => {
       yield* TestClock.adjust("10 minutes");
       assert.equal(catchUp.shellSnapshotReads, 0);
 
-      // `t3 connect publish` writes the opt-in without waking this process.
       yield* enablePublishing(secrets);
       yield* TestClock.adjust("5 seconds");
       assert.equal(catchUp.shellSnapshotReads, 1);

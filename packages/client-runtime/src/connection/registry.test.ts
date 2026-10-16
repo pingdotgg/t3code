@@ -159,12 +159,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
     readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
-    /** Runs before preparing a route; may suspend to hold an attempt in flight. */
     readonly beforePrepareRoute?: (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
-    /** Direct addresses the connected server reports. */
     readonly directEndpoints?: ServerConfig["directEndpoints"];
   },
 ) {
@@ -1369,8 +1367,6 @@ describe("EnvironmentRegistry", () => {
     Effect.gen(function* () {
       let storedCredentials: Ref.Ref<Map<string, ConnectionCredential>> | undefined;
       const harness = yield* makeHarness([], [], [], {
-        // Authentication fails while the old bearer is stored, as the server
-        // would answer once that session was revoked.
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
             ? Effect.succeed(undefined)
@@ -1410,9 +1406,6 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  // The desktop rotates the bootstrap token, so the renderer exchanges it again
-  // and the server revokes the old bearer while the socket stays open. HTTP
-  // reads such as the session's scopes must move to the new bearer (#13324).
   it.effect("a replaced platform bearer reaches a connected session's HTTP requests", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([]);
@@ -1458,8 +1451,6 @@ describe("EnvironmentRegistry", () => {
       const releaseFirstAttempt = yield* Deferred.make<void>();
       const attempts = yield* Ref.make(0);
       const harness = yield* makeHarness([], [], [], {
-        // The first attempt read the old bearer; it stalls, then fails
-        // authentication after the bearer has already been replaced.
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget"
             ? Effect.succeed(undefined)
@@ -1491,8 +1482,6 @@ describe("EnvironmentRegistry", () => {
         yield* registry.reconcilePlatform([registration("old-bearer")]);
         yield* Deferred.await(attemptStarted).pipe(Effect.timeout("1 second"));
 
-        // A live state subscription, as the UI holds, keeps the runtime in place
-        // so the stalled attempt's failure lands on the same supervisor.
         yield* registry
           .stateChanges(BEARER_TARGET.environmentId)
           .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
@@ -1751,7 +1740,6 @@ describe("EnvironmentRegistry", () => {
           (state) => state.phase === "connected",
         );
 
-        // Platform polls and explicit retries reach a healthy connection at once.
         yield* Effect.all(
           [
             ...Array.from({ length: 5 }, () => registry.registerPlatform(registration)),
@@ -1875,7 +1863,6 @@ describe("EnvironmentRegistry", () => {
 });
 
 describe("EnvironmentRegistry routes", () => {
-  // The relay environment, reachable on the LAN as well.
   const LAN_TARGET = new BearerConnectionTarget({
     environmentId: RELAY_TARGET.environmentId,
     label: RELAY_TARGET.label,
@@ -2006,7 +1993,6 @@ describe("EnvironmentRegistry routes", () => {
         const targets = yield* Ref.get(harness.storedTargets);
         expect(routesOf(targets, LAN_TARGET.environmentId)).toEqual([LAN_TARGET]);
         expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);
-        // Only the environment that lost its last route is forgotten.
         expect(yield* Ref.get(harness.cacheClears)).toEqual([SECOND_RELAY_TARGET.environmentId]);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId)?.target,
@@ -2120,7 +2106,6 @@ describe("EnvironmentRegistry routes", () => {
       const httpBaseUrl = "http://100.101.102.103:3773/";
       const learnedId = `learned:${LAN_TARGET.environmentId}:http://100.101.102.103:3773@${LAN_TARGET.connectionId}`;
       const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
-      // Learned by an earlier build, which saved no network.
       const learnedProfile = new BearerConnectionProfile({
         connectionId: learnedId,
         environmentId: LAN_TARGET.environmentId,
@@ -2161,7 +2146,6 @@ describe("EnvironmentRegistry routes", () => {
     Effect.gen(function* () {
       const learnedId = `learned:${LAN_TARGET.environmentId}:100.64.0.9:3773@${LAN_TARGET.connectionId}`;
       const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
-      // An earlier build saved the learned target twice and never its profile.
       const harness = yield* makeHarness(
         [LAN_TARGET, learned, learned],
         [LAN_PROFILE],

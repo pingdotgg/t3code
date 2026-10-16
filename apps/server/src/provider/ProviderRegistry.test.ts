@@ -70,7 +70,6 @@ const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
-/** Default slots that settings mark disabled, so their probes never spawn. */
 const disabledDefaultSlots = (
   ...drivers: ReadonlyArray<string>
 ): ContractServerSettings["providerInstances"] =>
@@ -90,8 +89,6 @@ const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
 
-// ── Test helpers ────────────────────────────────────────────────────
-
 const encoder = new TextEncoder();
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const withBundledCompatibility = (snapshot: ServerProvider) =>
@@ -101,7 +98,6 @@ const withBundledCompatibility = (snapshot: ServerProvider) =>
     ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
   );
 
-// Provider metadata checks use a bundled manifest and stubbed HTTP.
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -386,10 +382,6 @@ function makeMutableServerSettingsService(
   });
 }
 
-// The registry writes the status cache and only then publishes the change, so
-// a subscriber that sees `checkedAt` on the stream knows the file is on disk.
-// Subscribed before the publish that triggers it; a spin on the file would
-// race the write and lose on a slow host.
 const awaitPersistedProvider = (
   registry: ProviderRegistry.ProviderRegistry["Service"],
   checkedAt: string,
@@ -787,7 +779,6 @@ it.layer(
     });
 
     it("does not bring back models the installed CLI is too old to run", () => {
-      // The pending snapshot lists the whole catalog before the version is known.
       const pendingProvider = {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         driver: ProviderDriverKind.make("claudeAgent"),
@@ -1441,7 +1432,6 @@ it.layer(
           models: signedIn.models,
         });
         assert.equal("message" in merged, false);
-        // The next periodic probe reads the merged snapshot as its previous state.
         assert.deepStrictEqual(
           ProviderRegistry.mergeProviderSnapshot(merged, restartProbe),
           merged,
@@ -1479,7 +1469,6 @@ it.layer(
           { ...restartProbe, status: "disabled", enabled: false },
           { ...restartProbe, status: "error", installed: false },
           { ...restartProbe, driver: ProviderDriverKind.make("codex") },
-          // The instance was rebuilt with another sign-in method.
           { ...restartProbe, auth: { status: "unknown", type: "gemini-api-key" } },
         ] satisfies ReadonlyArray<ServerProvider>;
         for (const next of untouched) {
@@ -1821,7 +1810,6 @@ it.layer(
           );
           yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
           assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
-          // Nothing watches skill directories, so an expired scan is redone on use.
           yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS - 1);
           yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
           assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
@@ -1845,8 +1833,6 @@ it.layer(
             [newSkills],
           );
 
-          // A slow fresh scan that read older files must not overwrite a
-          // newer scan that finished first.
           const slowStarted = yield* Deferred.make<void>();
           const releaseSlow = yield* Deferred.make<void>();
           yield* Ref.set(scanGate, { started: slowStarted, release: releaseSlow });
@@ -2695,38 +2681,14 @@ it.layer(
       }),
     );
 
-    // This test intentionally avoids `mockCommandSpawnerLayer` so the real
-    // `probeCodexAppServerProvider` path runs — including the full
-    // `codex app-server` RPC handshake via `CodexClient.layerChildProcess`.
-    // We point `binaryPath` at a name that cannot exist on any machine so
-    // the real `ChildProcessSpawner` deterministically returns ENOENT; the
-    // probe wraps that as `CodexAppServerSpawnError` and
-    // `checkCodexProviderStatus` turns it into the user-visible "not
-    // installed" error snapshot. If the aggregator's `syncLiveSources`
-    // breaks — the `codex_personal`-never-probes bug we are guarding
-    // against — that snapshot never lands in `getProviders` and the
-    // assertions below fail.
     it.effect("propagates real Codex probe failures to the aggregator at boot", () =>
       Effect.gen(function* () {
         const missingBinary = `t3code_codex_missing_`;
         const serverSettings = yield* makeMutableServerSettingsService(
           decodeServerSettings(
             deepMerge(encodedDefaultServerSettings, {
-              // `providerInstances` keys are branded `ProviderInstanceId`;
-              // the branded index signature rejects plain string literals
-              // at the TS level even though the runtime schema happily
-              // accepts + decodes them. Cast the patch to `unknown` so
-              // the `Schema.decodeSync` below does the real validation.
               providerInstances: {
-                // Disable every built-in probe that would otherwise spawn
-                // on the CI host. `enabled: false` short-circuits each
-                // driver's probe *before* it touches the spawner, so the
-                // test environment stays isolated from the dev
-                // machine's PATH.
                 ...disabledDefaultSlots("codex", "claudeAgent", "cursor", "grok", "opencode"),
-                // Matches the shape the user had in `.t3/dev/settings.json`
-                // when the bug was reported: a custom enabled Codex instance
-                // pointing at a binary the server has to actually spawn.
                 codex_personal: {
                   driver: "codex",
                   displayName: "Codex Personal",
@@ -2769,11 +2731,6 @@ it.layer(
             OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ),
           Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
-          // NO spawner mock — `ChildProcessSpawner` is supplied by the
-          // outer `NodeServices.layer` on `it.layer(...)` and will
-          // genuinely spawn a subprocess. The missing-binary ENOENT is
-          // what exercises the same failure mode as a misconfigured
-          // production `binaryPath`.
         );
         const runtimeServices = yield* Layer.build(layerProviderRegistry).pipe(
           Scope.provide(scope),
@@ -2814,7 +2771,6 @@ it.layer(
       }),
     );
 
-    // A binary path change must rebuild Codex and publish its new probe result.
     it.effect("re-probes when settings change the codex binaryPath", () =>
       Effect.gen(function* () {
         const firstMissing = `t3code_codex_first_`;
@@ -2928,12 +2884,8 @@ it.layer(
               },
             },
           });
-          // Start the lazy stream only after publishing. A watcher that did
-          // not subscribe before forking has already lost this update.
           yield* Deferred.succeed(allowLazySettingsStream, undefined);
 
-          // Hold the second probe until the aggregator sees the rebuilt
-          // instance. Its next error must come from the new executable.
           yield* Deferred.await(secondProbeStarted);
           yield* pendingRebuild;
           const rebuiltError = yield* Stream.toPull(
@@ -3125,8 +3077,6 @@ it.layer(
       }),
     );
   });
-
-  // ── checkClaudeProviderStatus tests ──────────────────────────
 
   describe("checkClaudeProviderStatus", () => {
     it.effect("returns ready when claude is installed and authenticated", () =>
@@ -3430,7 +3380,6 @@ it.layer(
           claudeCapabilities(),
         );
         assert.strictEqual(status.status, "ready");
-        // The home is resolved through the host Path before it reaches the env.
         assert.deepStrictEqual(
           recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
           [(yield* Path.Path).resolve(claudeConfigDir)],

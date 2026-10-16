@@ -82,7 +82,6 @@ describe("workspace connection subscriptions", () => {
       expect(broadChanges).toBe(20);
       expect(connectionChanges).toBe(0);
       for (let index = 0; index < 4; index++) {
-        // Full config still advances for consumers such as Settings.
         const config = { cwd: `/workspace-${index}` } as ServerConfig;
         h.registry.set(h.source, { ...presentation(), serverConfig: config });
         expect(h.registry.get(h.source)?.serverConfig).toBe(config);

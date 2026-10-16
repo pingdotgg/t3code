@@ -6,17 +6,28 @@ import {
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
   type DeviceServiceState,
+  type ServerSettings as Settings,
+  type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
@@ -544,7 +555,6 @@ it.effect.each([
     Effect.gen(function* () {
       const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
       const paths: string[] = [];
-      // The device list is stale until shutdown re-reads it from the hub.
       let listed: "booted" | "off" | "missing" = "booted";
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
@@ -591,7 +601,6 @@ it.effect.each([
                           booted: listed === "booted",
                         },
                       ],
-                // A partial listing still decodes; it must not read as "off".
                 errors: listed === "missing" ? [{ message: "simctl list failed" }] : [],
               }),
             );
@@ -772,4 +781,108 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(starts).toEqual([]);
     expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+it.effect("reconciles SSH host settings without publishing no-op changes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-reconcile-" });
+    const settings = yield* ServerSettings.ServerSettingsService;
+    // Each change is acknowledged after reconciliation consumed it, so no-ops are observable.
+    const changes = yield* Queue.unbounded<{ value: Settings; done: Deferred.Deferred<void> }>();
+    const removedFiles: string[] = [];
+    const localHost: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      summary: Effect.succeed({
+        id: LOCAL_DEVICE_HOST_ID,
+        label: "Local",
+        kind: "local",
+        platforms: [],
+        hubInstalled: false,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+      current: Effect.succeed(null),
+      ensureReady: () => Effect.die("Unexpected device launch"),
+      ensureAgentReady: () => Effect.die("Unexpected agent launch"),
+      stop: Effect.void,
+      stopAgent: Effect.void,
+    };
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, localHost),
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        ...settings,
+        subscribeChanges: Effect.succeed(
+          Stream.fromQueue(changes).pipe(
+            Stream.flatMap(({ value, done }) =>
+              Stream.make(value).pipe(
+                Stream.concat(
+                  Stream.fromEffect(Deferred.succeed(done, undefined)).pipe(Stream.drain),
+                ),
+              ),
+            ),
+          ),
+        ),
+      }),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          remove: (file) => Effect.sync(() => void removedFiles.push(file)),
+        }),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Unexpected helper launch"),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Unexpected HTTP request")),
+      ),
+      // `ssh -G` resolves the target to a non-local address.
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.make(new TextEncoder().encode("hostname 192.0.2.1\nport 22\n")),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          ),
+        ),
+      ),
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+    );
+    const update = Effect.fnUntraced(function* (deviceHosts: ReadonlyArray<SshDeviceHostConfig>) {
+      const value = yield* settings.updateSettings({ deviceHosts: [...deviceHosts] });
+      const done = yield* Deferred.make<void>();
+      yield* Queue.offer(changes, { value, done });
+      yield* Deferred.await(done);
+      return yield* service.state;
+    });
+
+    const initial = yield* service.state;
+    expect(yield* update([])).toEqual(initial);
+
+    const host: SshDeviceHostConfig = { id: "remote", label: "Remote", target: "remote-fixture" };
+    const added = yield* update([host]);
+    expect(added.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID, host.id]);
+    expect(yield* update([{ ...host }])).toEqual(added);
+
+    yield* service.setHostStatus(host.id, { status: "failed", detail: "stale" });
+    const removed = yield* update([]);
+    expect(removed.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID]);
+    expect(removed.hostStatuses[host.id]).toBeUndefined();
+    expect(removedFiles).toHaveLength(1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
+  ),
 );

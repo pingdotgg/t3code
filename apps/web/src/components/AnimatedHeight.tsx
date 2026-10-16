@@ -10,7 +10,6 @@ export function AnimatedHeight({
   holdHeight = false,
 }: {
   readonly children: ReactNode;
-  /** Retain the previous content height while a replacement is loading. */
   readonly holdHeight?: boolean;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);

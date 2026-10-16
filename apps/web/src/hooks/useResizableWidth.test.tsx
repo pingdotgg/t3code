@@ -113,7 +113,6 @@ describe("panel resize cleanup", () => {
       expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("450px");
       expect(hostStyle.get("transition-property")).toBe("none");
       expect(result.width).toBe(400);
-      // Queue another move to check that interruption cancels pending work too.
       await act(() => result.handlers.onPointerMove(pointer(25)));
       expect(style.cursor).toBe("col-resize");
       expect(style.userSelect).toBe("none");

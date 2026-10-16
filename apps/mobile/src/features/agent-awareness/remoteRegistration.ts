@@ -73,15 +73,9 @@ export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwaren
 
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
 const activityPushTokenListeners = new WeakSet<LiveActivity<AgentActivityProps>>();
-// Activity tokens the relay recently accepted, by acceptance time. The refresh
-// runs on sign-in, every app foreground, and every environment-connection
-// update, which arrive in bursts and spammed identical registrations. But the
-// registration is not a pure no-op: the relay replays the current aggregate to
-// this device on every accepted registration, and that replay is the
-// foreground reconciliation that repairs drifted or orphaned activities. So
-// dedupe only within a short window — bursts collapse to one request, while a
-// foreground after real time away still triggers a replay. Cleared on
-// sign-out/identity change alongside the device registration state.
+// But the registration is not a pure no-op: the relay replays the current
+// aggregate to this device on every accepted registration, and that replay is
+// the foreground reconciliation that repairs drifted or orphaned activities.
 const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
 // Locally started activities carry the same stale window the relay puts on
 // every push (STALE_AFTER_SECONDS in ApnsClient.ts), so a card whose relay
@@ -93,11 +87,6 @@ let androidDeviceReplayedAt: number | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
 
-// Whether the relay has actually accepted this device's registration. The
-// notification/Live Activity settings toggles must reflect this rather than
-// only local iOS permission or saved preferences: if the registration request
-// never succeeded, the device cannot receive anything, so the switches must
-// not read as enabled.
 export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "registered" | "failed";
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
 const registrationStatusListeners = new Set<() => void>();
@@ -210,8 +199,6 @@ export function setAgentAwarenessRelayTokenProvider(
     // activities, so they would sit orphaned on the lock screen.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
     setRegistrationStatus("unknown");
-    // Sign-out is the only thing that invalidates a stored registration, so the
-    // next sign-in re-registers.
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
       logRegistrationError("clear registration record on sign-out failed", error);
     });
@@ -224,9 +211,6 @@ export function setAgentAwarenessRelayTokenProvider(
     "active live activity registration after cloud sign-in failed",
   );
   if (isExistingIdentity) {
-    // Same account re-activating (e.g. Clerk token refresh) normally needs no
-    // re-registration — but if the previous attempt never succeeded, this is
-    // the only trigger that will retry it before the next cold start.
     if (registrationStatus !== "registered") {
       enqueueDeviceRegistration({}, "device registration retry after cloud session refresh failed");
     }
@@ -235,10 +219,9 @@ export function setAgentAwarenessRelayTokenProvider(
   enqueueDeviceRegistration({}, "device registration after cloud sign-in failed");
 }
 
-// Detach the provider and native listeners without the destructive sign-out
-// cleanup. For provider teardown while the user is still signed in (e.g. the
-// auth bridge unmounting/remounting), ending lock-screen activities and wiping
-// the persisted registration would be wrong — the relay still holds a valid
+// For provider teardown while the user is still signed in (e.g. the auth bridge
+// unmounting/remounting), ending lock-screen activities and wiping the
+// persisted registration would be wrong — the relay still holds a valid
 // registration and the next mount reuses it.
 export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProvider = null;
@@ -322,9 +305,6 @@ const relayToken = (
     });
   });
 
-// Stable fingerprint of everything the relay stores for this device. When it
-// matches the last accepted registration for the same account, re-registering
-// is a no-op, so a launch that changed nothing skips the request entirely.
 function registrationSignature(body: RelayDeviceRegistrationRequest): string {
   return [
     body.deviceId,
@@ -359,8 +339,6 @@ function registerDeviceWithRelay(
     }
     const relayConfig = readRelayConfig();
     if (!relayConfig) {
-      // Nothing is in flight and nothing can succeed until configuration
-      // appears; "pending" would otherwise stick forever.
       setRegistrationStatus("unknown");
       return;
     }
@@ -378,10 +356,6 @@ function registerDeviceWithRelay(
       return;
     }
 
-    // Skip the request when this account already registered an identical
-    // payload; the relay upsert would be a no-op. The record is only cleared on
-    // sign-out, so a device stays registered across launches without re-hitting
-    // the relay every time the app opens.
     const identity = relayTokenProviderIdentity ?? "";
     const persisted = yield* Effect.tryPromise({
       try: () => loadAgentAwarenessRegistrationRecord(),
@@ -397,8 +371,6 @@ function registerDeviceWithRelay(
       return;
     }
     const payload = body;
-    // The relay URL participates so pointing the app at a different relay
-    // invalidates the record and re-registers there.
     const signature = `${relayConfig.url}|${registrationSignature(payload)}`;
     // Android registration also silently replays the current card. Collapse
     // foreground bursts, but repair missed pushes on cold start or a return
@@ -481,10 +453,6 @@ function unregisterDeviceWithRelay(input: {
   });
 }
 
-// The environment descriptor advertises whether agent-activity publishes
-// currently leave that server (`capabilities.agentActivityPublishing`). Only
-// an explicit false skips the seed card: older servers omit the capability
-// but may still publish.
 function environmentPublishesAgentActivity(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
@@ -492,13 +460,6 @@ function environmentPublishesAgentActivity(environmentId: EnvironmentId): boolea
   );
 }
 
-// Arms the lock-screen card the moment the user starts agent work from this
-// phone, while the app is still foregrounded and the fresh activity's token
-// can be registered immediately. The seeded row is a best-effort placeholder;
-// the relay's registration replay repaints it with the authoritative
-// aggregate within seconds. No-ops when a card is already armed, and skips
-// environments that report publishing disabled — the seed would sit on
-// "Connecting" forever with no update ever arriving to repaint or end it.
 export function armAgentAwarenessLiveActivityForLocalWork(input: {
   readonly environmentId: EnvironmentId;
   readonly threadTitle: string;
@@ -826,12 +787,6 @@ function ensurePushTokenListener(): void {
   });
 }
 
-// Re-registering activity tokens on foreground makes the relay replay the
-// current aggregate to this device, which updates content that drifted while
-// pushes could not be delivered and ends orphaned activities whose end push
-// never arrived. (Deduped by ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS: rapid
-// foreground/sign-in bursts collapse to one registration, but returning after
-// real time away still replays.)
 function ensureAppStateListener(): void {
   if (appStateSubscription || !canRegisterPushNotifications()) {
     return;
@@ -895,8 +850,6 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
   return registerDeviceForCurrentUser().pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
-        // Same rationale as the queued path: a failed refresh does not undo an
-        // already accepted registration.
         if (registrationStatus !== "registered") {
           setRegistrationStatus("failed");
         }
@@ -1108,12 +1061,9 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
     }
 
     // Activities are only ever created here, in the foreground, where the
-    // update token can be observed and registered immediately — the relay
-    // never remote-starts one (background push-to-start wakes proved too
-    // unreliable to hand the token over). Arming is conditional: the relay is
-    // asked what the card would show first, so an idle open never creates an
-    // empty lock-screen card, and an armed card is born with the real
-    // aggregate instead of a placeholder.
+    // update token can be observed and registered immediately — the relay never
+    // remote-starts one (background push-to-start wakes proved too unreliable
+    // to hand the token over).
     if (activities.length === 0) {
       const preferences = yield* Effect.tryPromise({
         try: () => loadPreferences(),
@@ -1123,8 +1073,6 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
             cause,
           }),
       }).pipe(Effect.orElseSucceed(() => null));
-      // The toggle defaults to on: an unset preference (fresh install) must
-      // prime, so only an explicit false blocks it.
       if (preferences?.liveActivitiesEnabled !== false) {
         const snapshot = yield* readAgentActivitySnapshot();
         // The snapshot request yields; an arm-on-send may have created the

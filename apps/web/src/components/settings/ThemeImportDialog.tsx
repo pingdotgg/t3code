@@ -24,7 +24,6 @@ import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../
 import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
- * A full theme export is a few KB, so anything past this is not a theme file.
  * The guard runs on the size before the bytes are ever read: a large file
  * would otherwise be pulled into memory, highlighted, and rendered, which
  * locks the UI for as long as that takes.
@@ -41,7 +40,6 @@ function formatByteSize(bytes: number): string {
   return `${bytes} bytes`;
 }
 
-/** Returns the error to show for a file too large to be a theme, else null. */
 export function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
   return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
@@ -140,7 +138,6 @@ function ThemeJsonEditor({
   );
 }
 
-/** What the import pipeline needs from a file; DOM File satisfies it. */
 type ImportableThemeFile = { name: string; size: number; text: () => Promise<string> };
 
 export function ThemeImportDialog({
@@ -152,7 +149,6 @@ export function ThemeImportDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: (theme: ThemeDefinition) => boolean;
-  /** Batch imports install without activating; the caller reports them. */
   onImportedMany: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -161,15 +157,11 @@ export function ThemeImportDialog({
   const [error, setError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
-  // Imports whose id is already installed wait here for an update-or-copy
-  // decision instead of failing.
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
   const importRequestRef = useRef(0);
 
   useEffect(() => {
     importRequestRef.current += 1;
-    // Reset on close too: a dialog dismissed mid-drag would otherwise reopen
-    // still wearing the drop highlight.
     setIsDropTarget(false);
     if (!open) return;
     setJson("");
@@ -180,8 +172,6 @@ export function ThemeImportDialog({
   }, [open]);
 
   const readThemeFile = useCallback(async (file: ImportableThemeFile) => {
-    // Check the size first: reading a large file is what locks the UI, so it
-    // never gets read at all.
     const oversized = describeOversizedThemeFile(file.size);
     if (oversized) {
       setError(oversized);
@@ -204,9 +194,6 @@ export function ThemeImportDialog({
     }
   }, []);
 
-  // Several files at once import as a batch: VS Code families pair their
-  // light and dark variants, everything installs without activating, and the
-  // single-file flow keeps filling the editor for review.
   const readThemeBatch = useCallback(
     async (files: ReadonlyArray<ImportableThemeFile>) => {
       const requestId = ++importRequestRef.current;
@@ -272,9 +259,6 @@ export function ThemeImportDialog({
     [readThemeBatch, readThemeFile],
   );
 
-  // On desktop the native picker opens in ~/.vscode/extensions (when it
-  // exists) and reads the files in the main process; the browser input is
-  // the fallback everywhere else.
   const openFilePicker = useCallback(() => {
     const bridge = window.desktopBridge;
     if (bridge?.pickThemeFiles) {
@@ -311,8 +295,6 @@ export function ThemeImportDialog({
     [readThemeFiles],
   );
 
-  /** Copy of an already-installed theme under the source file's name when
-   *  that differs (Dracula Soft), else the next free "Name (1)". */
   const versionedCopy = (
     theme: ThemeDefinition,
     preferredName?: string | null,
@@ -379,7 +361,6 @@ export function ThemeImportDialog({
   );
 
   const handleSubmit = useCallback(() => {
-    // Pasted text bypasses the file guard, so the same limit applies here.
     const oversized = describeOversizedThemeFile(json.length);
     if (oversized) {
       setError(oversized);
@@ -387,8 +368,6 @@ export function ThemeImportDialog({
     }
     try {
       const parsed: unknown = JSON.parse(json);
-      // VS Code themes are converted on the way in; anything else has to be
-      // one of our own files.
       const theme = isVsCodeThemeFile(parsed)
         ? parseVsCodeThemeFile(parsed)
         : parseThemeFile(parsed);
@@ -399,13 +378,9 @@ export function ThemeImportDialog({
       }
       const installedTheme = installCustomTheme(theme);
       if (!onImported(installedTheme)) {
-        // Roll the install back so a retry can run it again instead of
-        // failing on the already-taken theme id.
         try {
           removeCustomTheme(installedTheme.id);
-        } catch {
-          // Storage is failing wholesale; the error below covers it.
-        }
+        } catch {}
         setError("Theme added, but it could not be selected. Try again.");
         return;
       }
@@ -455,7 +430,6 @@ export function ThemeImportDialog({
                 setIsDropTarget(true);
               },
               onDragLeave: (event: DragEvent<HTMLDivElement>) => {
-                // Ignore moves between children of the drop zone.
                 if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                 setIsDropTarget(false);
               },
@@ -532,10 +506,6 @@ export function ThemeImportDialog({
                   {fileInput}
                 </div>
                 {editorSection()}
-                {/* The actions live with the import section, not in a DialogFooter,
-                    because Add theme only applies to the file in this section. Pinning
-                    them at the modal bottom would read as a modal-scoped action when
-                    the dialog also has the search and conflict views. */}
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <Button variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel

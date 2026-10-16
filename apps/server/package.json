@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.45",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -59,6 +59,7 @@
     "proper-lockfile": "4.1.2",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
+    "undici": "catalog:",
     "yaml": "catalog:",
     "yauzl": "^3.4.0"
   },

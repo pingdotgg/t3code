@@ -1,11 +1,16 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import {
+  GraphQL,
+  GraphQLClient,
+  GraphQLClientError,
+  GraphQLGroup,
+  GraphQLResolver,
+} from "effect/graphql";
 import * as Option from "effect/Option";
-import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -21,10 +26,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
+import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import {
-  decodeGitHubPullRequestEntries,
+  normalizeGitHubPullRequestRecord,
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 import {
@@ -56,6 +63,30 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
 
 import * as GitHubClient from "../client/definition.ts";
+import {
+  PullRequestByNumber,
+  PullRequestNode,
+  PullRequestsByHead,
+} from "./sourceControlProvider.graphql.ts";
+
+/**
+ * The generated head lookup with its rows left undecoded, so `listByHead` decodes them one at a
+ * time: a row whose fields no longer decode is skipped rather than failing every lookup that
+ * shared its document.
+ */
+const LenientPullRequestsByHead = GraphQL.query(PullRequestsByHead.name, {
+  // The template, not the joined text: `GraphQLResolver.aliased` repeats it per lookup.
+  document: PullRequestsByHead.template!,
+  variables: PullRequestsByHead.variables,
+  result: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        pullRequests: Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.Unknown)) }),
+      }),
+    ),
+  }),
+});
+const decodePullRequestNode = Schema.decodeUnknownOption(PullRequestNode);
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -80,10 +111,6 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
   }));
 }
 
-/**
- * Reads `gh auth status --json hosts`. The headline account is the one GitHub requests will
- * use: Settings can pin a login per host or turn a host off, and an environment token beats both.
- */
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
   settings: GitHubClient.GitHubSettings = readSourceControlHostSettings(GitHubClient.settings, {}),
@@ -92,7 +119,6 @@ export function parseGitHubAuth(
   const authStatus = parseGitHubAuthStatus(input.stdout);
   const hosts = [...new Set(authStatus.accounts.map((entry) => entry.host))];
   const fallback = findAuthenticatedGitHubAccount(authStatus.accounts);
-  // Lead with the host gh would pick, unless Settings turned it off.
   const orderedHosts = fallback
     ? [fallback.host, ...hosts.filter((host) => host !== fallback.host)]
     : hosts;
@@ -142,7 +168,7 @@ export function parseGitHubAuth(
   }
 
   // gh gained `auth status --json` in 2.81.0. Older versions reject the flag and exit
-  // non-zero, which reads exactly like a signed-out CLI. Name the real problem instead.
+  // non-zero, which reads exactly like a signed-out CLI.
   if (input.exitCode !== 0 && output.includes("unknown flag: --json")) {
     return providerAuth({
       status: "unknown",
@@ -180,19 +206,16 @@ const decodeViewer = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ login: Schema.String })),
 );
 
-/** The environment variable gh would take a github.com token from, if one is set. */
 function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null {
   return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
 }
 
 /**
- * GitHub is usable with a token saved in Settings, one from the environment, or `gh` to hand one
- * over. Reads the
- * GitHub settings on every probe, so a saved account choice shows on rescan. An environment
- * token is checked against the API, since `gh auth status` may not know it.
+ * An environment token is checked against the API, since `gh auth status` may
+ * not know it.
  */
 export const makeDiscovery = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
@@ -215,11 +238,9 @@ export const makeDiscovery = Effect.gen(function* () {
         process,
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
-      // A token saved in Settings wins over the environment, which wins over gh.
       const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);
       const tokenSource = savedToken ? "the token saved in Settings" : variable;
-      // A host turned off in Settings stays off even with a token.
       if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
       const viewer = yield* api
         .rest({ host: "github.com", operation: "discovery", path: "user" })
@@ -227,7 +248,6 @@ export const makeDiscovery = Effect.gen(function* () {
       const login = Result.isSuccess(viewer)
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
         : undefined;
-      // The per-host logins stay, so the account picker still lists every host gh knows.
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
       return {
         ...cli,
@@ -243,8 +263,7 @@ export const makeDiscovery = Effect.gen(function* () {
                   : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
               })
             : Result.isFailure(viewer) && viewer.failure._tag !== "GitHubApiAuthenticationError"
-              ? // Only a refusal says the token is bad; a network error or a pause says nothing.
-                providerAuth({
+              ? providerAuth({
                   status: "unknown",
                   host: "github.com",
                   detail: `Could not check ${savedToken ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
@@ -261,18 +280,20 @@ export const makeDiscovery = Effect.gen(function* () {
       } satisfies SourceControlProviderDiscoveryItem;
     }),
     /**
-     * Claims a custom host GitHub holds a credential for, from whichever source supplies it
-     * (Settings, the environment or gh). A host turned off in Settings is claimed too, so its
-     * error says so instead of "unsupported host".
+     * A host turned off in Settings is claimed too, so its error says so
+     * instead of "unsupported host".
      */
     refineUnknownRemote: ({ context }) => {
-      // Identity resolution also probes providers before a web base URL is known.
       const url = URL.parse(context.provider.baseUrl);
       if (!url?.host) return Effect.succeed(null);
+      // A timeout or keyring failure propagates: the registry does not keep that answer.
       return api.credential(url.host).pipe(
         Effect.as(true),
-        Effect.catchTags({ GitHubHostDisabledError: () => Effect.succeed(true) }),
-        Effect.orElseSucceed(() => false),
+        Effect.catchTags({
+          GitHubCliMissingError: () => Effect.succeed(false),
+          GitHubHostDisabledError: () => Effect.succeed(true),
+          GitHubNotSignedInError: () => Effect.succeed(false),
+        }),
         Effect.map((known) =>
           known
             ? ({
@@ -287,10 +308,6 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-/**
- * Why a GitHub read or write failed, in words a user can act on. The provider methods attach the
- * operation and request context; `cause` keeps the raw failure for logs, never for transport.
- */
 class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
   readonly detail: string;
   readonly cause: unknown;
@@ -301,9 +318,8 @@ const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail,
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
 
-/** `notFound` names what was missing, which only the operation knows. */
 function fromGitHubApiError(
-  error: GitHubApi.GitHubApiError,
+  error: GitHubRequestPolicy.GitHubApiError,
   notFound = PULL_REQUEST_NOT_FOUND,
 ): GitHubFailure {
   switch (error._tag) {
@@ -314,7 +330,6 @@ function fromGitHubApiError(
       );
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
-      // A missing or turned-off credential already says what to do about it.
       return failure(error.message, error);
     case "GitHubApiAuthenticationError":
       return failure(
@@ -332,7 +347,6 @@ function fromGitHubApiError(
     case "GitHubCliFailedError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
-      // GitHub's own reason ("A pull request already exists…") when it gave one.
       return failure(error.message.trim() || "GitHub request failed.", error);
   }
 }
@@ -357,25 +371,25 @@ const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmpt
 
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
-/** The pull request fields every read selects, in GraphQL. */
-const PULL_REQUEST_NODE_SELECTION =
-  "number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
-const GRAPHQL_STATES: Record<PullRequestListState, ReadonlyArray<string>> = {
+const GRAPHQL_STATES: Record<
+  PullRequestListState,
+  NonNullable<PullRequestsByHead.Variables["states"]>
+> = {
   open: ["OPEN"],
   closed: ["CLOSED"],
   merged: ["MERGED"],
   all: ["OPEN", "CLOSED", "MERGED"],
 };
 /**
- * Head lookups per GraphQL document. A document of a hundred costs one point, the same as one
- * single lookup, but half that keeps each answer near half a second.
+ * A document of a hundred costs one point, the same as one single lookup, but
+ * half that keeps each answer near half a second.
  */
 const HEAD_LOOKUPS_PER_DOCUMENT = 50;
 /**
- * How long a head lookup waits for company. Branch discovery reaches GitHub only after each
- * branch's own git reads, so lookups started together arrive tens of milliseconds apart.
- * A background sweep's lookups spread over up to ~300ms, and every document costs a point no
- * matter how few heads it holds, so reads without reserve wait longer.
+ * Branch discovery reaches GitHub only after each branch's own git reads, so lookups started
+ * together arrive tens of milliseconds apart. A background sweep's lookups spread over up to
+ * ~300ms, and every document costs a point no matter how few heads it holds, so reads
+ * without reserve wait longer.
  */
 const HEAD_LOOKUP_BATCH_WINDOW = "50 millis";
 const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
@@ -385,88 +399,44 @@ const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
  * processing limit; twenty-five took ~7s.
  */
 const BACKGROUND_HEAD_LOOKUPS_PER_DOCUMENT = 25;
-/** A full document is 5,000 rows of well under 2 KB each. */
 const HEAD_LOOKUP_MAX_RESPONSE_BYTES = 16_000_000;
-/**
- * Rows read for a fork's `owner:branch` head, which GitHub cannot filter by owner. A branch
- * named like a busy default (`main`) is the case this bounds; the owner's own row is near the
- * top because the newest come first.
- */
 const OWNER_HEAD_SCAN_LIMIT = 100;
 
-class PullRequestsByHeadRead extends Request.Class<
-  {
-    readonly host: string;
-    readonly owner: string;
-    readonly name: string;
-    readonly headRefName: string;
-    readonly state: PullRequestListState;
-    readonly limit: number;
-    readonly allowReserve: boolean;
-  },
-  ReadonlyArray<NormalizedGitHubPullRequestRecord>,
-  GitHubFailure
-> {}
-
-/** One aliased `pullRequests` connection per lookup, each head and state passed as a variable. */
-function buildPullRequestsByHeadQuery(
-  lookups: ReadonlyArray<Pick<PullRequestsByHeadRead, "headRefName" | "state" | "limit">>,
-): { readonly document: string; readonly variables: Record<string, unknown> } {
-  const variables: Record<string, unknown> = {};
-  const declarations: string[] = ["$owner: String!", "$name: String!"];
-  const selections: string[] = [];
-  for (const [index, lookup] of lookups.entries()) {
-    variables[`h${index}`] = lookup.headRefName;
-    variables[`s${index}`] = GRAPHQL_STATES[lookup.state];
-    declarations.push(`$h${index}: String!`, `$s${index}: [PullRequestState!]`);
-    // `gh pr list` orders the same way, so a head with more matches than the limit keeps the
-    // same rows.
-    selections.push(
-      `    h${index}: pullRequests(headRefName: $h${index}, states: $s${index}, first: ${lookup.limit}, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PULL_REQUEST_NODE_SELECTION} } }`,
-    );
-  }
-  return {
-    document: `query PullRequestsByHead(${declarations.join(", ")}) {\n  repository(owner: $owner, name: $name) {\n${selections.join("\n")}\n  }\n}`,
-    variables,
-  };
+function trimmed(value: string): string | null {
+  const text = value.trim();
+  return text.length > 0 ? text : null;
 }
 
-const PULL_REQUEST_BY_NUMBER_QUERY = `query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) { ${PULL_REQUEST_NODE_SELECTION} }
-  }
-}`;
+/**
+ * A pull request as every read reports it, or null for a row this cannot use: a number below
+ * one, a blank title, URL or branch name, or an `updatedAt` that is not a date. A list skips a
+ * null, so one such row cannot hide the rest. The generated schema already holds every row to
+ * GitHub's own types, with `state` as a lenient enum.
+ */
+function toPullRequestRecord(node: PullRequestNode): NormalizedGitHubPullRequestRecord | null {
+  const title = trimmed(node.title);
+  const url = trimmed(node.url);
+  const baseRefName = trimmed(node.baseRefName);
+  const headRefName = trimmed(node.headRefName);
+  const updatedAt = DateTime.make(node.updatedAt);
+  if (node.number < 1 || !title || !url || !baseRefName || !headRefName) return null;
+  if (Option.isNone(updatedAt)) return null;
+  return normalizeGitHubPullRequestRecord({
+    ...node,
+    title,
+    url,
+    baseRefName,
+    headRefName,
+    updatedAt: Option.some(DateTime.toUtc(updatedAt.value)),
+  });
+}
 
-const decodePullRequestsByHead = decodeJsonResult(
-  Schema.Struct({
-    data: Schema.Struct({
-      repository: Schema.NullOr(
-        Schema.Record(
-          Schema.String,
-          Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.Unknown) })),
-        ),
-      ),
-    }),
-  }),
-);
-
-const decodePullRequestByNumber = decodeJsonResult(
-  Schema.Struct({
-    data: Schema.Struct({
-      repository: Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(Schema.Unknown) })),
-    }),
-  }),
-);
-
-/** The local branch a pull request checks out into, the way `gh pr checkout` names it. */
 export function pullRequestCheckoutBranchName(input: {
   readonly headRefName: string;
   readonly headOwner: string | null;
   readonly isCrossRepository: boolean;
   readonly defaultBranch: string | null;
 }): string {
-  // gh prefixes the owner only where the fork's branch would take over the default branch's
-  // name, which is the one collision every fork pull request from `main` would hit.
   return input.isCrossRepository &&
     input.headOwner !== null &&
     input.defaultBranch !== null &&
@@ -475,12 +445,11 @@ export function pullRequestCheckoutBranchName(input: {
     : input.headRefName;
 }
 
-/** The checkout's GitHub API host, from the remote the caller resolved the provider from. */
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
 export const make = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
@@ -497,10 +466,6 @@ export const make = Effect.gen(function* () {
       timeoutMs: 5_000,
     });
 
-  /**
-   * Uses GH_REPO, then gh's remote selection on the detected host. The provider context is
-   * a fallback when the checkout's remotes cannot resolve that repository.
-   */
   const resolveRepository = Effect.fn("GitHubSourceControlProvider.resolveRepository")(
     function* (input: {
       readonly cwd: string;
@@ -539,73 +504,42 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const graphqlJson = <A>(
-    input: GitHubApi.GitHubGraphQlInput,
-    decode: (raw: string) => Result.Result<A, unknown>,
+  const client = yield* GraphQLClient.make(
+    GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
+      GitHubGraphQlClient.GitHubGraphQlAuth,
+    ),
+  ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+
+  /**
+   * Runs a generated read against `target`. GitHub's refusals and `errors` fail the way REST
+   * ones do; an answer that does not decode is a `decodeDetail` failure.
+   */
+  const graphqlRead = <A, E, R>(
+    target: GitHubGraphQlClient.GitHubGraphQlTarget["Service"],
     decodeDetail: string,
+    effect: Effect.Effect<A, E, R>,
   ) =>
-    api.graphql(input).pipe(
-      Effect.mapError(fromGitHubApiError),
-      Effect.flatMap((raw) => {
-        const decoded = decode(raw);
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(decoded.success)
-          : Effect.fail(failure(decodeDetail, decoded.failure));
-      }),
+    effect.pipe(
+      GitHubGraphQlClient.call(target),
+      Effect.mapError((error) =>
+        GraphQLClientError.isGraphQLClientError(error)
+          ? failure(decodeDetail, error)
+          : fromGitHubApiError(error as GitHubRequestPolicy.GitHubApiError),
+      ),
     );
 
-  const rest = (input: GitHubApi.GitHubRestInput, notFoundDetail?: string) =>
+  const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
 
-  const headResolver = RequestResolver.makeGrouped<PullRequestsByHeadRead, string>({
-    key: ({ request, context }) =>
-      [
-        request.host,
-        request.owner,
-        request.name,
-        String(request.allowReserve),
-        Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
-          ?.credentialFingerprint ?? "",
-        Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
-      ].join("\0"),
-    resolver: (entries) => {
-      const [first] = entries;
-      const { host, owner, name, allowReserve } = first.request;
-      const query = buildPullRequestsByHeadQuery(entries.map((entry) => entry.request));
-      return graphqlJson(
-        {
-          host,
-          operation: "listPullRequestsByHead",
-          query: query.document,
-          variables: { owner, name, ...query.variables },
-          allowReserve,
-          // Up to 50 heads of 100 rows each. A default branch such as `main` can match a hundred
-          // fork pull requests, so the usual cap would cut the answer short.
-          maxResponseBytes: HEAD_LOOKUP_MAX_RESPONSE_BYTES,
-        },
-        decodePullRequestsByHead,
-        "GitHub returned an invalid change request list.",
-      ).pipe(
-        Effect.flatMap((decoded) =>
-          decoded.data.repository === null
-            ? Effect.fail(notFound("The repository could not be read."))
-            : Effect.succeed(decoded.data.repository),
-        ),
-        Effect.map((aliases) => {
-          for (const [index, entry] of entries.entries()) {
-            const alias = aliases[`h${index}`];
-            entry.completeUnsafe(
-              Exit.succeed(alias == null ? [] : decodeGitHubPullRequestEntries(alias.nodes)),
-            );
-          }
-        }),
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            for (const entry of entries) entry.completeUnsafe(Exit.failCause(cause));
-          }),
-        ),
-      );
-    },
+  /**
+   * Head lookups to one host under one credential share aliased documents: the resolver batches by
+   * the host's endpoint and `batchKey`. Each lookup has its own `repository` root, so lookups on
+   * different repositories may share a document, and a repository GitHub cannot find fails only
+   * its own. Interactive and background lookups never share one, since they use separate
+   * resolvers, so a document is sent under one reserve setting.
+   */
+  const headResolver = GraphQLResolver.aliased(client.PullRequestsByHead, {
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT));
   const interactiveHeadResolver = headResolver.pipe(
     RequestResolver.setDelay(HEAD_LOOKUP_BATCH_WINDOW),
@@ -615,11 +549,6 @@ export const make = Effect.gen(function* () {
     RequestResolver.setDelay(BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW),
   );
 
-  /**
-   * Pull requests whose head is `headSelector` (a branch, or `owner:branch` for a fork), in the
-   * repository `gh pr list` would read in `cwd`. Lookups on one repository that arrive together
-   * share one GraphQL document.
-   */
   const listByHead = Effect.fn("GitHubSourceControlProvider.listByHead")(function* (input: {
     readonly cwd: string;
     readonly headSelector: string;
@@ -631,20 +560,35 @@ export const make = Effect.gen(function* () {
   }) {
     const locator = yield* resolveRepository(input);
     const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
-    // `owner:branch` names a fork's branch. GitHub filters on the branch name only, so the
-    // owner is matched on the rows it returns.
     const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(input.headSelector.trim());
     const headRefName = ownerMatch?.[2] ?? input.headSelector.trim();
-    const rows = yield* Effect.request(
-      new PullRequestsByHeadRead({
-        ...locator,
-        headRefName,
-        state: input.state,
-        limit: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
+    const result = yield* graphqlRead(
+      {
+        host: locator.host,
+        operation: "listPullRequestsByHead",
         allowReserve: input.allowReserve,
-      }),
-      input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
+        // Up to 50 heads of 100 rows each. A default branch such as `main` can match a hundred
+        // fork pull requests, so the usual cap would cut the answer short.
+        maxResponseBytes: HEAD_LOOKUP_MAX_RESPONSE_BYTES,
+      },
+      "GitHub returned an invalid change request list.",
+      GraphQLResolver.request(
+        {
+          owner: locator.owner,
+          name: locator.name,
+          head: headRefName,
+          states: GRAPHQL_STATES[input.state],
+          first: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
+        },
+        input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
+      ),
     );
+    if (result.repository === null) return yield* notFound("The repository could not be read.");
+    const rows = (result.repository.pullRequests.nodes ?? []).flatMap((entry) => {
+      const node = Option.getOrNull(decodePullRequestNode(entry));
+      const record = node === null ? null : toPullRequestRecord(node);
+      return record === null ? [] : [record];
+    });
     if (!ownerMatch) return rows;
     const headOwner = ownerMatch[1]!.toLowerCase();
     return rows
@@ -679,21 +623,19 @@ export const make = Effect.gen(function* () {
       }
       const locator = parsed.kind === "url" ? parsed.locator : yield* resolveRepository(input);
       const decodeDetail = "GitHub returned an invalid pull request.";
-      const decoded = yield* graphqlJson(
-        {
-          host: locator.host,
-          operation: "getPullRequest",
-          query: PULL_REQUEST_BY_NUMBER_QUERY,
-          variables: { owner: locator.owner, name: locator.name, number: parsed.number },
-          allowReserve: true,
-        },
-        decodePullRequestByNumber,
+      const result = yield* graphqlRead(
+        { host: locator.host, operation: "getPullRequest", allowReserve: true },
         decodeDetail,
+        client.PullRequestByNumber({
+          owner: locator.owner,
+          name: locator.name,
+          number: parsed.number,
+        }),
       );
-      const node = decoded.data.repository?.pullRequest;
+      const node = result.repository?.pullRequest;
       if (node == null) return yield* notFound("The pull request does not exist.");
-      const [record] = decodeGitHubPullRequestEntries([node]);
-      if (record === undefined)
+      const record = toPullRequestRecord(node);
+      if (record === null)
         return yield* failure(decodeDetail, new Error("Malformed pull request."));
       return record;
     },
@@ -747,9 +689,6 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * `gh pr checkout` in plain git: the head branch is fetched from the remote that holds it (a
-   * fork gets a remote of its own), checked out under the name gh would give it, and set to
-   * track the head. A head branch that is gone is read from the base's `refs/pull/<n>/head`.
    * An existing branch fast-forwards, or with `force` is reset to the pull request.
    */
   const checkoutPullRequest = Effect.fn("GitHubSourceControlProvider.checkoutPullRequest")(
@@ -801,7 +740,6 @@ export const make = Effect.gen(function* () {
         defaultBranch,
       });
 
-      /** The remote the head branch lives on; a fork the checkout does not know yet is added. */
       const headRemote = Effect.gen(function* () {
         if (!isCrossRepository) return yield* baseRemote;
         if (headNameWithOwner === null) return yield* failure("The fork is gone.");
@@ -821,7 +759,6 @@ export const make = Effect.gen(function* () {
         .listLocalBranchNames(input.cwd)
         .pipe(Effect.mapError(gitFailure))).includes(localBranch);
 
-      // The commit to check out, fetched from the head branch where it still exists.
       const target = yield* Effect.gen(function* () {
         const remoteName = yield* headRemote;
         yield* git.fetchRemoteTrackingBranch({
@@ -874,7 +811,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  /** Reports a failure against the operation and request that made it, with transport-safe context. */
   const providerError =
     (
       operation: string,
@@ -949,8 +885,7 @@ export const make = Effect.gen(function* () {
     // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
     // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,
     // a bare branch also lists same-named branches on other forks (`main`, `patch-1`), so read a
-    // full page and let the owner check pick the right head. gh fetches up to 100 in one
-    // request, and GitHub prices a first:100 connection like first:1.
+    // full page and let the owner check pick the right head.
     headBranchProbe: ({ headSelectors }) => ({
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
@@ -967,7 +902,6 @@ export const make = Effect.gen(function* () {
       return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
     },
     listChangeRequests: (input) =>
-      // An open lookup is a user waiting on a status; the rest may be a background sweep.
       (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
           listByHead({
@@ -1006,7 +940,6 @@ export const make = Effect.gen(function* () {
           host: locator.host,
           operation: "createPullRequest",
           method: "POST",
-          // A user's own write may spend the reserve the background leaves for it.
           allowReserve: true,
           path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
           // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
@@ -1030,7 +963,6 @@ export const make = Effect.gen(function* () {
           Effect.map((locator) => locator.host),
           Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
         )).toLowerCase();
-        // A bare name is the signed-in account's repository, the way `gh repo view` reads it.
         const bareName = input.repository.trim().replace(/\.git$/i, "");
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??

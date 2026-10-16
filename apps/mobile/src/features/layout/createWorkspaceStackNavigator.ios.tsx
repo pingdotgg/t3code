@@ -169,10 +169,6 @@ function WorkspaceColumns(
   );
 
   useEffect(() => {
-    // In compact size classes UIKit exposes one column. Selecting a thread
-    // changes the visible column without rebuilding either navigation stack.
-    // The initial column is a native prop, so it is applied before the host
-    // attaches. Commands only handle later navigation changes.
     if (layout.usesSplitView || shownCompactColumn.current === compactColumn) return;
     shownCompactColumn.current = compactColumn;
     hostRef.current?.show(compactColumn);
@@ -275,7 +271,6 @@ function WorkspaceColumns(
         </Split.Stack>
       </Split.Column>
       <Split.Inspector>
-        {/* Inspector content supplies its own navigation header. */}
         <Split.HeaderConfig hidden />
         <ColumnContent>
           <View className="flex-1 bg-screen">{inspector.render?.()}</View>

@@ -283,12 +283,7 @@ export const make = Effect.gen(function* () {
               // A delivered start begins a NEW activity generation: the stored
               // update token belongs to the previous activity (dead once a new
               // one starts, and certainly dead after an end), so keep it only
-              // for plain updates. Deliveries pause until the app registers
-              // the fresh activity's token; registerLiveActivity + replay then
-              // reconcile content (or end the activity if work already
-              // finished). Without this, updates and ends route to the dead
-              // token and the new lock-screen card is stranded at its start
-              // content forever.
+              // for plain updates.
               activityPushToken:
                 input.kind === "live_activity_update"
                   ? sql`${relayLiveActivities.activityPushToken}`

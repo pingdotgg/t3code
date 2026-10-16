@@ -34,7 +34,6 @@ const subscribe = (listener: () => void) => {
 export const serverPictureInPictureKey = (threadId: string, tabId: string) =>
   JSON.stringify([threadId, tabId]);
 
-/** Chromium and Safari float a canvas-captured video; Firefox has no API for it. */
 export function supportsServerPictureInPicture(): boolean {
   if (typeof document === "undefined") return false;
   if (typeof HTMLCanvasElement.prototype.captureStream !== "function") return false;

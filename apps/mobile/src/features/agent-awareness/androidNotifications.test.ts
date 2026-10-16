@@ -67,7 +67,6 @@ describe("Android native notification capability", () => {
     const { configureAndroidAgentNotifications, clearAndroidAgentNotifications } =
       await import("./androidNotifications");
     const { supportsAgentAwarenessPush } = await import("./capabilities");
-    // An iOS-only signing restriction must not disable Android notifications.
     mocks.config.extra.iosPersonalTeamBuild = true;
     expect(supportsAgentAwarenessPush()).toBe(true);
     configureAndroidAgentNotifications("device", "user", false);

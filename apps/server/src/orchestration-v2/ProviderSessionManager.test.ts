@@ -48,8 +48,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
@@ -78,18 +80,14 @@ const layerFailingReleaseEventSink = Layer.effect(
 ).pipe(Layer.provide(layerTestEventSink));
 
 interface FlakyReleaseWrites {
-  /** Which release writes fail right now. */
   readonly failing: Ref.Ref<"none" | "session" | "session-and-requests">;
-  /** Receives one item per failed write. */
   readonly failures: Queue.Queue<void>;
-  /** Holds runtime request writes: completes `paused`, then waits for `resume`. */
   readonly pauseRequestWrites?: {
     readonly paused: Deferred.Deferred<void>;
     readonly resume: Deferred.Deferred<void>;
   };
 }
 
-// Fails release writes with a defect, the way a failed SQL commit surfaces.
 const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
   Layer.effect(
     EventSink.EventSinkV2,
@@ -123,7 +121,6 @@ const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
-// Once armed, holds the next attach write until the writer is interrupted.
 const layerPausingAttachEventSink = (pause: {
   readonly armed: Ref.Ref<boolean>;
   readonly paused: Deferred.Deferred<void>;
@@ -334,14 +331,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
-    /** False models a runtime whose background tasks can outlive its process. */
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
-    /** Registers the process's closeCount finalizer before `beforeOpen` runs. */
     readonly spawnBeforeOpen?: boolean;
-    /** Completed when a hanging scope close reaches its wedged finalizer. */
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
 ) {
@@ -479,9 +473,7 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
-  /** Runs once, right before the next provider-thread compare-and-set write. */
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
-  /** Once armed, holds the next credential lookup until it is interrupted. */
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -544,6 +536,9 @@ function layerTest(input: {
         IdAllocator.layer,
         layerTestStores,
         ThreadCommandExecutor.layer,
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          resolveBranchName: () => Effect.succeed(null),
+        }),
       ),
     ),
   );
@@ -560,6 +555,9 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          CommandOutputHub.layer.pipe(
+            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+          ),
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
@@ -1056,7 +1054,6 @@ it.effect("ProviderSessionManagerV2 records provider session and turn metrics", 
 
     yield* effect.pipe(
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
-      // A private registry keeps other tests' provider metrics out of the assertions.
       Effect.provideService(Metric.MetricRegistry, new Map()),
     );
   }),
@@ -1129,9 +1126,6 @@ it.effect(
       const state = yield* Ref.make(emptyState);
       const owner = ThreadId.make("thread-provider-session-manager-oom-owner");
       const joiner = ThreadId.make("thread-provider-session-manager-oom-joiner");
-      // Both threads' previous agents were OOM-killed. A new session may run
-      // without a scope (Cursor, OpenCode, a shared Codex session), so it must
-      // not inherit that answer.
       const oomKilledThreads = new Set<string>([owner, joiner]);
       const agentScope = {
         ...AgentScope.defaultValue(),
@@ -1160,7 +1154,6 @@ it.effect(
         yield* manager.open({ threadId: joiner, providerSessionId, modelSelection, runtimePolicy });
         assert.isFalse(yield* agentScope.oomKilled(joiner));
 
-        // Reopening a session the thread already uses keeps its answer.
         oomKilledThreads.add(owner);
         yield* manager.open({ threadId: owner, providerSessionId, modelSelection, runtimePolicy });
         assert.isTrue(yield* agentScope.oomKilled(owner));
@@ -1208,19 +1201,13 @@ it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake"
       assert.isDefined(token);
       assert.isDefined(yield* registry.resolve(token!));
 
-      // A Stop while the provider is still starting.
       yield* Fiber.interrupt(opening);
 
-      // The process started for this open is stopped, and the credential minted
-      // for it revoked.
       assert.equal((yield* Ref.get(state)).closeCount, 1);
       assert.isUndefined(yield* registry.resolve(token!));
       assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
 
-      // Nothing of the interrupted open is left behind: the next open starts a
-      // fresh process with a fresh credential that a later release revokes,
-      // which a leaked reservation would prevent.
       yield* Ref.set(holdHandshake, false);
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
       const replacement = (yield* Ref.get(mcpConfigs)).at(-1);
@@ -1248,7 +1235,6 @@ it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake"
                   : Effect.void,
               ),
             ),
-          // The process is spawned before the handshake that is interrupted.
           spawnBeforeOpen: true,
         }),
       ),
@@ -1289,24 +1275,19 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
       const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(token);
 
-      // The interrupt starts cleanup; the scope close then never finishes.
       const interrupter = yield* Fiber.interrupt(opening).pipe(Effect.forkChild);
       yield* Deferred.await(scopeCloseReached);
 
-      // The session cleanup already ran, ahead of the stuck close.
       assert.isUndefined(yield* registry.resolve(token!));
       assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.equal((yield* Ref.get(state)).closeCount, 0);
 
-      // The close is time-boxed, so the interrupter returns and the session's
-      // open lock is free for the next open.
       yield* TestClock.adjust("30 seconds");
       yield* Fiber.join(interrupter);
       yield* Deferred.succeed(releaseRetry, undefined);
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
       assert.equal((yield* Ref.get(state)).openCount, 1);
 
-      // Its close hangs as well; release it while the test clock can still move.
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
       yield* Fiber.join(stopping);
@@ -1316,7 +1297,6 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
           state,
           idleTimeoutMs: 60_000,
           mcpConfigs,
-          // The first open hangs in its handshake; the retry completes.
           beforeOpen: () =>
             Deferred.isDone(handshakeStarted).pipe(
               Effect.flatMap((retry) =>
@@ -1384,8 +1364,6 @@ it.effect("ProviderSessionManagerV2 releases an idle session whose turn start wa
         .pipe(Effect.forkChild);
       yield* Deferred.await(startTurnReached);
 
-      // Stop lands while the provider is still accepting the turn. No terminal
-      // event follows, so the session must count itself idle again.
       yield* Fiber.interrupt(starting);
       yield* TestClock.adjust("2 seconds");
       yield* Effect.yieldNow;
@@ -1411,8 +1389,6 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const projectId = ProjectId.make("project-provider-session-manager-shared-stopped-start");
-      // Blocks the next project read, so a re-attach can be stopped before its
-      // start marks the session busy.
       const holdProjectRead = yield* Ref.make(false);
       const projectReadHeld = yield* Deferred.make<void>();
       const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
@@ -1478,18 +1454,14 @@ it.effect(
             });
           });
 
-        // B's turn is accepted and still running.
         yield* startTurn(threadB);
 
-        // A detaches, and its next start is stopped while re-attaching, before
-        // it marks the session busy.
         yield* manager.detach({ providerSessionId, threadId: threadA });
         yield* Ref.set(holdProjectRead, true);
         const startingA = yield* startTurn(threadA).pipe(Effect.forkChild);
         yield* Deferred.await(projectReadHeld);
         yield* Fiber.interrupt(startingA);
 
-        // B's running turn keeps the session busy past the idle timeout.
         yield* TestClock.adjust("2 seconds");
         yield* Effect.yieldNow;
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
@@ -1579,16 +1551,13 @@ it.effect(
             });
           });
 
-        // B's turn is accepted and still running.
         yield* startTurn(threadB);
 
-        // A's start is stopped after the adapter began the turn.
         yield* Ref.set(holdStart, true);
         const startingA = yield* startTurn(threadA).pipe(Effect.forkChild);
         yield* Deferred.await(startHeld);
         yield* Fiber.interrupt(startingA);
 
-        // The adapter ends A's turn anyway.
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
         yield* Queue.offer(queue!, {
@@ -1605,7 +1574,6 @@ it.effect(
           threadDisposition: "reusable",
         });
 
-        // B's running turn keeps the session busy past the idle timeout.
         yield* TestClock.adjust("2 seconds");
         yield* Effect.yieldNow;
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
@@ -1645,8 +1613,6 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
       yield* eventSink.write({
         events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
       });
-      // Detached, like an open the layer does not own: only the session
-      // scope's parent can stop its process when the layer closes.
       yield* manager
         .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
         .pipe(Effect.forkDetach);
@@ -1734,8 +1700,6 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
         });
       }
 
-      // Every close hangs until its time box ends. One time box must cover all
-      // three sessions, or a busy server outlives the launcher's kill timer.
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
       yield* Effect.yieldNow;
@@ -1746,7 +1710,7 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
   }),
 );
 
-it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
+it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -1781,7 +1745,8 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
 
       yield* manager.shutdown;
 
-      assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
+      const exit = yield* bufferedSubscription.events.pipe(Stream.runCollect, Effect.exit);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
@@ -1967,8 +1932,6 @@ it.effect(
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
-            // orDie: the test layer's settings-normalization error cannot
-            // occur for a literal override and the slot requires error never.
             serverSettingsLayer: ServerSettings.layerTest({
               enableAgentBrowserAccess: false,
             }).pipe(Layer.orDie),
@@ -2119,8 +2082,6 @@ it.effect(
           }),
         });
 
-        // The first attach of the thread is stopped after attaching it, while
-        // a second attach of the same thread is already on its way.
         yield* Ref.set(armed, true);
         const first = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
@@ -2128,7 +2089,6 @@ it.effect(
         yield* Fiber.interrupt(first);
         yield* Fiber.join(second);
 
-        // The second attach owns the thread's attachment and credential.
         const config = yield* mcpSessions.read(threadId);
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -2174,7 +2134,6 @@ it.effect(
           runtimePolicy,
         });
 
-        // An attach of the thread to this session stalls mid-write...
         yield* Ref.set(armed, true);
         const stale = yield* runtime
           .resumeThread({
@@ -2190,7 +2149,6 @@ it.effect(
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
 
-        // ...while the session is replaced and the thread opens the new one.
         yield* manager.release({ providerSessionId, reason: "runtime_error" });
         const replacement = yield* manager.open({
           threadId,
@@ -2203,14 +2161,12 @@ it.effect(
 
         yield* Fiber.interrupt(stale);
 
-        // The replacement keeps the thread and its credential.
         assert.equal(
           (yield* mcpSessions.read(threadId))?.providerSessionId,
           config!.providerSessionId,
         );
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
-        // Still attached: resuming on the replacement does not attach the thread again.
         const attachedEvents = eventStore
           .read({ threadId, eventType: "provider-session.attached" })
           .pipe(
@@ -2278,20 +2234,17 @@ it.effect(
             nativeThreadId: "native-resolve-stop",
           }),
         });
-        // The thread gets a credential, then detaches and keeps it for a re-attach.
         yield* resume;
         yield* manager.detach({ providerSessionId, threadId });
         const config = yield* mcpSessions.read(threadId);
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
 
-        // A re-attach is stopped while it checks whether that credential is reusable.
         yield* Ref.set(armed, true);
         const stopped = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
         yield* Fiber.interrupt(stopped);
 
-        // Nothing holds the credential now, so a terminal release revokes it.
         yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
         assert.isUndefined(yield* registry.resolve(token));
       }).pipe(
@@ -2407,9 +2360,6 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        // The replacement opens while the old session is still attached: this is
-        // the workspace-handoff sequence, where the queued continuation run can
-        // start its session before the outbox executes the old session's detach.
         yield* manager.open({
           threadId,
           providerSessionId: replacementSessionId,
@@ -2426,8 +2376,6 @@ it.effect(
           replacement?.providerSessionId,
         );
 
-        // First (non-duplicate) detach of the superseded session must not revoke
-        // the replacement's credential or clear its config slot.
         yield* manager.detach({ providerSessionId: oldSessionId, threadId });
 
         assert.equal(
@@ -2512,7 +2460,6 @@ it.effect(
         );
         assert.equal((yield* registry.resolve(originalToken!))?.thread.threadId, threadId);
 
-        // Releasing the session (provider process gone) still revokes.
         yield* manager.close(providerSessionId);
         assert.isUndefined(yield* registry.resolve(originalToken!));
       });
@@ -2557,12 +2504,9 @@ it.effect(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
         });
-        // S1 (shared session) records credential C1 for the thread, then the
-        // thread detaches; S1 stays alive with the stale record.
         yield* manager.open({ threadId, providerSessionId: s1, modelSelection, runtimePolicy });
         yield* manager.detach({ providerSessionId: s1, threadId });
 
-        // The credential dies externally, so S2's attach must rotate to C2.
         yield* registry.revokeThread(threadId);
         yield* manager.open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy });
         const rotated = yield* mcpSessions.read(threadId);
@@ -2570,8 +2514,6 @@ it.effect(
         const rotatedToken = rotated?.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(yield* registry.resolve(rotatedToken!));
 
-        // Releasing S2 must revoke C2 even though S1 still carries a stale
-        // record (of dead C1) for the same thread.
         yield* manager.close(s2);
         assert.isUndefined(
           yield* registry.resolve(rotatedToken!),
@@ -2687,8 +2629,6 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(yield* registry.resolve(token!));
 
-      // Archive/delete detaches carry revokeMcpCredential: the token must die
-      // with the thread even though the shared provider process lives on.
       yield* manager.detach({
         providerSessionId,
         threadId,
@@ -2798,8 +2738,6 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   }),
 );
 
-// Seeds a thread with a background command on a provider thread of the
-// session it then opens, and one on a provider thread of another session.
 const openSessionWithBackgroundCommand = (fixtureName: string) =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
@@ -2857,7 +2795,6 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
     });
     yield* Effect.forEach(providerThreads, writeProviderThread);
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-    // The task ids each seeded provider thread lists now.
     const rosters = Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const projection = yield* projectionStore.getThreadProjection(threadId);
@@ -2883,8 +2820,6 @@ it.effect(
         );
         assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
 
-        // Settle and archive detach the thread, which releases an exclusive
-        // (Claude-like) session.
         yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
 
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
@@ -2897,6 +2832,25 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 checks liveness without delaying idle release", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-is-live",
+      );
+      yield* TestClock.adjust("600 millis");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      yield* TestClock.adjust("600 millis");
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 clears the background roster of an idle-released session", () =>
@@ -2929,7 +2883,6 @@ it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks ca
         "provider-session-manager-outliving-roster",
       );
 
-      // Like OpenCode, whose background subagents run on a shared server.
       yield* manager.close(providerSessionId);
 
       assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
@@ -2955,8 +2908,6 @@ it.effect(
           yield* openSessionWithBackgroundCommand("provider-session-manager-replacement-roster");
         const release = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
 
-        // While the old process closes, a replacement session with the same id
-        // reports a task of its own next to the dead one.
         yield* Deferred.await(scopeCloseReached);
         yield* writeProviderThread({
           ...providerThreads[0]!,
@@ -2992,8 +2943,6 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const { providerSessionId, providerThreads, writeProviderThread, rosters } =
         yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
-      // A replacement reports a task after cleanup read the row, before it
-      // writes, without moving updatedAt (not every writer does).
       const seeded = providerThreads[0]!;
       yield* Ref.set(
         beforeUnchangedWrite,
@@ -3158,7 +3107,6 @@ it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", ()
           for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
         });
 
-      // A long workflow keeps reporting progress well past the pin cap.
       for (let tick = 0; tick < 12; tick += 1) {
         yield* step("1500 millis");
         yield* Queue.offer(adapterQueue!, {
@@ -3170,7 +3118,6 @@ it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", ()
       }
       assert.equal((yield* Ref.get(state)).closeCount, 0);
 
-      // Work that goes silent past the cap is still stopped.
       for (let tick = 0; tick < 6; tick += 1) {
         yield* step("1 second");
       }
@@ -3244,9 +3191,6 @@ it.effect(
         yield* TestClock.adjust("1 second");
         yield* Deferred.await(checkEntered);
 
-        // The release fiber is parked inside the pending-work check, so the
-        // idle decision it already made is stale once this turn marks the
-        // session busy.
         const turnFiber = yield* runtime
           .startTurn({
             appThread,
@@ -3301,9 +3245,6 @@ it.effect(
           layerTest({
             state,
             idleTimeoutMs: 1000,
-            // Uninterruptible so the markBusy-triggered interrupt cannot land
-            // inside the check, mirroring an adapter that masks interruption
-            // while inspecting its own state.
             hasPendingBackgroundWork: Effect.uninterruptible(
               Effect.gen(function* () {
                 if (yield* Ref.getAndSet(firstCheck, false)) {
@@ -3351,13 +3292,9 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
         runtimePolicy,
       });
 
-      // Park the first idle fiber inside an uninterruptible pending-work probe.
       yield* TestClock.adjust("1 second");
       yield* Deferred.await(checkEntered);
 
-      // close removes the map entry first, then waits to interrupt the idle
-      // fiber (still uninterruptible). That window lets a replacement open
-      // under the same providerSessionId before the stale probe finishes.
       const closeFiber = yield* manager.close(providerSessionId).pipe(Effect.forkDetach);
       for (let i = 0; i < 20; i += 1) {
         yield* Effect.yieldNow;
@@ -3370,8 +3307,6 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
       });
       assert.equal((yield* Ref.get(state)).openCount, 2);
 
-      // Stale probe reports pending work against the old runtime; the pin
-      // stamp must no-op on the replacement (runtime / generation mismatch).
       yield* Deferred.succeed(checkGate, undefined);
       yield* Fiber.join(closeFiber);
       for (let i = 0; i < 10; i += 1) {
@@ -3381,9 +3316,6 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
       assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
 
-      // Replacement has no pending background work. After one idle window it
-      // must release. A stale pin stamp would have deferred release until
-      // maxIdlePinMs.
       yield* TestClock.adjust("1 second");
       yield* Effect.yieldNow;
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
@@ -3713,12 +3645,10 @@ it.effect("ProviderSessionManagerV2 retries release records that failed to persi
 
       assert.isTrue(Exit.isFailure(yield* Effect.exit(manager.close(providerSessionId))));
       yield* Queue.take(flaky.failures);
-      // The failed session write does not keep the approval answerable.
       const afterClose = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(afterClose.runtimeRequests.at(-1)?.responseCapability.type, "not_resumable");
       assert.equal(afterClose.providerSessions.at(-1)?.status, "ready");
 
-      // The first retry fails as well, and the retries continue.
       yield* TestClock.adjust("1 second");
       yield* Queue.take(flaky.failures);
       yield* Ref.set(flaky.failing, "none");
@@ -3784,7 +3714,6 @@ it.effect("ProviderSessionManagerV2 release retries leave a replacement session 
       yield* Queue.take(flaky.failures);
       yield* Ref.set(flaky.failing, "none");
 
-      // A replacement opens with the same id before the retry runs.
       yield* TestClock.adjust("500 millis");
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
       const newRequestId = yield* writePendingRequest;
@@ -3861,7 +3790,6 @@ it.effect("ProviderSessionManagerV2 keeps each failed release's cleanup", () =>
           yield* Ref.set(flaky.failing, "none");
         });
 
-      // The first session serves both threads. Its replacement serves one.
       yield* manager.open({
         threadId: firstThreadId,
         providerSessionId,
@@ -3874,7 +3802,6 @@ it.effect("ProviderSessionManagerV2 keeps each failed release's cleanup", () =>
         modelSelection,
         runtimePolicy,
       });
-      // Both the session write and the second thread's request write fail.
       yield* failRelease(2);
       yield* TestClock.adjust("500 millis");
       yield* manager.open({
@@ -3883,7 +3810,6 @@ it.effect("ProviderSessionManagerV2 keeps each failed release's cleanup", () =>
         modelSelection,
         runtimePolicy,
       });
-      // Only the session write fails: the first thread has no requests.
       yield* failRelease(1);
 
       const settled = yield* eventSink
@@ -3933,7 +3859,6 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
         events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
       });
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-      // The runtime creates the request a moment after the release starts.
       const createdAt = DateTime.add(now, { seconds: 1 });
       const pendingRequest = yield* makePendingRuntimeRequestEvents({
         idAllocator,
@@ -3950,7 +3875,6 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
       const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterEvents);
       yield* Queue.offerAll(adapterEvents!, pendingRequest.providerEvents);
-      // The event pump holds the request permit while it persists the request.
       yield* Deferred.await(pause.paused);
       const closed = yield* manager
         .close(providerSessionId)
@@ -4237,7 +4161,6 @@ it.effect(
           providerInstanceId: modelSelection.instanceId,
           threadId: firstThreadId,
         });
-        // Each thread has its own native thread on the shared session.
         const firstProviderThread = makeProviderThread({
           idAllocator,
           threadId: firstThreadId,
@@ -4505,15 +4428,12 @@ it.effect(
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 4);
 
-        // The second thread has no persisted provider thread, so nothing is unloaded.
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
-        // The runtime stays up for the second thread; the first thread's
-        // native state is unloaded after its turn is interrupted.
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
@@ -4533,10 +4453,7 @@ it.effect(
       const state = yield* Ref.make(emptyState);
       const unloadStarted = yield* Deferred.make<void>();
       const releaseUnload = yield* Deferred.make<void>();
-      // Resumes the provider had served when the unload actually reached it.
       let resumesBeforeUnload: number | undefined;
-      // The unload parks after detach removed the attachment, leaving the
-      // window in which the same thread's next turn re-attaches it.
       const beforeUnload = Effect.gen(function* () {
         yield* Deferred.succeed(unloadStarted, undefined);
         yield* Deferred.await(releaseUnload);
@@ -4587,14 +4504,12 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        // A second thread keeps the shared runtime up after the detach.
         yield* manager.open({
           threadId: otherThreadId,
           providerSessionId,
           modelSelection,
           runtimePolicy,
         });
-        // Resuming re-attaches the thread to the shared runtime.
         const resume = runtime.resumeThread({
           providerThread,
           threadId,
@@ -4607,9 +4522,6 @@ it.effect(
           .detach({ providerSessionId, threadId })
           .pipe(Effect.forkScoped);
         yield* Deferred.await(unloadStarted);
-        // The same thread's next turn re-attaches while the unload is parked.
-        // Give it room to run: unfixed, it reaches the provider's resume
-        // here; serialized, it waits for the unload.
         const reattach = yield* resume.pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -4617,8 +4529,6 @@ it.effect(
         yield* Fiber.join(detach);
         yield* Fiber.join(reattach);
 
-        // The unload reached the provider before the re-attached resume, so
-        // that resume reloads the thread instead of being torn down after it.
         assert.equal(resumesBeforeUnload, 1);
         assert.equal((yield* Ref.get(state)).resumeCount, 2);
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
@@ -4639,9 +4549,7 @@ function runIdleThreadUnloadScenario(
     readonly manager: ProviderSessionManager.ProviderSessionManagerV2Shape;
     readonly providerSessionId: ProviderSessionId;
     readonly threadA: ThreadId;
-    /** Starts run `ordinal` on a thread and returns once the provider accepted it. */
     readonly startTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
-    /** Ends run `ordinal` on a thread and waits for the session to process it. */
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
@@ -4719,8 +4627,6 @@ function runIdleThreadUnloadScenario(
       const endTurn = (threadId: ThreadId, ordinal: number) =>
         Effect.scoped(
           Effect.gen(function* () {
-            // The pump hands an event to subscribers only after the session
-            // has processed it, so receiving it is the receipt.
             const subscription = yield* Effect.acquireRelease(subscribe!, (sub) => sub.close);
             const received = yield* subscription.events.pipe(
               Stream.filter((event) => event.type === "turn.terminal"),
@@ -4746,7 +4652,6 @@ function runIdleThreadUnloadScenario(
           }),
         ).pipe(Effect.orDie);
 
-      // B's running turn keeps the shared runtime itself busy throughout.
       yield* startTurn(threadB, 1);
       yield* scenario({
         state,
@@ -4782,21 +4687,17 @@ it.effect(
           assert.equal((yield* Ref.get(state)).resumeCount, 2);
           yield* endTurn(threadA, 1);
 
-          // A follow-up before the timeout keeps the thread loaded.
           yield* TestClock.adjust("500 millis");
           yield* startTurn(threadA, 2);
           yield* TestClock.adjust("1 second");
           assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
 
-          // Idle for the full timeout after its last turn, A is unloaded while
-          // the runtime stays up for B.
           yield* endTurn(threadA, 2);
           yield* TestClock.adjust("1 second");
           assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [`native-${threadA}`]);
           assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
           assert.equal((yield* Ref.get(state)).closeCount, 0);
 
-          // The next turn's resume reaches the provider and reloads A.
           const resumes = (yield* Ref.get(state)).resumeCount;
           yield* resume(threadA);
           assert.equal((yield* Ref.get(state)).resumeCount, resumes + 1);

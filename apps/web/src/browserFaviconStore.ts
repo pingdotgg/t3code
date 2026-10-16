@@ -36,9 +36,7 @@ type PendingFaviconsByOrigin = Record<string, PendingFavicon>;
 
 export interface BrowserFaviconStoreState {
   byKey: Record<string, BrowserFaviconEntry>;
-  /** Capture buffering only. */
   pendingByThreadKey: Record<string, PendingFaviconsByOrigin>;
-  /** Non-persisted fallback for draft/background threads without a hydrated shell. */
   projectRefByThreadKey: Record<string, ScopedProjectRef>;
   recordFavicon: (
     key: string,

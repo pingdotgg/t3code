@@ -13,24 +13,12 @@ import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
 /**
- * The trailing inspector column: resize divider + animated reveal.
- *
- * Rendered by AdaptiveWorkspaceLayout as a SIBLING of the navigator so the
- * native stack header (and its trailing toolbar items) spans only the content
- * pane — the inspector owns its own full-height column, mirroring how each
- * column of a UISplitViewController has its own chrome.
- *
- * Receives the pane layout via props (not the workspace context hook) so this
- * module stays import-cycle-free with AdaptiveWorkspaceLayout.
+ * Receives the pane layout via props (not the workspace context hook) so this module stays
+ * import-cycle-free with AdaptiveWorkspaceLayout.
  */
 export function WorkspaceInspectorPane(props: {
   readonly pathname: string;
   readonly renderedInspectorWidth: SharedValue<number>;
-  /**
-   * When false the pane animates closed but keeps its content mounted for the
-   * exit transition (a route that lost focus). `onClosed` fires once the
-   * close animation settles so the owner can drop the stale content.
-   */
   readonly active?: boolean;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
@@ -45,15 +33,8 @@ export function WorkspaceInspectorPane(props: {
   const resizeStartWidth = useRef(0);
   const [resizing, setResizing] = useState(false);
 
-  // A file-to-file replace remounts the route. Initialize an already-visible
-  // inspector at its final position so route replacement never replays an
-  // entering transition. Only visibility and explicit resizing change it.
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
   const { renderedInspectorWidth } = props;
-  // The content keeps its own width so the reveal (outer width) clips a
-  // fully-laid-out pane instead of reflowing text every frame. When the OPEN
-  // pane's target width changes (e.g. the sidebar toggles and reserves
-  // space), animate the content width in lockstep rather than snapping.
   const renderedContentWidth = useSharedValue(inspectorWidth ?? 0);
 
   const onClosed = props.onClosed;
@@ -83,8 +64,6 @@ export function WorkspaceInspectorPane(props: {
   useEffect(() => {
     const targetWidth = inspectorWidth ?? 0;
     if (!inspectorVisible || resizing) {
-      // Hidden panes re-measure silently; during a divider drag the content
-      // tracks the finger directly.
       renderedContentWidth.value = targetWidth;
       return;
     }

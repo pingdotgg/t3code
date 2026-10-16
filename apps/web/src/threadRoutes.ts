@@ -88,10 +88,6 @@ export function resolveThreadRouteTarget(
   };
 }
 
-/**
- * Resolves the thread represented by either a canonical thread route or a
- * draft route whose promotion to a server thread has been recorded.
- */
 export function resolveActiveThreadRouteRef(
   target: ThreadRouteTarget | null,
   draftThread: DraftThreadRouteState | null,

@@ -208,7 +208,6 @@ const registerSwitchedOffEnvironment = Effect.gen(function* () {
       connectionId: PAIRED_PROFILE.connectionId,
       label: "Old label",
     }),
-    // Keep the endpoint unchanged: registration alone must retain the stale reason.
     profile: new BearerConnectionProfile({ ...PAIRED_PROFILE, label: "Old label" }),
     credential: new BearerConnectionCredential({ token: "old-token" }),
   });

@@ -117,7 +117,6 @@ async function prepareStreamScripts() {
         ["preview-stream.browser.ts"],
         generatePreviewStreamScript,
       ],
-      // The preview transport also imports `hubAccess.ts`.
       ["packages/client-runtime/src/device", ["stream.ts", "hubAccess.ts"], generateAll],
       [
         "packages/client-runtime/src/preview",
@@ -125,7 +124,6 @@ async function prepareStreamScripts() {
         generatePreviewStreamScript,
       ],
     ]) {
-      // The generated modules participate in Metro's normal Fast Refresh.
       fs.watch(path.join(workspaceRoot, directory), { persistent: false }, (_event, filename) => {
         if (filename && !files.includes(String(filename))) return;
         rebuild = rebuild

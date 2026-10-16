@@ -12,11 +12,6 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
 
-/**
- * A whole file's diff inside a stop, for a file the guide vouched for without excerpting. The row
- * above it names the file, so the renderer's own header is left off. The bars between hunks load
- * the unchanged lines, as in the Code tab.
- */
 export function GuideFileDiff({
   file,
   loadDiffFiles,

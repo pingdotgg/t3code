@@ -1118,8 +1118,6 @@ describe("AcpSessionRuntime", () => {
       yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
 
       const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 9)));
-      // The coalesced progress tick emits nothing, and neither the completion
-      // nor a repeated one splits the markdown table across items.
       expect(notes.map((note) => note._tag)).toEqual([
         "ToolCallUpdated",
         "AssistantItemStarted",

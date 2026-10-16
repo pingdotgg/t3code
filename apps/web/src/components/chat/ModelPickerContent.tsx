@@ -21,7 +21,7 @@ import {
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import { rankModelPickerSearch } from "./modelPickerSearch";
 import {
   Combobox,
   ComboboxEmpty,
@@ -158,33 +158,14 @@ function ModelListSeparator() {
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   environmentId: EnvironmentId | null;
-  /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
-  /**
-   * When set, the picker is locked to the given driver kind — typically
-   * because the user is editing a previously-sent message and can't change
-   * which driver served the turn. Multiple instances of the same kind
-   * remain selectable (e.g. locked to `codex` still lets the user switch
-   * between the default Codex and a custom Codex Personal).
-   */
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
-  /**
-   * All configured provider instances in display order. Used to render
-   * the sidebar (one button per instance) and to resolve display names
-   * for the locked-mode header.
-   */
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings?: ResolvedKeybindingsConfig;
-  /**
-   * Model options per instance. Keyed by `ProviderInstanceId` so the
-   * default Codex instance and any custom Codex instances each have their
-   * own list (custom instances typically start with the same built-in
-   * model set but are free to diverge via customModels).
-   */
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   terminalOpen: boolean;
   onRequestClose?: () => void;
@@ -263,7 +244,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         activeInstanceHasSelectableUnavailableModel ||
         activeInstanceNeedsSetup
       ) {
-        // Keep the active instance visible when it is locked or needs setup.
         return props.activeInstanceId;
       }
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
@@ -312,20 +292,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [focusSearchInput]);
 
-  // Create a Set for efficient lookup. Favorites are keyed by
-  // `${instanceId}:${slug}`; the storage schema widened from ProviderDriverKind
-  // to ProviderInstanceId so pre-migration favorites keyed by driver slugs
-  // (e.g. `"codex:gpt-5"`) still resolve — the default instance id equals
-  // the driver slug.
   const favoritesSet = useMemo(() => {
     return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   }, [favorites]);
 
-  /**
-   * Lookup table keyed by `instanceId`. Used for display name + driver
-   * kind enrichment and for `ready`/enabled filtering before flattening
-   * models into the search list.
-   */
   const entryByInstanceId = useMemo(
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
@@ -363,17 +333,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.onOpenProviderSetup,
   ]);
 
-  // Flatten models into a searchable array. One pass over the
-  // instance-keyed map; each model carries its instance id + driver kind
-  // so the list row can render the right icon and display name without
-  // another lookup.
   const flatModels = useMemo(() => {
     const out: ModelPickerItem[] = [];
     for (const [instanceId, models] of modelOptionsByInstance) {
       const entry = entryByInstanceId.get(instanceId);
       if (!entry) {
-        // Instance disappeared between renders (configuration change). Skip
-        // its models — stale options shouldn't appear in the picker.
         continue;
       }
       for (const model of models) {
@@ -446,82 +410,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [instanceEntries],
   );
 
-  // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
     let result = flatModels;
 
-    // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
-      const rankedMatches = result
-        .map((model) => ({
-          model,
-          score: scoreModelPickerSearch(
-            {
-              name: model.name,
-              ...(model.shortName ? { shortName: model.shortName } : {}),
-              ...(model.subProvider ? { subProvider: model.subProvider } : {}),
-              driverKind: model.driverKind,
-              providerDisplayName: model.instanceDisplayName,
-              isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-            },
-            searchQuery,
-          ),
-          isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-          tieBreaker: buildModelPickerSearchText({
-            name: model.name,
-            ...(model.shortName ? { shortName: model.shortName } : {}),
-            ...(model.subProvider ? { subProvider: model.subProvider } : {}),
-            driverKind: model.driverKind,
-            providerDisplayName: model.instanceDisplayName,
-          }),
-        }))
-        .filter(
-          (
-            rankedModel,
-          ): rankedModel is {
-            model: ModelPickerItem;
-            score: number;
-            isFavorite: boolean;
-            tieBreaker: string;
-          } => rankedModel.score !== null,
-        );
-
-      // When searching, we only respect locked provider (by driver kind),
-      // ignoring sidebar selection so account-scoped searches can find a
-      // model before the user chooses a specific instance rail item.
-      if (props.lockedProvider !== null) {
-        const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
-        for (const rankedModel of rankedMatches) {
-          if (matchesLockedProvider(rankedModel.model)) {
-            lockedProviderMatches.push(rankedModel);
-          }
-        }
-        return lockedProviderMatches
-          .toSorted((a, b) => {
-            const scoreDelta = a.score - b.score;
-            if (scoreDelta !== 0) {
-              return scoreDelta;
-            }
-            if (a.isFavorite !== b.isFavorite) {
-              return a.isFavorite ? -1 : 1;
-            }
-            return a.tieBreaker.localeCompare(b.tieBreaker);
-          })
-          .map((rankedModel) => rankedModel.model);
-      }
-
-      return rankedMatches
-        .toSorted((a, b) => {
-          const scoreDelta = a.score - b.score;
-          if (scoreDelta !== 0) {
-            return scoreDelta;
-          }
-          if (a.isFavorite !== b.isFavorite) {
-            return a.isFavorite ? -1 : 1;
-          }
-          return a.tieBreaker.localeCompare(b.tieBreaker);
-        })
-        .map((rankedModel) => rankedModel.model);
+      const candidates =
+        props.lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
+      return rankModelPickerSearch(candidates, searchQuery, (model) => ({
+        name: model.name,
+        ...(model.shortName ? { shortName: model.shortName } : {}),
+        ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+        driverKind: model.driverKind,
+        providerDisplayName: model.instanceDisplayName,
+        isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+      }));
     }
 
     if (props.lockedProvider !== null) {
@@ -596,10 +498,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
-  // Models the manifest announces that this provider's installed CLI is too
-  // old to run. Without this, a new model just seems missing until the user
-  // happens to update the CLI.
-  // A search spans every instance, so it can explain gated matches from any of them.
   const updateRequiredNotices = (
     isSearching
       ? instanceEntries.filter(matchesLockedProvider)
@@ -636,9 +534,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!entry) {
         return;
       }
-      // `resolveSelectableModel` uses the driver kind for normalization
-      // (slug casing etc.). Custom instances share their driver's
-      // normalization rules, so pass the driver kind here.
       const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
       if (resolvedModel) {
         if (additive && onToggleModel) {
@@ -718,7 +613,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => modelListRef.current?.getState().listen("totalSize", setModelListContentSize),
     [],
   );
-  // Fit the list to its rows plus the combobox list `py-1` and LegendList `py-1.5`.
   const modelListHeight =
     filteredItemKeys.length === 0 ? 0 : `calc(${modelListContentSize}px + var(--spacing) * 5)`;
   const updateModelListScrollFades = useCallback(() => {
@@ -839,11 +733,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <div
         ref={pickerContentRef}
         className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
-        // Hold the height from when the search started; results scroll instead of resizing.
         style={isSearching ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
       >
-        {/* Sidebar */}
         {showSidebar && (
           <ModelPickerSidebar
             selectedInstanceId={selectedInstanceId}
@@ -862,7 +754,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           />
         )}
 
-        {/* Main content area */}
         <Combobox<string, boolean>
           inline
           items={allItemKeys}
@@ -971,7 +862,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onTouchStart={(e) => e.stopPropagation()}
             />
 
-            {/* Model list */}
             <div
               className="relative min-h-0 overflow-hidden pr-px"
               style={{ height: modelListHeight }}

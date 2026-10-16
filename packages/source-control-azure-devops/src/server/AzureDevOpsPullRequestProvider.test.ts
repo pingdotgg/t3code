@@ -46,12 +46,6 @@ function change(
   return { path, oldPath: path, changeKind, objectId: "8f80", originalObjectId: "0ca4" };
 }
 
-/**
- * A file whose two sides share no line, so its patch is `lines` removals and `lines` additions of
- * `width` characters each: the diff work and the patch bytes one file costs are both dialled from
- * here, and they are what a slice is bounded by. Each line carries its own number and a prefix
- * as well, so `width` is a floor on how long a line is rather than its byte count.
- */
 function side(prefix: string, lines: number, width: number): string {
   const pad = "z".repeat(width);
   return `${Array.from({ length: lines }, (_, line) => `${prefix} ${line} ${pad}`).join("\n")}\n`;
@@ -61,9 +55,7 @@ const readSlice = (input: {
   readonly paths: ReadonlyArray<string>;
   readonly lines: number;
   readonly width: number;
-  /** Paths the host refuses, which is one file's problem rather than the read's. */
   readonly refused?: ReadonlyArray<string>;
-  /** Paths the change creates, so the host has nothing to hand back for their old side. */
   readonly created?: ReadonlyArray<string>;
   readonly cursor?: string;
 }) =>
@@ -92,9 +84,7 @@ const readSlice = (input: {
               inFlight += 1;
               peakInFlight = Math.max(peakInFlight, inFlight);
               // Every read suspends before it answers, as a subprocess would, so what runs at
-              // once is the scheduler's answer rather than an artefact of resolving inline. The
-              // later a file is listed the sooner it answers, to leave the assembled patch
-              // nothing but the change list to take its order from.
+              // once is the scheduler's answer rather than an artefact of resolving inline.
               const answersAfter = input.paths.length - input.paths.indexOf(item.path);
               for (let turn = 0; turn < answersAfter; turn += 1) yield* Effect.yieldNow;
               inFlight -= 1;
@@ -127,7 +117,6 @@ const readSlice = (input: {
     return { slice, reads, peakInFlight };
   });
 
-/** Which files the patch carries a section for, in the order it carries them. */
 function patchedPaths(patch: string): ReadonlyArray<string> {
   return [...patch.matchAll(/^diff --git a\/(?<path>\S+) b\//gmu)].map(
     (match) => match.groups?.path ?? "",
@@ -141,8 +130,6 @@ describe("getChangeRequestSummary", () => {
 
       const provider = yield* make.pipe(
         Effect.provide(
-          // listIterations and listIterationChanges are left unimplemented here, so a summary
-          // that reached for either would die with UnimplementedError instead of this passing.
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => {
               pullRequestReads += 1;
@@ -197,9 +184,6 @@ describe("getChangeRequest", () => {
 describe("getDiff reads", () => {
   it.effect("holds every reader together to one request's worth of processes", () =>
     Effect.gen(function* () {
-      // The fan-out inside a read bounds one Code tab. Two people opening two Azure reviews at
-      // once are two reads, so without a ceiling above them both they are twice a request's
-      // processes, each paying a Python interpreter's start-up on the same machine.
       const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
       let inFlight = 0;
       let peakInFlight = 0;
@@ -237,17 +221,10 @@ describe("getDiff reads", () => {
 
   it.effect("leaves a run of files it could not diff at all for the next slice", () =>
     Effect.gen(function* () {
-      // A binary, oversize, purely renamed or unreadable entry is a header apiece, a couple of
-      // hundred bytes with no edits in it, so a change made of them spends neither budget: the
-      // byte one would take well over a thousand of them, and the edit one never fills at all.
-      // A listing holds up to ten thousand entries and each still costs its two reads, which is
-      // what a file count is here to bound.
       const paths = Array.from({ length: MAX_DIFF_SLICE_FILES + 20 }, (_, at) => `gen/a${at}.bin`);
       const read = yield* readSlice({ paths, lines: 2, width: 4, refused: paths });
 
       expect(patchedPaths(read.slice.patch)).toHaveLength(MAX_DIFF_SLICE_FILES);
-      // Well inside the byte budget, so the file count is what stopped it rather than either of
-      // the budgets that were already there.
       expect(byteLength(read.slice.patch)).toBeLessThan(MAX_DIFF_SLICE_BYTES);
       expect(parseAzureDevOpsDiffCursor(read.slice.nextCursor)?.fileIndex).toBe(
         MAX_DIFF_SLICE_FILES,
@@ -257,8 +234,6 @@ describe("getDiff reads", () => {
 
   it.effect("asks for both sides of several files at once rather than one side at a time", () =>
     Effect.gen(function* () {
-      // Each file is two `az` invocations, each paying a Python interpreter's start-up, so a
-      // slice read one side after another is most of what the Code tab waits for.
       const read = yield* readSlice({
         paths: ["a.ts", "b.ts", "c.ts", "d.ts"],
         lines: 2,
@@ -271,8 +246,6 @@ describe("getDiff reads", () => {
 
   it.effect("holds the number of files it reads at once down", () =>
     Effect.gen(function* () {
-      // The host throttles, and `az` is a process on the same machine the reader runs agents on,
-      // so a long change is read in batches rather than all at once.
       const paths = Array.from({ length: 24 }, (_, file) => `file-${file}.ts`);
       const read = yield* readSlice({ paths, lines: 2, width: 4 });
 
@@ -298,7 +271,6 @@ describe("getDiff reads", () => {
 
       expect(patchedPaths(read.slice.patch)).toEqual(paths);
       expect(read.slice.truncated).toBe(true);
-      // Its section ends at its header, and the files around it still carry their hunks.
       expect(read.slice.patch).toContain("+++ b/b.ts\ndiff --git a/c.ts");
       expect(read.slice.patch.match(/^@@ /gmu)).toHaveLength(2);
     }),
@@ -308,9 +280,6 @@ describe("getDiff reads", () => {
 describe("what one diff slice spends", () => {
   it.effect("stops on the byte ceiling without carrying what it read past it", () =>
     Effect.gen(function* () {
-      // Two of these fill the slice, and the batch they were read in reached two files further.
-      // Those two belong to the next slice: carrying them would put the request past a ceiling
-      // that is there to bound what one answer weighs.
       const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
       const read = yield* readSlice({ paths, lines: 100, width: 900 });
 
@@ -323,10 +292,6 @@ describe("what one diff slice spends", () => {
 
   it.effect("narrows what it reads at once as the slice fills", () =>
     Effect.gen(function* () {
-      // Four files fit inside the budget and the fifth is past half of what is left of it, so
-      // reading four more would throw most of them away and read them again next slice. Every
-      // file is two `az` invocations, so the batch is judged against what the files before it
-      // weighed rather than left at its full width to the last file.
       const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts"];
       const read = yield* readSlice({ paths, lines: 50, width: 450 });
 
@@ -337,9 +302,6 @@ describe("what one diff slice spends", () => {
 
   it.effect("stops once the diff work one request may do is spent", () =>
     Effect.gen(function* () {
-      // Short lines are cheap on the wire and dear to diff, so the byte ceiling alone would let
-      // one request hold the thread through a dozen of them. Each of these is half of what one
-      // file is allowed, and the slice ends while there is still room for another.
       const paths = Array.from({ length: 12 }, (_, file) => `file-${file}.ts`);
       const read = yield* readSlice({ paths, lines: MAX_FILE_DIFF_EDITS / 4, width: 1 });
 
@@ -351,9 +313,6 @@ describe("what one diff slice spends", () => {
 
   it.effect("carries a whole new file and stops the slice on what it weighed", () =>
     Effect.gen(function* () {
-      // A creation has no edit distance to search out, so no edit bound applies to it and its
-      // section is the whole file. What keeps a run of them from filling one answer is the bytes
-      // they weighed, which the slice has to be charged for.
       const paths = ["new.ts", "b.ts", "c.ts", "d.ts"];
       const read = yield* readSlice({ paths, lines: 8_000, width: 30, created: ["new.ts"] });
 
@@ -381,10 +340,6 @@ describe("what one diff slice spends", () => {
   );
   it.effect("keeps the pull request being read, not the one looked up first", () =>
     Effect.gen(function* () {
-      // Where a pull request lives is read from the pull request itself, so an evicted entry
-      // costs a whole pull request read before any file can be asked for. Ordered by insertion
-      // alone a hit does not renew its entry, so the review being worked through is the first
-      // thing dropped once a listing has walked a cache's worth of cold pull requests.
       const HOT = 7;
       const readsOf = new Map<number, number>();
 
@@ -408,7 +363,6 @@ describe("what one diff slice spends", () => {
         provider.getDiff({ cwd: "/w", repository: "acme/web", host: "dev.azure.com", number });
 
       yield* readDiff(HOT);
-      // A cache's worth of cold pull requests, with the open one read in between each of them.
       for (let filled = 0; filled < LOCATION_CACHE_CAPACITY; filled += 1) {
         yield* readDiff(HOT + 1 + filled);
         yield* readDiff(HOT);

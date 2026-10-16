@@ -30,7 +30,6 @@ const MODIFIER_CODES: Readonly<Record<SnapShotModifier, readonly [string, string
   alt: ["AltLeft", "AltRight"],
 };
 
-/** The same recorder for inline changes and config-backed setup, without saving either. */
 export function useSnapShotShortcutRecorder({
   shortcut,
   shortcutLabel,

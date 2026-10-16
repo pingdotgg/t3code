@@ -14,8 +14,6 @@ const layerRelayDpopSigner = Layer.effect(
   ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    // Keeps the loaded key for the app's lifetime. A failed or interrupted
-    // load is not kept, so the next relay request loads it again.
     const proofKeyCache = yield* Cache.makeWith(
       () => loadOrCreateDpopProofKeyPair().pipe(Effect.provideService(Crypto.Crypto, crypto)),
       {

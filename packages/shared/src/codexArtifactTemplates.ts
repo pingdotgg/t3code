@@ -62,7 +62,6 @@ function isAbsoluteSkillDirectory(value: string): boolean {
   );
 }
 
-/** Mirrors the Codex result-card schema so malformed directives remain literal Markdown. */
 export function resolveCodexArtifactTemplate(
   attributes: CodexArtifactTemplateAttributes | null | undefined,
 ): CodexArtifactTemplate | null {

@@ -327,7 +327,6 @@ describe("find result navigation", () => {
     scrollToOffset
       .mockImplementationOnce(async ({ offset }) => {
         scroll = offset;
-        // Newly mounted row measurements offset the first scroll movement.
       })
       .mockImplementationOnce(async ({ offset }) => {
         scroll = offset;

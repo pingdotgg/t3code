@@ -3,6 +3,7 @@ import {
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationThreadSnapshot,
   Persistence,
+  makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,7 +12,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as MobileDatabase from "../persistence/mobile-database";
-import { makeStoredShellSnapshotEncoder } from "./shell-cache-encoding";
 import {
   attachProjectFaviconDatabase,
   projectFaviconDatabaseCache,
@@ -113,8 +113,6 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
       }).pipe(
-        // Read cached project icons in parallel with the shell so the first rows can show
-        // them, instead of making the thread list wait for the icon read after the decode.
         Effect.zipWith(
           Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
           (snapshot) => snapshot,

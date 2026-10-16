@@ -1,0 +1,358 @@
+diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
+index 6882090..011ad0e 100644
+--- a/lib/module/views/NativeStackView.native.js
++++ b/lib/module/views/NativeStackView.native.js
+@@ -17,8 +17,12 @@ const ANDROID_DEFAULT_HEADER_HEIGHT = 56;
+ function isFabric() {
+   return 'nativeFabricUIManager' in global;
+ }
++function SceneNavigationProvider({ presentationEnvelope, ...props }) {
++  return presentationEnvelope ? props.children : /*#__PURE__*/_jsx(NavigationProvider, props);
++}
+ const useNativeDriver = Platform.OS !== 'web';
+ const SceneView = /*#__PURE__*/React.memo(function SceneView({
++  presentationEnvelope,
+   index,
+   focused,
+   shouldFreeze,
+@@ -305,7 +309,8 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+       }
+     }
+   });
+-  return /*#__PURE__*/_jsx(NavigationProvider, {
++  return /*#__PURE__*/_jsx(SceneNavigationProvider, {
++    presentationEnvelope,
+     route: route,
+     navigation: navigation,
+     children: /*#__PURE__*/_jsx(ScreenStackItem, {
+@@ -427,6 +432,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+   });
+ });
+ export function NativeStackView({
++  presentationEnvelope,
+   state,
+   navigation,
+   descriptors,
+@@ -444,6 +450,17 @@ export function NativeStackView({
+   return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
+     children: /*#__PURE__*/_jsx(ScreenStack, {
+       style: styles.container,
++      onFinishTransitioning: () => {
++        // Surface UIKit's transition-completion callback to every route of
++        // this navigator. Unlike transitionEnd, this also fires when a modal
++        // finishes dismissing — where the presenting screen below receives no
++        // appearance callbacks — and for a gesture-driven dismissal it fires
++        // before the state pop, while the modal route is still the focused
++        // one, so the event must not be targeted at a single route.
++        navigation.emit({
++          type: 'finishTransitioning'
++        });
++      },
+       children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
+         const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
+         const isFocused = state.index === index;
+@@ -460,6 +477,7 @@ export function NativeStackView({
+         // due to component being unmounted. To avoid this, we don't freeze the previous screen there
+         const shouldFreeze = isFabric() ? !isPreloaded && !isFocused && !isBelowFocused && !isModalOnIos : !isPreloaded && !isFocused && !isModalOnIos;
+         return /*#__PURE__*/_jsx(SceneView, {
++          presentationEnvelope,
+           index: index,
+           focused: isFocused,
+           shouldFreeze: shouldFreeze,
+diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
+index 08055b2..8718847 100644
+--- a/lib/module/views/useHeaderConfigProps.js
++++ b/lib/module/views/useHeaderConfigProps.js
+@@ -18,6 +18,12 @@ const processBarButtonItems = (items, colors, fonts) => {
+       }
+       return item;
+     }
++    if (item.type === 'mailSearchToolbar' || item.type === 'searchBarPlacement') {
++      return {
++        ...item,
++        index
++      };
++    }
+     if (item.type === 'button' || item.type === 'menu') {
+       if (item.type === 'menu' && item.menu == null) {
+         throw new Error(`Menu item must have a 'menu' property defined: ${JSON.stringify(item)}`);
+@@ -81,7 +87,7 @@ const processBarButtonItems = (items, colors, fonts) => {
+       }
+       return processedItem;
+     }
+-    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom' and 'spacing'.`);
++    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing', 'mailSearchToolbar' and 'searchBarPlacement'.`);
+   }).filter(item => item != null);
+ };
+ const transformIcon = icon => {
+@@ -165,8 +171,12 @@ export function useHeaderConfigProps({
+   route,
+   title,
+   unstable_headerInsets: headerInsets,
++  unstable_headerCenterItems: headerCenterItems,
+   unstable_headerLeftItems: headerLeftItems,
+-  unstable_headerRightItems: headerRightItems
++  unstable_headerRightItems: headerRightItems,
++  unstable_headerSubtitle: headerSubtitle,
++  unstable_headerToolbarItems: headerToolbarItems,
++  unstable_navigationItemStyle: navigationItemStyle
+ }) {
+   const {
+     direction
+@@ -264,6 +274,10 @@ export function useHeaderConfigProps({
+     tintColor,
+     canGoBack
+   });
++  const centerItems = headerCenterItems?.({
++    tintColor,
++    canGoBack
++  });
+   let rightItems = headerRightItems?.({
+     tintColor,
+     canGoBack
+@@ -273,6 +287,10 @@ export function useHeaderConfigProps({
+     // So we need to reverse them here to match the order
+     rightItems = [...rightItems].reverse();
+   }
++  const toolbarItems = headerToolbarItems?.({
++    tintColor,
++    canGoBack
++  });
+   const children = /*#__PURE__*/_jsxs(_Fragment, {
+     children: [Platform.OS === 'ios' ? /*#__PURE__*/_jsxs(_Fragment, {
+       children: [leftItems ? leftItems.map((item, index) => {
+@@ -281,6 +299,7 @@ export function useHeaderConfigProps({
+           // eslint-disable-next-line @eslint-react/no-array-index-key
+           , {
+             hidesSharedBackground: item.hidesSharedBackground,
++            identifier: item.identifier,
+             children: item.element
+           }, index);
+         }
+@@ -288,7 +307,16 @@ export function useHeaderConfigProps({
+       }) : headerLeftElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderLeftView, {
+         hidesSharedBackground: headerLeftBackgroundVisible === false,
+         children: headerLeftElement
+-      }) : null, headerTitleElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
++      }) : null, centerItems?.length ? centerItems.map((item, index) => {
++        if (item.type === 'custom') {
++          return /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
++            hidesSharedBackground: item.hidesSharedBackground,
++            identifier: item.identifier,
++            children: item.element
++          }, index);
++        }
++        return null;
++      }) : headerTitleElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
+         children: headerTitleElement
+       }) : null]
+     }) : /*#__PURE__*/_jsxs(_Fragment, {
+@@ -331,6 +359,7 @@ export function useHeaderConfigProps({
+         // eslint-disable-next-line @eslint-react/no-array-index-key
+         , {
+           hidesSharedBackground: item.hidesSharedBackground,
++          identifier: item.identifier,
+           children: item.element
+         }, index);
+       }
+@@ -367,6 +396,7 @@ export function useHeaderConfigProps({
+     largeTitleFontWeight,
+     largeTitleHideShadow: headerLargeTitleShadowVisible === false,
+     title: titleText,
++    subtitle: headerSubtitle,
+     titleColor,
+     titleFontFamily,
+     titleFontSize,
+@@ -378,6 +408,9 @@ export function useHeaderConfigProps({
+     disableBottomInsetApplication: headerInsets?.bottom !== undefined ? !headerInsets.bottom : undefined,
+     translucent: translucent === true,
+     children,
++    navigationItemStyle,
++    headerToolbarItems: processBarButtonItems(toolbarItems, colors, fonts),
++    headerCenterBarButtonItems: processBarButtonItems(centerItems, colors, fonts),
+     headerLeftBarButtonItems: processBarButtonItems(leftItems, colors, fonts),
+     headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
+     experimental_userInterfaceStyle: dark ? 'dark' : 'light'
+diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
+index 27a3d8e..3adf86e 100644
+--- a/lib/typescript/src/types.d.ts
++++ b/lib/typescript/src/types.d.ts
+@@ -903,6 +903,8 @@ type SharedHeaderItem = {
+      * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/sharesbackground
+      */
+     sharesBackground?: boolean;
++    /** Native bar axis preference on iOS 27.1 and later. */
++    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
+     /**
+      * An identifier used to match items across transitions.
+      * Only available from iOS 26.0 and later.
+@@ -1148,6 +1150,13 @@ export type NativeStackHeaderItemSpacing = {
+  */
+ export type NativeStackHeaderItemCustom = {
+     type: 'custom';
++    /**
++     * An identifier used to match items across transitions.
++     * Only available from iOS 26.0 and later.
++     *
++     * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/identifier
++     */
++    identifier?: string;
+     /**
+      * A React Element to display as the item.
+      */
+diff --git a/lib/typescript/src/views/NativeStackView.d.ts b/lib/typescript/src/views/NativeStackView.d.ts
+index cc688e2..0ec33c8 100644
+--- a/lib/typescript/src/views/NativeStackView.d.ts
++++ b/lib/typescript/src/views/NativeStackView.d.ts
+@@ -2,6 +2,7 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
+ import * as React from 'react';
+ import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
+ type Props = {
++    presentationEnvelope?: boolean;
+     state: StackNavigationState<ParamListBase>;
+     navigation: NativeStackNavigationHelpers;
+     descriptors: NativeStackDescriptorMap;
+diff --git a/lib/typescript/src/views/NativeStackView.native.d.ts b/lib/typescript/src/views/NativeStackView.native.d.ts
+index d533cd9..857b7ad 100644
+--- a/lib/typescript/src/views/NativeStackView.native.d.ts
++++ b/lib/typescript/src/views/NativeStackView.native.d.ts
+@@ -2,11 +2,12 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
+ import * as React from 'react';
+ import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
+ type Props = {
++    presentationEnvelope?: boolean;
+     state: StackNavigationState<ParamListBase>;
+     navigation: NativeStackNavigationHelpers;
+     descriptors: NativeStackDescriptorMap;
+     describe: (route: RouteProp<ParamListBase>, placeholder: boolean) => NativeStackDescriptor;
+ };
+-export declare function NativeStackView({ state, navigation, descriptors, describe, }: Props): React.JSX.Element;
++export declare function NativeStackView({ presentationEnvelope, state, navigation, descriptors, describe, }: Props): React.JSX.Element;
+ export {};
+ //# sourceMappingURL=NativeStackView.native.d.ts.map
+\ No newline at end of file
+diff --git a/src/types.tsx b/src/types.tsx
+index 5d63f41..e9c53ee 100644
+--- a/src/types.tsx
++++ b/src/types.tsx
+@@ -959,6 +959,8 @@ type SharedHeaderItem = {
+    * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/sharesbackground
+    */
+   sharesBackground?: boolean;
++  /** Native bar axis preference on iOS 27.1 and later. */
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
+   /**
+    * An identifier used to match items across transitions.
+    * Only available from iOS 26.0 and later.
+@@ -1213,6 +1215,13 @@ export type NativeStackHeaderItemSpacing = {
+  */
+ export type NativeStackHeaderItemCustom = {
+   type: 'custom';
++  /**
++   * An identifier used to match items across transitions.
++   * Only available from iOS 26.0 and later.
++   *
++   * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/identifier
++   */
++  identifier?: string;
+   /**
+    * A React Element to display as the item.
+    */
+diff --git a/src/views/NativeStackView.native.tsx b/src/views/NativeStackView.native.tsx
+index aa13bc7..ab4a9d1 100644
+--- a/src/views/NativeStackView.native.tsx
++++ b/src/views/NativeStackView.native.tsx
+@@ -52,7 +52,14 @@ function isFabric() {
+   return 'nativeFabricUIManager' in global;
+ }
+ 
++// A presentation envelope contains descriptors from its owning navigator.
++// Its synthetic route must not override those descriptors' focus state.
++function SceneNavigationProvider({ presentationEnvelope, ...props }: React.ComponentProps<typeof NavigationProvider> & { presentationEnvelope?: boolean }) {
++  return presentationEnvelope ? props.children : <NavigationProvider {...props} />;
++}
++
+ type SceneViewProps = {
++  presentationEnvelope?: boolean;
+   index: number;
+   focused: boolean;
+   shouldFreeze: boolean;
+@@ -71,6 +78,7 @@ type SceneViewProps = {
+ const useNativeDriver = Platform.OS !== 'web';
+ 
+ const SceneView = React.memo(function SceneView({
++  presentationEnvelope,
+   index,
+   focused,
+   shouldFreeze,
+@@ -434,7 +442,7 @@ const SceneView = React.memo(function SceneView({
+       );
+ 
+   return (
+-    <NavigationProvider route={route} navigation={navigation}>
++    <SceneNavigationProvider presentationEnvelope={presentationEnvelope} route={route} navigation={navigation}>
+       <ScreenStackItem
+         screenId={route.key}
+         activityState={isPreloaded ? 0 : 2}
+@@ -571,11 +579,12 @@ const SceneView = React.memo(function SceneView({
+           </HeaderHeightContext.Provider>
+         </AnimatedHeaderHeightContext.Provider>
+       </ScreenStackItem>
+-    </NavigationProvider>
++    </SceneNavigationProvider>
+   );
+ });
+ 
+ type Props = {
++  presentationEnvelope?: boolean;
+   state: StackNavigationState<ParamListBase>;
+   navigation: NativeStackNavigationHelpers;
+   descriptors: NativeStackDescriptorMap;
+@@ -586,6 +595,7 @@ type Props = {
+ };
+ 
+ export function NativeStackView({
++  presentationEnvelope,
+   state,
+   navigation,
+   descriptors,
+@@ -633,6 +643,7 @@ export function NativeStackView({
+ 
+           return (
+             <SceneView
++              presentationEnvelope={presentationEnvelope}
+               key={route.key}
+               index={index}
+               focused={isFocused}
+diff --git a/src/views/NativeStackView.tsx b/src/views/NativeStackView.tsx
+index c50a3fa..6305ed5 100644
+--- a/src/views/NativeStackView.tsx
++++ b/src/views/NativeStackView.tsx
+@@ -25,6 +25,7 @@ import type {
+ import { AnimatedHeaderHeightContext } from '../utils/useAnimatedHeaderHeight';
+ 
+ type Props = {
++    presentationEnvelope?: boolean;
+   state: StackNavigationState<ParamListBase>;
+   // This is used for the native implementation of the stack.
+   navigation: NativeStackNavigationHelpers;
+diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
+index 739134e..9bb056e 100644
+--- a/src/views/useHeaderConfigProps.tsx
++++ b/src/views/useHeaderConfigProps.tsx
+@@ -412,6 +412,7 @@ export function useHeaderConfigProps({
+                     // eslint-disable-next-line @eslint-react/no-array-index-key
+                     key={index}
+                     hidesSharedBackground={item.hidesSharedBackground}
++                    identifier={item.identifier}
+                   >
+                     {item.element}
+                   </ScreenStackHeaderLeftView>
+@@ -488,6 +489,7 @@ export function useHeaderConfigProps({
+                 // eslint-disable-next-line @eslint-react/no-array-index-key
+                 key={index}
+                 hidesSharedBackground={item.hidesSharedBackground}
++                identifier={item.identifier}
+               >
+                 {item.element}
+               </ScreenStackHeaderRightView>

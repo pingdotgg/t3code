@@ -22,7 +22,6 @@ const context = (
   platform: "web",
 });
 
-// Lets the host settle the promises its callbacks return.
 const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve)).then(() => undefined);
 
 const initialize = (
@@ -177,7 +176,6 @@ describe("makeMcpAppHost", () => {
     await flush();
     expect(messages).toEqual(["one", "two"]);
     expect(sent.find((m) => m.id === 3)?.error).toMatchObject({ code: -32602 });
-    // Blank text would ask to send an empty message.
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
   });
 
@@ -305,7 +303,6 @@ describe("makeMcpAppHost", () => {
       displayMode: "fullscreen",
     });
 
-    // An app that declared only inline stays inline.
     const declined = setup();
     initialize(declined.host, { availableDisplayModes: ["inline"] });
     declined.host.receive({
@@ -373,7 +370,6 @@ describe("makeMcpAppHost", () => {
       },
     ]);
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
-    // A refused download is reported in the result, as the draft defines.
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
   });
@@ -386,7 +382,6 @@ describe("makeMcpAppHost", () => {
       host.receive({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" });
       expect(closeRequested).toBe(true);
 
-      // Before initialization there is nothing to ask.
       await host.teardown();
       expect(sent.some((m) => m.method === "ui/resource-teardown")).toBe(false);
 
@@ -408,7 +403,6 @@ describe("makeMcpAppHost", () => {
       expect(timedOut).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       expect(timedOut).toBe(true);
-      // A torn-down host posts nothing more.
       const before = silent.sent.length;
       silent.host.updateHostContext();
       expect(silent.sent).toHaveLength(before);

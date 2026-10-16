@@ -40,10 +40,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Returns the committed hook result after React has flushed mount effects. */
 function readRenderTheme(): HtmlRenderTheme {
   let theme: HtmlRenderTheme | undefined;
-  /** Captures the theme in an effect to avoid mutating test state during render. */
   function Probe() {
     const resolved = useHtmlRenderTheme();
     useEffect(() => {

@@ -9,7 +9,6 @@ import { useComposerPathSearch as useComposerPathSearchQuery } from "../state/qu
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget): ComposerPathSearchState {
   const state = useComposerPathSearchQuery(target);
-  // A stable list lets the composer menu memo cache between renders.
   const entries = useMemo(
     () => state.entries.map((entry) => ({ path: entry.path, kind: entry.kind })),
     [state.entries],

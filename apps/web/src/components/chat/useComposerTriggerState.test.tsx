@@ -25,7 +25,6 @@ async function updatePrompt(text: string, cursor = text.length) {
 }
 
 beforeEach(async () => {
-  // The probe renders no DOM nodes, but ReactDOM still needs an event target.
   const document = {
     nodeType: 9,
     addEventListener() {},

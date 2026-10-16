@@ -200,7 +200,6 @@ function ComboboxItem({
       data-slot="combobox-item"
       {...props}
     >
-      {/* Children lay out as one row: a label that truncates, then any trailing meta. */}
       <div
         className="flex min-w-0 flex-1 items-center gap-2 [&_svg:not([class*='text-'])]:text-muted-foreground"
         data-slot="combobox-item-content"

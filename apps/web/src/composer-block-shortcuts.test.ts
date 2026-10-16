@@ -13,10 +13,8 @@ import {
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
 
-// The same modifier ProseMirror's keymap reads "Mod" as.
 const mac = typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 
-/** A key chord as the browser reports it: key, keyCode and modifiers. */
 function chord(spec: string) {
   const parts = spec.split("-");
   const key = parts.pop()!;
@@ -34,10 +32,6 @@ function chord(spec: string) {
   } as unknown as KeyboardEvent;
 }
 
-/**
- * Presses `spec` with the caret inside `value`, the way the composer's
- * editor would receive it, and returns the stored Markdown.
- */
 function press(value: string, spec: string) {
   const editor = new Editor({
     extensions: [
@@ -60,10 +54,6 @@ function press(value: string, spec: string) {
     content: buildDocJson(value, (name) => ({ label: name, description: null })),
   });
   editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
-  // What the view's `someProp("handleKeyDown")` does, without mounting one:
-  // offer the key to each extension plugin in order until one handles it.
-  // An unmounted editor's state does not carry them yet, so they come from
-  // the extension manager.
   const event = chord(spec);
   const before = editor.state.doc;
   const handled = editor.extensionManager.plugins.some((plugin) =>
@@ -76,11 +66,6 @@ function press(value: string, spec: string) {
   };
 }
 
-// Tiptap's own block shortcuts would nest a list, task list, code block or
-// heading inside a quote, or restructure a list item. The serializers only
-// write what the composer's grammar has, so the nested block, and the text
-// in it, would vanish from the stored draft. None of these are the
-// composer's shortcuts; they must do nothing.
 const BLOCK_CHORDS = [
   "Mod-Shift-8",
   "Mod-Shift-7",
@@ -104,15 +89,10 @@ describe("Tiptap's block shortcuts", () => {
     expect(press("plain text", spec).value).toBe("plain text");
   });
 
-  // Guards the harness itself: a chord the composer keeps must still reach
-  // the keymap, or every case above would pass without pressing anything.
   it("still delivers the composer's own keys", () => {
     expect(press("**bold**", "Mod-b").handled).toBe(true);
   });
 
-  // Sinking or lifting an item moves it without touching its `indent`, so
-  // the stored draft keeps the old nesting and the next rebuild undoes the
-  // move. Nesting belongs to the composer's own Tab, which edits the source.
   it.each([
     ["- p\n- a", "Tab"],
     ["- p\n  - a", "Shift-Tab"],

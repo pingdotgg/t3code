@@ -11,7 +11,6 @@ export interface TerminalPasteSession {
   readonly paste: (input: TerminalPasteInput) => Promise<void>;
 }
 
-/** Coordinates clipboard reads and writes for the currently attached pty. */
 export function createTerminalPasteSession(): TerminalPasteSession {
   let liveTarget: object | null = null;
   let latestRequest = 0;

@@ -112,7 +112,6 @@ describe("DesktopRemoteUpdates", () => {
         yield* settle;
         assert.equal(harness.quitAndInstalls(), 1);
 
-        // The mirror stamped the in-run state changes with the request id.
         const statuses = reports
           .filter((report) => report.requestId === "req-1")
           .map((report) => report.state.status);
@@ -150,8 +149,6 @@ describe("DesktopRemoteUpdates", () => {
         });
         yield* settle;
 
-        // Install failures reduce to status "downloaded" + errorContext
-        // "install"; the prepared result is followed by the commit failure.
         const terminals = terminalReports(reports);
         assert.deepEqual(
           terminals.map((report) => report.outcome),
@@ -185,7 +182,6 @@ describe("DesktopRemoteUpdates", () => {
           ["ready-to-install"],
         );
 
-        // A local install takes the updater reservation and starts shutdown.
         const localInstall = yield* updates.install.pipe(Effect.forkChild);
         yield* Deferred.await(installStarted);
         yield* Queue.offer(commits, {
@@ -195,8 +191,6 @@ describe("DesktopRemoteUpdates", () => {
         });
         yield* settle;
 
-        // No "failed" marker: that install relaunches the app and the
-        // client proves the handoff by reconnecting on the target version.
         assert.deepEqual(
           terminalReports(reports).map((report) => report.outcome),
           ["ready-to-install"],
@@ -271,9 +265,6 @@ describe("DesktopRemoteUpdates", () => {
           requestId: "req-5",
         });
         yield* settle;
-        // First run failed; state is "downloaded" with a lingering
-        // errorContext "install". The retry succeeds and must not report
-        // that leftover as a fresh failure.
         yield* Queue.offer(requests, request("req-6"));
         yield* settle;
         yield* Queue.offer(commits, {
@@ -336,9 +327,7 @@ describe("DesktopRemoteUpdates", () => {
 
   it.effect("retries a download refused while the check still holds the reservation", () => {
     // electron-updater emits update-available from inside checkForUpdates,
-    // before the check action releases its reservation. The download the
-    // remote flow forks in response is refused and must be retried once the
-    // reservation frees up, without burning a download attempt.
+    // before the check action releases its reservation.
     const releaseCheck = Deferred.makeUnsafe<void>();
     const harness = makeHarness({ checkForUpdates: Deferred.await(releaseCheck) });
 
@@ -348,7 +337,6 @@ describe("DesktopRemoteUpdates", () => {
         yield* settle;
         assert.equal(harness.checkCount(), 1);
 
-        // Fire "available" while the check reservation is still held.
         harness.emit("update-available", { version: "1.2.4" });
         yield* settle;
         assert.equal(harness.downloadCount(), 0);
@@ -409,14 +397,11 @@ describe("DesktopRemoteUpdates", () => {
         const desktopState = yield* DesktopState.DesktopState;
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* settle;
-        // Another install already owns the shutdown.
         yield* Ref.set(desktopState.quitting, true);
 
         yield* Queue.offer(requests, request("req-9"));
         yield* settle;
 
-        // Report "installing" once, no "failed" after the refusal: that
-        // install will relaunch the app and this request rides along.
         assert.deepEqual(
           terminalReports(reports).map((report) => report.outcome),
           ["ready-to-install"],

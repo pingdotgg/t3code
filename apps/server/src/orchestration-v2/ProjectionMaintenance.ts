@@ -66,13 +66,6 @@ export const layer: Layer.Layer<
     const eventStore = yield* EventStore.EventStoreV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
 
-    /**
-     * EventSink commits the event, its projection updates, and projection metadata in one SQL
-     * transaction. Startup verification therefore checks that transaction boundary and that every
-     * stored projection can be decoded. It intentionally does not replay domain events through a
-     * second projector: doing so creates another implementation of projection semantics that must
-     * evolve in lockstep with ProjectionStore.
-     */
     const verify = Effect.gen(function* () {
       const expectedThreadRows = yield* sql<{ readonly thread_id: string }>`
         SELECT DISTINCT stream_id AS thread_id
@@ -202,14 +195,12 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) => new ProjectionMaintenanceError({ operation, cause })),
         );
 
-    // Thread-state events whose payload is the complete thread: only the
-    // newest per thread can influence a replay or an afterSequence catch-up.
     // thread.created stays out — verify derives the expected thread set from
-    // it, and it anchors replay ordering.
+    // it, and it anchors replay ordering. thread.deleted stays out too: clients
+    // and waitForThread switch on the event type, not just the payload.
     const SUPERSEDABLE_THREAD_EVENT_TYPES = [
       "thread.archived",
       "thread.unarchived",
-      "thread.deleted",
       "thread.settled",
       "thread.unsettled",
       "thread.snoozed",
@@ -225,16 +216,26 @@ export const layer: Layer.Layer<
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
-      "thread.visited",
-      "thread.marked-unread",
     ];
+    // Read-state events carry the whole thread too, but client reducers apply
+    // them without bumping updatedAt. They supersede only each other: a newer
+    // visit must not delete the rename that carries the activity timestamp,
+    // while any newer activity-bearing event supersedes both groups.
+    const READ_STATE_THREAD_EVENT_TYPES = ["thread.visited", "thread.marked-unread"];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
+    const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
     // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
-    const COMPACTION_PAGE_SIZE = 500;
+    // Discovery runs on the shared synchronous connection; json_extract over
+    // large payloads made 500-row pages block the event loop for ~90ms.
+    const COMPACTION_PAGE_SIZE = 50;
 
     /**
-     * Scan newest first to retain the newest state for each entity.
+     * Scan newest first to retain the newest state for each entity. Keyed
+     * entities (messages, nodes, PR links) also keep their oldest event: client
+     * reducers append an entity where they first see it, so a replay from any
+     * cursor must either carry that first event or find the entity already
+     * present. Only the events in between are deleted.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
      * turn-item.updated stays intact because replay assigns positions on first write.
@@ -251,7 +252,10 @@ export const layer: Layer.Layer<
       let throughSequence = bounds[0]?.event_sequence ?? 0;
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
-      const retainedEntityKeys = new Set<string>();
+      const retainedReadStateThreadIds = new Set<string>();
+      // Per key: the lowest sequence seen so far after the newest. It is
+      // deleted once an even older event turns up and kept otherwise.
+      const oldestCandidateByEntityKey = new Map<string, number | null>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -275,6 +279,11 @@ export const layer: Layer.Layer<
               WHEN event.application_event_version = 2
                 AND event.event_type IN ('message.updated', 'node.updated')
               THEN json_extract(event.payload_json, '$.id')
+              WHEN event.application_event_version = 2
+                AND event.event_type = 'thread.pull-request-link-updated'
+              THEN json_array(json_extract(event.payload_json, '$.host'),
+                json_extract(event.payload_json, '$.repository'),
+                json_extract(event.payload_json, '$.number'))
               ELSE NULL
             END AS entity_id,
             CASE
@@ -302,10 +311,34 @@ export const layer: Layer.Layer<
             ) {
               if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
               else retainedThreadIds.add(row.stream_id);
-            } else if (row.event_type === "message.updated" || row.event_type === "node.updated") {
+            } else if (
+              row.aggregate_kind === "thread" &&
+              readStateThreadEventTypes.has(row.event_type)
+            ) {
+              if (
+                retainedThreadIds.has(row.stream_id) ||
+                retainedReadStateThreadIds.has(row.stream_id)
+              ) {
+                obsolete.push(row.sequence);
+              } else retainedReadStateThreadIds.add(row.stream_id);
+            } else if (
+              row.event_type === "thread.pull-request-link-updated" &&
+              retainedThreadIds.has(row.stream_id)
+            ) {
+              // A newer whole-thread payload already carries this link's state.
+              obsolete.push(row.sequence);
+            } else if (
+              row.event_type === "thread.pull-request-link-updated" ||
+              row.event_type === "message.updated" ||
+              row.event_type === "node.updated"
+            ) {
               const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
-              if (retainedEntityKeys.has(key)) obsolete.push(row.sequence);
-              else retainedEntityKeys.add(key);
+              const candidate = oldestCandidateByEntityKey.get(key);
+              if (candidate === undefined) oldestCandidateByEntityKey.set(key, null);
+              else {
+                if (candidate !== null) obsolete.push(candidate);
+                oldestCandidateByEntityKey.set(key, row.sequence);
+              }
             }
           }
         }
@@ -321,8 +354,6 @@ export const layer: Layer.Layer<
         if (rows.length < COMPACTION_PAGE_SIZE) break;
       }
 
-      // Legacy receipts are removable only after their thread's v1 import finishes.
-      // Page by rowid before checking eligibility, as with event discovery above.
       while (throughReceiptRowId > 0) {
         const rows = yield* sql<{
           readonly row_id: number;

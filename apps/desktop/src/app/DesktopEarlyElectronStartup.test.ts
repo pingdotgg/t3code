@@ -131,7 +131,6 @@ describe("DesktopEarlyElectronStartup", () => {
       "0.50.0": "c4a4c341568944bd4fb9cd503558b2de602c0213",
       "0.50.1": "4e242d086e20b32951fdc0ebcbfb4d41b5be8dcc",
     };
-    // Shape of `hyprctl version -j` from a release tarball, trimmed to the fields we read.
     const hyprctlVersion =
       (version: string, overrides: Record<string, unknown> = {}) =>
       () =>

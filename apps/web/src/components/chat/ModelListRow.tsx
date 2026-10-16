@@ -19,15 +19,8 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   model: ModelEsque;
-  /** Instance the model belongs to — the routing key used in combobox values. */
   instanceId: ProviderInstanceId;
-  /** Driver kind of the instance — used for the provider icon glyph. */
   driverKind: ProviderDriverKind;
-  /**
-   * Display name to show in the secondary line (provider footer). Usually
-   * the instance's configured `displayName` so custom instances like
-   * "Codex Personal" render with their user-authored label.
-   */
   providerDisplayName: string;
   providerAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;

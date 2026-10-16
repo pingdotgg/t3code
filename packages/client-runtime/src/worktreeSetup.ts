@@ -8,12 +8,6 @@ import * as Schema from "effect/Schema";
 
 const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
 
-/**
- * The worktree setup the server recorded on the thread, if any: running once
- * the bootstrap created the thread, then the settled outcome. It is what a
- * reload or a second client renders, and what tells them to attach the live
- * stream while it still says running.
- */
 export function findRecordedWorktreeSetup(
   activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
   threadId: ThreadId,
@@ -27,24 +21,10 @@ export function findRecordedWorktreeSetup(
   return null;
 }
 
-/**
- * Which setup snapshot the timeline shows, if any. The live stream wins while
- * it has a newer sequence; the recorded activity covers everything else. A
- * running setup always shows. The setup belongs to the thread's first turn:
- * once the user has sent a follow-up it is history and nothing about it is
- * shown again, whatever its outcome. Within that first turn, a clean finish
- * leaves no trace once the turn is live (the setup is a means to the reply,
- * not part of the conversation), while a failed script, a failed setup, or a
- * cancelled one stays so the outcome, exit code, and terminal are reachable.
- * Before the turn is live everything stays so nothing collapses in the
- * handoff gap. Visibility never depends on whether a turn happens to be
- * running, which would make the row come and go.
- */
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;
   recorded: WorktreeSetupSnapshot | null;
   turnStarted: boolean;
-  /** The user sent a message after the one that created the worktree. */
   followUpSent: boolean;
 }): WorktreeSetupSnapshot | null {
   const snapshot =

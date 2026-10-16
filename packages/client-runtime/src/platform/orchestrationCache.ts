@@ -10,10 +10,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
-/**
- * Thread snapshots version on their own so a thread-only invalidation keeps
- * shell caches warm. 4 drops bounded windows that lost queued runs' items (#16987).
- */
 export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 4 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
@@ -32,7 +28,6 @@ export const StoredOrchestrationThreadSnapshot = Schema.Struct({
   })),
 });
 
-/** Invalid orchestration caches are disposable and must never block live synchronization. */
 export function decodeOrDiscardOrchestrationCache<A, E, R, E2, R2>(
   decode: Effect.Effect<Option.Option<A>, E, R>,
   discard: Effect.Effect<void, E2, R2>,

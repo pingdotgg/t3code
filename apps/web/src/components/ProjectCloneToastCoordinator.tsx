@@ -24,12 +24,6 @@ import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { toastManager } from "./ui/toast";
 import { stackedThreadToast } from "./ui/toastHelpers";
 
-/**
- * One toast per clone in flight, on every environment. The palette that
- * started a clone closes right away, so this is where its progress lives:
- * the toast updates in place as git reports stages, then settles into a
- * success or failure state with the matching action.
- */
 export function ProjectCloneToastCoordinator() {
   const { environments } = useEnvironments();
   return environments.map((environment) => (
@@ -42,7 +36,6 @@ export function ProjectCloneToastCoordinator() {
 
 interface TrackedToast {
   readonly toastId: ReturnType<typeof toastManager.add>;
-  /** The last snapshot rendered, so an identical redraw does not touch the toast. */
   readonly renderedKey: string;
   readonly phase: ProjectCloneSnapshot["phase"];
 }
@@ -61,8 +54,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   const retryClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
     reportFailure: false,
   });
-  // The toast mirrors the server's clone state, so a request that never got
-  // there needs its own feedback.
   const runCloneAction = useCallback(
     async (title: string, action: () => Promise<AtomCommandResult<unknown, unknown>>) => {
       const result = await action();
@@ -82,9 +73,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   const removeClonedProject = useRemoveClonedProject();
   const toasts = useRef(new Map<ProjectId, TrackedToast>());
 
-  // Whether the user is already looking at this project's draft: the composer
-  // banner shows the same progress and actions there, so the toast steps
-  // aside and comes back if they navigate away mid-clone.
   const isViewingProjectDraft = useCallback(
     (projectId: ProjectId) => {
       if (!routeDraftId) return false;
@@ -108,7 +96,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       const key = renderKey(clone);
       const tracked = toasts.current.get(clone.projectId);
       const name = projectCloneDisplayName(clone);
-      // Handlers run later than this pass, so they look the toast up then.
       const closeToast = () => {
         const current = toasts.current.get(clone.projectId);
         if (!current) return;
@@ -172,8 +159,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         continue;
       }
 
-      // Failed or cancelled: the project stays, pointing at an empty folder.
-      // Retry from here; the draft's composer banner offers the same.
       const cancelled = clone.phase === "cancelled";
       const options = stackedThreadToast({
         type: cancelled ? "info" : "error",
@@ -193,8 +178,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
           secondaryActionProps: {
             children: "Remove project",
             onClick: () => {
-              // The server drops the clone with the project, which closes
-              // this toast; a failed removal leaves it (and Retry) in place.
               void removeClonedProject({ environmentId, projectId: clone.projectId });
             },
           },
@@ -209,9 +192,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       }
     }
 
-    // A clone the server stopped tracking (done and expired, or its project
-    // was removed) takes its toast with it, unless it already settled into a
-    // timed success toast that dismisses itself.
     for (const [projectId, tracked] of toasts.current) {
       if (seen.has(projectId)) continue;
       if (tracked.phase !== "done") toastManager.close(tracked.toastId);

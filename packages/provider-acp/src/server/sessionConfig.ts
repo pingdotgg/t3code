@@ -3,24 +3,12 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type { AcpSessionModeState } from "./runtimeModel.ts";
 
-/**
- * Maps ACP session configuration and session modes onto T3's provider option
- * descriptors so the existing model-options UI can drive them.
- *
- * Model selection stays on the dedicated model picker: `category: "model"`
- * options are excluded here because they already surface as models. Session
- * modes advertised through the modes API (rather than a config option) are
- * folded into one synthetic descriptor that the ACP adapter routes to
- * `session/set_mode`.
- */
-
-/** Synthetic descriptor ID for agents that expose modes outside config options. */
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
 /**
- * Choice ID for a select value that is exactly `""`. Agents use it for a real
- * choice (GitHub Copilot's default agent), but T3 option IDs must be
- * non-empty. The ACP adapter maps it back to `""` before applying a selection.
+ * Agents use it for a real choice (GitHub Copilot's default agent), but T3
+ * option IDs must be non-empty. The ACP adapter maps it back to `""` before
+ * applying a selection.
  */
 export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 

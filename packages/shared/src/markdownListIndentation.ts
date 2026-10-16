@@ -105,12 +105,8 @@ function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): 
 }
 
 /**
- * CommonMark treats four or more spaces after a list marker as an indented
- * code block. In chat output, excessive spacing is commonly accidental
- * alignment such as `-       text`, which otherwise produces a full code card
- * for every bullet. Only normalize blocks that retain excess indentation and
- * start on the marker's own line; explicit fences and conventional indented
- * blocks remain code.
+ * CommonMark treats four or more spaces after a list marker as an indented code
+ * block.
  */
 function attachListItemIndentationNormalizer(this: MarkdownParser) {
   return (tree: MarkdownAstNode, file: MarkdownFile) => {

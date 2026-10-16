@@ -13,9 +13,6 @@ import {
 const decodeAttachment = Schema.decodeUnknownEffect(ChatAttachment);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
 
-// Attachments ride on persisted events and thread streams with no client
-// version negotiation. A type this build does not know must decode instead of
-// failing the whole message.
 it.effect("tolerates attachment types from newer builds", () =>
   Effect.gen(function* () {
     const attachment = yield* decodeAttachment({
@@ -29,9 +26,6 @@ it.effect("tolerates attachment types from newer builds", () =>
   }),
 );
 
-// The tolerant member must not catch malformed known attachments: a file over
-// the size cap or an image with a bad mime has to fail its own schema, not
-// slide through the open one with those constraints unchecked.
 it.effect("rejects malformed known attachment types instead of tolerating them", () =>
   Effect.gen(function* () {
     const base = {

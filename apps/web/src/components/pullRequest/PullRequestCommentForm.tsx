@@ -1,8 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * The comment half of the floating composer: a remark on the pull request itself, optionally
- * the one that closes or reopens it. The popover around it belongs to PullRequestComposer.
- */
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
 import { useState, type RefObject } from "react";

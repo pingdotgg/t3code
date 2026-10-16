@@ -1,5 +1,3 @@
-// A gesture inside the timeline may belong to a nested tool result or code
-// block. Only treat it as timeline navigation if it can chain to the outer list.
 export function isTimelineScrollTarget(
   target: EventTarget | null,
   timeline: HTMLElement,

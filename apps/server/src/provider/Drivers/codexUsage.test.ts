@@ -40,7 +40,6 @@ describe("parseCodexLine", () => {
     expect(record?.provider).toBe("codex");
     expect(record?.model).toBe("gpt-5.6-sol");
     expect(record?.sessionId).toBe("019fbbc1-b12c-7360-a685-28c181f0025f");
-    // Codex reports input_tokens inclusive of the cached portion.
     expect(record?.totals.uncachedInputTokens).toBe(19239 - 11008);
     expect(record?.totals.cachedInputTokens).toBe(11008);
     expect(record?.totals.reasoningTokens).toBe(116);
@@ -62,8 +61,6 @@ describe("parseCodexLine", () => {
   });
 
   it("does not let a pre-model event poison the duplicate signature", () => {
-    // A token_count before its turn_context is dropped; the identical event
-    // re-emitted once the model is known must still be counted.
     const state = initialCodexScanState();
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
     parseCodexLine(turnContext, state);
@@ -87,7 +84,6 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)?.speed).toBe("standard");
     expect(speedAfter(settings({ service_tier: "ultrafast" }), 2)).toBe("ultrafast");
     expect(speedAfter(settings({ service_tier: "priority" }), 3)).toBe("fast");
-    // Codex omits the field when no tier was requested.
     expect(speedAfter(settings({ model: "gpt-6-astra" }), 4)).toBe("standard");
   });
 
@@ -142,7 +138,6 @@ describe("parseCodexLine", () => {
       parseCodexLine(meta({ id: "parent", timestamp: forkInstant }), state);
       parseCodexLine(stamped(forkInstant, turnContext), state);
 
-      // Copied history: written in one burst at the fork instant.
       expect(
         parseCodexLine(stamped("2026-08-01T05:00:00.001Z", tokenCount(100, 0, 10, 0)), state),
       ).toBeNull();
@@ -150,7 +145,6 @@ describe("parseCodexLine", () => {
         parseCodexLine(stamped("2026-08-01T05:00:00.002Z", tokenCount(200, 0, 20, 0)), state),
       ).toBeNull();
 
-      // The child's first genuine turn lands seconds later and must count.
       const real = parseCodexLine(
         stamped("2026-08-01T05:00:06.000Z", tokenCount(300, 0, 30, 0)),
         state,
@@ -158,7 +152,6 @@ describe("parseCodexLine", () => {
       expect(real).not.toBeNull();
       expect(real?.totals.outputTokens).toBe(30);
 
-      // Suppression never restarts, even for closely spaced later events.
       const next = parseCodexLine(
         stamped("2026-08-01T05:00:06.100Z", tokenCount(400, 0, 40, 0)),
         state,

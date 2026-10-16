@@ -60,7 +60,6 @@ class FakeElement {
     return null;
   }
 
-  /** Supports only the selectors markdown-clipboard actually asks for. */
   querySelector(selector: string): FakeElement | null {
     if (selector.includes(", ")) {
       for (const part of selector.split(", ")) {
@@ -107,7 +106,6 @@ function shikiCodeLine(text: string): FakeElement {
   return new FakeElement("SPAN", ["line"]).append(token);
 }
 
-/** Mirrors a rendered code block: select-none header chrome plus a shiki pre. */
 function renderedCodeBlock(lines: ReadonlyArray<string>): FakeElement {
   const code = new FakeElement("CODE");
   lines.forEach((line, index) => {
@@ -253,8 +251,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it("keeps fences when a bare list item sits alongside the code block", () => {
-    // serializeListItem emits "- " for an item with no text, so the item is
-    // content the plain-code path would drop.
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
       renderedCodeBlock(["pnpm test"]),
@@ -264,8 +260,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it("keeps fences when a checkbox-only task item sits alongside the code block", () => {
-    // The checkbox is a skipped tag, so the item renders no text of its own, but
-    // it still carries the task state.
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(
         new FakeElement("LI").append(new FakeElement("INPUT", [], { type: "checkbox" })),
@@ -279,8 +273,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it("still drops fences for a code block that is the whole list item", () => {
-    // The item only wraps the block, so a selection that never left the pre
-    // would drop the marker too.
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI").append(renderedCodeBlock(["pnpm test"]))),
       new FakeText("\n"),
@@ -290,8 +282,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it("keeps fences when a file chip sits alongside the code block", () => {
-    // The chip renders as a button, a skipped tag, but its data-markdown-copy
-    // still contributes markdown, so the block is not the only visible content.
     const container = new FakeElement("DIV").append(
       renderedCodeBlock(["pnpm test"]),
       new FakeText("\n"),
@@ -304,8 +294,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it("omits fences when a selection past the last line drags in the whole code block", () => {
-    // Dragging over the final newline ends the range after the pre, so the
-    // fragment carries the block plus the empty head of the next paragraph.
     const container = new FakeElement("DIV").append(
       renderedCodeBlock(["printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN"]),
       new FakeText("\n"),

@@ -9,6 +9,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import {
+  encodeHtmlRenderOutline,
+  HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_OUTLINE_MAX_BOXES,
+} from "@t3tools/shared/htmlRender";
 
 import { publicProxy } from "./publicProxy.ts";
 
@@ -17,7 +22,6 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
   {
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    /** The end of the browser's stderr when it exited, for diagnosing host setup. */
     output: Schema.optional(Schema.String),
   },
 ) {
@@ -38,27 +42,23 @@ const MAX_CONSOLE_TEXT_CHARS = 500;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
-// Pages load from this made-up web origin, never from a file. Chrome refuses
-// local files to every web page, frame, worker, and popup, so a page cannot
-// read files the agent's provider withholds; local images reach it already
-// inlined as data URIs. `.localhost` keeps it a secure context that may still
-// load plain-http resources, and the request never leaves the browser.
+// Chrome refuses local files to every web page, frame, worker, and popup, so a
+// page cannot read files the agent's provider withholds; local images reach it
+// already inlined as data URIs. `.localhost` keeps it a secure context that may
+// still load plain-http resources, and the request never leaves the browser.
 // All of the browser's traffic goes through `publicProxy`, which only reaches
 // public addresses, so a page cannot reach this machine's local network. The
 // main frame also stays on the page and the browser opens no popups, so a
 // capture always shows the page itself.
 const PAGE_ORIGIN = "http://t3-page.localhost";
 const PAGE_URL = `${PAGE_ORIGIN}/page.html`;
-// Stack traces and load errors name the page this way instead of its URL.
 const PAGE_NAME = "page.html";
-// Each measuring load reads its own copy of the page off the pipe.
 const MEASURE_CONCURRENCY = 3;
 
 const textEncoder = new TextEncoder();
 
 /**
- * A page as the base64 bytes `PAGE_URL` serves, encoded once however often it
- * loads. Node's encoder, since pages run to 25 MiB.
+ * Node's encoder, since pages run to 25 MiB.
  */
 const pageBody = (html: string) =>
   Buffer.from(Buffer.from(html, "utf8").toString("base64"), "latin1");
@@ -127,7 +127,6 @@ const CONSOLE_LEVELS: Readonly<Record<string, ConsoleMessage["level"]>> = {
   assert: "error",
 };
 
-/** Everything the page logs, uncaught exceptions, and the browser's own load errors. */
 const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessage | undefined => {
   if (method === "Runtime.consoleAPICalled") {
     const event = Option.getOrUndefined(decodeConsoleApiCalled(params));
@@ -157,14 +156,90 @@ const SETTLE_EXPRESSION =
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
 
+const OUTLINE_MAX_VISITS = 2_000;
+const OUTLINE_EXPRESSION = `(() => {
+  const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
+  const media = "canvas,svg,img,video,picture,iframe,object,embed,input,select,textarea,button";
+  const pageBackground = getComputedStyle(document.documentElement).backgroundColor;
+  const filled = (s) => (s.backgroundColor !== "rgba(0, 0, 0, 0)" && s.backgroundColor !== pageBackground) || s.backgroundImage !== "none" || parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth) + parseFloat(s.borderLeftWidth) > 0;
+  const add = (kind, r, lines) => boxes.push([kind, r.left + scrollX, r.top + scrollY, r.width, r.height, lines]);
+  const lineCount = (s, r) => Math.max(1, Math.round(r.height / (parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.5 || 20)));
+  // Text's own extent, so a short heading in a wide block stays short.
+  const addText = (el, s, r) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const t = range.getBoundingClientRect();
+    const box = t.width >= 2 && t.height >= 2 ? t : r;
+    add("text", box, lineCount(s, box));
+  };
+  // Visits are capped too, so a huge generated DOM costs no more than a page.
+  let full = false, visits = 0;
+  // Whether an element holds text of its own, looking at its first few children only.
+  const hasOwnText = (el) => {
+    let n = el.firstChild;
+    for (let i = 0; n && i < 64; n = n.nextSibling, i++) if (n.nodeType === 3 && n.data.trim() !== "") return true;
+    return false;
+  };
+  const walk = (parent, ps) => {
+    for (const el of parent.childNodes) {
+      // The last slot is kept for whatever the outline has no room left for.
+      if (boxes.length >= max - 1 || ++visits > ${OUTLINE_MAX_VISITS}) { full = true; return; }
+      // Bare text only reaches here under body or a display: contents element.
+      if (el.nodeType === 3) {
+        if (el.data.trim() === "") continue;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const t = range.getBoundingClientRect();
+        if (t.width >= 2 && t.height >= 2) add("text", t, lineCount(ps, t));
+        continue;
+      }
+      if (el.nodeType !== 1) continue;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
+      if (s.display === "contents") { walk(el, s); continue; }
+      const r = el.getBoundingClientRect();
+      // A zero-size box can still show positioned children, unless it clips them.
+      if (r.width < 2 || r.height < 2) { if (s.overflow === "visible") walk(el, s); continue; }
+      const tag = el.localName;
+      if (el.matches(media)) { add("media", r, 1); continue; }
+      if (tag === "table") { add("table", r, el.rows.length); continue; }
+      const text = hasOwnText(el);
+      if (boxes.length >= detail) { if (el.querySelector(media) || (!text && !el.firstElementChild)) add("media", r, 1); else addText(el, s, r); continue; }
+      if (text) { addText(el, s, r); continue; }
+      if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
+      walk(el, s);
+    }
+  };
+  walk(document.body, getComputedStyle(document.body));
+  if (full) {
+    const top = Math.max(0, ...boxes.map((b) => b[2] + b[4]));
+    const root = document.documentElement;
+    const rest = (root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height) - top;
+    if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
+  }
+  return boxes;
+})()`;
+const Outlined = Schema.Struct({
+  result: Schema.Struct({
+    value: Schema.Array(
+      Schema.Tuple([
+        Schema.Literals(["text", "media", "table"]),
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+      ]),
+    ),
+  }),
+});
+
 const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
 interface PageEvents {
-  /** The page's main frame, which only ever shows `PAGE_URL`. */
   readonly mainFrameId: string;
-  /** The page served for `PAGE_URL`, from `pageBody`. */
   body: Uint8Array | undefined;
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
@@ -173,9 +248,7 @@ interface PageEvents {
 
 /**
  * Starts the headless shell for the life of the scope, speaking CDP over
- * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON). Scope
- * close kills the process group. Each page is its own target, so pages load
- * in parallel.
+ * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON).
  */
 const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly executable: string;
@@ -250,7 +323,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   let disconnected: BrowserFailure | undefined;
   let nextId = 0;
 
-  // A command whose reply nobody awaits; `receive` drops replies without a waiter.
   const post = (method: string, params: Record<string, unknown>, sessionId: string) =>
     Queue.offer(
       outgoing,
@@ -366,7 +438,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return Effect.forEach(complete, receive, { discard: true });
     }),
     Effect.ignore,
-    // Interruption means the scope is closing on purpose; only an exit disconnects.
     Effect.andThen(disconnect),
     Effect.forkScoped,
   );
@@ -397,7 +468,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       );
     });
 
-  /** A fresh page at `width`; each `load` navigates it and measures the settled layout. */
   const openPage = Effect.fnUntraced(function* (width: number) {
     const { targetId } = yield* send(
       "Target.createTarget",
@@ -452,7 +522,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       sessionId,
     );
 
-    /** Loads a page from `pageBody`, so callers loading it often encode it once. */
     const load = Effect.fnUntraced(function* (body: Uint8Array, urlFragment: string) {
       const loaded = yield* Deferred.make<void, BrowserFailure>();
       events.body = body;
@@ -505,19 +574,37 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
             },
           ];
 
-    // Frees the page in the browser once it is no longer needed.
     const close = send("Target.closeTarget", { targetId }, Ignored).pipe(
       Effect.ensuring(Effect.sync(() => pages.delete(sessionId))),
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    const outline = send(
+      "Runtime.evaluate",
+      { expression: OUTLINE_EXPRESSION, returnByValue: true },
+      Outlined,
+      sessionId,
+    ).pipe(
+      Effect.map(({ result }) =>
+        encodeHtmlRenderOutline(
+          result.value.map(([kind, x, y, boxWidth, height, lines]) => ({
+            kind,
+            x,
+            y,
+            width: boxWidth,
+            height,
+            lines,
+          })),
+        ),
+      ),
+    );
+
+    return { load, outline, screenshot, consoleMessages, close };
   });
 
   return { openPage };
 });
 
-/** A temporary directory for the browser profile, removed with the scope. */
 const scratchDirectory = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.acquireRelease(
@@ -531,7 +618,6 @@ const scratchDirectory = Effect.gen(function* () {
   );
 });
 
-/** Loads `html` at `width` and returns a PNG of the top of the page. */
 export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreenshot")(
   function* (input: {
     readonly executable: string;
@@ -567,8 +653,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 
 /**
  * Content heights of the page at each width, each from a fresh load, since
- * pages often lay themselves out from the width once at load. One browser,
- * a few widths at a time.
+ * pages often lay themselves out from the width once at load.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
@@ -585,15 +670,27 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);
-  return yield* Effect.forEach(
+  let outline: string | undefined;
+  const heights = yield* Effect.forEach(
     input.widths,
     (width) =>
       browser.openPage(width).pipe(
         Effect.flatMap((page) =>
-          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
+          page.load(body, input.urlFragment).pipe(
+            Effect.tap(() =>
+              width === HTML_RENDER_COLUMN_WIDTH
+                ? page.outline.pipe(
+                    Effect.tap((value) => Effect.sync(() => (outline = value))),
+                    Effect.ignore,
+                  )
+                : Effect.void,
+            ),
+            Effect.ensuring(page.close),
+          ),
         ),
         Effect.map((height) => [width, height] as const),
       ),
     { concurrency: MEASURE_CONCURRENCY },
   );
+  return { heights, outline };
 }, Effect.scoped);

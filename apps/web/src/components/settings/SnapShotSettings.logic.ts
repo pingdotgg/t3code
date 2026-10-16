@@ -56,10 +56,6 @@ export function snapShotSetupButtonLabel(state: DesktopSnapShotState | null): st
   return desktop ? `Set up ${desktop} capture` : "Continue setup";
 }
 
-// Windows needs no permissions or setup: turning capture on is enough. macOS setup
-// has nothing left to manage once permissions and the shortcut are in place; the
-// shortcut row stays editable inline. Revoking a permission brings the button back
-// as "Continue setup" through the state message.
 export function snapShotSetupComplete(
   state: DesktopSnapShotState | null,
   includeAccessibility: boolean,

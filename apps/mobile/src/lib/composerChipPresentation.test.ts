@@ -10,7 +10,6 @@ describe("composerChipSizeSuffix", () => {
 
   it("adds nothing for records that carry no bytes", async () => {
     const { composerChipSizeSuffix } = await import("./composerChipPresentation");
-    // Terminal/review/PR chips have no size to show.
     expect(composerChipSizeSuffix({ kind: "terminal" })).toBe("");
     expect(composerChipSizeSuffix({ kind: "file" })).toBe("");
     expect(composerChipSizeSuffix(undefined)).toBe("");
@@ -20,7 +19,6 @@ describe("composerChipSizeSuffix", () => {
 describe("contextChipPresentation image detection", () => {
   it("treats a picture attached through the file picker as an image", async () => {
     const { contextChipPresentation } = await import("./composerChipPresentation");
-    // The document picker types every pick as `file`, so the name has to carry the intent.
     expect(
       contextChipPresentation("file", { kind: "file", name: "IMG_4997.PNG", mimeType: "" }),
     ).toEqual({ accent: "#d55665", symbol: "photo" });
@@ -62,8 +60,6 @@ describe("pull request chip status", () => {
   });
 
   it("keeps one glyph across every state, so only colour carries the status", async () => {
-    // Web draws a fixed `git-pull-request` and encodes state in colour alone. A per-state glyph
-    // here would put mobile out of step with it.
     const symbols = await Promise.all(
       [chip("open"), chip("open", true), chip("merged"), chip("closed")].map(
         async (pending) => (await pending).symbol,
@@ -74,7 +70,6 @@ describe("pull request chip status", () => {
 
   it("falls back to the generic pull request chip when the state is unknown", async () => {
     const { contextChipPresentation } = await import("./composerChipPresentation");
-    // An older server may send no metadata at all; the chip still has to render.
     expect(
       contextChipPresentation("review-comment", {
         kind: "review-comment",

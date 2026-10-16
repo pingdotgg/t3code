@@ -25,7 +25,6 @@ function parseTimestamp(value: string): number {
   return Date.parse(value);
 }
 
-/** Compare date-time strings by absolute time, with stable handling for malformed stored values. */
 export function compareDateTimeStrings(left: string, right: string): number {
   const leftTimestamp = parseTimestamp(left);
   const rightTimestamp = parseTimestamp(right);

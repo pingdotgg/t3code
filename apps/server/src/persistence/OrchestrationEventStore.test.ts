@@ -204,7 +204,6 @@ layer("OrchestrationEventStore", (it) => {
         replayed.map((entry) => entry.event),
         events,
       );
-      // Replay budgets measure the payloads replay decodes, not the slimmer stored rows.
       const stats = yield* store.getAgentReplayStats({
         threadId,
         afterSequence,
@@ -577,7 +576,6 @@ layer("OrchestrationEventStore", (it) => {
         rawPayloadBytes: 0,
         hasCreateEvent: false,
       });
-      // The application range skips V1 rows, which a shell resume never replays.
       assert.deepEqual(
         yield* store.getReplayStats({ afterSequence: baseline, throughSequence: head }),
         {
@@ -601,7 +599,6 @@ layer("OrchestrationEventStore", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const streamId = ThreadId.make(`skip-unknown:${reader}:${aggregateKind}`);
         const now = "2026-01-05T00:00:00.000Z";
-        // Direct SQL models rows written by a newer build, which append cannot accept.
         const insertRow = Effect.fnUntraced(function* (
           version: number,
           eventType: string,
@@ -650,13 +647,11 @@ layer("OrchestrationEventStore", (it) => {
         );
         const baseline = yield* store.latestApplicationSequence;
         const before = yield* insertRow(0, knownType, knownPayload);
-        // More than one raw page ensures replay crosses an entirely filtered page.
         yield* Effect.forEach(
           Array.from({ length: 1_000 }, (_, i) => i + 1),
           (version) => insertRow(version, "future.event", "not JSON"),
           { discard: true },
         );
-        // A type known for the other aggregate kind is unknown for this one.
         yield* insertRow(
           1_001,
           aggregateKind === "thread" ? "project.meta-updated" : "provider-session.detached",
@@ -668,11 +663,9 @@ layer("OrchestrationEventStore", (it) => {
         assert.deepEqual(yield* read(baseline, highWater, true), [before, after]);
         assert.isTrue(isPersistenceDecodeError(yield* read(baseline, highWater).pipe(Effect.flip)));
         if (reader === "agent") {
-          // The work limit includes skipped rows, rather than fetching extra pages to fill it.
           assert.deepEqual(yield* read(baseline, highWater, true, 2), [before]);
         }
         const beforeBroken = yield* store.latestApplicationSequence;
-        // Exercise a grouped V2 literal as well as the project type discriminator.
         const broken = yield* insertRow(
           1_005,
           aggregateKind === "thread" ? "thread.metadata-updated" : "project.created",

@@ -1,6 +1,5 @@
 import type { ReviewParsedDiff } from "../review/reviewModel";
 
-/** Match test paths, not source names such as `testing.ts` or `contest.ts`. */
 export function isPullRequestTestFile(path: string): boolean {
   const segments = path.replaceAll("\\", "/").split("/");
   const name = segments.at(-1) ?? "";
@@ -17,7 +16,6 @@ export function isPullRequestTestFile(path: string): boolean {
   );
 }
 
-/** Keep original files and line IDs so hiding tests cannot move review anchors. */
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,
   hideTestFiles: boolean,

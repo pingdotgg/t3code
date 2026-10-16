@@ -36,8 +36,6 @@ it.effect("starts without scanning or rebuilding projection history", () =>
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
 
-    // Delegated recovery reads the runs recovery terminalizes, and settles them
-    // before the worker runs restart continuations that would otherwise race it.
     assert.deepEqual(yield* Ref.get(calls), [
       "import",
       "recover",

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -5,8 +6,8 @@ import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { Atom } from "effect/reactivity";
 import { use, useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Linking, Platform, Share } from "react-native";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import { Linking, Platform, Share } from "react-native";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -61,7 +62,7 @@ export function usePullRequestListActions(
       setBusyKey(scopedPullRequestListKey(entry));
       try {
         const target = pullRequestTarget(params(entry));
-        // List rows do not subscribe to expensive detail reads. Check fresh permissions on intent.
+        // List rows do not subscribe to expensive detail reads.
         const response = await executeAtomQuery(registry, composerPullRequests.detail(target), {
           refresh: true,
           reportFailure: false,
@@ -97,7 +98,7 @@ export function usePullRequestListActions(
               : { isDraft: action === "draft" },
         );
       } catch (cause) {
-        Alert.alert(
+        Dialog.alert(
           "Couldn't update this pull request",
           cause instanceof Error ? cause.message : "Try again.",
         );
@@ -140,7 +141,7 @@ export function usePullRequestListActions(
         (value) => value === action,
       );
       if (!supported) return;
-      Alert.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
+      Dialog.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
         { text: "Cancel", style: "cancel" },
         {
           text: PR_ACTION_LABELS[supported],
@@ -152,7 +153,7 @@ export function usePullRequestListActions(
     [navigation, params, perform, selectAndroidWorkspace],
   );
   const actions = useCallback(
-    (entry: EnvironmentPullRequestListEntry): ControlPillMenuProps["actions"] => [
+    (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
       {
         id: "open",
         title: "Open pull request",

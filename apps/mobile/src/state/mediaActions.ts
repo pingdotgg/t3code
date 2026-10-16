@@ -1,3 +1,4 @@
+import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
 import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
@@ -11,7 +12,6 @@ import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 
 import { useRefreshAssetUrl } from "./assets";
 import { appAtomRegistry } from "./atom-registry";
@@ -21,7 +21,6 @@ import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachm
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 
-/** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
@@ -83,7 +82,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     })()
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
-          Alert.alert(
+          Dialog.alert(
             "Could not share file",
             error instanceof Error ? error.message : "Try again.",
           );

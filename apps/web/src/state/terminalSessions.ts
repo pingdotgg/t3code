@@ -83,7 +83,6 @@ function terminalMetadataIndex(metadata: ReadonlyArray<TerminalSummary>): Termin
   return index;
 }
 
-/** Share one ordered index per immutable snapshot without changing metadata subscriptions. */
 export function selectKnownTerminalSessions(
   metadata: ReadonlyArray<TerminalSummary> | null,
   environmentId: EnvironmentId | null,

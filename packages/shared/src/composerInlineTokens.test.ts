@@ -184,8 +184,6 @@ describe("collectComposerInlineTokens", () => {
   });
 
   it("stays fast on unterminated bracket runs", () => {
-    // Unbounded, the label body rescanned the rest of the text from every
-    // whitespace: this input took seconds.
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);

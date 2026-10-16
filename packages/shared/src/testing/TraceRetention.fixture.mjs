@@ -31,7 +31,6 @@ const tracer = await Effect.runPromise(
     },
   }),
 );
-// Like the SQLite prepared statement cache, lookup fibers remain alive after use.
 const cache = await Effect.runPromise(
   Cache.make({ capacity: count, timeToLive: "10 minutes", lookup: (key) => Effect.succeed(key) }),
 );

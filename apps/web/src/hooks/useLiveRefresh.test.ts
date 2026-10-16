@@ -129,7 +129,6 @@ describe("shouldLiveRefresh", () => {
   });
 
   it("stays quiet while the window is not showing", () => {
-    // A focus event can arrive for a window that is still hidden behind another one.
     expect(at(LIVE_REFRESH_MIN_INTERVAL_MS * 5, 0, false)).toBe(false);
   });
 
@@ -146,7 +145,6 @@ describe("shouldLiveRefresh", () => {
     for (let now = LIVE_REFRESH_INTERVAL_MS; now < hour; now += LIVE_REFRESH_INTERVAL_MS) {
       tick(now, false);
     }
-    // Coming back raises a visibility change and a focus event, one straight after the other.
     tick(hour, true);
     tick(hour, true);
 

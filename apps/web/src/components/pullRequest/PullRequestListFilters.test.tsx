@@ -28,7 +28,6 @@ function findValueChange(
   return undefined;
 }
 
-/** The nested radio-group component element carrying this label, invoked so its group shows. */
 function findLabeledGroup(node: ReactNode, label: string): ReactNode {
   for (const child of Children.toArray(node)) {
     if (!isValidElement(child)) continue;

@@ -75,7 +75,6 @@ export function ThreadDetailsPrRows({
 }) {
   const [expanded, setExpanded] = useState(false);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  // Only watched links get the eye; the row hides it once the server records the stop.
   const stopWatching = (link: ThreadPullRequestLink | null) =>
     link?.watch === undefined
       ? undefined

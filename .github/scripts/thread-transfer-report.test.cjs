@@ -216,6 +216,48 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
   assert.equal(fetchedPull, false);
 });
 
+test("does not report a passing run that skipped the server tests", async () => {
+  const outputs = {};
+  const listWorkflowRunArtifacts = () => {};
+  await resolve({
+    github: {
+      paginate: async (method) => {
+        assert.equal(method, listWorkflowRunArtifacts);
+        return [];
+      },
+      rest: {
+        actions: { listWorkflowRunArtifacts },
+        pulls: {
+          get: async () => ({
+            data: { head: { sha: "head-sha" }, base: { sha: "base-sha", ref: "main" } },
+          }),
+        },
+      },
+    },
+    context: {
+      repo: { owner: "pingdotgg", repo: "t3code" },
+      payload: {
+        workflow_run: {
+          id: 2,
+          event: "pull_request",
+          workflow_id: 3,
+          head_sha: "head-sha",
+          conclusion: "success",
+          pull_requests: [{ number: 5350 }],
+        },
+      },
+    },
+    core: {
+      info: () => {},
+      setOutput: (key, value) => {
+        outputs[key] = value;
+      },
+    },
+  });
+
+  assert.equal(outputs.publish, "false");
+});
+
 test("does not publish a stale result after the PR head advances", async () => {
   let listedComments = false;
   const info = [];

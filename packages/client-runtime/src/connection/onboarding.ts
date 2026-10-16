@@ -38,17 +38,12 @@ export interface PairingConnectionInput {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
-  /**
-   * Set when adding a route to a saved machine: the pairing must reach this
-   * environment, or nothing is saved.
-   */
   readonly expectedEnvironmentId?: EnvironmentId;
 }
 
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
-  /** Set when adding a route to a saved machine; see `PairingConnectionInput`. */
   readonly expectedEnvironmentId?: EnvironmentId;
 }
 
@@ -92,11 +87,6 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
   },
 );
 
-/**
- * One bearer route per address, so pairing over Tailscale adds a route next
- * to the LAN one instead of replacing it. Pairing the same address again
- * reuses the id and replaces that route.
- */
 function bearerConnectionId(environmentId: EnvironmentId, httpBaseUrl: string): string {
   return `bearer:${environmentId}:${new URL(httpBaseUrl).origin}`;
 }
@@ -159,13 +149,7 @@ const registerPairingConnection = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  // A platform-managed environment belongs to the host, so pairing leaves it alone.
   if (!(yield* registry.register(registration))) return registration.target.environmentId;
-  // Registering keeps a previous entry's switched-off flag and unsupported
-  // reason, which is right for label or URL edits. A pairing is an explicit
-  // request to connect, so the stale reason is cleared and the environment
-  // turned on after the pair succeeded; a server that is still incompatible,
-  // such as an outdated one awaiting an update, is flagged again on connect.
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)
@@ -182,7 +166,6 @@ const updateBearerConnection = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const saved = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
-  // Editing changes the environment's first direct route; others stay as saved.
   const route =
     saved === undefined
       ? undefined
@@ -269,8 +252,6 @@ export const prepareSshRegistration = Effect.fn(
 )(function* (input: SshConnectionInput) {
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const provisioned = yield* gateway.provision(input.target, input.expectedEnvironmentId);
-  // One id per SSH target, so a second host or alias for the same machine
-  // adds a route instead of replacing the first.
   const connectionId = `ssh:${provisioned.environmentId}:${sshTargetKey(provisioned.bootstrap.target)}`;
   const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
 

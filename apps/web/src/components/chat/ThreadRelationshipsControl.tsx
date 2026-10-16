@@ -74,10 +74,6 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
-// Lineage paging: a busy thread can accumulate dozens of forks and subagents,
-// and the panel it lives in already scrolls. Show a workable window, keep the
-// rest behind Show more, and bound what is shown so the sections below Lineage
-// stay reachable.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
 
@@ -97,14 +93,9 @@ export function ThreadLineageRowList(props: {
   return (
     <>
       {/*
-        Bounded rather than free-growing so Lineage cannot push the rest of the
-        thread details panel out of view. Plain overflow, not a ScrollArea
+        Plain overflow, not a ScrollArea
         component: this sits inside an already scrolling panel, where a
-        max-height-only virtual viewport measures badly. Every row is a focusable
-        button, so keyboard users reach and scroll the region through the rows
-        themselves and the container needs no extra tab stop of its own. An
-        expanded workflow asks for a taller window, so it raises the bound while
-        its tree is open.
+        max-height-only virtual viewport measures badly.
       */}
       <ul
         aria-label="Related threads"
@@ -182,10 +173,6 @@ function relationshipThreadTitle(input: {
   return formatSubagentDisplayTitle(input.title);
 }
 
-/**
- * The row's timer and hover card follow current child work, including queued
- * follow-ups whose provider turn has not started yet.
- */
 function currentSubagent<Agent extends RuntimeSubagent>(
   agent: Agent | undefined,
   childThread: OrchestrationV2ThreadShell | null | undefined,
@@ -211,7 +198,6 @@ function currentSubagent<Agent extends RuntimeSubagent>(
           : status,
     startedAt: startedAt ? DateTime.formatIso(startedAt) : null,
     completedAt: completedAt ? DateTime.formatIso(completedAt) : null,
-    // The task's output belongs to its recorded run, not newer child work.
     progress: null,
     result: null,
     error: null,
@@ -251,8 +237,6 @@ export function ThreadRelationshipsPanel(props: {
         ]),
     );
   }, [projection?.subagents, runtimeSubagents]);
-  // A workflow coordinator is already a subagent row here; the grouped model
-  // is what lets that row unfold into the phases and members it ran.
   const workflowGroupsById = useMemo(
     () =>
       new Map(deriveWorkflowGroups(runtimeSubagents).map((group) => [group.workflow.id, group])),
@@ -327,7 +311,6 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: active, expanded: true },
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
-  // Subagents without a child thread yet have no row, so count them separately.
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
@@ -474,7 +457,6 @@ export function ThreadRelationshipsPanel(props: {
                 agent.startedAt &&
                 ["pending", "running", "waiting"].includes(agent.status);
               const threadTitle = relationshipThreadTitle({
-                // A workflow's name is shorter than its child thread's title.
                 title:
                   workflowGroup?.workflow.workflowName ??
                   node?.thread?.title ??
@@ -560,8 +542,6 @@ export function ThreadRelationshipsPanel(props: {
                   ) : null}
                 </>
               );
-              // A workflow pairs this row with a disclosure, so it renders as the
-              // leading half of a split row; everything else renders it directly.
               const relationshipLink = (
                 <Tooltip>
                   <TooltipTrigger

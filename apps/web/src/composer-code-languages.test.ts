@@ -23,14 +23,10 @@ describe("withInfoStringLanguage", () => {
   it.each([
     ["", "ts", "ts"],
     ["js", "python", "python"],
-    // Anything after the language belongs to the fence and stays put.
     ["js title=example", "ts", "ts title=example"],
     ["js  {1,3}", "ts", "ts  {1,3}"],
-    // Plain text clears the language...
     ["js", "", ""],
-    // ...but a bare `title=x` would read as the language, so it keeps `text`.
     ["js title=example", "", "text title=example"],
-    // Whitespace between the fence and the language is the user's formatting.
     ["  js title=x", "python", "  python title=x"],
     ["  js title=x", "", "  text title=x"],
     [" js", "go", " go"],

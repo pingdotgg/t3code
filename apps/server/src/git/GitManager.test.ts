@@ -97,11 +97,8 @@ interface FakeGhScenario {
     headRepositoryOwnerLogin?: string | null;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
-  /** The detail the provider fails with, the way a GitHub failure reaches GitManager. */
   failWith?: string;
-  /** The raw failure behind `failWith`, which must stay out of anything shown or logged. */
   failCause?: unknown;
-  /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
 }
 
@@ -401,10 +398,6 @@ function createTextGeneration(
   };
 }
 
-/**
- * A GitHub source control provider over a fake `gh`. The fake still speaks gh's command shapes,
- * which is what `ghCalls` records and the tests assert on; the provider methods translate to them.
- */
 function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   service: SourceControlProvider["Service"];
   ghCalls: string[];
@@ -427,7 +420,6 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
       cause,
     });
 
-  /** `operation` is the provider method the call answers, which a failure reports. */
   const execute = (input: {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
@@ -546,7 +538,6 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
     return Effect.fail(fail(input.cwd, `Unexpected gh command: ${args.join(" ")}`));
   };
 
-  /** What GitHubSourceControlProvider makes of a pull request it read. */
   const toChangeRequest = (summary: FakePullRequestSummary): ChangeRequest => ({
     ...summary,
     provider: SourceControlProviderKind.make("github"),
@@ -562,8 +553,6 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       kind: SourceControlProviderKind.make("github"),
-      // The GitHub provider's own lookup rule and template convention, which GitManager reads
-      // instead of the kind.
       headBranchProbe: ({ headSelectors }) => ({
         headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
         limit: 100,
@@ -595,8 +584,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
                   .map(toChangeRequest),
               ),
             )
-          : // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
-            execute({
+          : execute({
               operation: "listChangeRequests",
               cwd: input.cwd,
               args: [
@@ -729,15 +717,12 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
-  /** Records the arguments of every git process the manager starts. */
   gitCommands?: string[];
-  /** Holds a matching git process's output until `release`, once it has exited. */
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
     readonly release: Deferred.Deferred<void>;
   };
-  /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
     ProjectionStore.ProjectionStoreV2Error | ProjectStore.ProjectStoreV2Error,
@@ -803,7 +788,6 @@ function makeManager(input?: {
         ),
       )
     : GitVcsDriver.layer;
-  // Fresh so the counting spawner is not swapped for the suite's shared driver.
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
@@ -813,8 +797,6 @@ function makeManager(input?: {
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     Effect.gen(function* () {
-      // GitHub reads its PR template with git, which the fake gh cannot answer; give the fake
-      // the package's real reader over the test repository's git.
       const git = yield* GitVcsDriver.GitVcsDriver;
       return (
         input?.sourceControlProvider ?? {
@@ -853,7 +835,6 @@ function makeManager(input?: {
     Layer.provideMerge(layerVcsDriver),
     Layer.provideMerge(NodeServices.layer),
   );
-  // Built into the test's scope: the manager reads these stores after this returns.
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
@@ -1373,7 +1354,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
         expect((yield* lookup)?.number).toBe(235);
 
-        // Discovery rereads git before it persists an answer.
         yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/other-head"]);
         const reread = yield* manager.branchPullRequest(
           { cwd: repoDir, branch: "feature/moving-upstream" },
@@ -1381,12 +1361,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         );
         expect(reread?.number).toBe(236);
 
-        // T3's own git actions end in invalidateStatus.
         yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/moving-upstream"]);
         yield* manager.invalidateStatus(repoDir);
         expect((yield* lookup)?.number).toBe(235);
 
-        // A change made outside T3 shows once the remembered state expires.
         yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/other-head"]);
         yield* TestClock.adjust("5 minutes");
         expect((yield* lookup)?.number).toBe(236);
@@ -1434,8 +1412,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         branch: "feature/racing-upstream",
       });
 
-      // The branch read has exited with the old upstream; a T3 git action
-      // changes it before the lookup gets that output.
       const inFlight = yield* Effect.forkChild(lookup);
       yield* Deferred.await(gate.reached);
       yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
@@ -1461,7 +1437,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             "[]",
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             JSON.stringify([
               {
                 number: 114,
@@ -1563,7 +1538,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             JSON.stringify([
               {
                 number: 216,
@@ -1615,7 +1589,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
           prListSequence: [
             JSON.stringify([
               {
@@ -1666,7 +1639,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             JSON.stringify([
               {
                 number: 217,
@@ -1728,7 +1700,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             "feature/deleted-fork-branch": JSON.stringify([
               {
                 number: 218,
@@ -1991,12 +1962,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/failed-probe"]);
       yield* runGit(repoDir, ["push", "fork", "feature/failed-probe"]);
       yield* runGit(repoDir, ["push", "origin", "feature/failed-probe"]);
-      // Local work past both tips, so no exact ref matches and the ancestor
-      // tier decides.
       yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Local work"]);
-      // Simulate a failed ancestry probe: point origin's tracking ref at a
-      // non-commit object so `merge-base --is-ancestor` exits 128 — neither
-      // a match (0) nor a negative result (1).
       const treeOid = (yield* runGit(repoDir, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
       yield* runGit(repoDir, ["update-ref", "refs/remotes/origin/feature/failed-probe", treeOid]);
       const forkProbe = yield* runGit(
@@ -2043,8 +2009,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       };
       const { manager } = yield* makeManager({ ghScenario });
-      // The fork probe matches, but the failed origin probe rejects the
-      // whole inference: unknown, invisible rather than wrong.
       expect(
         yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/failed-probe" }),
       ).toBeNull();
@@ -2119,7 +2083,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             JSON.stringify([
               {
                 number: 219,
@@ -2171,7 +2134,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             JSON.stringify([
               {
                 number: 220,
@@ -2265,13 +2227,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(prListCalls()).toHaveLength(4);
       expect(prListCalls().at(-1)).toContain("--head feature/open-pr");
 
-      // Just inside the 5-minute window only the open PR is asked again.
       yield* TestClock.adjust("238 seconds");
       yield* lookupAll;
       expect(prListCalls()).toHaveLength(5);
       expect(prListCalls().at(-1)).toContain("--head feature/open-pr");
 
-      // Just past it the settled answers expire too.
       yield* TestClock.adjust("2 seconds");
       yield* lookupAll;
       expect(prListCalls()).toHaveLength(7);
@@ -2318,7 +2278,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
         yield* lookup("feature/merges-later");
         yield* lookup("feature/already-merged");
-        // Open answers are re-read after a minute.
         yield* TestClock.adjust("61 seconds");
         expect((yield* lookup("feature/merges-later"))?.state).toBe("merged");
 
@@ -2438,9 +2397,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pushed-no-upstream"]);
-      // No `-u`, so the remote-tracking ref exists but branch.<name>.merge does
-      // not. Most terminal and agent pushes land this way, and they can still
-      // have a PR, so the skip must not trigger here.
       yield* runGit(repoDir, ["push", "origin", "feature/pushed-no-upstream"]);
 
       const { manager, ghCalls } = yield* makeManager({
@@ -2471,8 +2427,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   it("backs off repeated PR lookup failures past the healthy refresh cadence", () => {
     expect(Duration.toMillis(GitManager.prLookupFailureTtl(1))).toBe(20_000);
     expect(Duration.toMillis(GitManager.prLookupFailureTtl(2))).toBe(40_000);
-    // The point of the backoff: by the third retry a failing branch must not be
-    // asking more often than a healthy one, which refreshes every 2 minutes.
     expect(Duration.toMillis(GitManager.prLookupFailureTtl(4))).toBeGreaterThan(120_000);
     expect(Duration.toMillis(GitManager.prLookupFailureTtl(20))).toBe(900_000);
   });
@@ -3037,13 +2991,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pushed-plain", "origin/main"]);
-      // A plain push (no -u) leaves the upstream on origin/main.
       yield* runGit(repoDir, ["push", "origin", "feature/pushed-plain"]);
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             "feature/pushed-plain": JSON.stringify([
               {
                 number: 88,
@@ -3079,7 +3031,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* configureRemote(repoDir, "team/fork", forkDir, "team/fork");
         yield* runGit(repoDir, ["checkout", "-b", "feature/fork-plain", "origin/main"]);
-        // Pushed to the fork without -u: upstream stays origin/main.
         yield* runGit(repoDir, ["push", "team/fork", "feature/fork-plain"]);
         yield* configureVisibleRemoteUrlWithLocalRewrite(
           repoDir,
@@ -3097,7 +3048,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
               "feature/fork-plain": JSON.stringify([
                 {
                   number: 89,
@@ -3152,7 +3102,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             "feature/fork-settle": JSON.stringify([
               {
                 number: 91,
@@ -3199,7 +3148,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             "feature/sticky-plain": JSON.stringify([
               {
                 number: 90,
@@ -3372,9 +3320,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const first = yield* manager.status({ cwd: repoDir });
       expect(first.pr?.number).toBe(214);
 
-      // An explicit invalidation (user refresh, git action) bypasses the PR
-      // cache and forces a live lookup — which now fails. The badge must keep
-      // the last known PR instead of blanking out.
       yield* manager.invalidateStatus(repoDir);
       const second = yield* manager.status({ cwd: repoDir });
       expect(second.pr?.number).toBe(214);
@@ -3412,9 +3357,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const first = yield* manager.status({ cwd: repoDir });
         expect(first.pr?.number).toBe(214);
 
-        // Retarget the branch to a different remote/upstream (e.g. the PR was
-        // reopened against a fork). The previously cached PR belonged to the
-        // old upstream and must not be shown against the new one.
         const forkRemote = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork", forkRemote]);
         yield* runGit(repoDir, ["push", "fork", "feature/pr-retarget"]);
@@ -3532,14 +3474,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const first = yield* manager.status({ cwd: repoDir });
       expect(first.pr?.number).toBe(217);
 
-      // `remote.origin.url` reads go through readConfigValueNullable, which
-      // maps ANY failed read (a real "no remote configured" state or a
-      // transient git-config hiccup) to null the same way. Unsetting the
-      // key here reproduces that ambiguity without touching branch
-      // tracking (refs/remotes/origin/* and branch.<b>.remote are
-      // untouched) — the remote identity has not actually changed, so the
-      // sticky PR must survive even though the current lookup can no
-      // longer resolve a remote URL to compare against.
       yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
       yield* manager.invalidateStatus(repoDir);
 
@@ -3698,7 +3632,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             return Effect.succeed({ subject: "Use the project writer", body: "" });
           },
         },
-        // The thread exists only in V2; no V1 projection row names its project.
         seed: Effect.gen(function* () {
           yield* (yield* ProjectStore.ProjectStoreV2).apply({
             sequence: 1,
@@ -3754,7 +3687,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         }),
       });
 
-      // The checkout is not the project's root, so only the thread can name the project.
       yield* manager.runStackedAction({
         actionId: "test-action-id",
         cwd: repoDir,
@@ -3917,7 +3849,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.commit.status).toBe("created");
 
-      // b.txt should remain in the working tree
       const statusStdout = yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
         Effect.map((r) => r.stdout),
       );
@@ -4377,7 +4308,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      // A repository whose default branch is master, with no main anywhere.
       yield* runGit(repoDir, ["push", "origin", "HEAD:master"]);
       yield* runGit(repoDir, ["fetch", "origin"]);
       yield* runGit(repoDir, ["remote", "set-head", "origin", "master"]);
@@ -5589,12 +5519,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
       yield* runGit(repoDir, ["checkout", "main"]);
       yield* runGit(repoDir, ["branch", "-D", "feature/no-pull-ref"]);
-      // The remote keeps its Azure spelling, which is what the pull request is compared with.
       const remoteUrl = "https://dev.azure.com/org/project/_git/repo";
       yield* runGit(repoDir, ["remote", "set-url", "origin", remoteUrl]);
       yield* runGit(repoDir, ["config", `url.${remoteDir}.insteadOf`, remoteUrl]);
 
-      // A pull request of another repository in the organization is not this remote's branch.
       const { manager: otherRepositoryManager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -5615,7 +5543,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           mode: "worktree",
         }),
       );
-      // Nor is the branch of a closed one, which may have moved past the head it closed with.
       const { manager: mergedManager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -6006,8 +5933,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         NodeFS.realpathSync.native(worktreePath),
       );
       expect(result.branch).toBe("feature/pr-existing-worktree");
-      // Nothing to fetch from, so the checkout keeps the commit it had and setup stays out of a
-      // worktree another thread may be sitting in.
       expect(setupCalls).toHaveLength(0);
       expect(result.isOnPullRequestHead).toBe(false);
     }),
@@ -6220,8 +6145,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         "author-rewrite:feature/pr-force-pushed",
       ]);
       const rewrittenHead = (yield* runGit(repoDir, ["rev-parse", "author-rewrite"])).stdout.trim();
-      // Pushing from this clone also advanced its remote-tracking ref. A head rewritten by the
-      // author leaves that ref behind, which is the state a reused worktree is really opened in.
       yield* runGit(repoDir, [
         "update-ref",
         "refs/remotes/origin/feature/pr-force-pushed",
@@ -6302,7 +6225,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ]);
       yield* runGit(repoDir, ["checkout", "main"]);
 
-      // The work that must survive: a commit made in the worktree, on top of the stale head.
       NodeFS.writeFileSync(NodePath.join(worktreePath, "thread-work.txt"), "thread work\n");
       yield* runGit(worktreePath, ["add", "thread-work.txt"]);
       yield* runGit(worktreePath, ["commit", "-m", "Work done in the reused worktree"]);
@@ -6431,7 +6353,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       NodeFS.writeFileSync(NodePath.join(repoDir, "ref-only.txt"), "ref only\n");
       yield* runGit(repoDir, ["add", "ref-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Pull ref only PR branch"]);
-      // The head lives at refs/pull/90/head and nowhere else, so nothing can be tracked.
       yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/90/head"]);
       yield* runGit(repoDir, ["checkout", "main"]);
       yield* runGit(repoDir, ["branch", "-D", "feature/pr-ref-only"]);
@@ -6496,8 +6417,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["add", "contributor.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Contributor commit on the fork main"]);
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "fork-main-collision:main"]);
-      // The user's own main, checked out in its own worktree and behind the fork's main: a
-      // fast-forward would land the contributor's commits in it.
       yield* runGit(repoDir, ["checkout", "-b", "feature/root-work", "main"]);
       const mainWorktreePath = NodePath.join(
         repoDir,

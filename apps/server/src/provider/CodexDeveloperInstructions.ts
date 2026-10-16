@@ -22,11 +22,10 @@ const normalizeAvailability = (
   typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
 /**
- * Each block is omitted entirely when its tools aren't attached. Describing
- * `preview_*` or `device_*` tools that aren't in the turn's tool list would be
- * worse than saying nothing: the instructions actively steer the model away
- * from Playwright, agent-browser, and raw simctl/adb, so leaving them in would
- * talk it out of the only automation it still has.
+ * Describing `preview_*` or `device_*` tools that aren't in the turn's tool list would be worse
+ * than saying nothing: the instructions actively steer the model away from Playwright,
+ * agent-browser, and raw simctl/adb, so leaving them in would talk it out of the only automation
+ * it still has.
  */
 const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
   const tools = normalizeAvailability(availability);
@@ -187,7 +186,6 @@ export interface CodexRuntimeInfo {
   readonly reasoningEffort: string;
 }
 
-/** Mode prompt for `turn/start.collaborationMode.settings.developer_instructions`. */
 export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
   return interactionMode === "plan"
     ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
@@ -195,21 +193,12 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
 }
 
 /**
- * T3 Code context for `turn/start.additionalContext`. Codex renders each entry
- * as a `<key>value</key>` developer message and resends it only when the value
- * changes.
- *
  * This must stay out of the collaboration mode: when the model catalog ships
  * its own text for a mode, as newer models do, Codex uses that text and drops
  * the client's `developer_instructions` entirely.
  */
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
-  /**
-   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
-   * it from the session's actual MCP configuration rather than re-reading the
-   * setting, so the prompt cannot claim tools the turn doesn't have.
-   */
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);

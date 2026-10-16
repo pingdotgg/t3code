@@ -41,16 +41,9 @@ export interface DeviceViewControls {
 export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
-  /** False while the input socket is down; controls should disable. */
   readonly inputConnected: boolean;
 }
 
-/**
- * The live device screen. Pointer events map onto normalized coordinates in
- * the displayed frame and go to the device; keyboard input is forwarded while
- * the surface is focused. `visible=false` tears the stream down so a hidden
- * panel decodes nothing.
- */
 export function DeviceStreamView(props: {
   readonly environmentId: EnvironmentId;
   readonly platform: DevicePlatform;
@@ -59,10 +52,8 @@ export function DeviceStreamView(props: {
   readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
-  /** The full panel opts into the phone spike; compact viewers retain their flat presentation. */
   readonly allowPhoneView?: boolean;
   readonly renderControls?: (view: DeviceViewControls) => ReactNode;
-  /** Draw accessibility element frames over the screen. */
   readonly axOverlay?: boolean;
   readonly onHandle?: (handle: DeviceStreamHandle | null) => void;
   readonly onScreen?: (screen: DeviceScreenSize | null) => void;
@@ -134,7 +125,6 @@ export function DeviceStreamView(props: {
           onScreen?.(next);
         },
         onUnauthorized: () => {
-          // A fresh ticket re-runs this effect through the access dependency.
           refreshDeviceHubAccess(props.environmentId);
         },
         onMjpegFallback: (url) => {
@@ -179,7 +169,6 @@ export function DeviceStreamView(props: {
     props.visible,
   ]);
 
-  // Displayed aspect ratio (width / height) of the device as the user sees it.
   const aspect = useMemo(() => {
     if (!screen) return props.platform === "ios" ? 9 / 19.5 : 9 / 20;
     const landscape =
@@ -193,8 +182,6 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
-  // Encoder restarts and video reconnects retain the decoded frame and viewer
-  // while input is still connected and the next keyframe is on its way.
   const retainingFrame =
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
   const showPhone =
@@ -253,9 +240,6 @@ export function DeviceStreamView(props: {
     }
   }, [props.platform, screen]);
 
-  // A sideways rotation draws the raw portrait frame into a landscape box:
-  // the media element takes the transposed size and is rotated about the
-  // box's center.
   const sideways = rotation === 90 || rotation === -90;
   const mediaStyle: React.CSSProperties = sideways
     ? {
@@ -271,8 +255,6 @@ export function DeviceStreamView(props: {
         ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
       };
 
-  // The accessibility tree is polled while the overlay is on; each poll is
-  // one JSON fetch, so there is nothing to repaint between polls.
   const [axElements, setAxElements] = useState<ReadonlyArray<DeviceAxElement>>([]);
   useEffect(() => {
     if (!props.axOverlay || !access || !props.visible) return;
@@ -285,9 +267,7 @@ export function DeviceStreamView(props: {
       try {
         const tree = await fetchDeviceAxTree(target, controller.signal);
         if (!stopped) setAxElements(tree.elements);
-      } catch {
-        // Keep the last good tree; the next poll retries.
-      }
+      } catch {}
       if (!stopped) timer = setTimeout(() => void poll(), AX_POLL_INTERVAL_MS);
     };
     void poll();

@@ -6,13 +6,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-/**
- * Use available space, not device or orientation labels, to choose the shell.
- *
- * The height floor deliberately keeps every current iPhone in the compact shell
- * when it rotates to landscape, while still allowing iPad and foldable-sized
- * windows to adopt the persistent sidebar as they resize.
- */
 export const SPLIT_LAYOUT_MIN_WIDTH = 720;
 export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
@@ -30,7 +23,6 @@ export function deriveThreadWorkLogSizing(input: {
 }) {
   const lineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.footnote, input.baseFontSize);
   return {
-    // Different text metrics can share the same minimum row height.
     textSizeKey: `${input.baseFontSize}:${input.fontScale}`,
     estimatedRowHeight: Math.max(
       THREAD_WORK_ROW_MIN_HEIGHT,
@@ -99,9 +91,12 @@ export function deriveLayout(input: {
   const usableWidth = width - (metrics?.safeArea.left ?? 0) - (metrics?.safeArea.right ?? 0);
   // UIKit's size class supports the shorter Duo inner display. Geometry remains
   // a floor so a narrow multitasking window cannot squeeze both columns.
+  // Unfolded in portrait, the inner display reports neither a side bar nor a
+  // fold, only its hinge.
   const hasDuoGeometry =
     metrics &&
-    (metrics.verticalBarEdge !== "none" ||
+    (metrics.hasHinge === true ||
+      metrics.verticalBarEdge !== "none" ||
       metrics.reservedRegions.some((region) => region.kind === "division"));
   const wideEnoughForSplit = hasDuoGeometry
     ? metrics.horizontalSizeClass === "regular" &&
@@ -240,10 +235,6 @@ export function deriveFileInspectorPaneLayout(input: {
   };
 }
 
-/**
- * Keep an auxiliary pane within native-feeling bounds without squeezing its
- * neighboring content below a usable reading/editor width.
- */
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;

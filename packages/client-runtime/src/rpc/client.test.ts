@@ -510,12 +510,10 @@ describe("environment RPC", () => {
       yield* TestClock.adjust("100 millis");
       expect(yield* Queue.take(subscriptions)).toBe(2);
       yield* Queue.take(failures);
-      // The second retry waits 200ms, so 100ms is not enough.
       yield* TestClock.adjust("100 millis");
       expect(Option.isNone(yield* Queue.poll(subscriptions))).toBe(true);
       yield* TestClock.adjust("100 millis");
       expect(yield* Queue.take(subscriptions)).toBe(3);
-      // Attempt 3 delivered a value before failing, so the delay is back to 100ms.
       yield* Queue.take(failures);
       yield* TestClock.adjust("100 millis");
       expect(yield* Queue.take(subscriptions)).toBe(4);

@@ -192,7 +192,7 @@ export function cursorRuntimeAgentPolicy(
   return {
     autoReview:
       runtimePolicy.approvalPolicy === undefined
-        ? runtimePolicy.runtimeMode === "approval-required"
+        ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
         : runtimePolicy.approvalPolicy !== "never",
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
@@ -290,9 +290,6 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
  * Every Cursor settings layer the Cursor CLI loads: project and user rules,
  * skills, hooks, and MCP servers, team and MDM admin policy, and account
  * plugins. The SDK loads none of them when `settingSources` is omitted.
- * Sandbox policy files are read either way, and hooks can only deny or ask
- * (which local SDK runs reject), so these layers do not loosen the sandbox or
- * approval mode T3 sets.
  */
 const CURSOR_AGENT_SETTING_SOURCES = [
   "project",
@@ -788,6 +785,10 @@ interface CursorProjectionTarget {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"] | null;
 }
 
+// Fallback final output when Cursor's result carries none. The persisted row only
+// ever shows a bounded tail, so keep a little more than that.
+const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
+
 interface ActiveCursorToolCall {
   readonly callId: string;
   toolCall: ToolCall;
@@ -826,7 +827,6 @@ interface ActiveCursorTurn {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
-  // Item ordinals allocated in this turn. No later turn looks items up here.
   readonly itemOrdinals: Map<string, number>;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly subagents: Map<string, ActiveCursorSubagent>;
@@ -1122,7 +1122,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
           readonly active: ActiveCursorToolCall;
           readonly completed: boolean;
-          /** Terminal status for a tool the turn ended before Cursor completed it. */
           readonly unfinishedStatus?: "interrupted" | "failed" | "cancelled";
         }) {
           const { active } = input;
@@ -1230,8 +1229,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 toolCall.result?.status === "success" &&
                 toolCall.result.value.diffString !== undefined
                   ? { diffStr: toolCall.result.value.diffString }
-                  : // A failed change keeps its error where the diff would be.
-                    toolCall.result?.status === "error" && outputText.trim().length > 0
+                  : toolCall.result?.status === "error" && outputText.trim().length > 0
                     ? { diffStr: outputText }
                     : {}),
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
@@ -1263,7 +1261,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     : toolCall.type === "semSearch"
                       ? toolCall.args.targetDirectories?.join(", ")
                       : pattern;
-              // A failed search keeps its error as one row under the searched path.
               const results =
                 toolCall.result?.status === "error" && outputText.trim().length > 0
                   ? [{ fileName: searchPath?.trim() || ".", preview: outputText }]
@@ -1922,8 +1919,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               if (shell === undefined) {
                 return;
               }
-              shell.streamedOutput += shellOutputText(update.event);
-              yield* emitToolArtifacts({ active: shell, completed: false });
+              const chunk = shellOutputText(update.event);
+              if (chunk.length === 0) return;
+              // The completed call persists the final output once. Re-emitting the
+              // whole accumulated output on every delta grew the event store
+              // quadratically; live output goes to the command output hub instead.
+              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
+                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+              );
+              yield* emitProviderEvent({
+                type: "command_output.delta",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                threadId: shell.target.threadId,
+                itemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeItemId: shell.callId,
+                }),
+                chunk,
+              });
               return;
             }
             default:
@@ -1965,8 +1978,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           input.context.finalized = true;
           const completedAt = yield* DateTime.now;
-          // Tools still here never got a tool-call-completed. A stopped or
-          // failed turn cut them short, so they end with the turn's status.
           for (const tool of input.context.tools.values()) {
             yield* emitToolArtifacts({
               active: tool,
@@ -1975,9 +1986,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           }
           input.context.tools.clear();
-          // This interaction stops delivering updates at finalization. Tasks
-          // without a completion have an unknown outcome. Background launch
-          // acknowledgements have already settled their rows.
           for (const subagent of input.context.subagents.values()) {
             if (!isOrchestrationV2WorkActive(subagent.task.status)) continue;
             yield* emitSubagent({
@@ -2452,8 +2460,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           interruptTurn: Effect.fn("CursorAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               const context = yield* Ref.get(activeTurn);
-              // Stop on a settled turn: finalization already ended its tools
-              // and subagents, so nothing of it is left running to stop.
               if (context === null && turnInput.requestRuntimeRestart === true) return;
               if (context?.providerTurnId !== turnInput.providerTurnId) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({

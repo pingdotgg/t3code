@@ -74,9 +74,6 @@ describe("parseWorkflowAgentAnswers", () => {
   });
 });
 
-// Transcripts must sit under <configDir>/projects: readContainedWorkflowFile
-// rejects any path outside it. A temporary configDir keeps the real
-// ~/.claude untouched.
 let configDir: string;
 let transcriptDir: string;
 beforeAll(() => {
@@ -90,7 +87,6 @@ afterAll(() => {
 });
 
 describe("readWorkflowAgentAnswers", () => {
-  // The under-cap case is the control: without it a read stuck on [] would pass.
   effectIt.effect("reads final answers from both small and capped transcripts", () =>
     Effect.gen(function* () {
       const turn = assistant("a", [{ type: "text", text: "the answer" }]);

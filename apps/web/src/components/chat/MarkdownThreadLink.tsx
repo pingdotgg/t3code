@@ -7,12 +7,6 @@ import { MessageSquareTextIcon } from "lucide-react";
 import { useProject, useThreadShell } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
 
-/**
- * A `t3-thread://` link in chat. It shows the thread's current title, so a rename
- * reaches every message that links to it, and leads with the thread's project icon
- * the way a web link leads with its favicon. `label` is what the message wrote,
- * shown only when this client cannot see the thread. Opens the thread in the app.
- */
 export function MarkdownThreadLink(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -33,7 +27,6 @@ export function MarkdownThreadLink(props: {
     <Link
       to="/$environmentId/$threadId"
       params={{ environmentId: props.environmentId, threadId }}
-      // Like an attached thread chip: archived threads are not in the index but still open.
       title={thread === null ? "Thread no longer available" : project?.title}
       data-markdown-copy={formatThreadLink(threadId, title)}
     >

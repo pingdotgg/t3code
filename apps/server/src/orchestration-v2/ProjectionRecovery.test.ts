@@ -236,7 +236,6 @@ it.effect("stops a session its thread detached, which kept its live status", () 
         lastError: null,
       },
     });
-    // The server died before the release that should follow the detach.
     yield* projections.apply({
       id: EventId.make("event:recovery:detached-session:detached"),
       type: "provider-session.detached",
@@ -343,8 +342,6 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       },
     });
 
-    // This historical payload cannot be decoded. Candidate discovery must not
-    // materialize it while deciding which threads have work to reconcile.
     yield* sql`
       UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
       WHERE thread_id = ${ThreadId.make("thread:recovery:settled-599")}
@@ -387,7 +384,6 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
         deletedAt: name === "deleted" ? now : null,
       });
       yield* createRun(child, name === "running" ? "running" : "completed");
-      // A wake queued behind the result: held by Stop or a restart, or still deliverable.
       if (name === "held" || name === "queued") {
         yield* createRun(child, "queued", {
           ordinal: 2,
@@ -484,7 +480,6 @@ it.effect.each([
         consumedAt: null,
       },
     });
-    // Historical untracked work does not acquire a notification on restart.
     yield* createRun(child, "completed", { ordinal: 2 });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
     const taskId = NodeId.make("node:followup");
@@ -702,7 +697,6 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
       projections
         .getRuntimeRecoveryProjection(threadId)
         .pipe(Effect.map((state) => state.runs.map((run) => run.id)));
-    // Settled with background work left, then a queued follow-up.
     const settled = yield* createThread("roster-before-queue");
     const settledRun = yield* createRun(settled, "completed", {
       providerThreadId: ProviderThreadId.make(`provider-thread:${settled}`),
@@ -710,7 +704,6 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
     const queuedRun = yield* createRun(settled, "queued", { ordinal: 2, completedAt: null });
     yield* withRoster(settled);
     assert.deepEqual(yield* runIds(settled), [settledRun, queuedRun]);
-    // A resumed queued run (ordinal 1) ended after a continuation (ordinal 2).
     const resumed = yield* createThread("roster-after-resume");
     const resumedRun = yield* createRun(resumed, "completed", {
       providerThreadId: ProviderThreadId.make(`provider-thread:${resumed}`),
@@ -723,7 +716,6 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
     });
     yield* withRoster(resumed);
     assert.deepEqual(yield* runIds(resumed), [resumedRun, continuationRun]);
-    // Without a roster, settled history is not read.
     const quiet = yield* createThread("no-roster-before-queue");
     yield* createRun(quiet, "completed");
     const quietQueued = yield* createRun(quiet, "queued", { ordinal: 2, completedAt: null });

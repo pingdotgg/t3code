@@ -13,9 +13,7 @@ const MuseUsage = Schema.Struct({
 });
 
 export const MuseItem = Schema.Struct({
-  /** `workflow`: the launched entry's name. */
   entryId: Schema.optional(Schema.String),
-  /** `workflow`: each child agent's latest attempt, re-sent whole on every change. */
   children: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -31,7 +29,6 @@ export const MuseItem = Schema.Struct({
       }),
     ),
   ),
-  /** `workflow`: the run's result, once it settles. */
   finalSummary: Schema.optional(Schema.String),
   itemId: NonEmptyString,
   kind: NonEmptyString,
@@ -177,7 +174,6 @@ export const MuseDelta = Schema.Struct({
   field: Schema.optional(Schema.String),
 });
 
-/** The T3 decision for one native Muse choice, or none when T3 has no equivalent. */
 export function museApprovalDecision(
   choice: Pick<MuseApproval["availableChoices"][number], "decision" | "scope">,
 ): ProviderApprovalDecision | undefined {
@@ -203,8 +199,8 @@ export function museApprovalDecision(
 }
 
 /**
- * Maps each canonical decision to one native choice. Muse shell approvals offer
- * no `denied` choice, only `abort` ("Reject"), so `decline` falls back to it.
+ * Muse shell approvals offer no `denied` choice, only `abort` ("Reject"), so
+ * `decline` falls back to it.
  */
 export function museApprovalChoices(approval: Pick<MuseApproval, "availableChoices">) {
   const choices = new Map<ProviderApprovalDecision, MuseApproval["availableChoices"][number]>();
@@ -222,7 +218,6 @@ export function museApprovalChoices(approval: Pick<MuseApproval, "availableChoic
   return choices;
 }
 
-/** The approval buttons to show: one per native choice, preferring `decline` over `cancel`. */
 export function museApprovalOptions(approval: Pick<MuseApproval, "availableChoices">) {
   const choices = museApprovalChoices(approval);
   const declineChoiceId = choices.get("decline")?.choiceId;

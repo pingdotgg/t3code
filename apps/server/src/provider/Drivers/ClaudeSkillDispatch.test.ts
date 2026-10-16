@@ -7,7 +7,6 @@ const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
 describe("planClaudeSkillDispatch", () => {
   it("leaves a prompt without a known skill untouched", () => {
     expect(planClaudeSkillDispatch("fix the build", SKILLS)).toBeUndefined();
-    // Not a discovered skill, so it stays prose rather than becoming a command.
     expect(planClaudeSkillDispatch("echo $HOME then $unknown", SKILLS)).toBeUndefined();
   });
 

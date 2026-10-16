@@ -20,7 +20,7 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup } from "./DeviceSetup";
+import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -30,7 +30,6 @@ const platformLabel = (platform: DevicePlatform) =>
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
-/** Each surface owns one host/device; only the visible surface streams. */
 export function DevicePanel(props: {
   readonly mode: PreviewPanelMode;
   readonly threadRef: ScopedThreadRef;
@@ -102,7 +101,6 @@ export function DevicePanel(props: {
     }
   };
 
-  // Floating the device closes the panel, like the browser's floating preview.
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
@@ -138,12 +136,7 @@ export function DevicePanel(props: {
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
-  const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
-  const hostBusy =
-    !hostReady &&
-    Object.values(state.hostStatuses).some(
-      (host) => host.status === "installing" || host.status === "starting",
-    );
+  const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
       .filter((platform) => !platform.available)

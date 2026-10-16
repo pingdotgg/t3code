@@ -3,5 +3,6 @@ export * as Persistence from "./persistence.ts";
 // Flat so consumers' inferred types can name it.
 export { ConnectionPersistenceError } from "./persistence.ts";
 export * from "./orchestrationCache.ts";
+export * from "./shellCacheEncoding.ts";
 export * as PlatformConnectionSource from "./source.ts";
 export * from "./storageDocument.ts";

@@ -35,7 +35,6 @@ const SessionCancelNotification = jsonRpcNotification(
 const ExtPingNotification = jsonRpcNotification("x/ping", Schema.Struct({ count: Schema.Number }));
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
-/** A response whose cause is a handler's defect, as RpcServer encodes it. */
 const DieResponse = Schema.Struct({
   id: Schema.Number,
   error: Schema.Struct({

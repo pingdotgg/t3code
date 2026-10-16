@@ -63,8 +63,6 @@ export function AcpRegistrySearchStep({
   onPreparingChange,
 }: AcpRegistrySearchStepProps) {
   const [query, setQuery] = useState("");
-  // An empty registry query is the compact compatible catalog. Start there so
-  // entering this step is useful before the user knows what to search for.
   const [submittedQuery, setSubmittedQuery] = useState("");
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const [preparingId, setPreparingId] = useState<string | null>(null);
@@ -218,8 +216,6 @@ export function AcpRegistrySearchStep({
           </div>
         ) : (
           <ScrollArea scrollFade className="max-h-64">
-            {/* The overlay scrollbar takes no layout space, so the rows
-                reserve its lane explicitly. */}
             <div className="pr-2.5">
               {results.map((agent) => {
                 const alreadyAdded = isConfiguredAcpRegistryAgent(providerInstances, agent.id);

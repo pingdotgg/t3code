@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/**
- * Unpacks a CLI archive into a scratch directory and runs the executable the
- * way an installer would: no repo, no node_modules, no Node on PATH. Catches
- * the failures that only show inside the single-executable, such as an
- * external package reached through `import` or a native addon the hardened
- * runtime refuses to load.
- */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
@@ -125,10 +118,6 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     });
   }
 
-  // Starting the server is what actually opens sqlite, loads the terminal
-  // and search stacks (node-pty, fff, msgpackr-extract), and serves the
-  // client, so probe a real `serve` in a scratch home rather than a
-  // command that only reads package metadata.
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");

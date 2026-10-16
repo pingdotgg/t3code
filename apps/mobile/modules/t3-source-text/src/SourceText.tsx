@@ -13,7 +13,6 @@ export type SourceTextProps = Omit<TextProps, "onTextLayout" | "onPress" | "onLo
   }) => void;
 };
 
-/** One selectable document on iOS, with nested runs carrying syntax colors. */
 export function SourceText({ style, children, nativeTextRef, ...props }: SourceTextProps) {
   const [isAncestor, rootStyle] = React.useContext(TextAncestorContext);
   const flattenedStyle = React.useMemo(() => flattenStyles(rootStyle, style), [rootStyle, style]);

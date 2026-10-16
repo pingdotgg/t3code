@@ -57,7 +57,7 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
   AndroidWorkspaceNavigation,
   ANDROID_WORKSPACE_RAIL_WIDTH,
@@ -84,14 +84,6 @@ interface AdaptiveWorkspaceContextValue {
   readonly primarySidebarSearchQuery: string;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
-  /**
-   * Route screens hand their inspector pane content to the workspace so it
-   * renders BESIDE the navigator (outside the native stack header) instead of
-   * inside the route. Returns a deactivate callback: the pane animates closed
-   * (content kept mounted for the exit transition) unless a newer
-   * registration already took over — stale deactivates never clobber it.
-   * Prefer useRegisterWorkspaceInspector over calling this directly.
-   */
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
@@ -139,25 +131,17 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
 }
 
 /**
- * Register this screen's inspector pane content with the workspace column.
- *
  * The column renders BESIDE the navigator — outside any screen — so the
  * registering screen's navigation and route contexts are captured here and
- * re-provided around the portal content. Without them, useNavigation/useRoute
- * inside the pane (e.g. GitOverviewSheet via useThreadSelection) throw
- * "Couldn't find a route object".
+ * re-provided around the portal content.
  *
  * Registration is FOCUS-scoped, driven by navigation events rather than the
- * screen's own render cycle: react-native-screens freezes blurred screens, so
- * a cleanup that depends on the blurred subtree re-rendering never runs and
- * would leak the pane into the next route. Blur deactivates the pane (it
- * animates closed, or is replaced seamlessly when the next route registers in
- * the same commit); focus re-registers it.
+ * screen's own render cycle: react-native-screens freezes blurred screens, so a
+ * cleanup that depends on the blurred subtree re-rendering never runs and would
+ * leak the pane into the next route.
  */
 export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
-  // Raw context values (not the useNavigation/useRoute wrappers) so the
-  // portal re-provides exactly what this screen sees.
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
 
@@ -185,8 +169,6 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     deactivateRef.current = registerWorkspaceInspector(wrappedRenderRef.current);
   }, [registerWorkspaceInspector]);
 
-  // Focus lifecycle. Blur/focus events fire even when the blurred subtree is
-  // frozen (events are navigation-driven, renders are not).
   useFocusEffect(
     useCallback(() => {
       focusedRef.current = true;
@@ -198,15 +180,12 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     }, [syncRegistration]),
   );
 
-  // Content changes while focused re-register in place.
   useEffect(() => {
     if (focusedRef.current) {
       syncRegistration();
     }
   }, [syncRegistration, wrappedRender]);
 
-  // Unmount: hand the pane back (owner-guarded, so a route that already
-  // took over is unaffected).
   useEffect(
     () => () => {
       deactivateRef.current?.();
@@ -279,17 +258,12 @@ function AdaptiveWorkspaceLayoutContent(
     [height, viewportWidth, nativeMetrics],
   );
   const layout = baseLayout;
-  // The rail consumes real space before either pane; inspectors and the detail
-  // navigator must use the remaining viewport rather than clipping behind it.
   const shouldRenderNavigationRail = Platform.OS === "android" && layout.usesSplitView;
   const navigationRailWidth =
     shouldRenderNavigationRail && showPrimarySidebar
       ? ANDROID_WORKSPACE_RAIL_WIDTH * Math.max(1, androidControlScale)
       : 0;
   const width = viewportWidth - navigationRailWidth;
-  // In split layouts the sidebar IS the thread list — it renders on every
-  // route, including Home (which shows an empty-detail pane instead of the
-  // compact list).
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const fileInspector = useMemo(
     () =>
@@ -346,10 +320,6 @@ function AdaptiveWorkspaceLayoutContent(
       return null;
     }
   }, [environmentId, threadId]);
-  // Wrapped in an object: bare functions in useState would be treated as
-  // lazy initializers/updaters. `active: false` keeps the outgoing route's
-  // content mounted so the pane can animate closed (or be replaced
-  // seamlessly by the next route's registration in the same commit).
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
     readonly active: boolean;
@@ -369,7 +339,6 @@ function AdaptiveWorkspaceLayoutContent(
       setWorkspaceInspector((current) => (current === null ? null : { ...current, active: false }));
     };
   }, []);
-  // Once the close animation settles, drop the stale content entirely.
   const handleWorkspaceInspectorClosed = useCallback(() => {
     setWorkspaceInspector((current) => (current !== null && !current.active ? null : current));
   }, []);
@@ -531,8 +500,6 @@ function AdaptiveWorkspaceLayoutContent(
       viewportWidth,
       target: contentTargetWidth,
       sidebarVisible: panes.primarySidebarVisible,
-      // Clip the wide navigator during expansion, then reflow once at the end.
-      // Narrowing it first exposes an empty strip before the sidebar arrives.
       width: openingSidebar
         ? Math.max(contentSizing.width ?? 0, contentTargetWidth ?? 0)
         : contentTargetWidth,
@@ -576,17 +543,13 @@ function AdaptiveWorkspaceLayoutContent(
   const railAnimatedStyle = useAnimatedStyle(() => ({ width: renderedRailWidth.value }));
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
-    // The clipped width already reveals and hides the iOS sidebar.
     opacity: Platform.OS === "ios" ? 1 : Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,
   }));
 
-  // Freeze the content pane at its SETTLED width while the side panes
-  // animate. The navigator (native header + markdown feed) lays out ONCE per
-  // pane toggle instead of re-measuring on every animation frame — the
-  // animating columns merely clip/reveal it over a matching background.
-  // Continuously re-wrapping the chat feed was the main source of dropped
-  // frames during sidebar/inspector transitions.
+  // The navigator (native header + markdown feed) lays out ONCE per pane toggle
+  // instead of re-measuring on every animation frame — the animating columns
+  // merely clip/reveal it over a matching background.
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
   const renderedContentWidth = useDerivedValue(() =>
     Math.max(
@@ -606,7 +569,6 @@ function AdaptiveWorkspaceLayoutContent(
         threadId: String(thread.id),
       };
       if (Platform.OS === "android") {
-        // Selecting a sidebar row enters its base chat, including from that chat's nested screens.
         setFileInspectorPreferredVisible(false);
         selectAndroidWorkspace({ name: "Thread", params });
         return;

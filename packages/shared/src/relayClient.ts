@@ -30,9 +30,6 @@ export const CLOUDFLARED_VERSION = "2026.10.0";
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
-// Generous bound for a ~40MB binary download; without it a stalled
-// connection parks the install forever (same unbounded-wait family as the
-// other relay/cloud network calls).
 const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
@@ -147,14 +144,7 @@ export interface CloudflaredRelayClientOptions {
 }
 
 export interface RelayClientShape {
-  /**
-   * Finds the relay client to run, without downloading anything: the override,
-   * else the pinned managed folder, else the newest older managed folder, else
-   * `cloudflared` on PATH. Every candidate must report a compatible version, and
-   * the status carries the version the binary reports.
-   */
   readonly resolve: Effect.Effect<RelayClientStatus>;
-  /** Installs the pinned managed release unless it, or a valid override, is already present. */
   readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
   readonly installWithProgress: (
     report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
@@ -163,7 +153,6 @@ export interface RelayClientShape {
   readonly pruneManagedVersions: Effect.Effect<void>;
 }
 
-/** True when this is the pinned managed release, which needs no update. */
 export function isPinnedManagedRelayClient(client: AvailableRelayClient): boolean {
   return client.source === "managed" && client.version === CLOUDFLARED_VERSION;
 }
@@ -190,20 +179,17 @@ function parseVersion(value: string): readonly [number, number, number] | null {
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-/** Orders `YYYY.M.P` cloudflared versions; unparseable versions sort first. */
 export function compareCloudflaredVersions(left: string, right: string): number {
   const a = parseVersion(left) ?? [0, 0, 0];
   const b = parseVersion(right) ?? [0, 0, 0];
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-/** Reads the version from `cloudflared version` output, e.g. `cloudflared version 2026.5.2 (built ...)`. */
 export function parseCloudflaredVersionOutput(output: string): string | null {
   const version = parseVersion(output);
   return version ? version.join(".") : null;
 }
 
-// A changed file is a new key, so a replaced binary is probed again.
 class VersionProbeKey extends Data.Class<{
   readonly executablePath: string;
   readonly size: number;
@@ -275,10 +261,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   // `cloudflared version` costs a process spawn, so answers are cached per file
-  // revision. Before `--no-autoupdate`, a managed binary could replace itself in
-  // place, so the version is read from the binary, never from its folder name.
-  // A failed or timed-out probe is not cached, so a slow spawn under an AV scan
-  // does not hide a good binary until it changes on disk.
+  // revision. A failed or timed-out probe is not cached, so a slow spawn under
+  // an AV scan does not hide a good binary until it changes on disk.
   const versionCache = yield* Cache.makeWith(
     (key: VersionProbeKey) =>
       spawner
@@ -384,9 +368,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
       return missingStatus;
     }
-    // A managed binary reports the version it actually runs. One that replaced
-    // itself in place still serves as a fallback; the runtime sees it is not the
-    // pinned release and installs that.
     const pinned = yield* compatibleCandidate(managedPath, "managed");
     if (pinned) return pinned;
     for (const version of yield* olderManagedVersions) {
@@ -413,7 +394,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
-  /** Moves the new binary toward its final path, waiting out a brief Windows lock. */
   const renameWhenUnlocked = (from: string, to: string) =>
     fileSystem.rename(from, to).pipe(
       Effect.retry({

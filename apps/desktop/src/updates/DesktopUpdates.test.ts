@@ -686,7 +686,6 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
-        // Kept, so the next start on 1.2.3 still knows 1.2.4 did not apply.
         assert.isDefined(harness.previousInstallRecord());
 
         harness.emit("update-available", { version: "1.2.4" });
@@ -762,9 +761,7 @@ describe("DesktopUpdates", () => {
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        // The restarted old backend must release its tunnel on a later quit.
         assert.equal(harness.updateRestartMarkers.size, 0);
-        // The app never quit, so the next start must not report an unapplied install.
         assert.equal(harness.installRecords.size, 0);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

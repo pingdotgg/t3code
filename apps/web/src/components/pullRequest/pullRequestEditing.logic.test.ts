@@ -106,7 +106,6 @@ describe("canEditPullRequestChangeRequest", () => {
         }),
       ),
     ).toBe(false);
-    // The host can't rewrite change requests at all, so the reader's answer can't widen that.
     expect(
       canEditPullRequestChangeRequest(
         subject({
@@ -182,7 +181,6 @@ describe("canEditPullRequestComment", () => {
         comment({ author: actor("someone-else"), canEdit: true }),
       ),
     ).toBe(true);
-    // The host can't rewrite remarks at all, so its per-remark answer can't widen that.
     expect(
       canEditPullRequestComment(
         subject({ capabilities: capabilities({ changeRequest: true, comment: false }) }),

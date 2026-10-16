@@ -40,7 +40,6 @@ export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
-  /** The provider fields that name announced models its CLI is too old to run. */
   readonly updateRequired?: ProviderUpdateRequired;
 };
 
@@ -56,13 +55,6 @@ function providerDisplayLabel(provider: {
   return provider.instanceId;
 }
 
-/**
- * `provider.enabled` reflects the machine plus any project's keep-alive
- * override, so it alone can't tell this project apart from one that merely
- * shares the instance. Settings carry the real per-project view the server
- * itself enforces, so a project with no override of its own must resolve
- * from there, not from a snapshot another project may be keeping alive.
- */
 function isProviderEnabledForProject(
   config: T3ServerConfig | null | undefined,
   provider:
@@ -78,10 +70,6 @@ function isProviderEnabledForProject(
     : provider.enabled;
 }
 
-/**
- * Whether the project has explicitly turned this instance off, as opposed
- * to it merely being disabled or unreachable at the machine level.
- */
 function isProjectDisabledOverride(
   config: T3ServerConfig | null | undefined,
   instanceId: ModelSelection["instanceId"],
@@ -96,13 +84,6 @@ function isProjectDisabledOverride(
   );
 }
 
-/**
- * Whether the project cannot use this instance at all, whether the project
- * turned it off itself or it merely inherits a machine-level disable. Either
- * way the server's `ThreadManagementService.dispatch` refuses a send, and the
- * instance may still look installed and running in the snapshot because
- * another project's keep-alive left it up.
- */
 function isDisabledForProject(
   config: T3ServerConfig | null | undefined,
   provider:
@@ -143,13 +124,9 @@ function normalizeSelectionOptions(
 }
 
 /**
- * Whether the selection cannot be sent as is: the instance resolves disabled
- * for the project (its own override, or an inherited machine-level disable),
- * or a known Antigravity selection needs setup or a different model.
- *
- * `projectId` has no default: a caller that forgets it would silently check
- * only the machine-wide state and miss a project that turned this instance
- * off. Pass `null` explicitly outside a project's scope.
+ * `projectId` has no default: a caller that forgets it would silently check only the
+ * machine-wide state and miss a project that turned this instance off. Pass `null` explicitly
+ * outside a project's scope.
  */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
@@ -177,7 +154,6 @@ export function isModelSelectionUnavailable(
   );
 }
 
-/** Why `isModelSelectionUnavailable` refused a selection, worded for the recovery that applies. */
 export function describeUnavailableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection,
@@ -197,13 +173,6 @@ export function describeUnavailableModelSelection(
       };
 }
 
-/**
- * Keep Antigravity selections when setup or catalog changes make them
- * unavailable. Other providers fall through to the server default when they
- * are disabled, missing, or signed out. Without config, keep stored selections.
- *
- * `projectId` has no default; see `isModelSelectionUnavailable`.
- */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
@@ -228,13 +197,6 @@ export function resolveSelectableModelSelection(
     : null;
 }
 
-/**
- * Reject legacy models for implicit defaults, except Antigravity selections,
- * which must not silently change after a catalog update. Explicit picks in
- * the settings sheet are unaffected.
- *
- * `projectId` has no default; see `isModelSelectionUnavailable`.
- */
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
@@ -265,9 +227,6 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
-/**
- * `projectId` has no default; see `isModelSelectionUnavailable`.
- */
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,

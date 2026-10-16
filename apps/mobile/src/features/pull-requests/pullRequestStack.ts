@@ -1,6 +1,5 @@
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
-/** A stack merge includes the unmerged layers up to the selected PR, in host order. */
 export function pullRequestStackMerge(stack: PullRequestStack, number: number) {
   const position = stack.layers.findIndex((layer) => layer.number === number);
   const layers = stack.layers.slice(0, position + 1).filter((layer) => layer.state !== "merged");

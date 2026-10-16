@@ -78,10 +78,8 @@ function pullRequestMatchesProject(
 }
 
 /**
- * A recent user message stays queued until a run adopts its timestamp.
  * Absolute age bounds client clock skew in both directions and stops stale
- * pre-adoption data from blocking the thread forever. A failed run start
- * clears the block immediately (mirrors the v1 session "error" rule).
+ * pre-adoption data from blocking the thread forever.
  */
 export function threadHasQueuedTurnStart(
   thread: Pick<
@@ -107,11 +105,6 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
-/**
- * A merged or closed pull request settles the thread unless the user wrote to
- * it afterwards. Runs that background work, a PR watch, or another agent
- * started do not count, so they cannot hold a merged thread open.
- */
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -135,24 +128,18 @@ function pullRequestSettles(
   return pullRequestAtMs >= userAnchorMs;
 }
 
-/** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
-  // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
-  // A live run, or background work that will wake the agent, is not
-  // staleness. A dev server left running is: the agent is done.
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
-  // A snoozed thread that woke early (error or completed work) can settle;
-  // one still parked on its wake time keeps its stronger statement.
   const snoozedAtMs = toMillis(thread.snoozedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
@@ -164,13 +151,8 @@ export function isAutoSettlementCandidate(
 }
 
 /**
- * Whether a thread is parked on its snooze: its wake time is in the future and
- * it has not raised its hand with a pending request, a fresh failure, or work
- * that completed after the snooze. Server twin of the client's
- * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
- * difference: a failure counts as fresh when its run completed after the
- * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
- * update time, so a rename can wake a failed thread there but not here.
+ * Server twin of the client's `effectiveSnoozed`, so agents and the sidebar agree on what is
+ * snoozed.
  */
 export function isSnoozed(
   thread: Pick<
@@ -187,7 +169,6 @@ export function isSnoozed(
   const wokeOnError =
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
-  // Like the client, only a run that completed wakes it; an interrupt or cancel does not.
   const wokeOnCompletion =
     thread.status === "completed" &&
     snoozedAtMs !== null &&
@@ -202,6 +183,7 @@ export function resolveAutoSettlementAt(input: {
   readonly nowMs: number;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
+  readonly autoSettleKeepPullRequests?: boolean;
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -236,8 +218,10 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
   }
+  const hasPullRequest =
+    pullRequest !== null || thread.linkedPullRequest != null || thread.branchPullRequest != null;
+  if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
   if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
-  // A passed wake timer restarts inactivity. An earlier wake can only delay settlement.
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   const timerWakeAtMs =
     snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
@@ -267,7 +251,6 @@ function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerS
   );
 }
 
-/** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
 /** @internal Exported for tests. */
 export function autoSettlementSettingsKey(
   settings: import("@t3tools/contracts").ServerSettings,
@@ -275,14 +258,13 @@ export function autoSettlementSettingsKey(
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
-    // Only entries that touch settlement, in a stable order, so a project
-    // override on an unrelated key does not queue a sweep. JSON drops
-    // undefined, so inherit (absent) and never (null) need distinct marks.
+    settings.sidebarAutoSettleKeepPullRequests,
     Object.entries(settings.projectSettingsOverrides)
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined,
+          entry.sidebarAutoSettleAfterDays !== undefined ||
+          entry.sidebarAutoSettleKeepPullRequests !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -291,6 +273,7 @@ export function autoSettlementSettingsKey(
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
+        entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
       ]),
   ]);
 }
@@ -318,7 +301,6 @@ export const make = Effect.gen(function* () {
     if (!autoSettlementConfigured(settings)) {
       return;
     }
-    // A sweep for one thread reads only that thread's candidate row.
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
@@ -343,6 +325,7 @@ export const make = Effect.gen(function* () {
           nowMs: DateTime.toEpochMillis(decisionNow),
           autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
+          autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
         const uuid = yield* crypto.randomUUIDv4();
@@ -368,8 +351,6 @@ export const make = Effect.gen(function* () {
         ),
     );
 
-    // Inactivity is entirely projection-backed. Complete those decisions before
-    // a source-control lookup can delay or fail an otherwise eligible thread.
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => settleThread(thread, null),
@@ -377,7 +358,6 @@ export const make = Effect.gen(function* () {
     ))
       .filter((thread) => thread !== null)
       .filter((thread) => visibleThreadPullRequests(thread.pullRequests ?? []).length === 0);
-    // Use the same cwd as the sidebar so both paths share GitManager's PR cache.
     const lookupCwdByThreadId = new Map<string, string>();
     yield* Effect.forEach(
       lookupCandidates,
@@ -401,9 +381,7 @@ export const make = Effect.gen(function* () {
       // The merge just confirmed a terminal state the lookup caches can still
       // call open (branch answers live two minutes, the sweep runs every
       // minute). Drop the swept checkouts' cached answers so the merge settles
-      // its branch threads now instead of on a later sweep. Threads linked to
-      // the merged pull request settle from the event itself below and need no
-      // lookup, so they are absent from this map by construction.
+      // its branch threads now instead of on a later sweep.
       const cwds = [...new Set(lookupCwdByThreadId.values())];
       yield* Effect.forEach(cwds, (cwd) => git.invalidateStatus(cwd), {
         concurrency: 8,
@@ -445,6 +423,7 @@ export const make = Effect.gen(function* () {
             nowMs: DateTime.toEpochMillis(decisionNow),
             autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
             autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+            autoSettleKeepPullRequests: settings.sidebarAutoSettleKeepPullRequests,
           }) !== null
         );
       });
@@ -490,8 +469,6 @@ export const make = Effect.gen(function* () {
         } satisfies SettlementPullRequest;
         const cwd = lookupCwdByThreadId.get(thread.id);
         if (summary.state !== "open" && thread.branch !== null && cwd !== undefined) {
-          // Recheck reused branches only when this sweep would settle a thread.
-          // Eligibility that changes after this check waits for the next sweep.
           if (!(yield* wouldSettle(group, terminal))) return undefined;
           const current = yield* git.branchPullRequest(
             { cwd, branch: thread.branch },
@@ -556,14 +533,11 @@ export const make = Effect.gen(function* () {
     runSweep(null, threadId),
   );
 
-  // Settling closes the thread's shells that sit at an idle prompt, so they stop
-  // holding the worktree. A terminal running a command (a dev server, an
-  // editor) stays for the user to close. Then the project's settle script runs
-  // in the thread's own worktree; a thread in the shared checkout skips it,
-  // because other threads may still be working there.
+  // Then the project's settle script runs in the thread's own worktree; a
+  // thread in the shared checkout skips it, because other threads may still be
+  // working there.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
-      // A thread re-engaged before this event ran keeps its shells.
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeIdle({ threadId });
@@ -580,10 +554,8 @@ export const make = Effect.gen(function* () {
         projectId: thread.projectId,
         worktreePath,
         trigger: "settle",
-        // A clean exit closes the script's shell so it does not hold the worktree.
         observeCompletion: {},
       });
-      // Recorded after a successful start, so a failed start retries on the next event.
       settleActionRunAt.set(threadId, settledAtMs);
       if (run.status === "started" && run.completion) {
         yield* run.completion.pipe(Effect.forkDetach);

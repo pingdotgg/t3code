@@ -39,7 +39,6 @@ vi.mock("@pierre/diffs/worker/worker.js?worker", async () => {
   const { Worker } = await import("node:worker_threads");
   const moduleUrl = import.meta.resolve("@pierre/diffs/worker/worker.js");
 
-  // Adapt only the transport. Pierre's real worker loads its WASM and produces every response.
   return {
     default: class {
       worker: NodeWorkerThreads.Worker;

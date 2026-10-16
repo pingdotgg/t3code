@@ -29,7 +29,6 @@ function failure(
   };
 }
 
-/** Holds CLI requests until the real desktop renderer is ready to handle them. */
 export class DesktopAppActivationBroker {
   readonly #pending = new Map<string, PendingActivation>();
   readonly #requestTimeoutMs: number;

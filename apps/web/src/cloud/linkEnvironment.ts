@@ -247,9 +247,6 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
   }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }
 
-// "publish_only" links the environment to the relay for agent-activity
-// publishing alone: no managed tunnel is provisioned, so it can be toggled
-// independently of T3 Connect while clients reach the environment out of band.
 export type CloudLinkMode = "managed" | "publish_only";
 
 const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;

@@ -110,7 +110,6 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         });
         assert.equal(mutation.operation, "exec");
         if (mutation.operation === "exec" && (yield* HostProcess.Platform) !== "win32") {
-          // NTFS has no POSIX mode bits to report.
           assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
         }
 

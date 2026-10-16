@@ -158,8 +158,6 @@ describe("KeybindingsSettings write notice", () => {
     state.connected = true;
   });
 
-  // The hosted app has no environment until one is paired, so the editor is
-  // locked for a missing connection, not a missing permission.
   it("asks for a connected environment when none is connected", () => {
     state.connected = false;
     expect(noticeText(renderPanel())).toBe("Connect an environment to change keybindings.");

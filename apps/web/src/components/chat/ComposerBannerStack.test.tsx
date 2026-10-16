@@ -81,7 +81,6 @@ it("only offers notice details when the description cannot fit", async () => {
   text.scrollWidth = 300;
   await act(() => resize());
   expect(details()).toHaveLength(1);
-  // It fits without the icon: the icon must not keep its own overflow alive.
   availableWidth = 308;
   await act(() => resize());
   expect(details()).toHaveLength(0);

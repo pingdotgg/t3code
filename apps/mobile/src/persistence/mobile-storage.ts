@@ -225,8 +225,6 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     }),
   );
 
-  // Threads most recently opened on this device, newest first — the source
-  // for the launcher's dynamic "recent thread" app shortcuts.
   const loadRecentThreadShortcuts = readJson<{
     readonly threads?: ReadonlyArray<RecentThreadShortcut>;
   }>(RECENT_THREAD_SHORTCUTS_KEY).pipe(

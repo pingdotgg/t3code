@@ -180,9 +180,6 @@ export function ComposerEditor({
                 ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                 : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          // Only a mention wears per-filetype artwork. An attachment chip keeps the tinted
-          // monochrome glyph web draws for it: coloured artwork ignores the chip's accent and
-          // makes the composer chip read differently from the same chip in a sent message.
           iconUri:
             token.type === "mention"
               ? fileIconUri(token.value)

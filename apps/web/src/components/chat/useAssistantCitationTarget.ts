@@ -12,7 +12,6 @@ export interface CitationHistoryPage {
   readonly onLoadEarlier: () => void;
 }
 
-/** Fetch, unfold, and mount the source before its measured quote owns scrolling. */
 export function useAssistantCitationTarget({
   request,
   entries,

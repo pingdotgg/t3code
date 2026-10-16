@@ -71,30 +71,19 @@ export type AssetUrlState =
   | { readonly _tag: "Loading" }
   | {
       readonly _tag: "Failure";
-      /** Set when the session lacks `filesystem:read`; the file itself may be fine. */
       readonly reason?: "missing-file-access";
     }
   | {
       readonly _tag: "Success";
       readonly url: string;
-      /** When the signed URL stops working, in epoch milliseconds. */
       readonly expiresAt: number;
-      /** The host path the server chose to serve, when it differs from what was asked for. */
       readonly sourcePath?: string;
-      /** Pixel size from the image header, when the server could read one. */
       readonly imageDimensions?: AssetImageDimensions;
     };
 
-/** Shown in place of a host file the session lacks `filesystem:read` for. */
 export const MISSING_FILE_ACCESS_MESSAGE =
   "This connection cannot read host files. Pair again with a new link to view it.";
 
-/**
- * The state for a host file this session cannot read yet, or null when the client
- * should ask the host. The host requires `filesystem:read` for these resources, so
- * clients skip the request. A connected session without the scope gets its own
- * reason, so the UI can say to pair again instead of implying the file is gone.
- */
 export function blockedAssetUrlState(
   resource: AssetResource | null,
   fileAccess: {
@@ -113,7 +102,6 @@ export function blockedAssetUrlState(
     return null;
   }
   if (fileAccess.isPending) return { _tag: "Loading" };
-  // An error means the session check itself failed, such as when offline.
   return fileAccess.error === null
     ? { _tag: "Failure", reason: "missing-file-access" }
     : { _tag: "Failure" };
@@ -172,7 +160,6 @@ export function createAssetEnvironmentAtoms<R, E>(
       local.environmentId,
       request(WS_METHODS.assetsCreateUrl, input),
     );
-    // Callers resolve against the thread's server, so preserve the local server's origin.
     return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
   });
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
@@ -210,10 +197,6 @@ export function createAssetEnvironmentAtoms<R, E>(
   };
 }
 
-/**
- * Keeps project icons visible while their environment reconnects. Each resource
- * owns its last resolved URL, including a confirmed missing-icon response.
- */
 export function createProjectFaviconUrlAtomFamily(input: {
   readonly imageCache?: ProjectFaviconCache;
   readonly createUrl: (target: {
@@ -223,7 +206,6 @@ export function createProjectFaviconUrlAtomFamily(input: {
   readonly preparedConnection: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<Option.Option<{ readonly httpBaseUrl: string }>>;
-  /** The environment's tracked clones, empty when it reports none. */
   readonly projectClones?: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<ProjectCloneSnapshot>>;

@@ -261,7 +261,6 @@ describe("ChatMarkdown favicon privacy", () => {
         renderer!.update(markdown("https://example.com"));
       });
       expect(renderer!.root.findAllByType("img")).toHaveLength(1);
-      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
       await act(async () => {
         renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
       });
@@ -1129,12 +1128,10 @@ it("opens a disclosure only when find selects a match inside it", async () => {
   const frame = () =>
     act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   try {
-    // Closed panels are unmounted until find starts, as in the app.
     await act(() => root.render(<Probe activeOccurrence={0} searching={false} />));
     expect(container.textContent).not.toContain("nothing here");
     await act(() => root.render(<Probe activeOccurrence={0} />));
     await frame();
-    // Selecting the visible match opens nothing; the folded one is counted but not painted.
     expect(openStates()).toEqual(["false", "false", "false"]);
     expect(container.textContent).toContain("nothing here");
     expect(
@@ -1145,7 +1142,6 @@ it("opens a disclosure only when find selects a match inside it", async () => {
     await act(() => root.render(<Probe activeOccurrence={1} />));
     await frame();
     await frame();
-    // Stepping to the folded match opens its two ancestors, not the unrelated one.
     expect(openStates()).toEqual(["false", "true", "true"]);
     expect(highlights.get("t3-thread-find-active")?.size).toBe(1);
   } finally {
@@ -1199,7 +1195,6 @@ it("keeps Mermaid diagrams rendered until find selects a match in their source",
     await act(() => root.render(<Probe query="Alpha" />));
     await frame();
     await frame();
-    // Only the diagram holding the selected match switches to source.
     expect(diagrams()).toBe(1);
     expect(
       [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),

@@ -86,7 +86,6 @@ interface BranchToolbarProps {
   showGitControls: boolean;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
-  /** The thread's env mode as ChatView resolves it. */
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
@@ -407,16 +406,8 @@ const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
 /**
- * The width a label takes when shown, clipped parts included.
- *
- * Text keeps its full width when its box clips it, so each text run measures
- * whole. A label can hold more than one run (MiddleTruncate splits a branch
- * into a head and a tail), so the runs are added. Reading one element's
- * scrollWidth drops the tail when the label is hidden or squeezed, and the
- * strip then flips between labels and icons on every measure.
- *
- * A shown label never grows past its motion span's max width, so longer text
- * reserves only that much.
+ * Reading one element's scrollWidth drops the tail when the label is hidden or
+ * squeezed, and the strip then flips between labels and icons on every measure.
  */
 function labelTextWidth(label: HTMLElement, range: Range): number {
   const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
@@ -430,14 +421,6 @@ function labelTextWidth(label: HTMLElement, range: Range): number {
   return Number.isFinite(maxWidth) ? Math.min(width, maxWidth) : width;
 }
 
-/**
- * Collapse the strip's labels to icons only when the text no longer fits.
- *
- * Hidden labels stay measurable because their inner text keeps its natural
- * width while the outer layout box collapses. This lets every pass recompute
- * the expanded width without remembered values that could go stale or latch
- * the strip compact. A small hysteresis keeps the boundary from flapping.
- */
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const [overflows, setOverflows] = useState(false);
   const pendingLabelRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
@@ -453,9 +436,6 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     if (!current) return;
     const available = current.clientWidth;
     if (available === 0) return;
-    // flex-1 stretches the groups to fill the strip, so their own boxes always
-    // measure "full". Sum the laid-out content instead, skipping hidden form
-    // artifacts and other out-of-flow nodes.
     const contentWidth = (parent: Element): number => {
       const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
       let width = 0;
@@ -479,11 +459,11 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     let groups = 0;
     for (const child of current.children) {
       if (!(child instanceof HTMLElement)) continue;
-      // The host itself flexes into all remaining room. Reserve the natural
-      // width of the controls inside it, blocks in overflow included, so Git
-      // labels compact before squeezing out the model picker. Reserving only
-      // the visible controls would let the labels expand into room the
-      // composer just freed, shrink the host, and hide the controls again.
+      // Reserve the natural width of the controls inside it, blocks in overflow
+      // included, so Git labels compact before squeezing out the model picker.
+      // Reserving only the visible controls would let the labels expand into
+      // room the composer just freed, shrink the host, and hide the controls
+      // again.
       const hostedControls = child.matches('[data-chat-resting-composer-controls-host="true"]')
         ? child.querySelector<HTMLElement>('[data-chat-composer-resting-controls="true"]')
         : null;
@@ -500,8 +480,6 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     needed += stripGap * Math.max(0, groups - 1);
     const range = document.createRange();
     for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-      // Subtract the visible width even during an animation. The content
-      // sum already includes it; only the hidden text needs reserving.
       needed += Math.max(0, labelTextWidth(label, range) - label.getBoundingClientRect().width);
     }
     const nextOverflows = resolveContextStripLabelsCompact({
@@ -536,9 +514,6 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       const nextWidth = label.getBoundingClientRect().width;
       if (Math.abs(previousRect.width - nextWidth) < 0.5) continue;
 
-      // Animate the space occupied by each label so flex layout keeps the
-      // trailing controls anchored. Translating the whole group after its
-      // width snaps sends expanded text beyond the strip's right edge.
       const animation = label.animate(
         [
           { width: `${previousRect.width}px`, maxWidth: `${previousRect.width}px` },
@@ -572,9 +547,6 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     [],
   );
 
-  // Label widths can change without the strip box moving (font family or
-  // size preferences), so re-measure on every render as well as on resize
-  // and font loads.
   useLayoutEffect(() => {
     measure();
   });
@@ -640,9 +612,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
 
-  // "Previous worktree" hops a draft into the most recently active worktree
-  // of this project — the "keep going where I just was" follow-up flow. Only
-  // drafts can hop; started server threads have their workspace pinned.
   const canUsePreviousWorktree =
     draftThread !== null && serverThread === null && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = useMemo(
@@ -665,8 +634,6 @@ export const BranchToolbar = memo(function BranchToolbar({
     : null;
   const onUsePreviousWorktree = useCallback(() => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
-    // Same shape the branch selector writes when picking a branch that
-    // already lives in a worktree: point the draft at the existing tree.
     setDraftThreadContext(draftId ?? threadRef, {
       branch: previousWorktreeSeed.branch,
       worktreePath: previousWorktreeSeed.worktreePath,
@@ -831,9 +798,6 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : null}
 
       {composerControlsHostRef ? (
-        // The host takes whatever the workspace and branch controls leave
-        // over, in both strip layouts, so a collapsed composer can show its
-        // model and mode controls wherever they fit.
         <div
           ref={composerControlsHostRef}
           data-composer-context-control

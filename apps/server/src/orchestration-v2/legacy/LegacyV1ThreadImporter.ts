@@ -684,7 +684,6 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // Threads whose transcript import this process has already confirmed.
   // `transcript_imported_at` is never reset to NULL, so a positive answer
   // stays valid for the process lifetime; ensureTranscript runs on most
   // thread reads and command dispatches, so skipping the lock + lookup here

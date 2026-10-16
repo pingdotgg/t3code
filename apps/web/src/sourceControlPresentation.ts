@@ -19,7 +19,6 @@ export type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-co
 
 type SourceControlIcon = ElementType<{ className?: string }>;
 
-/** Web art for each definition `icon` key; a key without art draws the change request glyph. */
 const SOURCE_CONTROL_ICONS: Partial<Record<string, SourceControlIcon>> = {
   github: GitHubIcon,
   gitlab: GitLabIcon,
@@ -52,7 +51,6 @@ function presentDefinition(
   };
 }
 
-/** Named as the server reported the host, e.g. "GitHub Self-Hosted", when it reported one. */
 export function getSourceControlPresentation(
   provider: SourceControlProviderInfo | null | undefined,
 ): SourceControlPresentation {
@@ -60,7 +58,6 @@ export function getSourceControlPresentation(
   return presentDefinition(definition, provider?.name || definition.label);
 }
 
-/** For surfaces that know only the host kind, such as a change request row or filter. */
 export function getSourceControlPresentationForKind(kind: string): SourceControlPresentation {
   const definition = sourceControlClients.get(kind);
   return presentDefinition(definition, definition.label);

@@ -209,6 +209,53 @@ describe("threadHistoryPaging", () => {
     );
   });
 
+  it("counts runs that a notification started toward the 150-turn ceiling", () => {
+    const inRun = (index: number, run: number, item: object = {}) => {
+      const row = makeRow(index);
+      return {
+        ...row,
+        item: { ...row.item, runId: RunId.make(`run-${run}`), ...item },
+      } as OrchestrationV2ProjectedTurnItem;
+    };
+    const notification = (summary: string) => ({
+      type: "notification",
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary,
+    });
+    const items = Array.from({ length: 161 }, (_, run) => [
+      inRun(run * 4, run),
+      inRun(
+        run * 4 + 1,
+        run,
+        run === 0
+          ? {
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              messageId: MessageId.make("prompt-0"),
+              text: "Prompt 0",
+              attachments: [],
+            }
+          : notification(`Wake ${run}`),
+      ),
+      inRun(run * 4 + 2, run, notification(`Steer ${run}`)),
+      inRun(run * 4 + 3, run),
+    ]).flat();
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    expect(first.items).toHaveLength(150 * 4 - 1);
+    expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
+    const older = selectHistoryPageFromCursor({
+      items,
+      cursor: first.nextCursor!,
+      snapshotSequence: 1,
+    });
+    expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
+      items.map((row) => row.sourceItemId),
+    );
+  });
+
   it("pages agent-only child transcripts instead of dropping their earlier activity", () => {
     const commandRows = Array.from({ length: 90 }, (_, index) => makeRow(index + 1));
     const first = makeRow(0);
@@ -322,8 +369,6 @@ describe("threadHistoryPaging", () => {
       snapshotSequence: 3,
       policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
     });
-    // Clamp exclusive end to items.length and page backward so the client can
-    // dedupe and advance rather than permanently 400 on a dead cursor.
     expect(page.items.map((row) => row.sourceItemId)).toEqual(["item-3", "item-4"]);
     expect(page.hasMoreHistory).toBe(true);
     expect(page.nextCursor).not.toBeNull();
@@ -369,7 +414,6 @@ describe("threadHistoryPaging", () => {
     expect(bounded.hasMoreHistory).toBe(true);
     expect(bounded.historyCursor).not.toBeNull();
     expect(bounded.projection.visibleTurnItems.map((row) => row.position)).toEqual([0, 1, 2, 3, 4]);
-    // Watermark comes from the full projection, not the trimmed window.
     expect(bounded.latestLocalTurnOrdinal).toBe(40);
     expect(computeLatestLocalTurnOrdinal(full.turnItems)).toBe(40);
   });
@@ -420,13 +464,7 @@ describe("threadHistoryPaging", () => {
         threadId: ThreadId.make("parent-thread"),
       },
     };
-    // Full projection still has local turnItems even if the recent window is
-    // only the inherited row (e.g. after aggressive byte budget on a large
-    // local item that is not selected into the recent page). Use a synthetic
-    // projection with local turnItems and inherited-only visible window.
     const full = makeProjection([localOlder, localMid, inherited]);
-    // Force an inherited-only visible window by rebuilding with only inherited
-    // visible rows while retaining full local turnItems for the watermark.
     const inheritedOnly = {
       ...full,
       visibleTurnItems: [inherited],
@@ -445,7 +483,6 @@ describe("threadHistoryPaging", () => {
   });
 
   it("retains an out-of-window run_interrupt_request needed by a visible result", () => {
-    // Older request sits outside a 1-row recent window; result is visible alone.
     const request = interruptRow(0, "run_interrupt_request");
     const filler = makeRow(1);
     const result = interruptRow(2, "run_interrupt_result");
@@ -467,9 +504,6 @@ describe("threadHistoryPaging", () => {
   });
 
   it("retains all run_interrupt_request items even when no result is in the initial window", () => {
-    // Cold open: recent window is only filler. Request and result both live on
-    // older pages, but the request must still ride in turnItems so a later
-    // history page can introduce the result safely under live attempt updates.
     const request = interruptRow(0, "run_interrupt_request");
     const result = interruptRow(1, "run_interrupt_result");
     const recent = makeRow(2);
@@ -513,7 +547,6 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems.length).toBeGreaterThan(0);
     expect(bounded.projection.visibleTurnItems.length).toBeLessThan(rows.length);
 
-    // History pages only charge the projected row once (no turnItems copy).
     const historyPage = selectRecentTimelineWindow({
       items: rows,
       snapshotSequence: 1,
@@ -526,7 +559,6 @@ describe("threadHistoryPaging", () => {
     expect(historyBytes).toBeLessThanOrEqual(maxEncodedBytes);
     expect(historyPage.items.length).toBeGreaterThan(bounded.projection.visibleTurnItems.length);
 
-    // Dual-cost for one local row exceeds the plain row cost.
     const sample = rows[0]!;
     expect(projectedRowBoundedSnapshotEncodedBytes(sample, THREAD)).toBeGreaterThan(
       projectedRowEncodedBytes(sample),

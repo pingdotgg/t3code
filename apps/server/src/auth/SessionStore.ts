@@ -59,7 +59,6 @@ export interface VerifiedSession {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
-  /** The most an MCP client approved through OAuth may hand to the threads it drives. */
   readonly runtimeModeCeiling?: RuntimeMode;
 }
 
@@ -378,12 +377,7 @@ export class SessionStore extends Context.Service<
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
-      /**
-       * Atomically revoke active sessions with the same subject and method
-       * before storing this session.
-       */
       readonly replaceActiveForSubjectAndMethod?: boolean;
-      /** Replace only this session, of the same method, in the issuance transaction. */
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
@@ -608,7 +602,6 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("SessionStore.markConnected"),
     );
 
-  // Best-effort: connection metadata must never block or fail a connect.
   const recordClientConnection: SessionStore["Service"]["recordClientConnection"] = (
     sessionId,
     client,

@@ -127,7 +127,6 @@ describe("environment favorite toggles", () => {
       await mount();
       const first = click();
       const second = click();
-      // Preparing the patch is asynchronous even when migration has already completed.
       await act(async () => {});
       expect(writes.map((write) => write.patch.setModelFavorites?.[0]?.favorite)).toEqual([
         !initiallyFavorited,
@@ -195,7 +194,6 @@ describe("environment favorite toggles", () => {
     await act(async () => {});
     writes[0]!.finish();
     await first;
-    // Another client removed the favorite after this client's add was acknowledged.
     const remoteSettings = { ...initialSettings, favorites: [] };
     durable.set(primaryId, remoteSettings);
     await act(() => registry.set(state.settings.get(primaryId)!, remoteSettings));

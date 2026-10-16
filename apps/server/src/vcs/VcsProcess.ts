@@ -42,7 +42,6 @@ export interface VcsProcessOutput {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
-  /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
 }
@@ -209,7 +208,6 @@ export const make = Effect.gen(function* () {
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&
       input.onStdoutChunk === undefined
     ) {
-      // Retry the failed command, retaining the private index/tree and recovery's outer deadline.
       return yield* bounded.pipe(
         Effect.tapError((error) =>
           Effect.logDebug("checkpoint Git command failed", {

@@ -523,7 +523,6 @@ describe("EnvironmentProviderSettings routing", () => {
 
     const [resetMutation, resetPatch] = settingsState.mutateProviderInstance.mock.lastCall ?? [];
     expect(resetMutation).toEqual({ operation: "remove", instanceId: codexId });
-    // Removing the instance is the whole reset; shared preferences stay untouched.
     expect(resetPatch ?? {}).toEqual({});
   });
 

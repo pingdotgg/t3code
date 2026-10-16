@@ -26,7 +26,6 @@ const runServerCommand = (
     return yield* runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
   });
 
-/** Bare words can name existing directories, but must not create typo projects. */
 export const runDefaultServerCommand = (flags: CliServerFlags) =>
   Effect.gen(function* () {
     if (Option.isSome(flags.cwd)) {

@@ -1,6 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-/** Wait for earlier grants before choosing the settings that edits and synchronization use. */
 export function resolveAutoSettleReferenceEnvironmentId(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;

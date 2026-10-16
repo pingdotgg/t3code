@@ -69,7 +69,6 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
         },
       ];
     }
-    // Use actions even for checked entries: the app owns their durable state.
     return [
       {
         id: childId,
@@ -137,7 +136,6 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
   });
 }
 
-/** Translate the existing screen options to v5's native header API. */
 export function V5StackHeader(props: {
   readonly options: Options;
   readonly canGoBack: boolean;

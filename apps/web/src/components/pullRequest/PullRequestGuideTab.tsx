@@ -19,11 +19,6 @@ import {
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 
-/**
- * A maintainer's tour of the pull request: stops through the diff in reading order with the
- * calls only a person can make. Generated on request and stored, so opening the tab is free.
- * Rewriting a current guide lives in the header menu; the tab only asks when it has a reason.
- */
 export function PullRequestGuideTab({
   environmentId,
   reference,
@@ -39,24 +34,16 @@ export function PullRequestGuideTab({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The pull request's title for the notice when a guide is ready, null until the detail loads. */
   title: string | null;
-  /** The checkout the guide's prose renders against, as the description does. */
   workspaceRoot: string;
-  /** Whether this is the tab on screen. */
   active: boolean;
-  /** Whether this reader may queue line comments for a review on this host. */
   canComment: boolean;
-  /** Opens an agent thread about lines of the change. Null where no thread can be opened. */
   onAskAboutLines: ((comment: ReviewCommentContext, request: string) => void) | null;
   onAskAboutStop:
     | ((stop: PullRequestReviewGuideStop, index: number, question: string) => void)
     | null;
-  /** Opens the review composer with the comments queued so far. Null where the reader cannot review. */
   onFinishReview: (() => void) | null;
-  /** Shows a file in the Code tab. */
   onOpenFile: (path: string) => void;
-  /** Told when a written guide comes on screen; a run in progress is not one. */
   onTourShown?: (() => void) | undefined;
 }) {
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
@@ -65,7 +52,6 @@ export function PullRequestGuideTab({
     title,
   });
   const runKey = guideRunKey(environmentId, reference);
-  // Line comments join the review the Code tab collects, so either place shows and sends them.
   const reviewKey = pullRequestReviewKey(reference);
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -108,7 +94,6 @@ export function PullRequestGuideTab({
   const runState = data?.run ?? null;
   const currentHeadSha = data?.currentHeadSha ?? null;
   const stale = guide !== null && currentHeadSha !== null && currentHeadSha !== guide.headSha;
-  // A failure is shown only while it is about the head the reader is looking at.
   const failure =
     runState?._tag === "Failed" && runState.headSha === currentHeadSha ? runState.detail : null;
   const writeButton = (label: string, size: "sm" | "xs") =>
@@ -144,7 +129,6 @@ export function PullRequestGuideTab({
     );
   }
 
-  // Only a guide that needs attention says so; a current one is just the tour.
   const banner =
     stale || failure !== null || running ? (
       <Alert variant={running ? "info" : "warning"}>

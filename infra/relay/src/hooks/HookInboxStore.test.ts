@@ -25,7 +25,6 @@ const hook = (id: string, overrides: Partial<HookInboxStore.HeldHook> = {}) =>
     ...overrides,
   }));
 
-/** Delivers with `outcome` per request and records what the environment was sent. */
 const deliverer = (outcome: (hook: HookInboxStore.HeldHook) => HookInboxStore.DeliveryOutcome) => {
   const sent: Array<{ readonly baseUrl: string; readonly hook: HookInboxStore.HeldHook }> = [];
   const send = (baseUrl: string, held: HookInboxStore.HeldHook) =>
@@ -53,7 +52,6 @@ describe("HookInboxStore", () => {
         expect(yield* HookInboxStore.deliverDue(send)).toBeNull();
         expect(sent.map((entry) => entry.hook.id)).toEqual(["first", "second"]);
         expect(sent[0]).toEqual({ baseUrl: BASE_URL, hook: first });
-        // Delivered requests are gone.
         expect(yield* HookInboxStore.deliverDue(send)).toBeNull();
         expect(sent).toHaveLength(2);
       }),
@@ -67,7 +65,6 @@ describe("HookInboxStore", () => {
         yield* HookInboxStore.hold(yield* hook("second"), BASE_URL);
         const offline = deliverer(() => "unreachable");
         const now = yield* Clock.currentTimeMillis;
-        // Stops at the first failure, so order is kept.
         expect(yield* HookInboxStore.deliverDue(offline.send)).toBe(now + 10_000);
         expect(offline.sent.map((entry) => entry.hook.id)).toEqual(["first"]);
         expect(yield* HookInboxStore.deliverDue(offline.send)).toBe(now + 10_000);
@@ -88,10 +85,8 @@ describe("HookInboxStore", () => {
         yield* HookInboxStore.hold(yield* hook("stuck-2", stuck), BASE_URL);
         const busy = deliverer((held) => (held.hookKey === "stuck" ? "busy" : "delivered"));
         const now = yield* Clock.currentTimeMillis;
-        // The other hook is delivered; the busy hook keeps its order and runs again soon.
         expect(yield* HookInboxStore.deliverDue(busy.send)).toBe(now);
         expect(busy.sent.map((entry) => entry.hook.id)).toEqual(["stuck-1", "other-1"]);
-        // Only the busy hook is left, so the next run waits rather than spinning.
         expect(yield* HookInboxStore.deliverDue(busy.send)).toBe(now + 30_000);
 
         const drained = deliverer(() => "delivered");
@@ -155,7 +150,6 @@ describe("HookInboxStore", () => {
         yield* HookInboxStore.deliverDue(offline.send);
         yield* HookInboxStore.deliverDue(offline.send);
 
-        // Past the fast phase: the environment was away a while.
         for (let failure = 0; failure < 20; failure++) {
           yield* HookInboxStore.deliverDue(offline.send);
         }
@@ -180,7 +174,6 @@ describe("HookInboxStore", () => {
         for (let failure = 0; failure < 30; failure++) {
           yield* HookInboxStore.deliverDue(offline.send);
         }
-        // Nothing got through before the request expired.
         yield* TestClock.adjust(Duration.hours(25));
         expect(yield* HookInboxStore.deliverDue(offline.send)).toBeNull();
 
@@ -211,7 +204,6 @@ describe("HookInboxStore", () => {
           expect(yield* HookInboxStore.hold(yield* hook(`a-${index}`), BASE_URL)).not.toBeNull();
         }
         expect(yield* HookInboxStore.hold(yield* hook("one-too-many"), BASE_URL)).toBeNull();
-        // Another hook still has room.
         const other = yield* hook("other", { rawHookId: "hook-2", hookKey: "hook-2" });
         expect(yield* HookInboxStore.hold(other, BASE_URL)).not.toBeNull();
       }),

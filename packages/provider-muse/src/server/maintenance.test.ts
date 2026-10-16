@@ -76,7 +76,6 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
         expect(compareMuseVersions("1.1.1-R9.1", "1.1.1-R10.1")).toBeLessThan(0);
         expect(compareMuseVersions("1.1.1-R2514.1", "1.1.1-R2514.2")).toBeLessThan(0);
         expect(compareMuseVersions("1.2.0-R1.1", "1.1.1-R2514.2")).toBeGreaterThan(0);
-        // A CLI that prints no revision compares by release, never as an older prerelease.
         expect(compareMuseVersions("1.4.3", "1.4.3-R5018.1")).toBe(0);
         expect(compareMuseVersions("1.4.2", "1.4.3-R5018.1")).toBeLessThan(0);
       }),

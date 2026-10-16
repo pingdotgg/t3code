@@ -8,7 +8,6 @@ import { useThreadShells } from "./entities";
 import { pullRequestStackAtom } from "./pullRequests";
 import { useEnvironmentQuery } from "./query";
 
-/** Detail headers and list popovers keep saved navigation during an unavailable refresh. */
 export function usePullRequestStack(
   environmentId: EnvironmentId,
   reference: PullRequestRef | null,

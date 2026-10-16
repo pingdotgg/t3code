@@ -83,7 +83,6 @@ it.effect("collects planner statistics for an existing database on open", () => 
       `;
     }).pipe(Effect.provide(persistence()));
 
-    // A database written before statistics existed gets them on the next open.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql<{ readonly stat: string }>`
@@ -103,7 +102,6 @@ it.effect("only fsyncs the database file at WAL checkpoints", () => {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
-    // 1 is NORMAL.
     assert.equal(rows[0]?.synchronous, 1);
   }).pipe(
     Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),

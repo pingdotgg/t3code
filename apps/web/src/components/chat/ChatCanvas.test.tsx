@@ -45,7 +45,6 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
-    // A nonzero canvas origin catches viewport coordinates used as canvas coordinates.
     if (this.hasAttribute("data-thread-find-bar")) {
       const gap = 0.75 * fontSize;
       return new DOMRect(

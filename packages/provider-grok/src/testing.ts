@@ -1,9 +1,3 @@
-/**
- * Grok internals the server's replay testkit, fixture recorder, and
- * orchestration tests drive directly.
- *
- * @module provider-grok/testing
- */
 export {
   GROK_DEFAULT_INSTANCE_ID,
   GROK_PROVIDER,

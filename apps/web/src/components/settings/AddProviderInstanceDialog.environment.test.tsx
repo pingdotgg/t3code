@@ -169,7 +169,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
       },
     });
     let tree = render();
-    // Codex offers ChatGPT sign-in first; manual setup keeps the existing CLI flow.
     (findByChildren(tree, "Configure manually").props.onClick as () => void)();
     tree = render();
     (findByChildren(tree, "Next").props.onClick as () => void)();

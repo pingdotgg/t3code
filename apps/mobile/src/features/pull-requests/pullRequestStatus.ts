@@ -4,7 +4,7 @@ import type {
   PullRequestDetail,
   PullRequestListEntry,
 } from "@t3tools/contracts";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 const STATES = {
   open: {
@@ -122,7 +122,6 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   } as const;
 }
 
-/** A reviewer's latest verdict replaces their earlier approval or dismissal. */
 export function pullRequestReviewSummary(
   pr: Pick<PullRequestDetail, "reviewers">,
   activity: Pick<PullRequestActivity, "comments" | "commits"> | null,

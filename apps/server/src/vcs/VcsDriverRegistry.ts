@@ -118,9 +118,8 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
-  // The cwd and each parent below the repository root. A new `.git` in any of
-  // them means `git init` made a nested repository. Falls back to the cwd alone
-  // when the root is not above it, such as a cwd reached through a symlink.
+  // Falls back to the cwd alone when the root is not above it, such as a cwd
+  // reached through a symlink.
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
     const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
     if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
@@ -129,7 +128,6 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  // What `detect` re-checks on every cache hit, using stats instead of git.
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
     Effect.all({
       gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
@@ -165,8 +163,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // A hit is stale when its worktree or `.git` folder was removed, or when
-  // `git init` created a nested repository between the cwd and its root.
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);

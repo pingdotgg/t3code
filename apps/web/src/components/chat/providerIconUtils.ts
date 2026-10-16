@@ -32,12 +32,6 @@ export function getDisplayModelName(
   return stripLeadingQualifier(name, model.subProvider);
 }
 
-/**
- * The second line of a model row, naming where the model comes from. A
- * sub-provider whose name reads as its provider plus a qualifier ("OpenCode
- * Zen" under "OpenCode") stands alone: joining the two shows "OpenCode ·
- * OpenCode Zen", and OpenCode's own picker shows the sub-provider by itself.
- */
 export function getProviderRowLabel(
   providerDisplayName: string,
   subProvider: string | undefined,

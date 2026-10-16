@@ -17,8 +17,6 @@ export function encodeComposerContextFragment(
   return encoded.length <= MAX_FRAGMENT_CHARS ? encoded : null;
 }
 
-/** HTML is the portable flavor shared by browsers and native system clipboards. */
-/** Room for the wrapper element, its attribute name, and the copied HTML itself. */
 const HTML_WRAPPER_SLACK_CHARS = 4096;
 
 export function encodeComposerContextClipboardHtml(
@@ -47,7 +45,6 @@ export function decodeComposerContextClipboardHtml(
   }
 }
 
-/** Clipboard data is untrusted: anything that is not a valid version-1 fragment is ignored. */
 export function decodeComposerContextFragment(
   raw: string | null | undefined,
 ): ComposerContextClipboardFragment | null {

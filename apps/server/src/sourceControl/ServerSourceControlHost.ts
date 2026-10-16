@@ -1,9 +1,3 @@
-/**
- * The server's implementation of `SourceControlHost.SourceControlHost`, the only server surface
- * source control provider packages may use.
- *
- * @module sourceControl/ServerSourceControlHost
- */
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

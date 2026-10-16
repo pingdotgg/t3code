@@ -38,10 +38,6 @@ const ATTENTION_LABELS = {
   accessibility: "An accessibility call",
 } as const satisfies Record<PullRequestReviewGuideAttention["kind"], string>;
 
-/**
- * One stop of the tour: what it is about, where to look, and the two things a reader does with
- * it: comment on its lines for the review, or ask an agent about it.
- */
 export function GuideStop({
   stop,
   index,
@@ -62,42 +58,30 @@ export function GuideStop({
   stop: PullRequestReviewGuideStop;
   index: number;
   stopCount: number;
-  /** Whether the stop list is folded open under the header, on a narrow panel. */
   railOpen: boolean;
   onRailOpenChange: (open: boolean) => void;
-  /** The tour's stop list, folded under the header on a narrow panel. */
   stopList: ReactNode;
-  /** The following stop's title, null on the last stop. */
   nextTitle: string | null;
   files: ReadonlyMap<string, FileDiffMetadata>;
-  /** Loads a file's unchanged lines for the bars between hunks. */
   loadDiffFiles: FileDiffContentsLoader;
   diffLoading: boolean;
-  /** Commenting on excerpt lines; null where the reader can neither comment nor ask. */
   commenting: ExcerptCommenting | null;
   onStep: (delta: 1 | -1) => void;
-  /** Opens an agent thread about this stop, with the question prefilled or empty. */
   onAsk: ((question: string) => void) | null;
-  /** Opens the review composer, on the last stop. Null where the reader cannot review. */
   onFinish: (() => void) | null;
   onOpenFile: (path: string) => void;
 }) {
   const { lettered, byExcerpt } = useMemo(() => letterStopNotes(stop), [stop]);
   const excerptPaths = new Set(stop.excerpts.map((excerpt) => excerpt.path));
-  // Files the stop owns without excerpting, and excerpted ones listed again with a note.
   const otherFiles = stop.files.filter((file) => !excerptPaths.has(file.path));
 
   const hasNotes = lettered.length > 0;
 
   return (
-    // On a maximized panel the notes take a sticky column of their own beside the stop; a stop
-    // without notes keeps the whole width. Narrower, they follow the excerpts.
     <div
       className={cn("grid gap-8", hasNotes && "@min-[90rem]/guide:grid-cols-[minmax(0,1fr)_20rem]")}
     >
       <article className="flex min-w-0 flex-col gap-5">
-        {/* Narrow, the stop list folds open under this line like an accordion, so one place
-            says where the reader is. Wide, the list sits beside the stop and this is a label. */}
         <Collapsible open={railOpen} onOpenChange={onRailOpenChange}>
           <header className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
@@ -156,7 +140,6 @@ export function GuideStop({
         </div>
 
         {stop.attention !== null ? (
-          // A call for the reader to make, not a warning, so it reads as a plain notice.
           <Alert controlAlignment="first-line">
             <EyeIcon />
             <AlertTitle>{ATTENTION_LABELS[stop.attention.kind]}</AlertTitle>
@@ -258,7 +241,6 @@ export function GuideStop({
                     <GuideProse text={question} />
                   </div>
                 ) : (
-                  // A question is a sentence, so it wraps rather than truncating as a button would.
                   <button
                     key={question}
                     type="button"

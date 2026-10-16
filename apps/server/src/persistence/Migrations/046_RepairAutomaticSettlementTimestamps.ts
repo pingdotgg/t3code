@@ -1,12 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Server auto-settlement used to stamp settledAt with the sweep time instead
-// of the thread's last activity. Repair the projection only: the engine and
-// projectors bootstrap from projection rows and cursors, never a full replay,
-// so the historical event payloads can stay as they were recorded. The
-// decider stamped settledAt and occurred_at from the same clock read, which
-// is how an unrepaired automatic settlement is identified below.
+// Repair the projection only: the engine and projectors bootstrap from
+// projection rows and cursors, never a full replay, so the historical event
+// payloads can stay as they were recorded. The decider stamped settledAt and
+// occurred_at from the same clock read, which is how an unrepaired automatic
+// settlement is identified below.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

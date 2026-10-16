@@ -29,7 +29,6 @@ interface PullRequestThreadLinksProps {
   onPickerOpenChange?: (open: boolean) => void;
 }
 
-/** Thread relations belong to the detail environment, including when another environment is active. */
 export function PullRequestThreadLinks(props: PullRequestThreadLinksProps) {
   const configs = useServerConfigs();
   if (

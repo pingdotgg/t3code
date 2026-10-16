@@ -24,10 +24,7 @@ describe("alert dialog description", () => {
     const header = /<div[^>]*data-slot="alert-dialog-header"[^>]*>/.exec(markup)?.[0] ?? "";
     const description = /<p[^>]*data-slot="alert-dialog-description"[^>]*>/.exec(markup)?.[0] ?? "";
 
-    // The whole payload stays available to inspect, untruncated…
     expect(markup).toContain(payload);
-    // …but bounded: the header may shrink inside the height-capped popup and
-    // the description scrolls instead of pushing the footer off screen.
     expect(header).toContain("min-h-0");
     expect(description).toContain("max-h-[min(24rem,60dvh)]");
     expect(description).toContain("overflow-y-auto");

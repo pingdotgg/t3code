@@ -104,7 +104,6 @@ const snapshotResult = {
   },
 };
 
-/** Answers every snapshot request on a fresh broker host with the given result. */
 const serveSnapshots = (clientId: string, result: unknown) =>
   Effect.gen(function* () {
     const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -349,7 +348,6 @@ it.effect.each([
         ]);
       }
 
-      // Output selection belongs to this call, not the MCP session's history.
       const nextDefault = yield* server
         .callTool({
           name: "preview_snapshot",
@@ -422,7 +420,6 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const snapshot = yield* callSnapshot({ save: true, includeImage: true });
 
       expect(snapshot.isError).toBe(false);
-      // The browser never receives the server-only `save` flag.
       expect(inputs).toEqual([{}]);
       expect(snapshot.content.map((content) => content.type)).toContain("image");
       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
@@ -439,7 +436,6 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const unsaved = yield* callSnapshot({});
       expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
 
-      // A save without the image skips the page dump.
       const pathOnly = yield* callSnapshot({ save: true });
       const saved = pathOnly.structuredContent as { readonly screenshotPath: string };
       expect(saved).toEqual({ url: snapshotResult.url, screenshotPath: expect.any(String) });
@@ -456,7 +452,6 @@ it.effect("reports a tagged error when the screenshot cannot be saved", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
-      // A regular file where the artifacts directory should be makes every write fail.
       yield* fileSystem.writeFileString(config.browserArtifactsDir, "");
       yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
 
@@ -494,7 +489,6 @@ it.effect(
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })
         .pipe(
-          // A preview-only credential: the token predates the toolkit or was minted elsewhere.
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
@@ -547,8 +541,6 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      // Mirrors the real failure: a [role] container whose innerText is the whole
-      // project list, repeated for several elements, plus a big AX tree.
       const pageText = "/Users/theo/Code/project\nClaude, Codex · 79 threads\n".repeat(600);
       const element = (name: string, index: number) => ({
         tag: "div",
@@ -649,7 +641,6 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 it.effect("bounds page text made of wide characters before dropping locators", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      // The character caps alone leave 8,000 three-byte characters, about 24 KB.
       yield* serveSnapshots("mcp-wide-text-client", {
         ...snapshotResult,
         visibleText: "界".repeat(9_000),
@@ -739,7 +730,6 @@ it.effect("sheds log entries before locators when every list is full", () =>
         readonly networkEntries: ReadonlyArray<unknown>;
         readonly actionTimeline: ReadonlyArray<unknown>;
       };
-      // Locators survive; the log lists take the cut.
       expect(parsed.interactiveElements).toHaveLength(20);
       expect(
         parsed.consoleEntries.length + parsed.networkEntries.length + parsed.actionTimeline.length,

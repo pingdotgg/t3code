@@ -1,12 +1,10 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
 
-/** One step forward or back, held to the tour's first and last stops. */
 export function stepTourPosition(current: number, delta: 1 | -1, stopCount: number): number {
   return Math.max(Math.min(current + delta, stopCount - 1), 0);
 }
 
-/** The stop's files in reading order: the excerpted ones first, then the rest it owns. */
 export function stopFilePaths(stop: PullRequestReviewGuideStop): ReadonlyArray<string> {
   return [
     ...new Set([
@@ -16,34 +14,26 @@ export function stopFilePaths(stop: PullRequestReviewGuideStop): ReadonlyArray<s
   ];
 }
 
-/** The rail's second line for a stop. */
 export function stopSubline(stop: PullRequestReviewGuideStop): string {
   const count = stopFilePaths(stop).length;
   if (count === 0) return "Context, no code";
   return count === 1 ? "1 file" : `${count} files`;
 }
 
-/** A note's marker: A, B, C… in the order the guide lists them, numbers past Z. */
 function noteMarker(index: number): string {
   return index < 26 ? String.fromCharCode(65 + index) : String(index + 1);
 }
 
-/** One rendered line of a file's diff, with where it sits on each side. */
 export interface DiffRow {
   readonly kind: "context" | "addition" | "deletion";
-  /** Line number on the old side, null for an added line. */
   readonly oldLine: number | null;
-  /** Line number on the new side, null for a removed line. */
   readonly newLine: number | null;
-  /** The next line number on each side when this row is reached, for hunk headers. */
   readonly oldAt: number;
   readonly newAt: number;
   readonly text: string;
-  /** Which hunk of the file the row came from; rows from two hunks are not adjacent. */
   readonly hunk: number;
 }
 
-/** Every line of a parsed file diff as the unified view lists it. */
 export function fileDiffRows(file: FileDiffMetadata): ReadonlyArray<DiffRow> {
   const rows: DiffRow[] = [];
   file.hunks.forEach((hunk, hunkIndex) => {
@@ -95,11 +85,6 @@ export function fileDiffRows(file: FileDiffMetadata): ReadonlyArray<DiffRow> {
   return rows;
 }
 
-/**
- * The rows an excerpt covers. Its range is in one side's line numbers, so the other side's half
- * of a replacement at either edge comes along: an excerpt starting on an added line also shows
- * the lines it replaced, which is what makes it read as a change rather than as new code.
- */
 export function excerptRows(
   rows: ReadonlyArray<DiffRow>,
   excerpt: Pick<PullRequestReviewGuideExcerpt, "side" | "start" | "end">,
@@ -132,10 +117,6 @@ export function excerptRows(
 
 const ROW_PREFIX = { context: " ", addition: "+", deletion: "-" } as const;
 
-/**
- * A unified patch of just these rows, so the shared diff renderer can draw a slice of a file
- * with its real line numbers instead of a second diff view being written for excerpts.
- */
 export function rowsToPatch(
   path: string,
   previousPath: string,
@@ -166,11 +147,8 @@ export function rowsToPatch(
 }
 
 /**
- * The old side an excerpt expands against: the new file with only the excerpt's lines put back
- * as they were. The renderer fills the code around a hunk from both files and needs them to
- * agree outside it, which the real old file does not wherever another hunk changed lines. Only
- * the lines the reader can expand into are read, and those are the new file's, so the code
- * around the excerpt shows as it reads after the change. Null when the excerpt spans hunks.
+ * The renderer fills the code around a hunk from both files and needs them to agree
+ * outside it, which the real old file does not wherever another hunk changed lines.
  */
 export function excerptExpansionOldContents(
   newContents: string,
@@ -181,8 +159,6 @@ export function excerptExpansionOldContents(
   const newLines = newContents.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const before = head.newAt - 1;
   const newCount = rows.filter((row) => row.newLine !== null).length;
-  // The old side keeps its own numbering, so its prefix is as long as the old file's: trimmed
-  // from the front, or padded there with lines no expansion reaches.
   const oldBefore = head.oldAt - 1;
   const prefix = newLines.slice(0, before);
   const oldPrefix =
@@ -195,16 +171,11 @@ export function excerptExpansionOldContents(
   return [...oldPrefix, ...oldRows, ...newLines.slice(before + newCount)].join("");
 }
 
-/** A stop's notes lettered in guide order, with the excerpt lines each one marks. */
 export interface LetteredNote<Note> {
   readonly marker: string;
   readonly note: Note;
 }
 
-/**
- * Letters a stop's notes and groups them by the excerpt line they sit on. A note outside every
- * excerpt keeps its letter in the list; it just has no line to mark.
- */
 export function letterStopNotes(stop: PullRequestReviewGuideStop) {
   const lettered = stop.notes.map((note, index) => ({ marker: noteMarker(index), note }));
   const byExcerpt = stop.excerpts.map((excerpt) => {

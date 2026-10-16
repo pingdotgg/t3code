@@ -1,9 +1,3 @@
-/**
- * The T3 Connect link lifecycle of this environment: linking it to the relay,
- * applying and reading the link, unlinking, answering the relay's signed health
- * and mint requests, and keeping the managed tunnel registered, recovered and
- * released. HTTP handlers, server startup and shutdown all go through it.
- */
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPublicKey.
 import * as NodeCrypto from "node:crypto";
 import {
@@ -125,7 +119,6 @@ const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
 const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
-/** Secret store name prefixes of cloud replay markers. The server prunes expired ones. */
 export const CLOUD_REPLAY_MARKER_PREFIXES = [
   CLOUD_MINT_NONCE_PREFIX,
   CLOUD_MINT_JTI_PREFIX,
@@ -141,7 +134,6 @@ const RELAY_CONFIG_FIELD_MESSAGES = {
   cloudMintPublicKey: "Cloud mint public key must be a valid Ed25519 public key.",
 } as const;
 
-/** The relay sent a link configuration this environment cannot install. */
 export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLinkRelayConfigInvalidError>()(
   "CloudLinkRelayConfigInvalidError",
   {
@@ -159,11 +151,6 @@ export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLi
   }
 }
 
-/**
- * A link was asked to point at an origin it may not serve: a link proof request
- * that did not reach this server directly on loopback (`endpoint`), or a local
- * origin that is not a bare http(s) origin (`local`).
- */
 export class CloudLinkOriginInvalidError extends Schema.TaggedError<CloudLinkOriginInvalidError>()(
   "CloudLinkOriginInvalidError",
   { origin: Schema.Literals(["endpoint", "local"]) },
@@ -193,7 +180,6 @@ export class CloudLinkAccountMismatchError extends Schema.TaggedError<CloudLinkA
   }
 }
 
-/** Linking from the CLI needs the authorization `t3 connect link` stores. */
 export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<CloudLinkAuthorizationMissingError>()(
   "CloudLinkAuthorizationMissingError",
   {},
@@ -205,7 +191,6 @@ export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<Cloud
 
 const SignedRelayRequest = Schema.Literals(["health", "mint"]);
 
-/** A signed relay request whose proof does not verify for this environment. */
 export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkProofRejectedError>()(
   "CloudLinkProofRejectedError",
   { request: SignedRelayRequest },
@@ -215,7 +200,6 @@ export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkPro
   }
 }
 
-/** A signed relay request whose proof was already used once. */
 export class CloudLinkProofReplayedError extends Schema.TaggedError<CloudLinkProofReplayedError>()(
   "CloudLinkProofReplayedError",
   { request: SignedRelayRequest },
@@ -225,7 +209,6 @@ export class CloudLinkProofReplayedError extends Schema.TaggedError<CloudLinkPro
   }
 }
 
-/** The stored tunnel changed while its registration was in flight. */
 export class CloudLinkTunnelSupersededError extends Schema.TaggedError<CloudLinkTunnelSupersededError>()(
   "CloudLinkTunnelSupersededError",
   {},
@@ -235,11 +218,6 @@ export class CloudLinkTunnelSupersededError extends Schema.TaggedError<CloudLink
   }
 }
 
-/**
- * The managed tunnel is not serving: its connector did not start
- * (`runtime-not-started`, with the runtime's status), or the relay never
- * confirmed this server's origin (`origin-unconfirmed`).
- */
 export class CloudLinkEndpointUnavailableError extends Schema.TaggedError<CloudLinkEndpointUnavailableError>()(
   "CloudLinkEndpointUnavailableError",
   {
@@ -275,7 +253,6 @@ const INTERNAL_OPERATION_MESSAGES = {
   "issue-credential": "Could not issue cloud connection credential.",
 } as const;
 
-/** A link step failed on this machine: storage, signing, or an unexpected relay answer. */
 export class CloudLinkInternalError extends Schema.TaggedError<CloudLinkInternalError>()(
   "CloudLinkInternalError",
   {
@@ -311,11 +288,9 @@ const isPermanentLinkError = Schema.is(
   ]),
 );
 
-/** Whether a failed link step may succeed on retry: not when the relay or this server refused it. */
 export const shouldRetryCloudLink = (error: unknown): boolean =>
   shouldRetryRelayRequest(error) && !isPermanentLinkError(error);
 
-/** A failed rollback leaves a setting changed; it is logged, not hidden. */
 const rollbackFailed = (cause: unknown) =>
   Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
 
@@ -333,7 +308,6 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-/** Records each one-shot marker; false when any already existed, so the request is a replay. */
 export function consumeCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
@@ -409,7 +383,6 @@ type ManagedTunnelRecoveryProofInput = {
   | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
 );
 
-/** Every failure CloudLink constructs itself. */
 export type CloudLinkError =
   | CloudLinkAccountMismatchError
   | CloudLinkAuthorizationMissingError
@@ -422,7 +395,6 @@ export type CloudLinkError =
   | CloudLinkRelayConfigInvalidError
   | CloudLinkTunnelSupersededError;
 
-/** Failures of the link work that talks to the relay: linking, recovery and shutdown. */
 type CloudLinkBackgroundError =
   | CloudLinkEndpointUnavailableError
   | CloudLinkInternalError
@@ -432,8 +404,6 @@ type CloudLinkBackgroundError =
   | Schema.SchemaError
   | PlatformError.PlatformError;
 
-// "revoked" means the relay rejected this environment's credential, as after
-// the environment is deregistered from T3 Connect.
 type ManagedTunnelRegistration =
   | { readonly status: "not_linked" | "superseded" | "revoked" }
   | { readonly status: "recovery_required"; readonly config: RelayManagedEndpointRuntimeConfig }
@@ -456,7 +426,6 @@ export class CloudLink extends Context.Service<
       RelayEnvironmentLinkProof,
       CloudLinkOriginInvalidError | CloudLinkInternalError | EnvironmentAuth.ServerAuthInternalError
     >;
-    /** Installs the link the relay returned and, for a managed tunnel, confirms its origin. */
     readonly applyRelayConfig: (
       payload: RelayEnvironmentConfigRequest,
     ) => Effect.Effect<
@@ -474,22 +443,13 @@ export class CloudLink extends Context.Service<
       EnvironmentCloudLinkStateResult,
       CloudLinkInternalError
     >;
-    /** Stops the tunnel and forgets the link, including the CLI's wish to keep it. */
     readonly unlink: () => Effect.Effect<EnvironmentCloudRelayConfigResult, CloudLinkInternalError>;
-    /**
-     * Saves this environment's T3 Connect preferences, all or nothing, and
-     * returns the link state. The activity setting is saved first. Holding
-     * webhooks while offline is decided by the relay, so the relay is told
-     * before the local copy is saved. If either step fails, the activity
-     * setting is put back, and so is the relay when only the local save failed.
-     */
     readonly updatePreferences: (
       input: EnvironmentCloudPreferencesRequest,
     ) => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkNotLinkedError | CloudLinkInternalError
     >;
-    /** Answers the relay's signed health check once per proof. */
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
     ) => Effect.Effect<
@@ -499,7 +459,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
     >;
-    /** Issues a short-lived pairing credential for a client the relay vouched for, once per proof. */
     readonly mintCredential: (
       request: RelayCloudMintCredentialRequest,
     ) => Effect.Effect<
@@ -509,7 +468,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
     >;
-    /** Links this environment with the stored CLI authorization and records the CLI's wish. */
     readonly reconcileDesiredLink: (
       localOrigin: string,
     ) => Effect.Effect<
@@ -521,7 +479,6 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | CliTokenManager.CloudCliTokenManagerError
     >;
-    /** As `reconcileDesiredLink`, but returns null when the CLI no longer wants a link. */
     readonly reconcileDesiredLinkIfStillDesired: (
       localOrigin: string,
     ) => Effect.Effect<
@@ -533,22 +490,15 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | CliTokenManager.CloudCliTokenManagerError
     >;
-    /** Tells the relay which local origin the stored tunnel serves, then starts it. */
     readonly registerManagedTunnelRecovery: (
       localOrigin: string,
       options?: { readonly retryRuntimeFailures?: boolean },
     ) => Effect.Effect<ManagedTunnelRegistration, CloudLinkBackgroundError>;
-    /** Asks the relay for a replacement tunnel, unless the stored one changed meanwhile. */
     readonly recoverManagedTunnel: (
       localOrigin: string,
       expectedConfig?: RelayManagedEndpointRuntimeConfig,
       options?: { readonly retryRuntimeFailures?: boolean },
     ) => Effect.Effect<boolean, CloudLinkBackgroundError>;
-    /**
-     * Starts the stored tunnel. By default only one the relay already confirmed
-     * on this origin; startup falls back to any stored tunnel when the relay
-     * stays unreachable.
-     */
     readonly startManagedTunnelIfOriginConfirmed: (
       localOrigin: string,
       options?: { readonly requireConfirmedOrigin?: boolean },
@@ -558,7 +508,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkOriginInvalidError
       | ServerSecretStore.SecretStoreError
     >;
-    /** Deletes a CLI-managed tunnel when this server goes offline for good. */
     readonly releaseManagedTunnelOnShutdown: () => Effect.Effect<
       boolean,
       | CloudLinkBackgroundError
@@ -824,11 +773,10 @@ const make = Effect.gen(function* () {
         : null;
       yield* endpointRuntime.applyConfig(null);
       yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
-      // The relay has already committed this link. The stored runtime config
-      // is what reports the link as managed and what startup respawns, so drop
-      // it first and store it last. A write that fails part-way then leaves a
-      // link that reads as not managed, and the next relink repairs it instead
-      // of trusting a stale tunnel config.
+      // The stored runtime config is what reports the link as managed and what
+      // startup respawns, so drop it first and store it last. A write that
+      // fails part-way then leaves a link that reads as not managed, and the
+      // next relink repairs it instead of trusting a stale tunnel config.
       yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
 
       yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
@@ -955,8 +903,6 @@ const make = Effect.gen(function* () {
           confirmedOrigin: parsedOrigin.origin,
         },
       );
-      // Callers decide on managed tunnel recovery from the mode this link
-      // actually used, not from a value read before the relay round trip.
       return mode;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-desired-link")),
@@ -1022,12 +968,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Marks the link revoked after the relay answered 401 to `credential`, usually
-   * because the environment was deregistered. Retrying cannot fix that, and
-   * relinking is the user's call, so only mark it. Nothing stored is removed:
-   * the relay also answers 401 for a skewed clock, and the next accepted
-   * registration clears the mark. Returns false, without marking, when a relink
-   * replaced the credential while the rejected request was in flight.
+   * Nothing stored is removed: the relay also answers 401 for a skewed clock,
+   * and the next accepted registration clears the mark. Returns false, without
+   * marking, when a relink replaced the credential while the rejected request
+   * was in flight.
    */
   const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
     endpointRuntime.withLinkStateLock(
@@ -1188,8 +1132,6 @@ const make = Effect.gen(function* () {
       schema: RelayManagedEndpointRecoveryResponse,
       timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     }).pipe(
-      // A running host learns of a Deregister here, when its dead tunnel asks
-      // for a replacement. The rejection still fails the recovery.
       Effect.tapError((error) =>
         error.rejection === "unauthorized" ? markLinkRevoked(credential, error) : Effect.void,
       ),
@@ -1214,7 +1156,6 @@ const make = Effect.gen(function* () {
         }
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
         yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
-        // The relay accepted this link, so an earlier rejection no longer holds.
         yield* secrets.remove(CLOUD_LINK_REVOKED);
         return true;
       }),
@@ -1275,14 +1216,10 @@ const make = Effect.gen(function* () {
   );
 
   // Cloudflare bills per provisioned tunnel, so an environment that goes offline
-  // must not leave its tunnel behind. Releasing deletes only the tunnel — the
-  // relay keeps the link and its hostname reservation, and the next startup's
-  // link reconcile provisions a replacement tunnel under the same URL.
+  // must not leave its tunnel behind.
   const releaseManagedTunnelOnShutdown = Effect.fn(
     "environment.cloud.releaseManagedTunnelOnShutdown",
   )(function* () {
-    // Only a managed link stores a runtime config; publish-only links have no
-    // tunnel to release.
     const runtimeConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     if (Option.isNone(runtimeConfig)) {
       return false;
@@ -1297,15 +1234,12 @@ const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    // A shutdown that hands off to a pending update is not the environment
-    // going offline: the service launcher or the desktop app immediately brings
-    // a server back (the new version, or the old one after a rollback). Deleting
+    // A shutdown that hands off to a pending update is not the environment going
+    // offline: the service launcher or the desktop app immediately brings a
+    // server back (the new version, or the old one after a rollback). Deleting
     // the tunnel here forces that server to provision a replacement UUID, and the
     // public hostname's route to the new tunnel takes 1-2 minutes to propagate —
-    // the dominant cost of an update restart. Keep the tunnel instead: the next
-    // boot respawns the connector from the stored config and is reachable as
-    // soon as it connects, and the reconcile confirms the still-live tunnel
-    // without replacing it.
+    // the dominant cost of an update restart.
     if (
       (yield* withRuntimeFiles(desktopUpdateRestartPending)) ||
       (yield* withRuntimeFiles(pendingUpdateHandoffExists))
@@ -1324,7 +1258,6 @@ const make = Effect.gen(function* () {
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
-    // Stop the local connector before the relay deletes the tunnel it serves.
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
       `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
@@ -1342,11 +1275,10 @@ const make = Effect.gen(function* () {
     }
     // The connector token died with the tunnel. Drop the stored config so the
     // next start waits for the link reconcile instead of respawning the relay
-    // client with a dead token. Kept when the release request fails: the tunnel
-    // still exists, so the stored token keeps working across the restart.
-    // Only dropped while it is still the config this shutdown released — a fast
-    // restart may already have reconciled and stored a fresh config for its
-    // replacement tunnel, and that one must survive this finalizer.
+    // client with a dead token. Only dropped while it is still the config this
+    // shutdown released — a fast restart may already have reconciled and stored
+    // a fresh config for its replacement tunnel, and that one must survive this
+    // finalizer.
     const storedConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     if (
       Option.isSome(storedConfig) &&
@@ -1385,8 +1317,6 @@ const make = Effect.gen(function* () {
       cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
       relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
       relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
-      // The managed tunnel runtime config is only stored for managed links; a
-      // publish-only link leaves it absent.
       managedTunnelActive: Option.isSome(endpointRuntimeConfig),
       publishAgentActivity: Option.isSome(publishAgentActivity)
         ? bytesToString(publishAgentActivity.value) === "true"
@@ -1453,14 +1383,11 @@ const make = Effect.gen(function* () {
       .set(name, stringToBytes(String(value)))
       .pipe(Effect.catch(internalError("persist-preferences")));
 
-  // One update at a time, so two requests can't each leave one setting behind.
   const preferencesLock = yield* Semaphore.make(1);
 
   const savePreferences = Effect.fn("CloudPreferences.update")(
     function* (input: EnvironmentCloudPreferencesRequest) {
-      // All or nothing: the activity setting is saved first, before the relay
-      // is told anything, and put back if the hold change then fails. Both
-      // current values are read up front; a failed read stops here, before
+      // Both current values are read up front; a failed read stops here, before
       // anything changes, because a guessed value would be the rollback target.
       const readCurrent = (name: string) =>
         secrets.get(name).pipe(Effect.catch(internalError("read-preferences")));

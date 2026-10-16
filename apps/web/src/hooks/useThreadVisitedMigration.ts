@@ -6,19 +6,8 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useUiStateStore } from "../uiStateStore";
 
-// Module-level so each thread is considered once per page load. The visit
-// command is idempotent server-side (the server keeps max(stored, supplied)),
-// so repeats across page loads are harmless — this only avoids re-dispatching
-// within a session.
 const migratedThreadKeys = new Set<string>();
 
-/**
- * One-way migration of the browser-local visited watermarks into servers with
- * visited tracking. Before tracking existed, "Done" lived in this browser's
- * localStorage; pushing those watermarks up seeds the server value so other
- * devices see the same read state. The server never rewinds a newer visit, so
- * this cannot clobber progress made elsewhere.
- */
 export function useThreadVisitedMigration(): void {
   const threads = useThreadShells();
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });

@@ -1,11 +1,10 @@
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
 const ICNS_HEADER_BYTES = 8;
-const ICNS_MAGIC = 0x69636e73; // "icns"
-const PNG_MAGIC = 0x89504e47; // "\x89PNG"
+const ICNS_MAGIC = 0x69636e73;
+const PNG_MAGIC = 0x89504e47;
 
 /**
- * Picks the smallest PNG at least `minSize` wide, else the largest; null when there is none.
  * Returns a copy so the response does not pin the whole `.icns` buffer.
  */
 export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array | null {

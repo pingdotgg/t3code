@@ -4,7 +4,6 @@ import { useMemo } from "react";
 
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
 
-/** A bounded, readable table for CSV and TSV text; the source view keeps every byte. */
 export function DelimitedTablePreview(props: {
   readonly name: string;
   readonly text: string;

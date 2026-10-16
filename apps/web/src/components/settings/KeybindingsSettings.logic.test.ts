@@ -89,7 +89,6 @@ describe("KeybindingsSettings.logic", () => {
       "usage.period.month",
       "usage.period.quarter",
     ];
-    // The order must not depend on the order of the configured bindings.
     for (const bindings of [
       DEFAULT_RESOLVED_KEYBINDINGS,
       DEFAULT_RESOLVED_KEYBINDINGS.toReversed(),

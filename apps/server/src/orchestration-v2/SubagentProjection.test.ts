@@ -171,7 +171,6 @@ function taskFixture() {
 
 it("reports the run that ended last, not the highest ordinal", () => {
   const { projection, run } = taskFixture();
-  // A restart continuation (ordinal 4) ran ahead of held queued runs 2 and 3.
   const ended = (ordinal: number, completedAt: string): OrchestrationV2Run => ({
     ...run,
     id: RunId.make(`run:${ordinal}`),
@@ -240,7 +239,6 @@ it("waits for nested work and retains the report across monitor acknowledgements
     startedAt: null,
   };
   assert.equal(delegatedTaskProgress({ ...projection, runs: [run, pending] }).state, "working");
-  // Stop or a restart holds queued wakes for the user; they are not work the task owes.
   const cancelled = { ...run, status: "cancelled" as const };
   const held = delegatedTaskProgress({
     ...projection,

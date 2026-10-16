@@ -24,7 +24,6 @@ describe("ResetCreditCoordinator", () => {
       assert.isTrue(first._tag === "Failure");
       const second = yield* redeem("acct", consume);
       assert.strictEqual(second, "reset");
-      // A fresh redemption after success must be a fresh attempt.
       yield* redeem("acct", consume);
 
       const seen = yield* Ref.get(keys);
@@ -68,7 +67,6 @@ describe("ResetCreditCoordinator", () => {
           return "reset" as const;
         });
 
-      // Two instances of the same account redeem at once.
       const a = yield* redeem("acct", consume).pipe(Effect.forkChild);
       const b = yield* redeem("acct", consume).pipe(Effect.forkChild);
       yield* Effect.yieldNow;

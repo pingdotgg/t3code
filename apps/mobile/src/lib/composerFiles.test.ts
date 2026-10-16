@@ -122,10 +122,6 @@ describe("composer file attachments", () => {
       width: 4032,
       height: 3024,
     };
-    /**
-     * Stands in for the native manipulator: `size` is what decoding the source yields,
-     * `resizes` records every requested resize, and `saved` is what saving returns.
-     */
     const native = {
       size: { width: 1, height: 1 },
       resizes: [] as Array<{ width?: number | null; height?: number | null }>,
@@ -195,7 +191,6 @@ describe("composer file attachments", () => {
       await pickComposerImages({ existingCount: 0 });
 
       expect(native.resizes).toEqual(input.resizes);
-      // Every decoded bitmap is released, including the full-size one a resize replaces.
       expect(mocks.release).toHaveBeenCalledTimes(input.resizes.length + 1);
     });
 
@@ -244,8 +239,6 @@ describe("composer file attachments", () => {
     });
 
     it("measures the picker file instead of trusting the reported size", async () => {
-      // A content stream can deliver more bytes than the picker advertises; a supported
-      // original only skips rendering when the file itself measures within the limit.
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
         assets: [{ ...photo, fileName: "photo.png", mimeType: "image/png", fileSize: 42 }],
@@ -748,8 +741,6 @@ describe("composer file attachments", () => {
 
   it("rejects a copy that delivered more bytes than the source reported", async () => {
     const maxBytes = 1024 * 1024;
-    // An Android content: stream can report a small size and still deliver
-    // more bytes; the persisted copy is what must satisfy the limit.
     mocks.size.mockImplementation((uri: string) =>
       uri.startsWith("content:") ? 42 : 2 * 1024 * 1024,
     );

@@ -58,6 +58,7 @@ import {
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
+  COMMAND_OUTPUT_STREAMING_PROMPT,
   TURN_INTERRUPT_PROMPT,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
@@ -98,6 +99,7 @@ const SCENARIO_NAMES = [
   "message_steering",
   "turn_interrupt",
   "turn_interrupt_mid_tool",
+  "command_output_streaming",
   "thread_rollback",
   "thread_rollback_after_restart",
   "thread_rollback_to_stopped_turn",
@@ -173,7 +175,6 @@ interface ReplayScenario {
   readonly name: ScenarioName;
   readonly fileName: `${ScenarioName}.ndjson`;
   readonly description: string;
-  /** Model this scenario needs, e.g. one that still runs multi-agent v1. `--model` wins. */
   readonly model?: string;
   readonly runs: ReadonlyArray<ReplayRun>;
 }
@@ -482,7 +483,6 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           name: "spawn-v2-subagent-needing-approval",
           description:
             "The child inherits the root's approval policy, so its write asks the client for approval on the child's native thread and turn.",
-          // The adapter's approval-required turn defaults.
           turnDefaults: {
             approvalPolicy: "untrusted",
             sandboxPolicy: { type: "readOnly" },
@@ -763,6 +763,29 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
               label: "interrupt-after-command-execution",
               prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
               interruptAfterCommandExecutionStarted: true,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "command_output_streaming",
+      fileName: "command_output_streaming.ndjson",
+      description: "One command prints over several seconds, so Codex streams its output deltas.",
+      runs: [
+        {
+          name: "command-output-streaming",
+          description: "Run a foreground command that prints a line a second.",
+          prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "command-output-streaming",
+              prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
             },
           ],
         },
@@ -1094,7 +1117,6 @@ function makeRecorder({
 }: {
   readonly outPath: string;
   readonly scenario: ReplayScenario;
-  /** Checkout root, scrubbed from recordings because it names the local worktree layout. */
   readonly checkout: string;
 }): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
@@ -1244,7 +1266,6 @@ function installReplayHandlers({
   readonly completeTurn: (turnId: string) => Effect.Effect<void>;
   readonly startCommandExecution: (turnId: string) => Effect.Effect<void>;
   readonly beforeApprovalResponse: () => Effect.Effect<void>;
-  /** Turn id -> command item id -> process id, for commands still running. */
   readonly runningCommandProcessIds: Map<string, Map<string, string>>;
 }) {
   return Effect.all(
@@ -1350,7 +1371,6 @@ function runReplaySession({
     const beforeApprovalResponse = () =>
       approvalGate ? Deferred.await(approvalGate) : Effect.void;
     const model = scenarioModel(scenario);
-    // Same runtime params the adapter sends on thread/start, thread/resume and thread/fork.
     const threadRuntimeParams = { cwd: process.cwd(), model, config: CODEX_THREAD_CONFIG };
     const lastTurnIdByThread = new Map<string, string>();
     const runningCommandProcessIds = new Map<string, Map<string, string>>();
@@ -1432,7 +1452,6 @@ function runReplaySession({
             threadId,
             turnId,
           });
-          // Like the adapter, stop commands the interrupt left running.
           for (const processId of runningCommandProcessIds.get(turnId)?.values() ?? []) {
             yield* client.raw.request("thread/backgroundTerminals/terminate", {
               threadId,
@@ -1553,7 +1572,6 @@ function runReplaySession({
 
       for (const [stepIndex, step] of run.steps.entries()) {
         if (step.type === "rollback") {
-          // The adapter only reverts paginated history, so it reads the mode first.
           yield* client.request("thread/read", { threadId: activeThreadId, includeTurns: false });
           yield* revertCodexThread(client, activeThreadId, step.numTurns);
           continue;
@@ -1564,7 +1582,6 @@ function runReplaySession({
           if (sourceThreadId === undefined) {
             throw new Error(`Unknown replay thread alias '${step.from}'.`);
           }
-          // The adapter forks at the source's latest native turn.
           const lastTurnId = lastTurnIdByThread.get(sourceThreadId);
           const forked = yield* client.request("thread/fork", {
             threadId: sourceThreadId,

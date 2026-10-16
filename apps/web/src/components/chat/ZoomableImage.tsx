@@ -14,7 +14,6 @@ export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
 }
 
-/** Zooms around the pointer and keeps the whole image accessible by dragging or scrolling. */
 export function ZoomableImage({
   src,
   name,

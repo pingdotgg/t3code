@@ -8,6 +8,7 @@ import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/c
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { useOpenLink } from "../browser/useOpenLink";
+import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -25,12 +26,6 @@ export {
   changeRequestRepositoryUrl,
 } from "@t3tools/shared/changeRequestUrl";
 
-/**
- * The project a link belongs to, or nothing. Matched the way the server matches: the repository
- * identity is the full path below the host where one was recorded — which is what nested GitLab
- * groups and Azure project paths need — and the host is the first segment of the canonical
- * remote, so github.com and an Enterprise install stay apart.
- */
 export function findProjectForChangeRequest(
   projects: ReadonlyArray<EnvironmentProject>,
   link: ChangeRequestLink,
@@ -89,11 +84,6 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
   );
 }
 
-/**
- * Any project checked out from the link's host. Thread links are host-level, so a pull request
- * from a repository nobody has checked out is still linkable as long as one project on that
- * host can lend the server its credentials. The link's own project, when it exists, comes first.
- */
 export function findProjectOnChangeRequestHost(
   projects: ReadonlyArray<EnvironmentProject>,
   link: ChangeRequestLink,
@@ -109,24 +99,11 @@ export function findProjectOnChangeRequestHost(
   });
 }
 
-/**
- * Opens a change request link on the page, and says whether it did. Anything else — another
- * organisation's repository, a host nothing here is checked out from, a link that merely looks
- * like one — is left alone for the caller to handle as the ordinary link it is.
- *
- * Resolving the project here rather than on the page is what makes recognising a URL safe: a
- * lookalike hostname matches no project and stays a link, and the page is handed the project
- * rather than a host to narrow its whole list by.
- *
- * Given a thread, the link opens beside it in the right panel instead of taking the whole app to
- * the pull requests page: a reader following a link the agent wrote is reading the thread, and
- * should still be reading it afterwards. Any change request opens there, not only the thread's
- * own, since the panel is told which one to show.
- */
 export function shouldOpenPullRequestExternally(
-  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey"> &
+    Partial<Pick<MouseEvent<HTMLElement>, "button">>,
 ): boolean {
-  return event.metaKey || event.ctrlKey;
+  return event.metaKey || event.ctrlKey || event.button === 1;
 }
 
 export function useOpenChangeRequestLink(
@@ -145,9 +122,10 @@ export function useOpenChangeRequestLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   return useCallback(
     (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
+      if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -158,9 +136,6 @@ export function useOpenChangeRequestLink(
       // Beside a thread the panel reads on that thread's environment, so a project from another
       // one could not be read there whatever its remote says: two environments can hold the same
       // repository, and handing the panel the wrong one's id opens a surface that never loads.
-      //
-      // The page has no such tie — it lists every server at once — so the link is resolved
-      // against all of them, the primary first where two hold the same repository.
       const projects = resolvedThreadRef
         ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
         : targetEnvironmentId
@@ -230,20 +205,17 @@ export function useOpenChangeRequestLink(
         to: "/pull-requests",
         search: {
           involvement: "all",
-          // Every state, so the pull request being opened is also in the list behind it whether
-          // it is open, merged or closed.
           state: "all",
           repository,
           number: parsed.number,
           selectedHost: parsed.authority ?? parsed.host,
           selectedProjectId: project.id,
-          // Named so the page opens the right one of two servers holding this project.
           selectedEnvironmentId: project.environmentId,
         },
       });
       return true;
     },
-    [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
+    [allProjects, navigate, openInApp, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
   );
 }
 
@@ -252,11 +224,12 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openLink = useOpenLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
+      if (event.button > 1) return false;
       event.stopPropagation();
       const openInBrowser = shouldOpenPullRequestExternally(event);
       const isAnchor =
         event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-      // A real link already knows how to cmd/ctrl+click. Leave its default
+      // A real link already knows how to cmd/ctrl/middle-click. Leave its default
       // action alone so the browser (or Electron's window-open handler) opens
       // the host. Buttons have no href, so they still go through openExternal.
       if (openInBrowser && isAnchor) return false;
@@ -264,8 +237,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       event.preventDefault();
       if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
-      // No project to show it in, so it is an ordinary link and follows the
-      // "Open links in" setting; the modifier still forces the system browser.
       void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
         console.error(error);
         toastManager.add(

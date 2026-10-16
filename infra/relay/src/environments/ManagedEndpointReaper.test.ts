@@ -76,9 +76,7 @@ function harness(input?: {
   readonly cleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
   readonly legacyCleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
   readonly legacyTunnelGraceMinutes?: number;
-  /** Simulated time each release takes, advanced on the test clock. */
   readonly releaseDelayMs?: number;
-  /** Simulated time each Cloudflare list request takes. */
   readonly listDelayMs?: number;
 }) {
   const listRequests: ManagedEndpointProvider.ManagedEndpointTunnelListRequest[] = [];
@@ -206,7 +204,6 @@ function harness(input?: {
           return false;
         }
         if (request.expectedTunnelId !== undefined) {
-          // Surface Cloudflare failures the same way the real release does.
           yield* tunnelClient.delete(request.expectedTunnelId).pipe(
             Effect.mapError(
               (cause) =>
@@ -297,7 +294,6 @@ describe("ManagedEndpointReaper", () => {
         failed: 0,
       });
       expect(state.deleted).toEqual(["down-1", "inactive-1"]);
-      // A host that registered recovery gets a new tunnel on its own.
       expect(state.releases.some((release) => release.markReleased === true)).toBe(false);
       expect(state.releases.map((request) => request.expectedTunnelId)).toEqual([
         "down-1",
@@ -459,16 +455,12 @@ describe("ManagedEndpointReaper", () => {
     const down = (id: string, suffix: string, timestamp: string) =>
       tunnel({ id, suffix, status: "down", timestamp });
     const tunnels = [
-      // Legacy owners, down for 1, 10, 40, and 100 days, plus one just past
-      // seven days, which must already count as over seven.
       down("legacy-1d", "1111111111111111", "2026-08-24T11:00:00.000Z"),
       down("legacy-7d1h", "7777777777777777", "2026-08-18T11:00:00.000Z"),
       down("legacy-10d", "2222222222222222", "2026-08-15T11:00:00.000Z"),
       down("legacy-40d", "3333333333333333", "2026-07-16T11:00:00.000Z"),
       down("legacy-100d", "4444444444444444", "2026-05-17T11:00:00.000Z"),
-      // The allocation now records a different tunnel under this name.
       down("stale", "5555555555555555", "2026-08-25T11:00:00.000Z"),
-      // The allocation has not recorded a tunnel yet.
       down("pending", "6666666666666666", "2026-08-25T11:00:00.000Z"),
     ];
     const state = harness({
@@ -511,21 +503,18 @@ describe("ManagedEndpointReaper", () => {
 
   describe("legacy cleanup", () => {
     const legacyTunnels = [
-      // Down for 5 days: inside the legacy grace period.
       tunnel({
         id: "legacy-recent",
         suffix: "1111111111111111",
         status: "down",
         timestamp: "2026-08-20T12:00:00.000Z",
       }),
-      // Down for 40 days: past it.
       tunnel({
         id: "legacy-old",
         suffix: "2222222222222222",
         status: "down",
         timestamp: "2026-07-16T12:00:00.000Z",
       }),
-      // Never connected, created 40 days ago.
       tunnel({
         id: "legacy-never",
         suffix: "3333333333333333",
@@ -585,10 +574,7 @@ describe("ManagedEndpointReaper", () => {
           deleted: 2,
         });
         expect([...state.deleted].sort()).toEqual(["legacy-never", "legacy-old"]);
-        // A legacy host needs an update to recover, so its user is told why.
         expect(state.releases.every((release) => release.markReleased === true)).toBe(true);
-        // The release re-checks each tunnel against the 7-day cutoff, not
-        // the 5-minute cutoff used for recoverable tunnels.
         for (const release of state.releases) {
           expect(release.expectedInactiveBefore).toBe("2026-08-18T12:00:00.000Z");
         }
@@ -610,7 +596,6 @@ describe("ManagedEndpointReaper", () => {
           tunnels: stageLegacyTunnels,
           allocations: legacyOwners,
           legacyCleanupMode: "dry-run",
-          // Ten minutes: the 10-day-old tunnel qualifies only if this applies.
           legacyTunnelGraceMinutes: 10,
         });
         return Effect.gen(function* () {
@@ -705,7 +690,6 @@ describe("ManagedEndpointReaper", () => {
   });
 
   it.effect("starts no new deletion after a rate limit, even with deletions in flight", () => {
-    // Enough candidates to fill every concurrent slot several times over.
     const entries = Array.from({ length: 12 }, (_, index) =>
       tunnel({
         id: index === 0 ? "limited" : `ok-${index}`,
@@ -726,7 +710,6 @@ describe("ManagedEndpointReaper", () => {
       const result = yield* reaper.sweep;
       expect(result.truncated).toBe(true);
       expect(result.failed).toBe(1);
-      // Releases already running may finish, but none start afterwards.
       expect(result.attempted).toBeLessThanOrEqual(
         ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY,
       );
@@ -746,7 +729,6 @@ describe("ManagedEndpointReaper", () => {
     const state = harness({
       tunnels: entries,
       allocations: recoverableOwners(entries),
-      // Ten seconds each: the 90-second budget allows about 9 rounds.
       releaseDelayMs: 10_000,
     });
 
@@ -788,7 +770,6 @@ describe("ManagedEndpointReaper", () => {
 
     return Effect.gen(function* () {
       const fastListing = yield* sweepWith(0);
-      // Two list requests of 20 seconds each use 40 of the 90-second budget.
       const slowListing = yield* sweepWith(20_000);
       expect(slowListing).toBeLessThan(fastListing);
     });
@@ -1036,7 +1017,6 @@ describe("ManagedEndpointReaper", () => {
         timestamp: "2026-08-25T11:00:00.000Z",
       }),
     );
-    // The first 100 candidates always fail to delete.
     const state = harness({
       tunnels: entries,
       allocations: recoverableOwners(entries),

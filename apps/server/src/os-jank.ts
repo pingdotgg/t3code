@@ -5,6 +5,7 @@ import {
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
+  setWindowsPath,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,6 +63,9 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const env = yield* HostProcess.Environment;
 
   if (platform === "win32") {
+    // The desktop already ran both PowerShell probes into the env this child
+    // extends. Repeating them here costs seconds of startup on Windows.
+    if (options?.shellEnvironmentPrepared === true) return;
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>
         Effect.sync(() => {
@@ -71,7 +75,10 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
       ),
     );
     for (const [key, value] of Object.entries(repairedEnvironment)) {
-      if (value !== undefined) {
+      if (value === undefined) continue;
+      if (key === "PATH") {
+        setWindowsPath(env, value);
+      } else {
         env[key] = value;
       }
     }

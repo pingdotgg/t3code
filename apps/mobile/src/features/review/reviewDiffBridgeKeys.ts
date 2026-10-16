@@ -1,8 +1,5 @@
 import type { NativeReviewDiffHighlightScheme } from "../diffs/nativeReviewDiffHighlighter";
 
-// Pure key-derivation helpers for the native review diff bridge. Kept free of
-// react-native / hook imports so they stay unit-testable in node.
-
 function hashReviewDiffKey(diff: string | null | undefined): string {
   if (!diff) {
     return "empty";

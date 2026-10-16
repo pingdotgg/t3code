@@ -11,12 +11,6 @@ import {
 import { useEnvironments } from "../../state/environments";
 import { useSettingsScope } from "./SettingsScopeContext";
 
-/**
- * A model choice fans out to every selected target, so it must exist on all
- * of them. Returns the reason a (instance, model) pair cannot be applied, or
- * null when every target can honor it. The representative's entries decide
- * which driver the instance id names.
- */
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],

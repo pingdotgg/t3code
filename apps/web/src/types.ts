@@ -49,7 +49,6 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly previewUrl?: string;
   readonly downloadable?: boolean;
-  /** A page an agent published with `html_render`; its viewer hands it the app theme. */
   readonly htmlRender?: boolean;
 }
 

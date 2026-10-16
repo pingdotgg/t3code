@@ -318,7 +318,6 @@ const createManager = (
 const layerWithHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcess.Platform, platform);
 
-// Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
   const lines = text.split("\n");
@@ -1128,8 +1127,6 @@ it.layer(
   it.effect("derives subprocess activity for every terminal from one shared process snapshot", () =>
     Effect.gen(function* () {
       const runCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-      // FakePtyAdapter assigns pids starting at 9000, so the two terminals
-      // opened below run as pids 9000 and 9001.
       const psStdout = ["  100  9000 vim", "  101   100 git", "  200  9001 /usr/bin/python3"].join(
         "\n",
       );
@@ -1184,8 +1181,6 @@ it.layer(
         "1200 millis",
       );
 
-      // Every spawn is the shared table snapshot — no per-terminal `pgrep`
-      // or per-child `ps -p` invocations.
       expect(runCalls.every((call) => call.args.join(" ") === "-eo pid=,ppid=,comm=")).toBe(true);
     }),
   );
@@ -1237,7 +1232,6 @@ it.layer(
         "1200 millis",
       );
 
-      // A failed snapshot is not authoritative: no terminal flips to idle.
       const activityEvents = (yield* getEvents).filter((event) => event.type === "activity");
       expect(activityEvents.length).toBeGreaterThan(0);
       expect(activityEvents.every((event) => event.hasRunningSubprocess === true)).toBe(true);
@@ -1278,16 +1272,13 @@ it.layer(
 
   it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
     Effect.gen(function* () {
-      // FakePtyAdapter assigns pids from 9000 in open order.
       const { manager, ptyAdapter } = yield* createManager(5, {
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
-          // An async prompt worker: a copy of the shell with no children.
           { pid: 100, ppid: 9000, name: "zsh" },
           { pid: 9001, ppid: 1, name: "zsh" },
           { pid: 200, ppid: 9001, name: "node" },
           { pid: 9002, ppid: 1, name: "zsh" },
-          // A subshell with a child is real work.
           { pid: 300, ppid: 9002, name: "zsh" },
           { pid: 301, ppid: 300, name: "sleep" },
           { pid: 9003, ppid: 1, name: "zsh" },
@@ -1312,7 +1303,6 @@ it.layer(
   it.effect("keeps terminals that get input or output while closeIdle checks them", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
-      // The typed command's process misses the snapshot, but its input or echo lands.
       let duringCheck: (pid: number) => Effect.Effect<void> = () => Effect.void;
       const { manager, getEvents } = yield* createManager(5, {
         ptyAdapter,
@@ -1376,7 +1366,6 @@ it.layer(
       );
 
       yield* manager.open(openInput());
-      // The fallback data is still applied while the sidecar is down.
       yield* waitFor(
         Effect.map(getEvents, (events) =>
           events.some(
@@ -1393,9 +1382,6 @@ it.layer(
         Effect.sync(() => fallbackCalls.length >= 4),
         "2000 millis",
       );
-      // Four snapshots at the 20 ms base cadence would span ~60 ms. Backoff
-      // (40 + 80 + 160 ms) stretches the same four snapshots past 150 ms, so
-      // a stalled sidecar no longer hot-loops the spawned fallback.
       const spanMs = fallbackCalls[3]! - fallbackCalls[0]!;
       expect(spanMs).toBeGreaterThan(150);
     }),
@@ -1608,16 +1594,11 @@ it.layer(
       if (!process) return;
 
       process.emitData("prompt ");
-      // DECRQM/DECRPM, XTVERSION, and kitty-keyboard CSI query/reply traffic.
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
-      // DECRQSS and XTGETTCAP query/reply traffic in 7-bit DCS form.
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
-      // The same DCS traffic in 8-bit form.
       process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
       process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
-      // Setters and cursor movement share final bytes with query families but
-      // have visible terminal-state value and must survive replay.
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
       process.emitData("done\n");
 
@@ -2081,8 +2062,6 @@ it.layer(
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
-      // Arbitrary host env vars must pass through — terminals inherit the
-      // user's environment apart from the explicit blocklist.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),
   );
@@ -2128,23 +2107,14 @@ it.layer(
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
-      // AppImage runtime markers must never reach the PTY — tools inside the
-      // terminal otherwise resolve against the AppImage mount (e.g. PHP_BINARY
-      // reporting the AppImage path instead of the real binary).
       expect(spawnInput.env.APPIMAGE).toBeUndefined();
       expect(spawnInput.env.APPDIR).toBeUndefined();
       expect(spawnInput.env.ARGV0).toBeUndefined();
       expect(spawnInput.env.OWD).toBeUndefined();
-      // PATH/LD_LIBRARY_PATH keep the user's real entries but drop the AppImage
-      // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
-      // XDG_DATA_DIRS keeps the host entries but drops the AppImage share dir.
       expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
-      // GSETTINGS_SCHEMA_DIR pointed only at the mount, so it is removed and
-      // gsettings falls back to the host schema location.
       expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
-      // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),
   );
@@ -2155,8 +2125,6 @@ it.layer(
         env: {
           PATH: "/usr/local/bin:/usr/bin:/bin",
           LD_LIBRARY_PATH: "/home/user/.local/lib",
-          // Without APPIMAGE/APPDIR set, OWD is an ordinary variable and must
-          // not be stripped — only an AppImage launch gives it special meaning.
           OWD: "/home/user/keep-this",
         },
       });

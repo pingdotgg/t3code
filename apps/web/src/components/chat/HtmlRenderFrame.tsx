@@ -3,29 +3,26 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
+  htmlRenderOutlineBoxes,
+  type HtmlRenderOutlineBox,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+import { cn } from "~/lib/utils";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
 
-// A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
-/**
- * An agent's HTML render inline in the thread: the page itself on the thread's
- * own background, at the server's measured height for this width until the
- * page reports its own. Loading and failure hold the same box so nothing below
- * it moves.
- */
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
@@ -33,8 +30,6 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
-  // The frame takes the page's measured height at its own width, read before
-  // first paint so the reserved box is already the right size.
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   useLayoutEffect(() => {
@@ -62,9 +57,16 @@ export function HtmlRenderFrame(props: {
   );
   // A cached URL with life left is reused, so the browser's cache serves the
   // page again; one near expiry is minted afresh, since a frame cannot report a
-  // failed load. The page keeps its first URL for its lifetime.
+  // failed load.
   const [src, setSrc] = useState<string | null>(null);
+  const srcExpiresAt = useRef(0);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const showPage = useCallback(() => setReady(true), []);
+  const fitPage = useCallback((contentHeight: number) => {
+    setContentHeight(contentHeight);
+    setReady(true);
+  }, []);
   const { onFullscreenChange } = props;
   useEffect(() => {
     if (expandedSrc === null) return;
@@ -89,6 +91,7 @@ export function HtmlRenderFrame(props: {
     }
     if (cachedUrl === null) return;
     if (cachedExpiresAt - Date.now() > MIN_URL_LIFE_MS) {
+      srcExpiresAt.current = cachedExpiresAt;
       setSrc(cachedUrl);
       return;
     }
@@ -101,14 +104,26 @@ export function HtmlRenderFrame(props: {
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
+      {!ready && !failed ? (
+        <HtmlRenderSkeleton
+          title={title}
+          height={height}
+          outline={htmlRenderOutlineBoxes(props.htmlRender, width)}
+        />
+      ) : null}
       {src !== null ? (
         <>
           <HtmlRenderDocument
             src={src}
             title={title}
             threadRef={props.threadRef}
-            className="block size-full"
-            onContentHeight={setContentHeight}
+            className={cn(
+              "block size-full motion-safe:transition-opacity motion-safe:duration-200",
+              !ready && "opacity-0",
+            )}
+            onContentHeight={fitPage}
+            onLoad={showPage}
+            onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
@@ -119,7 +134,10 @@ export function HtmlRenderFrame(props: {
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
-                      const url = await refresh().catch(() => null);
+                      const url =
+                        srcExpiresAt.current - Date.now() > MIN_URL_LIFE_MS
+                          ? src
+                          : await refresh().catch(() => null);
                       if (url !== null) setExpandedSrc(url);
                       else
                         toastManager.add({
@@ -150,6 +168,73 @@ export function HtmlRenderFrame(props: {
           Unable to load {title}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const SKELETON_SECTION_HEIGHT = 264;
+
+const OUTLINE_BOX_CLASS = {
+  media: "rounded-lg bg-muted-foreground/15",
+  text: "",
+  table: "",
+} as const;
+
+const OUTLINE_BAR = "color-mix(in srgb, var(--color-muted-foreground) 15%, transparent)";
+
+function outlineBoxStyle(box: HtmlRenderOutlineBox): React.CSSProperties {
+  const style: React.CSSProperties = {
+    left: box.x,
+    top: box.y,
+    width: box.width,
+    height: box.height,
+  };
+  if (box.kind !== "text" && box.kind !== "table") return style;
+  const step = box.height / box.lines;
+  const bar = Math.min(box.kind === "table" ? 12 : 10, step * 0.6);
+  const start = (step - bar) / 2;
+  return {
+    ...style,
+    backgroundImage: `repeating-linear-gradient(to bottom, transparent 0 ${start}px, ${OUTLINE_BAR} ${start}px ${start + bar}px, transparent ${start + bar}px ${step}px)`,
+  };
+}
+
+function HtmlRenderSkeleton(props: {
+  readonly title: string;
+  readonly height: number;
+  readonly outline: ReadonlyArray<HtmlRenderOutlineBox>;
+}) {
+  if (props.outline.length > 0) {
+    return (
+      <div
+        role="status"
+        aria-label={`Loading ${props.title}`}
+        className="pointer-events-none absolute inset-0 overflow-hidden motion-safe:animate-skeleton"
+      >
+        {props.outline.map((box) => (
+          <div
+            key={`${box.kind}:${box.x}:${box.y}:${box.width}:${box.height}`}
+            className={cn("absolute", OUTLINE_BOX_CLASS[box.kind])}
+            style={outlineBoxStyle(box)}
+          />
+        ))}
+      </div>
+    );
+  }
+  const sections = Math.ceil(props.height / SKELETON_SECTION_HEIGHT);
+  return (
+    <div
+      role="status"
+      aria-label={`Loading ${props.title}`}
+      className="pointer-events-none absolute inset-0 flex flex-col gap-6 overflow-hidden pt-1"
+    >
+      {Array.from({ length: sections }, (_, index) => (
+        <div key={index} className="flex shrink-0 flex-col gap-2">
+          <Skeleton className="h-4 w-2/5" />
+          <Skeleton className="h-3 w-3/5" />
+          <Skeleton shape="card" className="mt-2 h-40 w-full" />
+        </div>
+      ))}
     </div>
   );
 }

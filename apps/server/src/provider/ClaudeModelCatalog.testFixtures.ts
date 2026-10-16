@@ -1,7 +1,5 @@
 import type { ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
 
-// Transport tests must stay independent of bundled or remote manifest contents.
-// Keep every model, alias, capability, and runtime mapping in this fixture synthetic.
 export const SYNTHETIC_CLAUDE_CAPABLE_MODEL = "claude-synthetic-capable";
 export const SYNTHETIC_CLAUDE_COLLIDING_ALIAS = "synthetic-collision";
 export const SYNTHETIC_CLAUDE_STANDARD_MODEL = "claude-synthetic-standard";

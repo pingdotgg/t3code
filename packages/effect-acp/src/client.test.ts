@@ -52,9 +52,7 @@ const PermissionRequest = jsonRpcRequest(
 const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ElicitationRequest = jsonRpcRequest("elicitation/create", AcpSchema.CreateElicitationRequest);
 const ElicitationResponse = jsonRpcResponse(AcpSchema.CreateElicitationResponse);
-/** A JSON-RPC error response; only its id and the presence of an error matter here. */
 const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
-/** A response whose cause is a handler's defect, as RpcServer encodes it. */
 const DieResponse = Schema.Struct({
   id: Schema.String,
   error: Schema.Struct({
@@ -1169,7 +1167,6 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const send = <E>(line: Effect.Effect<Uint8Array, E>) =>
         Effect.flatMap(line, (bytes) => Queue.offer(input, bytes));
       const decodeDie = Schema.decodeEffect(Schema.fromJsonString(DieResponse));
-      // A stopped reader leaves these waiting; fail instead of hanging.
       const next = <A>(queue: Queue.Dequeue<A>) =>
         TestClock.withLive(Queue.take(queue).pipe(Effect.timeout("2 seconds")));
 
@@ -1224,10 +1221,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         }),
       );
 
-      // The next session handler still ran.
       assert.equal(yield* next(updates), "session-1");
 
-      // The reader survived all three: a later request is still answered.
       yield* send(
         encodeJsonl(ExtRequest, {
           jsonrpc: "2.0",
@@ -1242,7 +1237,6 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       );
       assert.deepEqual([answered.id, answered.result], ["ext-b", { ok: true }]);
 
-      // Every defect was logged at Error, once.
       assert.deepEqual((yield* Queue.clear(errorLogs)).toSorted(), [
         "ACP extension request handler failed for 'x/dies'",
         "ACP notification handler failed",

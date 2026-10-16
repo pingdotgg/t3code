@@ -22,7 +22,6 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
-/** What the form reads from a definition: an agent provider's, or a source control host's. */
 export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSchema"> & {
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
@@ -38,7 +37,7 @@ export interface ProviderSettingsFieldModel {
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
   readonly secret?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
-  /** Choices for a `select` control. The first entry is the default. */
+
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
 
@@ -294,15 +293,10 @@ interface ProviderSettingsFormProps {
   readonly definition: SettingsFormDefinition;
   readonly value: unknown;
   readonly idPrefix: string;
-  /**
-   * `card` stacks label over control, `dialog` is the compact wizard layout,
-   * and `settings` renders the shared settings row treatment.
-   */
   readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }
 
-/** Stores the default choice as an omitted key so unchanged configs stay small. */
 function ProviderSettingsSelect({
   field,
   value,

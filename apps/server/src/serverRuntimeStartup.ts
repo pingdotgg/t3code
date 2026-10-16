@@ -268,8 +268,6 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   let bootstrapThreadId: ThreadId | undefined;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
-    // Project creation has no user model choice; only the bootstrap thread
-    // gets an automatic selection, and an explicit project default wins.
     const threadModelSelection = getAutoBootstrapThreadModelSelection();
     const { project } = yield* projects.bootstrap({
       commandId: CommandId.make(yield* randomUUID),
@@ -346,8 +344,10 @@ const maybeOpenBrowser = (target: string) =>
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.annotateSpans({ "startup.phase": phase }),
-    Effect.withSpan(`server.startup.${phase}`),
+    // Attributes on the span itself, not annotateSpans: an annotation follows
+    // every fiber forked inside the phase, such as the effect worker, for the
+    // life of the server.
+    Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
 interface StartupOptions {
@@ -398,7 +398,6 @@ export function runOrderedV2StartupPhases<
 >(input: {
   readonly importLegacyShells: Effect.Effect<Import, ImportError, ImportContext>;
   readonly recover: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
-  /** Settles delegated tasks whose runs recovery just terminalized. */
   readonly recoverDelegatedTasks: Effect.Effect<void, DelegationError, DelegationContext>;
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
@@ -581,8 +580,9 @@ const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* Effect.logDebug("startup phase: recording startup heartbeat");
           yield* recordStartupHeartbeat.pipe(
-            Effect.annotateSpans({ "startup.phase": "heartbeat.record" }),
-            Effect.withSpan("server.startup.heartbeat.record"),
+            Effect.withSpan("server.startup.heartbeat.record", {
+              attributes: { "startup.phase": "heartbeat.record" },
+            }),
             Effect.ignoreCause({ log: true }),
           );
           if (serverConfig.startupPresentation === "headless") {
@@ -653,12 +653,15 @@ const make = (options?: StartupOptions) =>
       yield* Effect.logDebug("startup phase: complete");
       yield* flushCompileCache;
     }).pipe(
-      Effect.annotateSpans({
-        "server.mode": serverConfig.mode,
-        "server.port": serverConfig.port,
-        "server.host": serverConfig.host ?? "default",
+      Effect.withSpan("server.startup", {
+        kind: "server",
+        root: true,
+        attributes: {
+          "server.mode": serverConfig.mode,
+          "server.port": serverConfig.port,
+          "server.host": serverConfig.host ?? "default",
+        },
       }),
-      Effect.withSpan("server.startup", { kind: "server", root: true }),
     );
 
     yield* Effect.forkScoped(

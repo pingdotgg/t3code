@@ -21,10 +21,6 @@ interface ThreadFindBarProps {
   readonly onClose: () => void;
 }
 
-/**
- * Room the open bar takes at the top of the chat canvas: its `h-9` height plus
- * the shared 12px gap below it, so the details card starts on the same rhythm.
- */
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 
 export function ThreadFindBar(props: ThreadFindBarProps) {
@@ -59,7 +55,6 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   };
 
   return (
-    // Fades in while the details popover slides out from under it.
     <div
       data-thread-find-bar
       className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"

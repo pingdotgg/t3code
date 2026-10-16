@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Best-effort provider event logging with one shared writer per thread.
- *
  * Native and canonical views share batching, rotation, and retention state so
  * they cannot race while appending to the same thread-scoped file.
  */
@@ -10,11 +8,14 @@ import * as NodePath from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
 import { errorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -135,10 +136,12 @@ export interface PendingRecord {
   readonly bytes: number;
 }
 
+type AsyncFileSink = Effect.Success<ReturnType<typeof makeAsyncRotatingFileSink>>;
+
 interface StoreState {
   readonly pending: Array<PendingRecord>;
   readonly pendingBytes: number;
-  readonly sinks: ReadonlyMap<string, RotatingFileSink>;
+  readonly sinks: ReadonlyMap<string, AsyncFileSink>;
   readonly flushScheduled: boolean;
   readonly closed: boolean;
   readonly lastRetentionAt: number;
@@ -201,7 +204,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
     const nested = Reflect.get(event, "event");
     const envelope = typeof nested === "object" && nested !== null ? nested : event;
     // Decoded frames carry the same information as raw frames without another
-    // copy of every token delta. Decode failures have their own diagnostic frame.
+    // copy of every token delta.
     if (Reflect.get(envelope, "stage") === "raw") return false;
     const decodedPayload = Reflect.get(envelope, "payload");
     const nativeEvent =
@@ -250,7 +253,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
       const partType = Reflect.get(part, "type");
       if (partType === "text" || partType === "reasoning") return false;
       if (partType === "tool") {
-        // Running snapshots repeat growing output. Pending and terminal states stay in the log.
+        // Running snapshots repeat growing output.
         const state = Reflect.get(part, "state");
         if (typeof state === "object" && state !== null) {
           return Reflect.get(state, "status") !== "running";
@@ -333,7 +336,6 @@ function summarizeProviderEvent(event: unknown): unknown {
   }
 }
 
-/** Bounds traversal before adapters copy payloads or the logger encodes them. */
 export function boundProviderEventForLogging(event: unknown): unknown {
   let remainingCharacters = MAX_RECORD_CHARACTERS;
   let remainingFields = MAX_RECORD_FIELDS;
@@ -363,71 +365,73 @@ export function boundProviderEventForLogging(event: unknown): unknown {
   };
   try {
     if (fits(event, 0)) return event;
-  } catch {
-    // A failing accessor must not escape into provider processing.
-  }
+  } catch {}
   return summarizeProviderEvent(event);
 }
 
-export function writeBatchedMessages(
-  sink: Pick<RotatingFileSink, "write">,
+export const writeBatchedMessages = Effect.fnUntraced(function* (
+  sink: AsyncFileSink,
   records: ReadonlyArray<PendingRecord>,
   maxBytes: number,
   onWritten: (records: ReadonlyArray<PendingRecord>) => void,
-): void {
+) {
   let pendingRecords: Array<PendingRecord> = [];
   let pendingBytes = 0;
 
-  const flush = () => {
+  const flush = Effect.gen(function* () {
     if (pendingRecords.length === 0) return;
     const writtenRecords = pendingRecords;
-    sink.write(writtenRecords.map((record) => record.line).join(""));
+    yield* sink.write(writtenRecords.map((record) => record.line).join(""));
     onWritten(writtenRecords);
     pendingRecords = [];
     pendingBytes = 0;
-  };
+  });
 
   for (const record of records) {
     if (pendingBytes > 0 && pendingBytes + record.bytes > maxBytes) {
-      flush();
+      yield* flush;
     }
     pendingRecords.push(record);
     pendingBytes += record.bytes;
     if (pendingBytes >= maxBytes) {
-      flush();
+      yield* flush;
     }
   }
-  flush();
-}
+  yield* flush;
+});
 
-function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
+async function isProviderLogFile(
+  filePath: string,
+  fileName: string,
+  filePrefix: string,
+): Promise<boolean> {
   if (!/\.log(?:\.\d+)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
 
-  const descriptor = NodeFS.openSync(filePath, "r");
+  const descriptor = await NodeFS.promises.open(filePath, "r");
   try {
     const header = Buffer.alloc(256);
-    const bytesRead = NodeFS.readSync(descriptor, header, 0, header.byteLength, 0);
+    const { bytesRead } = await descriptor.read(header, 0, header.byteLength, 0);
     return /^\[[^\]\r\n]+\] (?:NTIVE|CANON|ORCH): /u.test(header.toString("utf8", 0, bytesRead));
   } finally {
-    NodeFS.closeSync(descriptor);
+    await descriptor.close();
   }
 }
 
-function enforceRetention(input: {
+async function enforceRetention(input: {
   readonly directory: string;
   readonly maxTotalBytes: number;
   readonly maxAgeMs: number;
   readonly activeFilePaths: ReadonlySet<string>;
   readonly filePrefix: string;
   readonly now: number;
-}): RetentionResult {
+}): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
   const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
-    entries = NodeFS.readdirSync(input.directory, { withFileTypes: true });
+    entries = await NodeFS.promises.readdir(input.directory, { withFileTypes: true });
   } catch (cause) {
     return { failures: [{ filePath: input.directory, cause }] };
   }
@@ -436,8 +440,8 @@ function enforceRetention(input: {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
     try {
-      if (!isProviderLogFile(filePath, entry.name, input.filePrefix)) continue;
-      const stat = NodeFS.statSync(filePath);
+      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
+      const stat = await NodeFS.promises.stat(filePath);
       files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
     } catch (cause) {
       failures.push({ filePath, cause });
@@ -445,10 +449,10 @@ function enforceRetention(input: {
   }
 
   let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = (file: (typeof files)[number]) => {
+  const remove = async (file: (typeof files)[number]) => {
     if (input.activeFilePaths.has(file.filePath)) return false;
     try {
-      NodeFS.rmSync(file.filePath, { force: true });
+      await NodeFS.promises.rm(file.filePath, { force: true });
       totalBytes -= file.size;
       return true;
     } catch (cause) {
@@ -457,16 +461,16 @@ function enforceRetention(input: {
     }
   };
 
-  const retained = files.filter((file) => {
-    if (input.now - file.mtimeMs <= input.maxAgeMs) return true;
-    return !remove(file);
-  });
+  const retained: typeof files = [];
+  for (const file of files) {
+    if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) retained.push(file);
+  }
 
   for (const file of retained.toSorted(
     (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
-    remove(file);
+    await remove(file);
   }
 
   return { failures };
@@ -517,7 +521,7 @@ function resolveOptions(
   return Effect.succeed(resolved);
 }
 
-function drainPending(input: {
+const drainPending = Effect.fnUntraced(function* (input: {
   readonly directory: string;
   readonly options: ResolvedOptions;
   readonly state: StoreState;
@@ -525,7 +529,10 @@ function drainPending(input: {
   readonly now: number;
   readonly timerFired: boolean;
   readonly close: boolean;
-}): readonly [DrainResult, StoreState] {
+  readonly makeSink: (
+    filePath: string,
+  ) => Effect.Effect<AsyncFileSink, Effect.Error<ReturnType<typeof makeAsyncRotatingFileSink>>>;
+}): Effect.fn.Return<readonly [DrainResult, StoreState]> {
   if (input.state.closed) {
     return [{ attributions: [], failures: [] }, input.state];
   }
@@ -548,22 +555,20 @@ function drainPending(input: {
     const filePath = providerLogPath(input.directory, input.filePrefix, threadSegment);
     let sink = sinks.get(threadSegment);
     if (!sink) {
-      try {
-        sink = new RotatingFileSink({
-          filePath,
-          maxBytes: input.options.maxBytes,
-          maxFiles: input.options.maxFiles,
-          throwOnError: true,
-        });
-        sinks.set(threadSegment, sink);
-      } catch (cause) {
-        failures.push({ filePath, cause });
+      const created = yield* input.makeSink(filePath).pipe(Effect.result);
+      if (Result.isFailure(created)) {
+        failures.push({ filePath, cause: created.failure });
         continue;
       }
+      sink = created.success;
+      sinks.set(threadSegment, sink);
     }
 
-    try {
-      writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
+    const written = yield* writeBatchedMessages(
+      sink,
+      records,
+      input.options.maxBytes,
+      (writtenRecords) => {
         for (const record of writtenRecords) {
           const current = attributionByStream.get(record.stream) ?? {
             count: 0,
@@ -574,28 +579,31 @@ function drainPending(input: {
             logicalWriteBytes: current.logicalWriteBytes + record.bytes,
           });
         }
-      });
-    } catch (cause) {
+      },
+    ).pipe(Effect.result);
+    if (Result.isFailure(written)) {
       sinks.delete(threadSegment);
-      failures.push({ filePath, cause });
+      failures.push({ filePath, cause: written.failure });
     }
   }
 
   const retentionDue =
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
   const retention = retentionDue
-    ? enforceRetention({
-        directory: input.directory,
-        maxTotalBytes: input.options.maxTotalBytes,
-        maxAgeMs: input.options.maxAgeMs,
-        activeFilePaths: new Set(
-          Array.from(sinks.keys(), (threadSegment) =>
-            providerLogPath(input.directory, input.filePrefix, threadSegment),
+    ? yield* Effect.promise(() =>
+        enforceRetention({
+          directory: input.directory,
+          maxTotalBytes: input.options.maxTotalBytes,
+          maxAgeMs: input.options.maxAgeMs,
+          activeFilePaths: new Set(
+            Array.from(sinks.keys(), (threadSegment) =>
+              providerLogPath(input.directory, input.filePrefix, threadSegment),
+            ),
           ),
-        ),
-        filePrefix: input.filePrefix,
-        now: input.now,
-      })
+          filePrefix: input.filePrefix,
+          now: input.now,
+        }),
+      )
     : { failures: [] };
 
   return [
@@ -615,7 +623,7 @@ function drainPending(input: {
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
     },
   ];
-}
+});
 
 const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
   return yield* encodeUnknownJsonString(event).pipe(
@@ -630,18 +638,32 @@ const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
 export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   filePath: string,
   options: EventNdjsonLogStoreOptions = {},
-): Effect.fn.Return<EventNdjsonLogStore, EventNdjsonLogStoreError> {
+): Effect.fn.Return<
+  EventNdjsonLogStore,
+  EventNdjsonLogStoreError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const resolved = yield* resolveOptions(filePath, options);
   const directory = NodePath.dirname(filePath);
   const filePrefix = providerLogPrefix(filePath);
 
-  yield* Effect.try({
-    try: () => NodeFS.mkdirSync(directory, { recursive: true }),
-    catch: (cause) => new EventNdjsonLogDirectoryError({ directory, cause }),
-  });
+  yield* fs
+    .makeDirectory(directory, { recursive: true })
+    .pipe(Effect.mapError((cause) => new EventNdjsonLogDirectoryError({ directory, cause })));
+  const makeSink = (filePath: string) =>
+    makeAsyncRotatingFileSink({
+      filePath,
+      maxBytes: resolved.maxBytes,
+      maxFiles: resolved.maxFiles,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
 
   const initializedAt = yield* Clock.currentTimeMillis;
-  const initialRetention = yield* Effect.sync(() =>
+  const initialRetention = yield* Effect.promise(() =>
     enforceRetention({
       directory,
       maxTotalBytes: resolved.maxTotalBytes,
@@ -671,17 +693,16 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
     const startedAt = yield* Clock.currentTimeMillis;
     const result = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-      Effect.sync(() =>
-        drainPending({
-          directory,
-          options: resolved,
-          state,
-          filePrefix,
-          now: startedAt,
-          timerFired,
-          close,
-        }),
-      ),
+      drainPending({
+        directory,
+        options: resolved,
+        state,
+        filePrefix,
+        now: startedAt,
+        timerFired,
+        close,
+        makeSink,
+      }),
     );
 
     for (const failure of result.failures) {
@@ -714,7 +735,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
         { discard: true },
       );
     }
-  });
+  }, Effect.uninterruptible);
 
   const scheduleFlush = Effect.fnUntraced(function* () {
     yield* Effect.forkIn(
@@ -738,8 +759,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       if (!shouldPersistProviderEvent(stream, event)) return;
       let payload = yield* serializeEvent(boundProviderEventForLogging(event));
       if (payload === undefined) return;
-      // Escaping can expand strings beyond their input size. Keep that bounded
-      // serialization out of the file too, while retaining routing/error fields.
+      // Escaping can expand strings beyond their input size.
       if (Buffer.byteLength(payload) > MAX_RECORD_CHARACTERS) {
         payload = yield* serializeEvent(summarizeProviderEvent(event));
         if (payload === undefined) return;
@@ -791,7 +811,11 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 export const makeEventNdjsonLogger = Effect.fnUntraced(function* (
   filePath: string,
   options: EventNdjsonLoggerOptions,
-): Effect.fn.Return<ProviderEventLoggers.EventNdjsonLogger | undefined> {
+): Effect.fn.Return<
+  ProviderEventLoggers.EventNdjsonLogger | undefined,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
   const store = yield* makeEventNdjsonLogStore(filePath, options).pipe(
     Effect.catch((error) =>
       logWarning(error.message, { error }).pipe(

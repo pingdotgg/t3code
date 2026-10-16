@@ -9,14 +9,12 @@ const ACCESSIBILITY_RESIZE_STEP = 24;
 interface WorkspacePaneDividerProps {
   readonly accessibilityLabel: string;
   readonly currentWidth: number;
-  /** 1 when dragging right grows the pane, -1 when dragging left grows it. */
   readonly resizeDirection: 1 | -1;
   readonly onResizeStart?: () => void;
   readonly onResizeBy: (delta: number) => void;
   readonly onResizeEnd?: () => void;
 }
 
-/** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
   latestProps.current = props;

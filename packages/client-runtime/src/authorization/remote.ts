@@ -37,8 +37,6 @@ const clientMetadataTokenExchangeFields = (
   };
 };
 
-// The server reads these off the /ws upgrade URL next to wsTicket. Optional on
-// both ends: old servers ignore unknown params, old clients never send them.
 export const appendClientConnectionParams = (
   url: URL,
   clientMetadata: AuthClientPresentationMetadata | undefined,

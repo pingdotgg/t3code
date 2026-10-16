@@ -18,7 +18,6 @@ const GuideRow = Schema.Struct({
   guide: Schema.fromJsonString(PullRequestReviewGuide),
 });
 
-/** The latest review guide per pull request, keyed by host-level identity. */
 export class PullRequestReviewGuideRepository extends Context.Service<
   PullRequestReviewGuideRepository,
   {

@@ -27,11 +27,6 @@ const usageCommandOrder = new Map<KeybindingCommand, number>(
 
 const firstUsageCommand = METRIC_OPTIONS[0].command;
 
-/**
- * Orders commands by `key`, except Usage page commands, which sort as one
- * block in page order where the first of them would sort. A total order, so
- * adding a binding elsewhere cannot reshuffle the Usage rows.
- */
 function compareCommands(
   left: KeybindingCommand,
   right: KeybindingCommand,
@@ -207,7 +202,6 @@ export interface KeybindingGroup {
   readonly rows: ReadonlyArray<KeybindingRow>;
 }
 
-/** Page sections in display order; a command joins the first group listing its prefix. */
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
@@ -231,7 +225,6 @@ function keybindingGroupFor(command: KeybindingCommand): { id: string; title: st
   );
 }
 
-/** Splits sorted rows into the page's sections, dropping sections with no rows. */
 export function groupKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
 ): ReadonlyArray<KeybindingGroup> {
@@ -418,7 +411,6 @@ function normalizeShortcutKeyToken(key: string): string | null {
   return null;
 }
 
-/** Turns a keydown into a binding such as `mod+shift+k` or `tab`. Null for modifier-only presses. */
 export function keybindingFromKeyboardEvent(
   event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,

@@ -4,7 +4,6 @@ export type AndroidWorkspaceDestination =
   | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
   | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
 
-/** Peer details share one slot above Home; nested routes retain ordinary back navigation. */
 export function androidWorkspaceNavigationState(
   state: NavigationState,
   destination?: AndroidWorkspaceDestination,

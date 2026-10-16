@@ -3,7 +3,6 @@ import { View } from "react-native";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
 
-/** Uses the signed progressive URL directly; choosing a file never preloads its video bytes as text. */
 export function WorkspaceFileVideoPreview(props: {
   readonly name: string;
   readonly thumbnailKey: string;

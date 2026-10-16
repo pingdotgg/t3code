@@ -9,7 +9,6 @@ const backdropClassNames = {
     "absolute inset-x-0 top-0 h-72 bg-[radial-gradient(48rem_20rem_at_top,color-mix(in_srgb,var(--color-blue-500)_12%,transparent),transparent)]",
 };
 
-/** Shared page and card geometry for entry points outside the app shell. */
 export function StandalonePage({
   tone,
   masthead,
@@ -45,7 +44,6 @@ export function StandalonePage({
   );
 }
 
-/** Entry-page headings keep their typography and spacing together. */
 export function StandalonePageHeader({
   eyebrow,
   title,

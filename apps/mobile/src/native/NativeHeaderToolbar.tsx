@@ -319,7 +319,6 @@ function NativeHeaderToolbarMenuAction(_props: {
 }
 NativeHeaderToolbarMenuAction.displayName = "NativeHeaderToolbarMenuAction";
 
-/** Renders an arbitrary element as a bar item, e.g. a spinner standing in for a button. */
 function NativeHeaderToolbarCustom(_props: { readonly children: ReactElement }) {
   return null;
 }

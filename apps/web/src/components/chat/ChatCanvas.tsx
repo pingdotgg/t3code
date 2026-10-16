@@ -12,10 +12,6 @@ import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLay
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
 import { observeResize } from "../../lib/observeResize";
 
-/**
- * Owns the available conversation space. Cards only report where they sit; the
- * canvas decides when chat moves over to make room for them.
- */
 export function ChatCanvas({
   composerOverlayElement,
   detailsCardTopInset = 0,

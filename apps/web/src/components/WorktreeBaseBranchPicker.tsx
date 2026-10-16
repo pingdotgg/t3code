@@ -11,7 +11,6 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
 import { ComboboxTrigger } from "./ui/combobox";
 
-/** Select a future worktree's base without changing the project's current checkout. */
 export function WorktreeBaseBranchPicker({
   environmentId,
   cwd,

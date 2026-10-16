@@ -198,9 +198,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
             : "User-configured endpoint for this desktop backend.",
         }),
       );
-    } catch {
-      // Ignore malformed user-configured endpoints without dropping valid endpoints.
-    }
+    } catch {}
   }
 
   return endpoints;

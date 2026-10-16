@@ -1,6 +1,5 @@
 import { Cache, Effect } from "effect";
 import { detachStackFrame } from "../detachStackFrame.ts";
-// `original` runs the bare Effect Cache to show the leak this helper prevents.
 const original = process.argv.includes("original");
 const failure = process.argv.includes("failure");
 const lookup = () => (failure ? Effect.fail("unavailable") : Effect.succeed(1));

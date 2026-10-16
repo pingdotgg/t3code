@@ -1,9 +1,9 @@
+import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -24,7 +24,7 @@ import {
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { ComposerContextSheet } from "./ComposerContextSheet";
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import {
   composerDocumentAttachment,
   composerMentionPath,
@@ -35,15 +35,8 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
   readonly environmentId?: EnvironmentId;
   readonly onOpenMention?: (path: string) => void;
-  /** Documents open in the file screen; pictures, video and PDF keep their native viewers. */
   readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
-  /**
-   * A resting composer is a target to type in, not a document to navigate. Its chips go inert
-   * so a draft full of them can still be tapped anywhere to start writing; the caller focuses
-   * the editor instead. Chips become live again once the composer is open.
-   */
   readonly chipsInert?: boolean;
-  /** Called instead of opening a chip while `chipsInert` is set. */
   readonly onInertChipPress?: () => void;
 };
 
@@ -107,20 +100,20 @@ export function ComposerEditor({
         return;
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
-        Alert.alert(
+        Dialog.alert(
           "Could not paste context",
           "Remove some attachments or context items from the draft, then paste again.",
         );
         return;
       }
       if (result.failures.length > 0)
-        Alert.alert(
+        Dialog.alert(
           "Some attachments could not be copied",
           "Reconnect to the source environment and copy them again. References without their files are marked unavailable.",
         );
     } catch (error) {
       if (!controller.signal.aborted)
-        Alert.alert(
+        Dialog.alert(
           "Could not paste context",
           error instanceof Error ? error.message : "Try copying again.",
         );

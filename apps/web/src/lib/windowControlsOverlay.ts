@@ -63,7 +63,6 @@ function getNativeTitlebarHeight(): number {
   return overlay?.visible ? overlay.getTitlebarAreaRect().bottom : 0;
 }
 
-/** Height of the strip at the top of the window where native window controls paint over the page. */
 export function useNativeTitlebarHeight(): number {
   return useSyncExternalStore(subscribeTitlebarArea, getNativeTitlebarHeight, () => 0);
 }

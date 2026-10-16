@@ -13,10 +13,6 @@ export interface UsageDailyChartProps {
   readonly height: number;
 }
 
-/**
- * Stacked daily bars drawn with plain views. Android and any platform without
- * Swift Charts land here; iOS resolves `UsageDailyChart.ios.tsx` instead.
- */
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
   const chartDays = useMemo(() => buildChartDays(days, daily, metric), [days, daily, metric]);

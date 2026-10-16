@@ -27,7 +27,6 @@ function contrast(first: string, second: string) {
 
 function expectVisibleSelection(colors: ReturnType<typeof androidWorkspaceNavigationColors>) {
   expect(contrast(colors.indicatorColor, colors.containerColor)).toBeGreaterThanOrEqual(1.5);
-  // Native labels sit below the indicator, while their icons sit within it.
   for (const surface of [colors.containerColor, colors.indicatorColor]) {
     expect(contrast(colors.selectedColor, surface)).toBeGreaterThanOrEqual(4.5);
   }

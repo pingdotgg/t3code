@@ -1,17 +1,22 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import * as Dialog from "../../components/ui/Dialog";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
-import { AudioFilePreview } from "../../components/AudioFilePreview";
-import { ControlPillMenu } from "../../components/ControlPill";
-import { EmptyState } from "../../components/EmptyState";
+import {
+  AndroidHeaderIconButton,
+  AndroidScreenHeader,
+} from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AudioFilePreview } from "./AudioFilePreview";
+import { Menu } from "../../components/ui/Menu";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { nativeViewerErrorMessage } from "../../lib/attachmentDownload";
@@ -26,10 +31,6 @@ import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
 
-/**
- * Both the thread stack and the new-task sheet stack register this screen, so a chip in a
- * sent message and a chip in a draft open the same view a workspace file does.
- */
 export type AttachmentFileRouteParams = {
   readonly environmentId?: string;
   readonly threadId?: string;
@@ -37,15 +38,12 @@ export type AttachmentFileRouteParams = {
   readonly name: string;
   readonly mimeType: string;
   readonly sizeBytes: string;
-  /** Present for a draft attachment, which may still live only on this device. */
   readonly draftKey?: string;
-  /** Present for a page an agent published with `html_render`, which takes the app theme. */
   readonly htmlRender?: "1";
 };
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
-/** Kinds this screen cannot render itself; the platform viewer is the primary presentation. */
 function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"]) {
   if (kind === "image") return "image" as const;
   if (kind === "pdf") return "pdf" as const;
@@ -192,8 +190,6 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     attachment: localAttachment,
   });
   const [nativeOpen, setNativeOpen] = useState(false);
-  // A format we cannot render goes straight to the system viewer; this screen is only the
-  // launch pad and, when no viewer can show it, the honest fallback.
   const nativeKind = nativeViewerKind(document.kind);
   const [nativeViewer, setNativeViewer] = useState<"pending" | "open" | "unavailable" | null>(
     nativeKind ? "pending" : null,
@@ -228,7 +224,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     pendingNativeError.current = null;
     if (nativeViewer === null) {
       // A file this screen renders itself: an explicit viewer failure is worth a word.
-      if (message) Alert.alert("Could not open document", message);
+      if (message) Dialog.alert("Could not open document", message);
       return;
     }
     if (message) {
@@ -236,7 +232,6 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       setNativeViewer("unavailable");
       return;
     }
-    // The viewer was the whole visit: return to the conversation rather than a blank screen.
     handleBack();
   }, [handleBack, nativeViewer]);
   const removeFromDraft = useCallback(() => {
@@ -368,49 +363,49 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
           subtitle={subtitle}
           onBack={handleBack}
           trailing={
-            <ControlPillMenu
+            <Menu
               actions={androidMenuActions}
               isAnchoredToRight
               title="File actions"
               onPressAction={handleAndroidMenuAction}
             >
               <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
-            </ControlPillMenu>
+            </Menu>
           }
         />
       ) : null}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+      <Toolbar placement="right">
+        <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
           {renderedMode ? (
-            <NativeHeaderToolbar.Menu inline>
+            <Toolbar.Menu inline>
               {menuActions
                 .filter(({ inline }) => inline)
                 .map((action) => (
-                  <NativeHeaderToolbar.MenuAction
+                  <Toolbar.MenuAction
                     key={action.id}
                     icon={action.icon}
                     isOn={action.id === selectedAction}
                     onPress={action.onPress}
                   >
                     {action.title}
-                  </NativeHeaderToolbar.MenuAction>
+                  </Toolbar.MenuAction>
                 ))}
-            </NativeHeaderToolbar.Menu>
+            </Toolbar.Menu>
           ) : null}
           {menuActions
             .filter(({ inline }) => !inline)
             .map((action) => (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 key={action.id}
                 icon={action.icon}
                 destructive={"destructive" in action}
                 onPress={action.onPress}
               >
                 {action.title}
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
             ))}
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
+        </Toolbar.Menu>
+      </Toolbar>
       <AttachmentDocumentBody
         document={document}
         name={params.name}

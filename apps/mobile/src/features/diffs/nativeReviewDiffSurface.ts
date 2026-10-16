@@ -124,7 +124,6 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly rowHeight: number;
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
-  /** Disable the native vertical scroller when an excerpt grows inside a page. */
   readonly scrollEnabled?: boolean;
   readonly bounces?: boolean;
   readonly refreshing?: boolean;

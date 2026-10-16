@@ -1,4 +1,3 @@
-/** Other clients own their workspace navigation chrome. */
 export function AndroidWorkspaceNavigation(_props: {
   readonly rail?: boolean;
   readonly onSelect?: () => void;

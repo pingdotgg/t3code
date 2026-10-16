@@ -56,11 +56,6 @@ const SentBatch = Schema.fromJsonString(
   }),
 );
 
-/**
- * HTTP client that reads each batch, then fails as if the connection dropped
- * before the response arrived. PostHog stores these batches, so the server
- * must not send them forever.
- */
 const layerAcceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -117,7 +112,6 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         for (let index = 0; index < 20; index += 1) {
           yield* analytics.record("test.retry", { index });
         }
-        // Before the fix this loop sent the batch about once a second.
         for (let second = 0; second < 600; second += 1) {
           yield* TestClock.adjust("1 second");
         }

@@ -106,7 +106,6 @@ describe("installPasskeyBridge", () => {
         challenge,
         rpId: "example.com",
         allowCredentials: [{ type: "public-key", id: new Uint8Array([1, 2, 3]) }],
-        // Unknown members the page adds must not break IPC cloning.
         extensions: { onHint: () => {} } as AuthenticationExtensionsClientInputs,
       },
     })) as PublicKeyCredential;
@@ -191,7 +190,6 @@ describe("installPasskeyBridge", () => {
       publicKey: { challenge: new Uint8Array([1]) },
     });
     await credentials.get({ password: true } as CredentialRequestOptions);
-    // Conditional create upgrades a password sign-in silently; no modal sheet.
     const upgrade = { mediation: "conditional", publicKey: creationOptions } as const;
     await credentials.create(upgrade);
     await credentials.create({ password: {} } as CredentialCreationOptions);

@@ -21,7 +21,6 @@ function Probe() {
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(console, "error").mockImplementation(() => {});
-  // Valid JSON that no longer matches the schema, as after a schema change.
   localStorage.setItem(KEY, JSON.stringify("not a number"));
   root = createRoot(document.createElement("div"));
   await act(() => root.render(createElement(Probe)));

@@ -18,11 +18,6 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { CustomModelEditor } from "./CustomModelEditor";
 
-/**
- * Placeholder text for the "add a custom model" input, keyed by driver
- * kind. Mirrors the prior hardcoded switch in `SettingsPanels.tsx` so the
- * UX is unchanged — only the owning component has moved.
- */
 const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
@@ -31,15 +26,8 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("pi")]: "anthropic/claude-sonnet-5",
 };
 
-/** Above this many models the list gets a filter input. */
 const FILTER_THRESHOLD = 8;
 
-/**
- * Short capability words shown after a model's slug. Claude and Cursor report
- * fast mode as a boolean `fastMode` option; Codex reports it as a
- * `serviceTier` select whose fast tier is labelled "Fast" (catalog id
- * `priority`, or `fast` from the speed-tier fallback), matching the composer.
- */
 function describeModelCapabilities(model: ServerProviderModel): string[] {
   const descriptors = model.capabilities?.optionDescriptors ?? [];
   const labels: string[] = [];
@@ -67,13 +55,6 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
   return labels;
 }
 
-/**
- * Display order for the models list: favorites first (in user order), then
- * visible models, then hidden ones. Hidden models sink so the list reads
- * top-down as "what the picker shows"; moves only swap rows within the same
- * group, and the resulting display order is what gets persisted as
- * `modelOrder`.
- */
 export function groupModelsForDisplay<
   T extends { readonly slug: string; readonly isCustom: boolean },
 >(
@@ -113,37 +94,15 @@ export function nextHiddenModelsForBulkToggle(
 }
 
 interface ProviderModelsSectionProps {
-  /** Identifier used to namespace input ids within the DOM. */
   readonly instanceId: ProviderInstanceId;
-  /**
-   * Driver kind for slug normalization + input placeholder. `null` when
-   * the section is rendered without enough provider metadata.
-   */
   readonly driverKind: ProviderDriverKind | null;
-  /**
-   * The live model list to display. Includes both built-in (probe-reported)
-   * and custom entries, distinguished by `isCustom`.
-   */
   readonly models: ReadonlyArray<ServerProviderModel>;
-  /**
-   * The persisted custom-model list for this instance, resolved. Drives
-   * dedup, and is the list we hand back (with an entry appended / replaced /
-   * removed) via `onChange`.
-   */
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
   readonly canManageCustomModels: boolean;
   readonly canWritePreferences?: boolean;
-  /** Server-returned model slugs hidden from the model picker. */
   readonly hiddenModels: ReadonlyArray<string>;
-  /** Model slugs favorited for this provider instance. */
   readonly favoriteModels: ReadonlyArray<string>;
-  /** Explicit user-authored model ordering for this provider instance. */
   readonly modelOrder: ReadonlyArray<string>;
-  /**
-   * Commit the new custom-model list. Caller is responsible for routing the
-   * write to the correct storage (legacy `settings.providers[kind]` vs.
-   * `providerInstances[id].config`).
-   */
   readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
   readonly onHiddenModelsChange: (
     next: ReadonlyArray<string>,
@@ -154,17 +113,6 @@ interface ProviderModelsSectionProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
-/**
- * Shared "Models" section rendered on both the built-in default and custom
- * provider-instance cards. Owns its own input + error local state so two
- * cards on screen don't fight over the input value.
- *
- * Validation mirrors the pre-consolidation logic in `SettingsPanels`:
- *   - empty / whitespace → "Enter a model slug."
- *   - duplicate of a non-custom (probe-reported) slug → "already built in"
- *   - exceeds `MAX_CUSTOM_MODEL_LENGTH` → length error
- *   - duplicate of an already-saved custom slug → already-saved error
- */
 export function ProviderModelsSection({
   instanceId,
   driverKind,
@@ -185,10 +133,8 @@ export function ProviderModelsSection({
   const [isAdding, setIsAdding] = useState(false);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Slug of the custom model whose inline editor is open, if any.
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  // Slug of a just-added custom model, scrolled into view once its row exists.
   const scrollToSlugRef = useRef<string | null>(null);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
   const favoriteModelSet = useMemo(() => new Set(favoriteModels), [favoriteModels]);
@@ -219,8 +165,6 @@ export function ProviderModelsSection({
       )
     : displayModels;
 
-  // The parent commits the new custom model and hands back an updated
-  // `models` list, so the row can only be scrolled to after that render.
   useEffect(() => {
     const slug = scrollToSlugRef.current;
     if (slug === null) return;
@@ -252,8 +196,6 @@ export function ProviderModelsSection({
       return;
     }
 
-    // Clear the filter so the new row renders even when it does not match,
-    // which is also what lets the pending scroll target resolve and clear.
     scrollToSlugRef.current = normalized;
     setFilter("");
     onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
@@ -296,8 +238,6 @@ export function ProviderModelsSection({
     onToggleFavorite(slug);
   };
 
-  // Rows only trade places with a neighbour in the same group (favorites,
-  // visible, hidden), and the display order is persisted as the new order.
   const groupOf = (model: (typeof displayModels)[number]) =>
     favoriteModelSet.has(model.slug)
       ? "favorite"
@@ -340,8 +280,6 @@ export function ProviderModelsSection({
     </Tooltip>
   );
 
-  // Reorder and remove stay in the row at all times (dimmed when unavailable)
-  // so ordering is discoverable without hovering.
   const rowActions = (
     model: DisplayModel,
     options: {
@@ -456,15 +394,11 @@ export function ProviderModelsSection({
   const renderRow = (model: DisplayModel) => {
     const capLabels = describeModelCapabilities(model);
     const group = groupOf(model);
-    // Hidden is read from the preference itself: a favorited model can still be
-    // hidden, and its switch must say so even though it sits in the favorites group.
     const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
     const isFavorite = group === "favorite";
     const index = displayModels.indexOf(model);
     const previousModel = displayModels[index - 1];
     const nextModel = displayModels[index + 1];
-    // Reordering a filtered view would be ambiguous, so arrows only show on
-    // the full list.
     const canMoveUp =
       !isFiltering && previousModel !== undefined && groupOf(previousModel) === group;
     const canMoveDown = !isFiltering && nextModel !== undefined && groupOf(nextModel) === group;
@@ -475,8 +409,6 @@ export function ProviderModelsSection({
         key={`${instanceId}:${model.slug}`}
         data-model-slug={model.slug}
         className={cn(
-          // Actions column is at least wide enough for the four custom-row
-          // buttons so capability labels line up across built-in and custom rows.
           "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-md px-2 transition-colors hover:bg-muted/30",
           isHidden && "opacity-50",
         )}
@@ -493,10 +425,6 @@ export function ProviderModelsSection({
             <span className="text-2xs text-muted-foreground/70">custom</span>
           ) : null}
         </span>
-        {/*
-          Always a grid item so the columns line up across rows; the text
-          itself drops out on phone widths where it would starve the name.
-        */}
         <span className="text-2xs text-muted-foreground/70">
           {capLabels.length > 0 ? (
             <span className="hidden sm:inline">{capLabels.join(" · ")}</span>

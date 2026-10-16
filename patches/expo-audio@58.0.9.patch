@@ -1,0 +1,25 @@
+diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
+index 198fe6d..5b39611 100644
+--- a/ios/AudioRecorder.swift
++++ b/ios/AudioRecorder.swift
+@@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+   }
+ 
+   func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+-    // Update internal state when recording finishes automatically (e.g., from recordForDuration)
+-    currentState = .stopped
++    // Update internal state when AVAudioRecorder finishes or fails.
++    currentState = flag ? .stopped : .error
+     resetDurationTracking()
+     durationLimitSeconds = nil
+ 
+     emit(event: recordingStatus, payload: [
+       "id": id,
+       "isFinished": true,
+-      "hasError": false,
+-      "error": nil,
++      "hasError": !flag,
++      "error": flag ? nil : "Recording failed",
+       "url": recorder.url.absoluteString
+     ])
+   }

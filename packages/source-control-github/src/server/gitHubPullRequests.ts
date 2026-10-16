@@ -13,7 +13,6 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
-  /** The head commit, when the read asked for `headRefOid`. */
   readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
@@ -80,7 +79,8 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
-function normalizeGitHubPullRequestRecord(
+/** A pull request row, in `gh --json` or GraphQL node shape, as every read reports it. */
+export function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
   const explicitNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
@@ -122,7 +122,7 @@ const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestS
  * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
  * skipped, so one malformed pull request cannot hide the rest.
  */
-export function decodeGitHubPullRequestEntries(
+function decodeGitHubPullRequestEntries(
   entries: ReadonlyArray<unknown>,
 ): ReadonlyArray<NormalizedGitHubPullRequestRecord> {
   const pullRequests: NormalizedGitHubPullRequestRecord[] = [];

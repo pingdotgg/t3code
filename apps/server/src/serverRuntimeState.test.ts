@@ -174,8 +174,6 @@ describe("serverRuntimeState", () => {
       });
 
       assert.isTrue(managed.serviceManaged);
-      // Older readers decode the file without the field, so it is omitted
-      // rather than written as false.
       assert.isFalse("serviceManaged" in manual);
     }),
   );

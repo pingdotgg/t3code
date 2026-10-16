@@ -35,7 +35,6 @@ function gesture(
     onPending: vi.fn(),
   };
   const onFinish = vi.fn();
-  // The sensor never reads dnd-kit's layout context or active node.
   const props = {
     active: "thread",
     event: pointer("pointerdown"),
@@ -132,7 +131,6 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onMove).toHaveBeenNthCalledWith(1, { x: 10, y: 20 });
     expect(drag.onMove).toHaveBeenNthCalledWith(2, { x: 30, y: 30 });
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
-    // Outside the list the sort no longer sees the pointer.
     expect(drag.onMove).toHaveBeenCalledTimes(2);
     document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 90, clientY: 30 }));
     expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 90, y: 30 });

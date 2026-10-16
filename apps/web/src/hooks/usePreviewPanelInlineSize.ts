@@ -10,11 +10,6 @@ export interface PreviewPanelInlineSize {
 
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
 const PREVIEW_PANEL_MIN_WIDTH = 360;
-/**
- * Upper bound as a fraction of the viewport; only binds on wide screens.
- * On narrow windows the container clamp below is what preserves the
- * sibling column's usable width.
- */
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
 /**
  * Floor for the column beside the panel: below this the chat column's
@@ -29,7 +24,6 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
-    /** Measure this row instead of the panel's parent. */
     readonly container?: HTMLElement | null | undefined;
   } = {},
 ): PreviewPanelInlineSize {
@@ -43,11 +37,6 @@ export function usePreviewPanelInlineSize(
   });
 }
 
-/**
- * Keep the resizable panel's upper bound in sync with the window AND the row
- * it sits in. Resize-aware so dragging the OS window narrower (or expanding
- * the app sidebar) re-clamps the stored width on the next render.
- */
 function useViewportClampedMaxWidth(
   hostRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,

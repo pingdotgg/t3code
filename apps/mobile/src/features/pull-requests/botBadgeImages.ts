@@ -1,11 +1,9 @@
 /**
- * Logos, buttons, and status icons that review bots, agents, and CI stamp into pull requests.
  * Each entry is a host plus a path that only serves those assets, so screenshots uploaded to
  * the same service (such as cursor.com/artifacts or app.devin.ai/attachments) stay visible.
  * Only the description's Attachments strip skips them; markdown still renders them inline.
  */
 const BOT_BADGE_PREFIXES = [
-  // Coding agents and review bots
   "static.devin.ai/assets/",
   "cursor.com/assets/images/",
   "storage.googleapis.com/coderabbit_public_assets/",
@@ -21,7 +19,6 @@ const BOT_BADGE_PREFIXES = [
   "pr-comments-assets.blacksmith.sh/",
   "app.roocode.com/cloud-agents/github/",
   "app.parameter.ai/_static/icons/",
-  // CI, deploy, and dependency bots
   "img.shields.io/",
   "raster.shields.io/",
   "dependabot-badges.githubapp.com/",

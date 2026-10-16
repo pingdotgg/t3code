@@ -17,7 +17,6 @@ export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRu
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
-/** Uses the selected environment's grant, including cached scopes during a refresh. */
 export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
@@ -38,7 +37,6 @@ function sessionHasScope(
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
-/** Subscribe to the grants of every selected environment. */
 export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   scope: AuthEnvironmentScope,
@@ -89,9 +87,8 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
 }
 
 /**
- * This client's authenticated session on one environment, as reported by that
- * environment's `/api/auth/session` endpoint. `data` stays populated across
- * SWR revalidations; `isPending` is only meaningful before the first resolve.
+ * `data` stays populated across SWR revalidations; `isPending` is only
+ * meaningful before the first resolve.
  */
 export function useEnvironmentSessionState(environmentId: EnvironmentId) {
   const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));

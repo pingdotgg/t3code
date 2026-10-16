@@ -3,8 +3,8 @@ import type { ReactElement } from "react";
 import { Platform, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
 
 import type { useMediaActions } from "../state/mediaActions";
-import { SymbolView } from "./AppSymbol";
-import { ControlPillMenu } from "./ControlPill";
+import { SymbolView } from "./ui/AppSymbol";
+import { Menu } from "./ui/Menu";
 
 export function MediaActionsMenu(props: {
   readonly media: ReturnType<typeof useMediaActions>;
@@ -15,9 +15,9 @@ export function MediaActionsMenu(props: {
   if (props.media.actions.length === 0) return props.children ?? null;
   // Android's normal anchored menu lives in the app-root portal, behind native modals.
   const nativeAndroidMenu = props.inModal && Platform.OS === "android";
-  const Menu = nativeAndroidMenu ? MenuView : ControlPillMenu;
+  const MediaMenu = nativeAndroidMenu ? MenuView : Menu;
   return (
-    <Menu
+    <MediaMenu
       title={props.media.title}
       style={props.style}
       shouldOpenOnLongPress={props.children !== undefined}
@@ -40,6 +40,6 @@ export function MediaActionsMenu(props: {
           <SymbolView name="ellipsis" size={20} tintColor="#ffffff" type="monochrome" />
         </View>
       )}
-    </Menu>
+    </MediaMenu>
   );
 }

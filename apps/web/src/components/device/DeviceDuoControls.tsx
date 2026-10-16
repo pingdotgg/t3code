@@ -20,12 +20,6 @@ const STANDS = [
   { id: "tent", label: "Tent stand" },
 ] as const;
 
-/**
- * Fold shapes move only the hinge, so the device opens around whichever edge it
- * currently rests on: a vertical phone opens as a book into a landscape tablet,
- * a horizontal one as a laptop into a portrait tablet. Stands are native presets
- * that also place the device. Pinching supplies continuous hinge control.
- */
 export function DeviceDuoControls(props: {
   screen: DeviceScreenSize;
   state: DuoControlState;
@@ -34,11 +28,8 @@ export function DeviceDuoControls(props: {
 }) {
   const { screen } = props;
   const { fold, stand, phoneVertical: reportedVertical, settled } = duoFoldState(screen);
-  // A fold never changes how the phone is held. Keep the last settled reading
-  // through display handoffs, whose interim orientation belongs to the other display.
   const [settledVertical, setSettledVertical] = useState(reportedVertical);
   if (settled && settledVertical !== reportedVertical) setSettledVertical(reportedVertical);
-  // Stands rotate the device. Folding out of one returns it to how it was held before.
   const [standVertical, setStandVertical] = useState(settledVertical);
   const phoneVertical = stand ? standVertical : settledVertical;
   // Folding out of a stand sends the rotation back, then the fold, and only one command can

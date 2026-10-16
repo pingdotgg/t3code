@@ -27,16 +27,8 @@ import {
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
-/** Consecutive automatic continuations allowed before a person has to step in. */
 const MAX_CONTINUATION_CHAIN = 3;
 
-/**
- * Whether a restart must leave this run for the user: the thread is put away,
- * the provider turn already ended, or the user owes an answer. Checked when
- * intent is recorded and again when the continuation is delivered. A
- * `settled` run is woken for the awaited work it lost, so its ended provider
- * turn does not block it.
- */
 function restartContinuationBlocked(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
@@ -63,13 +55,10 @@ function restartContinuationBlocked(
     return true;
   const waitingRequest = projection.runtimeRequests.some(
     (request) =>
-      // Tool calls and auth refreshes do not wait on a person, and a
-      // message-capable question stays answerable after the restart.
       request.kind !== "dynamic_tool_call" &&
       request.kind !== "auth_refresh" &&
       request.responseCapability.type !== "message" &&
       (request.status === "pending" ||
-        // Recovery closes live callbacks on the cut turn; it does not answer them.
         ((request.status === "expired" || request.status === "cancelled") &&
           request.responseCapability.type === "not_resumable" &&
           turn !== undefined &&
@@ -81,7 +70,6 @@ function restartContinuationBlocked(
       item.type === "secret_request" &&
       item.runId === source.id &&
       (item.secretStatus === "pending" ||
-        // Recovery cancels an open secret card and its run at the same instant.
         (item.secretStatus === "cancelled" &&
           item.completedAt !== null &&
           source.completedAt !== null &&
@@ -90,8 +78,8 @@ function restartContinuationBlocked(
 }
 
 /**
- * Open awaited work (see `isAwaitedWork`) on a provider thread. App-owned
- * delegations are not counted: their own threads continue and report back.
+ * App-owned delegations are not counted: their own threads continue and report
+ * back.
  */
 function hasOpenAwaitedWork(
   projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems">,
@@ -118,10 +106,8 @@ function hasOpenAwaitedWork(
 }
 
 /**
- * The run a restart continues: an unfinished root turn, or a settled one
- * waiting on awaited work that the restart cancels. A settled run needs a
- * live session, so stale records from an older crash never wake it. Other
- * leftover work is cleaned up and reported on the next user turn.
+ * A settled run needs a live session, so stale records from an older crash
+ * never wake it.
  */
 export function restartContinuationRun(
   projection: Pick<
@@ -136,7 +122,6 @@ export function restartContinuationRun(
   >,
   now: DateTime.Utc,
 ): OrchestrationV2Run | undefined {
-  // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
       candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
@@ -213,8 +198,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
-    // Reconciliation cancels a waiting run it cannot checkpoint, so a settled
-    // source can be cancelled too. It continues only for awaited work.
     if (
       !source ||
       !isRestartContinuationSource(source, projection.providerTurns) ||
@@ -226,8 +209,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
-    // A user submission after reconciliation takes precedence over an automatic
-    // prompt. Queued runs never started and stay held behind this one.
     if (
       projection.runs.some(
         (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
@@ -260,7 +241,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         turnItemTypes: ["run_interrupt_request"],
       },
     );
-    // The user asked this run to stop before the restart cut it.
     if (
       sourceRecords.turnItems.some(
         (item) => item.runId === source.id && item.type === "run_interrupt_request",
@@ -292,7 +272,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         threadId: input.threadId,
         messageId,
         text,
-        // Shown as a work log row; the prompt the agent got is its detail.
         notification: {
           source: { kind: "system" },
           outcome: "updated",

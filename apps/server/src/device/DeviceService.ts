@@ -1,15 +1,3 @@
-/**
- * Device discovery, per-thread device sessions, and the state stream clients
- * render the Device panel from.
- *
- * Discovery and boot go through expo-device-hub's JSON API rather than
- * shelling out to simctl and adb here: the hub already normalizes both
- * platforms into one device shape and is the process that has to know a
- * device is booted before it can stream it. Sessions are the server's own
- * bookkeeping — which thread is looking at which device — so the panel and
- * the `device_*` tools agree, and so a `device_open` from an agent surfaces in
- * every connected client the way `preview_open` does.
- */
 import {
   type DeviceActionInput,
   type DeviceCloseInput,
@@ -69,7 +57,6 @@ import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
-/** Origin-relative prefix the hub is proxied under. See DeviceHubProxy. */
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
@@ -125,7 +112,6 @@ export class DeviceService extends Context.Service<
     readonly configure: (
       input: DeviceConfigureInput,
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
-    /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
     readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly inspect: Effect.Effect<DeviceServiceState>;
@@ -133,20 +119,13 @@ export class DeviceService extends Context.Service<
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
-    /** Current settings and foreground app for one device. */
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
-    /** Runs one action, then returns the refreshed detail. */
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
-    /** Host endpoints for the proxy and the provider environment. */
     readonly readiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness, DeviceError>;
-    /**
-     * `readiness` only when the host can run at least one platform; a machine
-     * with no simulator toolchain never installs or starts anything.
-     */
     readonly readinessIfSupported: (
       hostId?: DeviceHostId,
     ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
@@ -600,9 +579,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   /**
-   * Boot through the hub so its device list and the streaming helper both see
-   * the device come up. Android AVDs change id when they boot (AVD name to
-   * emulator serial), so the returned id is authoritative.
+   * Android AVDs change id when they boot (AVD name to emulator serial), so the
+   * returned id is authoritative.
    */
   const boot = Effect.fn("DeviceService.boot")(function* (
     ready: DeviceReadiness,
@@ -685,7 +663,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
       }
     } else if (device.platform === "ios" && device.booted) {
-      // A simulator booted outside T3 has no helper attached yet.
       yield* HttpClientRequest.post(
         `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
       ).pipe(
@@ -767,8 +744,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // serve-sim's shutdown closes its in-process capture session before it runs
     // `simctl shutdown`; the hub's generic shutdown can leave that session cached
     // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
-    // already off fails there. Accept that failure only when the hub confirms
-    // the simulator is off; a failure on a running one still surfaces.
+    // already off fails there.
     yield* platform === "ios"
       ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
           Effect.catch((cause) =>
@@ -830,7 +806,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     function* (input) {
       const host = yield* resolveHost(input.hostId);
       yield* shutdownDevice(host.id, input.deviceId, input.platform);
-      // Sessions on a powered-off device are stale in every thread.
       yield* publish((current) => ({
         ...current,
         sessions: current.sessions.filter(
@@ -990,6 +965,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   };
 });
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
@@ -1089,7 +1065,7 @@ export const make = Effect.gen(function* () {
             configured.delete(id);
             removed.push({ id, scope: previous.scope });
           }
-          yield* service.refreshHosts;
+          if (removed.length > 0) yield* service.refreshHosts;
           return removed;
         }),
       );
@@ -1105,8 +1081,10 @@ export const make = Effect.gen(function* () {
       );
       yield* service.withLifecycleLock(
         Effect.gen(function* () {
+          let added = false;
           for (const host of next) {
             if (configured.has(host.id)) continue;
+            added = true;
             const hostScope = yield* Scope.fork(scope);
             const instance = yield* SshDeviceHost.make(
               host,
@@ -1130,7 +1108,8 @@ export const make = Effect.gen(function* () {
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
           }
-          yield* service.refreshHosts;
+          // Refresh again after removed scopes closed so a late status write from an old host cannot linger.
+          if (added || removed.length > 0) yield* service.refreshHosts;
         }),
       );
     });
@@ -1173,7 +1152,6 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 
-/** State stream for WS subscribers: current snapshot first, then every change. */
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(
     Effect.gen(function* () {

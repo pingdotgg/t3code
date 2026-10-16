@@ -28,9 +28,6 @@ function codepointView(codepoints: ReadonlyArray<number>): DataView {
 
 describe("ghosttyCellText", () => {
   it("converts oversized grapheme clusters without hitting engine spread limits", () => {
-    // A program printing one base character followed by a huge run of
-    // combining marks packs the whole cluster into one cell; spreading that
-    // many arguments into String.fromCodePoint once overflows the call stack.
     const graphemeLength = 130_000;
     const view = new DataView(new ArrayBuffer(graphemeLength * 4));
     for (let index = 0; index < graphemeLength; index += 1) {

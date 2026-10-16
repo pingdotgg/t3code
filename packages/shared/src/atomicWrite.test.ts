@@ -143,7 +143,6 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
     const renamed: Array<string> = [];
     const removed: Array<string> = [];
     const fileSystem = FileSystem.layerNoop({
-      // The target does not exist yet, so it is written in place.
       readLink: (path) =>
         Effect.fail(
           PlatformError.systemError({

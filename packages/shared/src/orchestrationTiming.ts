@@ -1,6 +1,5 @@
 import { isOrchestrationV2WorkActive, type OrchestrationV2Subagent } from "@t3tools/contracts";
 
-/** Unknown settled timing must not turn a task's age into its work duration. */
 export function deriveSubagentElapsedMs(
   agent: {
     readonly status: OrchestrationV2Subagent["status"];
@@ -22,7 +21,6 @@ export function deriveSubagentElapsedMs(
 
 type LatestRunTiming = {
   readonly runId: string | null;
-  /** Set when the turn is created; `startedAt` waits for the provider. */
   readonly requestedAt?: string | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -64,14 +62,10 @@ function isLatestRunSettled(
 }
 
 /**
- * When the working indicator should be counting, and from when.
- *
- * `requestedAt` is the floor for an unsettled turn. The projector only stamps
- * `startedAt` in the same update that moves the session to "running", so while
- * the provider spins up (session "starting") a requested turn has no
- * `startedAt` at all — and returning null there blinks the indicator out for
- * the whole spin-up. A settled turn still falls through to `sendStartedAt`, so
- * this cannot leave the indicator counting after the work is done.
+ * The projector only stamps `startedAt` in the same update that moves the
+ * session to "running", so while the provider spins up (session "starting") a
+ * requested turn has no `startedAt` at all — and returning null there blinks
+ * the indicator out for the whole spin-up.
  */
 export function deriveActiveWorkStartedAt(
   latestRun: LatestRunTiming | null,

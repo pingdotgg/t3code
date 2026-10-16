@@ -408,7 +408,6 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
         "http://192.168.1.10:3773/.well-known/t3/environment",
       ]);
-      // The token stays saved for the T3 Connect route.
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
         "cached-access-token",
       );

@@ -5,7 +5,6 @@ import { useCallback } from "react";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
 
-/** The pull request list's environment and its filters, restored on the next launch. */
 export function usePullRequestListControls() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);

@@ -46,7 +46,6 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
   under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
 };
 
-/** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
   const kind: UsageProviderKind | undefined =
     driver === "codex"
@@ -59,7 +58,6 @@ export function barColor(driver: ServerProvider["driver"]): string {
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
 }
 
-/** Pace as a glyph with the words on hover. */
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
@@ -80,12 +78,6 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   );
 }
 
-/**
- * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
- * window the clock is, which is also where even spending would have put the
- * fill. Hover for the exact figures and reset time.
- */
 function WindowBar({
   color,
   window,
@@ -98,7 +90,6 @@ function WindowBar({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
@@ -155,10 +146,6 @@ function WindowBar({
   );
 }
 
-/**
- * One account's windows as rows: label and percent, bar, pace and countdown.
- * Compact rows fit the composer panel with narrower columns.
- */
 export function LimitWindows({
   driver,
   windows,
@@ -209,7 +196,6 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/** Everything a redeem needs: where to send it and what to say afterwards. */
 export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
@@ -242,10 +228,9 @@ export function useResetCredit(
 }
 
 /**
- * The confirm for a redeem. Redeeming spends a credit the provider granted the
- * user, so it never fires on a bare click. Mount it outside any popover that
- * holds the button: dialogs stack under popovers, and closing the popover
- * would unmount a dialog rendered inside it.
+ * Redeeming spends a credit the provider granted the user, so it never fires on a bare click.
+ * Mount it outside any popover that holds the button: dialogs stack under popovers, and closing
+ * the popover would unmount a dialog rendered inside it.
  */
 export function ResetCreditDialog({
   open,
@@ -279,7 +264,6 @@ export function ResetCreditDialog({
   );
 }
 
-/** `2 reset credits banked · next expires in 27d 23h`, or the short form for a popover. */
 export function resetCreditsSummary(
   credits: ServerProviderResetCredits,
   now: number,
@@ -296,7 +280,6 @@ export function resetCreditsSummary(
   }`;
 }
 
-/** Banked reset credits with the redeem button and its confirm, self-contained. */
 export function ResetCredits({
   environmentId,
   input,
@@ -340,9 +323,8 @@ export function ResetCredits({
 }
 
 /**
- * Subscription quota across every connected environment's providers and hubs,
- * pooled per provider. The page advances `now` on explicit refresh rather than
- * ticking: a live clock would repaint the page for no decision-changing gain.
+ * The page advances `now` on explicit refresh rather than ticking: a live clock would repaint the
+ * page for no decision-changing gain.
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
@@ -360,8 +342,6 @@ export function UsageLimitsSection({
     [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
   );
   const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
-  // Hidden drivers leave both native accounts and hub accounts, so their
-  // bars, notices, and external links all drop out together.
   const selected = new Map(
     [...presentations].flatMap(([id, presentation]) => {
       if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
@@ -375,7 +355,6 @@ export function UsageLimitsSection({
             serverConfig: {
               ...config,
               providers: config.providers.filter((provider) => isVisible(provider.driver)),
-              // A hub left with no visible accounts is dropped, not reported as empty.
               usageLimitSources: config.usageLimitSources?.flatMap((source) => {
                 const accounts = source.accounts.filter((account) => isVisible(account.driver));
                 return accounts.length === 0 && source.accounts.length > 0

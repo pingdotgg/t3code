@@ -151,7 +151,7 @@ describe("workEntryIndicatesToolFailure", () => {
     } satisfies WorkLogPresentationEntry;
 
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
-    // Older activities can store output in this field, so that path stays separate.
+
     expect(workEntryIndicatesToolFailure(entry)).toBe(true);
     expect(workEntryDisplayIndicatesToolFailure({ ...entry, detail: "File not found" })).toBe(true);
   });

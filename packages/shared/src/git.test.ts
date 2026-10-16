@@ -78,8 +78,6 @@ describe("normalizeGitRemoteUrl", () => {
   });
 
   it("leaves an Azure SSH host it cannot read as the path it was given", () => {
-    // Not `v3`, and not four segments: rewriting either would invent a repository that the web
-    // spelling has no name for, so the remote stands as it arrived.
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v4/T3Tools/Platform/T3Code")).toBe(
       "ssh.dev.azure.com/v4/t3tools/platform/t3code",
     );
@@ -120,7 +118,6 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(parseOriginUrlFromGitConfig("[remote.origin]\n\turl = git@github.com:a/b.git\n")).toBe(
       "git@github.com:a/b.git",
     );
-    // Git folds the dotted form to lowercase but keeps quoted names as written.
     expect(parseOriginUrlFromGitConfig("[remote.Origin]\n\turl = git@github.com:a/b.git\n")).toBe(
       "git@github.com:a/b.git",
     );
@@ -203,9 +200,7 @@ describe("isTemporaryWorktreeBranch", () => {
   });
 
   it("rejects UUID-shaped refs that are not RFC 4122 v4", () => {
-    // version nibble is not 4
     expect(isTemporaryWorktreeBranch("t3code/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12")).toBe(false);
-    // variant nibble is not [89ab]
     expect(isTemporaryWorktreeBranch("t3code/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12")).toBe(false);
   });
 

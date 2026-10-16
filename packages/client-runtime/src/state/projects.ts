@@ -135,7 +135,6 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
   });
 }
 
-/** Whether a project is its environment's Scratch project (`ServerConfig.scratchWorkspaceRoot`). */
 export function isScratchProject(
   project: { readonly workspaceRoot: string },
   scratchWorkspaceRoot: string | null | undefined,

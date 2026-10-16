@@ -19,7 +19,7 @@ const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   rider: ["Rider", "JetBrains Rider"],
 };
 
-/** True for `<name> <version>.app`, where the version is digits and dots (`IntelliJ IDEA 2026.1.4.app`).
+/**
  * A plain prefix match would let one editor steal another's bundle, e.g. stable VS Code resolving to
  * `Visual Studio Code - Insiders.app`. */
 const isVersionedBundle = (entry: string, name: string) => {

@@ -1,11 +1,5 @@
 import { isValidElement, type ReactElement } from "react";
 
-/**
- * Depth-first search over a React element tree produced by calling a component
- * as a plain function (see `reactHookHarness`). Descends through props so
- * render-prop and slot-style children are reachable. Returns the first element
- * the visitor accepts, or null.
- */
 export function visitElements(
   node: unknown,
   visitor: (element: ReactElement<Record<string, unknown>>) => boolean,

@@ -39,10 +39,6 @@ export {
   type ThreadPrPresentation,
 } from "./thread-pr-presentation";
 
-/**
- * Linked PRs use server snapshots. Branch fallback and legacy references share
- * a live summary request across visible rows in the same environment.
- */
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),

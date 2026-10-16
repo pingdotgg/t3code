@@ -82,34 +82,24 @@ export type HtmlRenderPrepareError =
   | HtmlRenderPageTooLargeError;
 
 export interface HtmlPreview {
-  /** Base64 PNG of the top `capturedHeight` pixels. */
   readonly png: string;
   readonly width: number;
-  /** Height the page needs to show without scrolling. */
   readonly contentHeight: number;
   readonly capturedHeight: number;
   readonly consoleMessages: ReadonlyArray<HeadlessChrome.ConsoleMessage>;
-  /** Local image paths that could not be read; they show as broken images. */
   readonly missingImages?: ReadonlyArray<string>;
 }
 
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
-    /** The self-contained page that gets stored: local images inlined, theme bootstrap injected. */
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    /**
-     * Stores a prepared page as a thread attachment for clients to show inline,
-     * measuring its height at each client width when the preview browser is
-     * already installed.
-     */
     readonly publish: (input: {
       readonly threadId: ThreadId;
       readonly html: string;
       readonly title: string;
       readonly height: number;
     }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
-    /** Screenshots a page in headless Chrome, tolerating unreadable local images. */
     readonly preview: (input: {
       readonly html: string;
       readonly width?: number | undefined;
@@ -138,10 +128,7 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ico: "image/x-icon",
 };
 const IMAGE_EXTENSIONS = Object.keys(IMAGE_MIME_TYPES).join("|");
-// POSIX `/…` (not protocol-relative `//…`) or Windows `C:\…` / `C:/…`.
 const ABSOLUTE_PATH = String.raw`(?:/(?!/)|[a-z]:[\\/])`;
-// An absolute image path that is a whole quoted string ("…", '…', `…`) or an
-// unquoted CSS url(…). URLs, data:, blob:, and relative paths never match.
 const LOCAL_IMAGE_PATTERN = new RegExp(
   String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))\1` +
     String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
@@ -184,17 +171,11 @@ const isImageBytes = (bytes: Uint8Array) => {
   return hasSvgRoot(new TextDecoder().decode(bytes.subarray(0, 4096)));
 };
 
-/** The index just past `token` at or after `from`, or -1 when it never appears. */
 const after = (text: string, token: string, from: number) => {
   const at = text.indexOf(token, from);
   return at === -1 ? -1 : at + token.length;
 };
 
-/**
- * Whether an XML document's root element is <svg>, after any processing
- * instructions, comments, and a doctype. One forward pass, so no input can
- * make it slow, and quoted text never counts as markup.
- */
 const hasSvgRoot = (text: string) => {
   let at = 0;
   while (at !== -1) {
@@ -208,7 +189,6 @@ const hasSvgRoot = (text: string) => {
   return false;
 };
 
-/** The index just past a doctype whose body starts at `from`, honoring quotes and its internal subset. */
 const afterDoctype = (text: string, from: number) => {
   let inSubset = false;
   let at = from;
@@ -227,7 +207,6 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
-/** Replaces every local image reference with a data URI; unreadable paths stay as written. */
 const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
@@ -292,7 +271,6 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const dataUris = new Map(
     images.map(
       (image) =>
-        // Node's encoder: images run to 10 MiB.
         [
           image.path,
           dataUriPrefix(image.path) + Buffer.from(image.bytes).toString("base64"),
@@ -321,12 +299,9 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
 
 const MIN_PREVIEW_WIDTH = 240;
 const MAX_PREVIEW_WIDTH = 1_600;
-// Each preview or measurement runs its own browser; more at once mostly costs memory.
 const MAX_CONCURRENT_BROWSERS = 2;
-// Publishing waits this long at most for heights before returning without them.
 const MEASURE_TIMEOUT = "6 seconds";
 
-// Measured in the dark theme with Arial-metric fonts, so text wraps close to how clients show it.
 const MEASURE_FRAGMENT = htmlRenderThemeFragment(
   htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_MEASURE_FONTS),
 );
@@ -344,7 +319,6 @@ const make = Effect.gen(function* () {
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
-  /** Runs one browser launch; a host that cannot start it gets setup steps instead. */
   const launching = <A>(
     executable: string,
     run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
@@ -367,12 +341,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // Never installs the browser: html_render must not depend on it.
   const measure = (html: string) =>
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const heights = yield* launching(executable.value, (noSandbox) =>
+      const { heights, outline } = yield* launching(executable.value, (noSandbox) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
@@ -391,7 +364,7 @@ const make = Effect.gen(function* () {
             ),
         }),
       );
-      return heights.toSorted(([left], [right]) => left - right);
+      return { heights: heights.toSorted(([left], [right]) => left - right), outline };
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not measure an HTML render; publishing it without heights.", {
@@ -432,7 +405,7 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
-    const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
+    const measured = yield* fileSystem.writeFileString(filePath, html).pipe(
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
       Effect.andThen(measure(html)),
       // Only the returned reference lets thread deletion find the page, so a
@@ -443,7 +416,8 @@ const make = Effect.gen(function* () {
       attachmentId,
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
       height: clampHtmlRenderHeight(input.height),
-      ...(heights === undefined ? {} : { heights }),
+      ...(measured === undefined ? {} : { heights: measured.heights }),
+      ...(measured?.outline === undefined ? {} : { outline: measured.outline }),
     } satisfies HtmlRenderReference;
   });
 

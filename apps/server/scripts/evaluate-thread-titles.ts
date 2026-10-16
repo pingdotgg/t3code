@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-// This CLI uses Node argument parsing and random ordering at the application boundary.
 // @effect-diagnostics nodeBuiltinImport:off
-// Run with --model <configured-model> --out /tmp/title-eval.
-// Pass --baseline /tmp/previous-eval/results.json to compare two generation runs.
-// Add --initial to evaluate only the opening request.
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -147,7 +143,6 @@ await Effect.runPromise(
         ProcessRunner.layer,
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(SourceControlBuiltInDrivers.layer),
-          // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),

@@ -21,7 +21,6 @@ import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-/** Hub management follows the selected device and access rules of provider settings. */
 export function UsageProviderSettings({
   environmentId,
   environmentLabel,
@@ -131,7 +130,6 @@ export function UsageProviderSettings({
   );
 }
 
-/** Removing a hub deletes its stored management key, so it requires confirmation. */
 function RemoveUsageProviderButton({
   label,
   onConfirm,

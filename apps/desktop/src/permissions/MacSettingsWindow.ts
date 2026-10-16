@@ -56,7 +56,6 @@ function run() {
   }
 }`;
 
-/** Place the panel inside Settings' content column, above its bottom edge. */
 export function settingsHelperBounds(settings: NonNullable<SettingsWindow>): Electron.Rectangle {
   const sidebarWidth = 216;
   const inset = 16;
@@ -69,7 +68,6 @@ export function settingsHelperBounds(settings: NonNullable<SettingsWindow>): Ele
   };
 }
 
-/** Track only metadata; this does not request Accessibility or Screen Recording. */
 export function watchMacSettingsWindow(
   onChange: (window: SettingsWindow) => void,
   onUnavailable: () => void,

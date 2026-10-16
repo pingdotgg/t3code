@@ -45,8 +45,6 @@ describe("isComposerNativeEcho", () => {
   });
 
   it("does not claim a controlled selection against an assumed state without one", () => {
-    // An echo payload serializes `selection: null`; classifying a controlled
-    // selection as an echo of an assumed state would drop a parent caret move.
     const assumed = [{ eventCount: 3, value: "native", selection: null }];
     expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(false);
     expect(isComposerNativeEcho("other", { start: 0, end: 0 }, 3, assumed)).toBe(false);
@@ -165,8 +163,6 @@ describe("assumeComposerControlledState", () => {
   });
 
   it("applies a parent caret move on the assumed value at the assumed revision", () => {
-    // Same value, new caret: not an echo (so the selection is serialized) but
-    // still stamped at the assumed revision so the editor accepts it.
     const snapshots = assumeComposerControlledState([], 3, "typed");
 
     expect(isComposerNativeEcho("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
@@ -176,10 +172,6 @@ describe("assumeComposerControlledState", () => {
   });
 
   it("re-applies a parent value that round-trips back to an acknowledged state", () => {
-    // Native acknowledged "typed", the parent then controlled the editor to ""
-    // (a send clearing the draft) and back to "typed" (the send failed and the
-    // draft was restored). The restore must be a fresh non-echo edit stamped at
-    // the current revision, not an echo the editor would drop.
     const snapshots = assumeComposerControlledState(
       [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }],
       3,
@@ -200,13 +192,10 @@ describe("typing immediately before an intercepted paste", () => {
       { eventCount: 1, value: "typed", selection: { start: 5, end: 5 } },
       { eventCount: 2, value: "typed", selection: { start: 0, end: 5 } },
     ];
-    // Both native platforms stamp the paste with its current value and selection.
-    // A render still carrying the typing caret cannot overwrite that selection.
     expect(resolveComposerControlledEventCount("typed", { start: 5, end: 5 }, 2, snapshots)).toBe(
       1,
     );
     expect(isComposerNativeEcho("typed", { start: 0, end: 5 }, 2, snapshots)).toBe(true);
-    // The replacement is a parent edit at the acknowledged paste revision.
     expect(resolveComposerControlledEventCount("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(
       2,
     );

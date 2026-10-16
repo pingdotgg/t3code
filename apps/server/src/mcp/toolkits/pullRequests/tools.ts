@@ -34,11 +34,6 @@ const guideDependencies = [
 const REGISTER_EVERY_PR =
   "Register every pull request you open for this thread, including each layer of a stack, right after creating it.";
 
-/**
- * Either the pull request's URL or its repository and number. Both forms
- * resolve to the same host-level identity, so the agent can pass whichever
- * the host CLI handed back.
- */
 export const PullRequestTargetInput = Schema.Struct({
   threadId: Schema.optional(
     ThreadId.annotate({
@@ -347,7 +342,6 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-/** A pull request to write or read a guide for, by URL or by repository and number. */
 const GuideTarget = Schema.Struct({
   url: PullRequestTargetInput.fields.url,
   repository: PullRequestTargetInput.fields.repository,

@@ -11,11 +11,6 @@ import {
 } from "../shared.ts";
 import { NESTED_SUBAGENT_APPROVAL_PENDING_SHELL_KEY } from "./input.ts";
 
-/**
- * Codex asks for a grandchild's command approval on the grandchild's own
- * native thread and turn. The request is asked on the top-level thread and
- * run instead, under the top-level subagent that leads to the grandchild.
- */
 export function assertSubagentV2NestedApprovalOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -90,7 +85,6 @@ export function assertSubagentV2NestedApprovalOutput(
   assert.equal(approval.requestId, request.id);
   assert.include(approval.prompt ?? "", "nested-approval.txt");
 
-  // While Codex waited, only the top-level thread reported the approval.
   const pendingShell = result.capturedShellSnapshots.get(
     NESTED_SUBAGENT_APPROVAL_PENDING_SHELL_KEY,
   );
@@ -104,7 +98,6 @@ export function assertSubagentV2NestedApprovalOutput(
     assert.isNull(nestedShell.pendingRuntimeRequest);
   }
 
-  // Neither native child thread holds a request; the grandchild ran the command.
   for (const nested of [childProjection, grandchildProjection]) {
     assert.lengthOf(nested.runtimeRequests, 0);
     assert.isFalse(nested.turnItems.some((item) => item.type === "approval_request"));

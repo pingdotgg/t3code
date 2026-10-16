@@ -159,7 +159,6 @@ describe("desktop app control server", () => {
     }),
   );
 
-  // Two desktop apps can share one state dir, such as nightly and a preview build.
   it.effect("keeps a newer app's socket when an older app on the same state dir quits", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;

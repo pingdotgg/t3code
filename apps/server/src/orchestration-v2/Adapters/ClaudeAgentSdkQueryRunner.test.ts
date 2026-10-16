@@ -95,7 +95,6 @@ const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(NodeServices.layer),
 );
 
-/** Writes an executable stand-in for the Claude CLI into a fresh directory. */
 function fakeClaudeCli(script: string): string {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-cli-"));
   const cli = NodePath.join(dir, "claude");
@@ -121,9 +120,8 @@ const openFakeCli = (cli: string) =>
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
   // The CLI stops the MCP servers it started, but not their children: a
-  // plugin's `bun server.ts` outlives its `bun run` wrapper (#3089). The fake
-  // CLI leaves a child running the same way. The child holds a FIFO open, so
-  // its death reads as end-of-file here, with no polling.
+  // plugin's `bun server.ts` outlives its `bun run` wrapper (#3089). The child
+  // holds a FIFO open, so its death reads as end-of-file here, with no polling.
   it.effect("stops what the CLI left running when the session closes", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(
@@ -138,7 +136,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          // Only does anything when the test fails: do not leak its child.
           try {
             process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
           } catch {}

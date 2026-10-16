@@ -11,8 +11,6 @@ export type DesktopUpdateStatusIconState =
   | "available"
   | "downloading"
   | "downloaded"
-  // Other machines or providers have updates. Matches the server update icon
-  // in Connections settings; the download arrow stays for this app's own file.
   | "everything";
 
 function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {

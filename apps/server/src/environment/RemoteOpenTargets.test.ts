@@ -22,7 +22,6 @@ interface CommandResult {
   readonly stdout: string;
 }
 
-/** Spawner answering `tailscale status --json` and `tailscale debug prefs`. */
 const layerSpawner = (input: { readonly status: CommandResult; readonly prefs: CommandResult }) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -70,7 +69,6 @@ const resolveTargets = (input: {
     ),
   );
 
-// `tailscale debug prefs` output, trimmed. `tailscale up --ssh` sets RunSSH.
 const prefsJson = (prefs: { readonly RunSSH: boolean; readonly WantRunning: boolean }) => ({
   exitCode: 0,
   stdout: JSON.stringify(

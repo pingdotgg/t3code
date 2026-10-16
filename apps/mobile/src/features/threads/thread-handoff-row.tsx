@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveHandoffEndpoints, type HandoffEndpoints } from "@t3tools/client-runtime/handoff";
@@ -9,10 +10,10 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { Fragment, useMemo } from "react";
-import { Alert, Pressable, View, type ColorValue } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { useMemo } from "react";
+import { Pressable, View, type ColorValue } from "react-native";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
@@ -76,14 +77,17 @@ export function ThreadHandoffDivider(props: {
     >
       <View className="flex-row flex-wrap items-center justify-center gap-1.5">
         {endpoints.from.map((endpoint, index) => (
-          <Fragment key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}>
-            {index > 0 ? (
+          <View
+            key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}
+            className="max-w-full flex-row items-center"
+          >
+            <HandoffEndpoint {...endpoint} providers={config?.providers ?? []} />
+            {index < endpoints.from.length - 1 ? (
               <Text accessible={false} className="text-xs text-foreground-muted">
                 ,
               </Text>
             ) : null}
-            <HandoffEndpoint {...endpoint} providers={config?.providers ?? []} />
-          </Fragment>
+          </View>
         ))}
         {endpoints.from.length > 0 ? (
           <SymbolView name="arrow.right" size={12} tintColor={props.iconColor} />
@@ -114,7 +118,7 @@ function HandoffEndpoint(props: {
       className="min-h-6 max-w-full flex-row items-center justify-center gap-1"
       hitSlop={{ top: 8, bottom: 8 }}
       onPress={() =>
-        Alert.alert(
+        Dialog.alert(
           label,
           provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId,
         )

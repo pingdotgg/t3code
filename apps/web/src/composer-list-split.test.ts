@@ -27,12 +27,6 @@ afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy();
 });
 
-/**
- * Splits the last item of `value` the way Shift+Enter does, types `b`, and
- * returns the stored Markdown. Tiptap carries every attribute left at the
- * default `keepOnSplit: true` onto the new item and merges the overrides on
- * top, so the new item must keep the source marker, indent and spacing.
- */
 function makeEditor(value: string) {
   const editor = new Editor({
     extensions: [
@@ -84,7 +78,6 @@ describe("splitting a list item", () => {
   });
 });
 
-/** Puts the caret `offset` characters into the first text node holding `text`. */
 function placeCaret(editor: Editor, text: string, offset = 0) {
   let caret = -1;
   editor.state.doc.descendants((node, pos) => {
@@ -95,7 +88,6 @@ function placeCaret(editor: Editor, text: string, offset = 0) {
   editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, caret)));
 }
 
-/** The stored draft, after checking a rebuild from it gives back the same document. */
 function storedDraft(editor: Editor) {
   const stored = serializeEditorDoc(editor.state.doc).value;
   expect(makeEditor(stored).state.doc.toString()).toBe(editor.state.doc.toString());
@@ -103,9 +95,6 @@ function storedDraft(editor: Editor) {
 }
 
 describe("Shift+Enter twice on an item", () => {
-  // The second Shift+Enter lifts the new empty item one level. The stored
-  // draft must write it at its new depth, so a rebuild from that draft gives
-  // back the document the user is looking at.
   it.each([
     ["- a\n  - x", "- a\n  - x\n- b"],
     ["* a\n  * x", "* a\n  * x\n* b"],
@@ -128,7 +117,6 @@ describe("Shift+Enter twice on an item", () => {
     editor.view.dispatch(editor.state.tr.insertText("b"));
     const stored = serializeEditorDoc(editor.state.doc).value;
     expect(stored).toBe(expected);
-    // Same nesting after a rebuild; spacing defaults may differ but write the same.
     expect(makeEditor(stored).state.doc.toString()).toBe(editor.state.doc.toString());
   });
 });
@@ -148,8 +136,6 @@ describe("Shift+Enter in the middle of an ordered list", () => {
 });
 
 describe("Shift+Enter on an empty task under a bullet", () => {
-  // There is no task list one level up to move it into, and the item cannot
-  // hold a second line, so the draft stays what the editor shows.
   it.each(["- a\n  - [ ] x", "- [ ] a\n  - x"])("in %j keeps the draft honest", (value) => {
     const editor = makeEditor(value);
     placeCaret(editor, "x", 1);
@@ -165,7 +151,6 @@ describe("Backspace at the start of a line", () => {
     ["- a\n  - x\n  - y", "x", "- a\n- x\n  - y"],
     ["- [ ] a\n  - [ ] x", "x", "- [ ] a\n- [ ] x"],
     ["- a\n- b\n- c", "b", "- a\nb\n- c"],
-    // A task under a bullet has no task list to move into, so it joins up.
     ["- a\n  - [ ] x", "x", "- ax"],
     ["- a\n  - x\nb", "b", "- a\n  - xb"],
     ["1. a\nb", "b", "1. ab"],
@@ -225,7 +210,6 @@ describe("blocks that a list item or quote cannot hold", () => {
 });
 
 describe("[ ] typed at the start of a bullet item", () => {
-  // The value holds `[ ]` already; the rule fires on the space after it.
   it.each([
     ["* [ ]x", "- [ ] x"],
     ["* a\n* [ ]x\n* c", "* a\n- [ ] x\n* c"],
@@ -252,7 +236,6 @@ describe("[ ] typed at the start of a bullet item", () => {
 describe("a rule at the end of the draft", () => {
   it("keeps an empty line after it to type on", () => {
     const editor = makeEditor("a\n---");
-    // Removing the line after the rule puts one straight back.
     editor.view.dispatch(
       editor.state.tr.delete(editor.state.doc.content.size - 2, editor.state.doc.content.size),
     );

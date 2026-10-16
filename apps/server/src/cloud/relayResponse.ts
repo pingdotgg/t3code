@@ -6,9 +6,9 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
 /**
- * A relay request that did not succeed. `unavailable` means it may succeed on
- * retry; the relay refused the other kinds. The description is safe to show:
- * it carries the relay's own explanation and trace ID, never request details.
+ * `unavailable` means it may succeed on retry; the relay refused the other
+ * kinds. The description is safe to show: it carries the relay's own
+ * explanation and trace ID, never request details.
  */
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
   "RelayRequestError",
@@ -33,7 +33,6 @@ export function relayRequestError(cause: unknown): RelayRequestError {
       });
 }
 
-/** Whether a failure may succeed on retry: anything but a relay refusal. */
 export const shouldRetryRelayRequest = (error: unknown): boolean =>
   !isRelayRequestError(error) || error.rejection === "unavailable";
 
@@ -51,7 +50,6 @@ function recoveryHint(error: RelayProtectedError): string {
   }
 }
 
-/** Preserve relay diagnostics before converting permanent rejections into non-retryable errors. */
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ) {

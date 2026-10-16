@@ -8,7 +8,6 @@ import {
   type PullRequestEnvironmentTarget,
 } from "./pullRequestEnvironmentFallback";
 
-/** Move a pull request route to a connected copy of its repository when its own is down. */
 export function usePullRequestEnvironmentFallback(params: PullRequestEnvironmentTarget) {
   const navigation = useNavigation();
   const projects = useProjects();

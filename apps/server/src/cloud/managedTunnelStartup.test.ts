@@ -83,7 +83,6 @@ describe("retryManagedTunnelRegistration", () => {
       );
       yield* TestClock.adjust("15 minutes");
       expect(yield* Fiber.join(fiber)).toBe("relay unavailable");
-      // Capped at 30 seconds between attempts, ten minutes allows a bounded run.
       expect(attempts).toBeGreaterThan(5);
       expect(attempts).toBeLessThan(60);
     }),

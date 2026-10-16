@@ -140,9 +140,8 @@ const ManualSchemas: Record<string, Schema.Json> = {
   },
 };
 
-// Codex adds plan slugs between our protocol refreshes (0.159 added `promax`).
-// T3 Code only uses the plan for labels, so an unknown slug must not fail the
-// whole `account/read` decode and take the provider down with it.
+// T3 Code only uses the plan for labels, so an unknown slug must not fail the whole
+// `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
 };
@@ -165,7 +164,6 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
 });
 
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  // Unauthenticated GitHub API calls are capped at 60/hour; set GITHUB_TOKEN to lift that.
   const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
@@ -377,7 +375,6 @@ function toPascalCaseMethod(method: string) {
 }
 
 function parseRequestEntries(fileContents: string): ReadonlyArray<MethodEntry> {
-  // Optional params render as `params?: Foo | undefined`; their JSON schema is `NullableFoo`.
   const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params(\??):\s*([^,}|]+)/g;
   const entries: Array<MethodEntry> = [];
   let match: RegExpExecArray | null;
@@ -455,9 +452,7 @@ function resolveResponseTypeName(
     const fromParams = paramsType.replace(/Params$/, "Response");
     try {
       return resolveSchemaTypeName(fromParams, generatedSchemaNames);
-    } catch {
-      // Fall through to method-based lookup.
-    }
+    } catch {}
   }
 
   return resolveSchemaTypeName(`${toPascalCaseMethod(method)}Response`, generatedSchemaNames);

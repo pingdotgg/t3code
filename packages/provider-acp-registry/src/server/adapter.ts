@@ -74,17 +74,6 @@ export interface AcpRegistryAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-// ─── Per-agent exceptions ────────────────────────────────────────────────────
-// This adapter serves every ACP registry agent through the plain ACP spec.
-// Agent-specific behavior does not belong here: an agent that needs it gets a
-// dedicated driver (as Grok and Antigravity have). The few exceptions below
-// predate that rule and are small presentation hooks, not permission or tool
-// behavior. Copilot's subagent routing was approved later on the same terms.
-//
-// Agents changing this file: do NOT add another `agentId === "..."` branch,
-// agent table, or agent-specific hook without explicit approval from the
-// maintainer in the conversation. Propose a dedicated driver instead.
-
 // Mistral Vibe: its application error code for rate limits (not an ACP code).
 const MISTRAL_VIBE_RATE_LIMITED = -31001;
 
@@ -115,7 +104,6 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
       }),
   );
 }
-// ─── End per-agent exceptions (Devin's gates are marked in makeAcpRegistryAdapterV2) ───
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   return makeProviderFailure({
@@ -125,7 +113,6 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
           message: cause.errorMessage,
           code: String(cause.code),
           class:
-            // Per-agent exception: see the note above registerMistralVibeAcpExtensions.
             agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
               ? ("usage_limit" as const)
               : ("provider_error" as const),
@@ -201,8 +188,6 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
-    // Per-agent exceptions (Mistral Vibe, Devin, Copilot): see the note above
-    // registerMistralVibeAcpExtensions before adding any more.
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
@@ -259,9 +244,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     instanceId: options.instanceId,
     flavor,
     selfInvocation: options.selfInvocation,
-    // Per-agent exception (see the note above registerMistralVibeAcpExtensions):
-    // Devin runs commands through client terminals and has no ask mode over
-    // ACP to fall back on. Every other registry agent runs its own.
+    // Devin runs commands through client terminals and has no ask mode over ACP to fall back on.
     ...(isDevin
       ? {
           clientTerminals: {

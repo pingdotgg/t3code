@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -18,12 +19,16 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -95,7 +100,8 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Path.layer,
+        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
@@ -104,6 +110,10 @@ it("does not commit running state when inherited background routing cannot be re
             ),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadRecords: () => {
+            projectionReadCount += 1;
+            return Effect.succeed(projection);
+          },
           getTurnStartContext: () => {
             projectionReadCount += 1;
             return Effect.succeed({
@@ -141,7 +151,7 @@ it("does not commit running state when inherited background routing cannot be re
       .pipe(Effect.flip);
 
     expect(error._tag).toBe("ProviderTurnStartError");
-    expect(projectionReadCount).toBe(2);
+    expect(projectionReadCount).toBe(3);
     expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
     expect(createWorktree).toHaveBeenCalledWith({
       cwd: "/tmp/provider-turn-start-project",
@@ -155,21 +165,17 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly worktreePath?: string;
+  readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
-  /** Opens the session, then fails loading its provider thread. */
   readonly ensureThreadFailure?: unknown;
-  /**
-   * Resumes a thread that has a native ref: resume fails, the fresh-thread
-   * fallback succeeds, then reading history for its handoff fails.
-   */
   readonly historyReadFailureAfterFallback?: unknown;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
-  /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -236,8 +242,9 @@ function makeLocalCommandHarness(input: {
     thread: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
-      branch: null,
-      worktreePath: null,
+      projectId: ProjectId.make("project-native-account-command"),
+      branch: input.worktreePath === undefined ? null : "feature/restore",
+      worktreePath: input.worktreePath ?? null,
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -483,6 +490,24 @@ function makeLocalCommandHarness(input: {
           return { committed, storedEvents: [] };
         }),
   );
+  const resolveRuntimePolicy = vi.fn(
+    ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
+      Effect.succeed({ cwd: thread.worktreePath ?? "/tmp/native-account-command" } as never),
+  );
+  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const getThreadRecords = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"]>(() =>
+    Effect.succeed(projection),
+  );
+  const getTurnStartContext = vi.fn(() =>
+    Effect.succeed({
+      ...projection,
+      hasConversation: projection.messages.some(
+        (m) =>
+          m.role === "user" &&
+          (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+      ),
+    }),
+  );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -491,19 +516,21 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        FileSystem.layerNoop({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Path.layer,
+        input.fileSystem === undefined
+          ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
+          : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees: () => Effect.void,
+          createWorktree,
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getTurnStartContext: () =>
-            Effect.succeed({
-              ...projection,
-              hasConversation: projection.messages.some(
-                (m) =>
-                  m.role === "user" &&
-                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-              ),
-            }),
+          getThreadRecords,
+          getTurnStartContext,
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
               ...projection,
@@ -525,12 +552,19 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
-          resolve: () => Effect.succeed({} as never),
+          resolve: resolveRuntimePolicy,
         }),
       ),
     ),
   );
   return {
+    getThreadRecords,
+    getTurnStartContext,
+    setProjection: (next: OrchestrationV2ThreadProjection) => {
+      projection = next;
+    },
+    resolveRuntimePolicy,
+    createWorktree,
     open,
     writeIfRunCurrent,
     startRootRun,
@@ -552,6 +586,163 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect.each(["cleanup-first", "startup-first"])(
+  "coordinates provider startup with %s",
+  (order) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
+      const worktreePath = path.join(workspaceRoot, "worktree");
+      yield* fileSystem.makeDirectory(worktreePath);
+      const release = yield* Deferred.make<void>();
+      const openEntered = yield* Deferred.make<void>();
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      harness.createWorktree.mockImplementation(() =>
+        fileSystem.makeDirectory(worktreePath).pipe(Effect.as({} as never), Effect.orDie),
+      );
+      const open = harness.open.getMockImplementation()!;
+      harness.open.mockImplementation(() =>
+        Effect.gen(function* () {
+          expect(yield* fileSystem.exists(worktreePath).pipe(Effect.orDie)).toBe(true);
+          yield* Deferred.succeed(openEntered, undefined);
+          if (order === "startup-first") yield* Deferred.await(release);
+          return yield* open();
+        }),
+      );
+      let cleanupEntered = false;
+      const cleanupEffect = withWorkspaceLease(
+        worktreePath,
+        Effect.gen(function* () {
+          cleanupEntered = true;
+          if (order === "cleanup-first") yield* Deferred.await(release);
+          else {
+            expect(harness.projection().providerSessions).toHaveLength(1);
+            expect(harness.projection().runs.at(-1)?.status).toBe("running");
+          }
+          yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+        }),
+      );
+      const cleanup =
+        order === "cleanup-first"
+          ? yield* cleanupEffect.pipe(Effect.forkChild({ startImmediately: true }))
+          : undefined;
+      const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+      if (order === "cleanup-first") expect(harness.open).not.toHaveBeenCalled();
+      if (order === "startup-first") yield* Deferred.await(openEntered);
+      const laterCleanup =
+        order === "startup-first"
+          ? yield* cleanupEffect.pipe(Effect.forkChild({ startImmediately: true }))
+          : undefined;
+      if (order === "startup-first") expect(cleanupEntered).toBe(false);
+      yield* Deferred.succeed(release, undefined);
+      if (cleanup !== undefined) yield* Fiber.join(cleanup);
+      yield* Fiber.join(startup);
+      if (laterCleanup !== undefined) yield* Fiber.join(laterCleanup);
+      if (order === "cleanup-first") {
+        expect(harness.createWorktree).toHaveBeenCalledWith({
+          cwd: "/tmp/native-account-project",
+          refName: "feature/restore",
+          path: worktreePath,
+        });
+      }
+      expect(harness.resolveRuntimePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thread: expect.objectContaining({ worktreePath }),
+        }),
+      );
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
+        }),
+      );
+      expect(harness.startRootRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appThread: expect.objectContaining({ worktreePath }),
+          runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("reads only thread state before taking the startup lease", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+    yield* harness.start;
+    expect(harness.getThreadRecords).toHaveBeenCalledExactlyOnceWith(
+      harness.projection().thread.id,
+      [],
+    );
+    expect(harness.getTurnStartContext).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("completed");
+  }),
+);
+
+effectIt.effect("reads current startup state after waiting for the workspace lease", () =>
+  Effect.gen(function* () {
+    const worktreePath = "/tmp/provider-start-fresh-state";
+    const release = yield* Deferred.make<void>();
+    const readEntered = yield* Deferred.make<void>();
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      failReadsAfterRunning: true,
+    });
+    harness.getThreadRecords.mockImplementationOnce(() =>
+      Deferred.succeed(readEntered, undefined).pipe(Effect.as(harness.projection())),
+    );
+    const holder = yield* withWorkspaceLease(worktreePath, Deferred.await(release)).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(readEntered);
+    expect(harness.getTurnStartContext).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    harness.setProjection({
+      ...projection,
+      runs: projection.runs.map((run) => ({ ...run, status: "running" })),
+    });
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(holder);
+    yield* Fiber.join(startup);
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("starts another provider in the same checkout while a turn is pending", () =>
+  Effect.gen(function* () {
+    const worktreePath = "/tmp/provider-start-shared-checkout";
+    const turnEntered = yield* Deferred.make<void>();
+    const releaseTurn = yield* Deferred.make<void>();
+    const first = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      failReadsAfterRunning: true,
+    });
+    const second = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      failReadsAfterRunning: true,
+    });
+    first.startRootRun.mockImplementation(() =>
+      Deferred.succeed(turnEntered, undefined).pipe(Effect.andThen(Deferred.await(releaseTurn))),
+    );
+    const pending = yield* first.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(turnEntered);
+    yield* second.start;
+    expect(second.startRootRun).toHaveBeenCalledOnce();
+    expect(second.projection().runs.at(-1)?.status).toBe("running");
+    yield* Deferred.succeed(releaseTurn, undefined);
+    yield* Fiber.join(pending);
+  }),
+);
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>
   Effect.gen(function* () {
@@ -727,8 +918,6 @@ effectIt.effect(
 
       const error = yield* harness.start.pipe(Effect.flip);
 
-      // The provider succeeded; the failing stage is the projection read, so
-      // the run is not failed as a provider error on the last attempt.
       expect(error._tag).toBe("ProviderTurnStartError");
       expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
       expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
@@ -747,8 +936,6 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     const controls = harness.startRootRun.mock.calls[0]?.[0];
     expect(controls).toBeDefined();
     if (controls === undefined) return;
-    // "false" would skip the provider turn or the terminal write and leave the
-    // run active. A read failure must reach the caller instead.
     const startCheck = yield* Effect.flip(controls.shouldStartProviderTurn!());
     const finalizeCheck = yield* Effect.flip(controls.shouldFinalizeRun!());
     expect(startCheck._tag).toBe("ProjectionStoreReadError");

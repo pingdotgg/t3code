@@ -118,7 +118,6 @@ describe("Cursor skills", () => {
           yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
         });
         const userRoot = path.join(userHome, ".claude", "skills");
-        // The root is depth 0, so `deep-skill` sits at the depth limit and `below` past it.
         const atLimit = path.join(
           userRoot,
           "deep",
@@ -214,9 +213,6 @@ describe("Cursor skills", () => {
             yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
           });
 
-          // A skill package managed in a config repo and installed by symlink.
-          // Its own SKILL.md must be discovered under the link name, but nothing
-          // below the target may be walked.
           yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
           yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
           const root = path.join(workspace, ".cursor", "skills");

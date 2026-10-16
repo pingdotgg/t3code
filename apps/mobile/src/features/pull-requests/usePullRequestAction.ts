@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -6,15 +7,13 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { canPerformPullRequestAction } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
-/** Small row actions stay in place, preserving expanded rows and scroll position. */
-export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail) {
+export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
   const target = pullRequestTarget(params);
   const permissions = usePullRequestPermissions(params, pr);
   const run = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
@@ -23,7 +22,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
   const available = (action: PullRequestAction) =>
-    !busy && permissions.canWrite && canPerformPullRequestAction(pr, action);
+    pr !== null && !busy && permissions.canWrite && canPerformPullRequestAction(pr, action);
   const perform = async (action: PullRequestAction, updateMethod?: PullRequestUpdateMethod) => {
     if (pending.current || !available(action)) return;
     pending.current = true;
@@ -37,7 +36,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       refreshDetail();
       refreshActivity();
     } catch (cause) {
-      Alert.alert(
+      Dialog.alert(
         "Couldn't update this pull request",
         cause instanceof Error ? cause.message : "Try again.",
       );
@@ -47,11 +46,11 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     }
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
-    Alert.alert(title, message, [
+    Dialog.alert(title, message, [
       { text: "Cancel", style: "cancel" },
       {
         text: title,
-        style: action === "close" ? "destructive" : "default",
+        style: action === "close" || action === "delete-branch" ? "destructive" : "default",
         onPress: () => void perform(action),
       },
     ]);

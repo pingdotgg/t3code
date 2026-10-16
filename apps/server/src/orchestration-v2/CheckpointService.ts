@@ -446,7 +446,6 @@ export const layer: Layer.Layer<
             toCheckpointRef: checkpointRef,
           };
           // A pull or rebase can change thousands of files the turn did not write.
-          // Keep only the files the turn's own work touched.
           const files = previousExists
             ? yield* Effect.all([
                 checkpointStore.diffCheckpoints({

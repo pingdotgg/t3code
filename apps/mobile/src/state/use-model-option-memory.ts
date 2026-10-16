@@ -6,7 +6,6 @@ import {
   type ModelOptionMemoryState,
 } from "./use-composer-drafts";
 
-/** Cross-thread memory of each model's last explicit option selection. */
 function recordModelOptionsInState(
   state: ModelOptionMemoryState,
   instanceId: string,
@@ -25,7 +24,6 @@ function recordModelOptionsInState(
   };
 }
 
-/** Pure lookup; `undefined` means "no memory, fall back to descriptor defaults". */
 function lookupModelOptionsInState(
   state: ModelOptionMemoryState,
   instanceId: string,
@@ -34,7 +32,6 @@ function lookupModelOptionsInState(
   return state[instanceId]?.[model];
 }
 
-/** Records an explicitly chosen option set for one instance and model. */
 export function rememberModelOptions(
   instanceId: string,
   model: string,
@@ -62,10 +59,6 @@ export function rememberedModelOptions(
   );
 }
 
-/**
- * Restores a remembered option set for a freshly picked selection, keeping the
- * incoming selections when nothing is remembered or they already match.
- */
 export function withRememberedModelOptions<
   T extends {
     readonly instanceId: string;

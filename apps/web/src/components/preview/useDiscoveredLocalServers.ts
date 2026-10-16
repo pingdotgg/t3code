@@ -20,10 +20,6 @@ interface UseDiscoveredLocalServersInput {
   configuredUrls?: ReadonlyArray<string> | undefined;
 }
 
-/**
- * Enrich the environment-level live server snapshot with matching configured
- * URLs and return a stable sorted list.
- */
 export function useDiscoveredLocalServers(
   input: UseDiscoveredLocalServersInput,
 ): ReadonlyArray<PreviewableServer> {

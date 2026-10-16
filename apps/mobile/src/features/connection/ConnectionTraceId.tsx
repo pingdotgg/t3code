@@ -1,8 +1,7 @@
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
-/** Inline trace control; disclosure rows reserve ordinary taps for their own navigation. */
 export function ConnectionTraceId({
   traceId,
   tone = "muted",
