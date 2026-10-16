@@ -28,6 +28,10 @@ vi.mock("~/state/server", () => ({
   primaryServerKeybindingsAtom: Symbol("keybindings"),
 }));
 
+vi.mock("./ProjectFaviconThumbnail", () => ({
+  ProjectFaviconThumbnail: () => null,
+}));
+
 vi.mock("~/hooks/useTheme", () => ({
   useTheme: () => ({ resolvedTheme: "dark" }),
 }));
