@@ -219,3 +219,23 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+describe("right panel tab middle click", () => {
+  it("closes the tab without leaving the mouseup that pastes the primary selection", async () => {
+    const onCloseSurface = vi.fn();
+    const files = { id: "files" as const, kind: "files" as const };
+    await renderPanel({ surfaces: [files], activeSurfaceId: files.id, onCloseSurface });
+    const tab = container.querySelector("[data-active-tab]")!;
+    const mouse = (type: string, button: number) => {
+      const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+      tab.dispatchEvent(event);
+      return event;
+    };
+
+    expect(mouse("mousedown", 1).defaultPrevented).toBe(true);
+    expect(mouse("mouseup", 1).defaultPrevented).toBe(true);
+    await act(() => mouse("auxclick", 1));
+    expect(onCloseSurface).toHaveBeenCalledExactlyOnceWith(files);
+    expect(mouse("mouseup", 0).defaultPrevented).toBe(false);
+  });
+});

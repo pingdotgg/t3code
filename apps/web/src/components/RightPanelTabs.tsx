@@ -1040,7 +1040,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     [props],
   );
-  const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
+  // Middle-click closes a tab. Cancelling mousedown stops autoscroll; on Linux,
+  // Chromium pastes the primary selection into the focused editable unless the
+  // mouseup itself is cancelled, even when auxclick is.
+  const preventTabMiddleButtonDefault = useCallback((event: ReactMouseEvent) => {
     if (event.button !== 1) return;
     event.preventDefault();
   }, []);
@@ -1150,7 +1153,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     surfaceId={surface.id}
                     disabled={!props.onMoveSurface || renamingDevice === surface.id}
                     data-active-tab={active}
-                    onMouseDown={handleTabMouseDown}
+                    onMouseDown={preventTabMiddleButtonDefault}
+                    onMouseUp={preventTabMiddleButtonDefault}
                     onAuxClick={(event) => handleTabAuxClick(event, surface)}
                     onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                     className={cn(
