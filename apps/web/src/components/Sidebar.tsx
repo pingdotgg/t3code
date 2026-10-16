@@ -306,6 +306,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -2826,16 +2827,37 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, workingShelfExpanded, workingThreads]);
 
+  // Pinned collapses like the shelves, with the same route exception, but
+  // starts expanded so pins stay visible until someone folds them away.
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useLocalStorage(
+    PINNED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const togglePinnedShelf = useCallback(
+    () => setPinnedShelfExpanded((value) => !value),
+    [setPinnedShelfExpanded],
+  );
+  const visiblePinnedThreads = useMemo(() => {
+    if (pinnedShelfExpanded) return pinnedThreads;
+    if (routeThreadKey === null) return EMPTY_THREADS;
+    const routeThread = pinnedThreads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread === undefined ? EMPTY_THREADS : [routeThread];
+  }, [pinnedShelfExpanded, pinnedThreads, routeThreadKey]);
+
   const orderedThreads = useMemo(
     () => [
-      ...pinnedThreads,
+      ...visiblePinnedThreads,
       ...activeThreads,
       ...visibleWorkingThreads,
       ...visibleSnoozedThreads,
       ...renderedSettledThreads,
     ],
     [
-      pinnedThreads,
+      visiblePinnedThreads,
       activeThreads,
       visibleWorkingThreads,
       visibleSnoozedThreads,
@@ -3354,12 +3376,14 @@ export default function Sidebar() {
       });
     },
   );
+  // The drop order holds the pinned rows on screen. A collapsed shelf hides
+  // its rows like a filter does, and their keys stay reserved in pinnedKeysById.
   const pinnedKeys = useMemo(
     () =>
-      pinnedThreads.map((thread) =>
+      visiblePinnedThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [pinnedThreads],
+    [visiblePinnedThreads],
   );
   const activeKeys = useMemo(
     () =>
@@ -3527,7 +3551,7 @@ export default function Sidebar() {
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(visiblePinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
@@ -3548,10 +3572,11 @@ export default function Sidebar() {
     return items;
   }, [
     activeThreads,
-    pinnedThreads,
+    pinnedThreads.length,
     renderedSettledThreads,
     settledThreads.length,
     snoozedThreads.length,
+    visiblePinnedThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
     workingThreads.length,
@@ -5023,12 +5048,41 @@ export default function Sidebar() {
                         }
                         switch (item.marker) {
                           case "pinned-header":
+                            // The toggle sits outside the sortable order, so the drag
+                            // boundary below keeps its geometry. Its label would repeat
+                            // the toggle's, so it shows only when nothing is pinned.
+                            if (pinnedThreads.length > 0) {
+                              items.push(
+                                <li
+                                  key="pinned-shelf-header"
+                                  data-thread-selection-safe
+                                  className="mx-0.5 h-8 list-none"
+                                >
+                                  <CollapsibleSectionHeader
+                                    onClick={togglePinnedShelf}
+                                    expanded={pinnedShelfExpanded}
+                                    tone={
+                                      dragTargetSection === "pinned"
+                                        ? "accent"
+                                        : from !== null
+                                          ? "emphasized"
+                                          : "muted"
+                                    }
+                                    data-testid="sidebar-pinned-shelf-toggle"
+                                  >
+                                    {pinnedShelfExpanded
+                                      ? "Pinned"
+                                      : `Pinned (${pinnedThreads.length})`}
+                                  </CollapsibleSectionHeader>
+                                </li>,
+                              );
+                            }
                             items.push(
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={from !== null && pinnedThreads.length === 0}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );
