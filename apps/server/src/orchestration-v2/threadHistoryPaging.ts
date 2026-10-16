@@ -83,6 +83,27 @@ function bytesOfJson(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
+/**
+ * Proves overflow without serializing: a string's UTF-16 length never exceeds
+ * its UTF-8 JSON bytes, and local items are encoded once per array they sit in.
+ */
+function timelineTextExceedsBudget(
+  projection: OrchestrationV2ThreadProjection,
+  budget: number,
+): boolean {
+  let length = 0;
+  const exceeds = (item: OrchestrationV2TurnItem): boolean => {
+    if ("text" in item) {
+      length += item.text.length;
+    }
+    return length > budget;
+  };
+  return (
+    projection.visibleTurnItems.some((row) => exceeds(row.item)) ||
+    projection.turnItems.some(exceeds)
+  );
+}
+
 /** Ordinary history-page cost: one projected row (item is nested once). */
 export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
@@ -592,6 +613,8 @@ export function buildBoundedThreadProjection(input: {
     // Adding timeline rows and historical summaries cannot shrink control state.
     // Avoid serializing the whole timeline when control state already exceeds the cap.
     payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
+      controlBytes > policy.maxEncodedBytes ||
+      timelineTextExceedsBudget(projection, policy.maxEncodedBytes) ||
+      bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
