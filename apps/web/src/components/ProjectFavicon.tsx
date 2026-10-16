@@ -4,9 +4,8 @@ import {
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
 import { FolderCodeIcon } from "lucide-react";
-import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
-import { lazy, Suspense, useState } from "react";
+import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
@@ -14,8 +13,15 @@ import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
 
-const DynamicIcon = lazy(() =>
-  import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
+// All lucide icons load as one chunk, only once a project uses a lucide override.
+const LucideProjectIcon = lazy(() =>
+  import("../lib/lucideIconByName").then(({ lucideIconByName }) => ({
+    default: function LucideProjectIcon(props: { name: string; className: string }) {
+      return createElement(lucideIconByName(props.name) ?? FolderCodeIcon, {
+        className: props.className,
+      });
+    },
+  })),
 );
 
 function DynamicProjectIconFallback() {
@@ -71,10 +77,9 @@ export function ProjectFavicon(input: {
     return (
       <span aria-hidden="true" className={iconClassName}>
         <Suspense fallback={<DynamicProjectIconFallback />}>
-          <DynamicIcon
-            name={project.projectIcon.name as IconName}
+          <LucideProjectIcon
+            name={project.projectIcon.name}
             className={cn("size-full", colorClassName)}
-            fallback={DynamicProjectIconFallback}
           />
         </Suspense>
       </span>
