@@ -295,7 +295,7 @@ export function GitHubAccountSettings({
                     revealed={revealed}
                     disabled={saving || !enabled}
                     ariaLabel={`GitHub account for ${owner} on ${group.host}`}
-                    staleWarning={`This login is no longer signed in, so the active gh login reads ${owner}.`}
+                    staleWarning={`This login is no longer signed in, so ${owner} uses the default account.`}
                     onChange={(account) =>
                       void save(group.host, {
                         owners: nextGitHubRules(choice?.owners, owner, account),

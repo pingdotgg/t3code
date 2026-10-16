@@ -35,6 +35,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Hash from "effect/Hash";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
@@ -68,6 +69,21 @@ export function runtimePolicyEnvironment(
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(policy?.environment ?? {}).map(([name, value]) => [name, Redacted.value(value)]),
+  );
+}
+
+/**
+ * Which variables the runtime environment sets, and a digest of each value. A key that decides
+ * whether a live process can serve the next turn includes it, so a changed credential opens a
+ * fresh one without the credential itself appearing in the key.
+ */
+export function runtimePolicyEnvironmentKey(
+  policy: Pick<ProviderAdapterV2RuntimePolicy, "environment"> | null | undefined,
+): string {
+  return JSON.stringify(
+    Object.entries(policy?.environment ?? {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => [name, Hash.string(Redacted.value(value))]),
   );
 }
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;

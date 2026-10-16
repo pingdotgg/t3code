@@ -34,7 +34,9 @@ repository can use a different account from its owner: pick it in that project's
 control** settings. A repository's pull requests are read and acted on as its account, **Mine**
 and **Reviewing** include the pull requests of every account, and agents in its projects get the
 account's token as `GH_TOKEN`. Codex, Claude, Grok, Antigravity, OpenCode 1.x, and Pi agents
-receive it; OpenCode 2.x and Cursor agents keep using `gh`'s active account. On mobile, the same
+receive it; OpenCode 2.x and Cursor agents keep using `gh`'s active account. After you change an
+account, Claude agents use the new one from their next turn; other agents switch once their
+session restarts, for example after you stop the thread. On mobile, the same
 choices are under **Settings → Source control → GitHub accounts**, and with a project selected
 in Settings. A saved token or `GH_TOKEN` takes precedence over every account choice; a host
 turned off stays off either way.

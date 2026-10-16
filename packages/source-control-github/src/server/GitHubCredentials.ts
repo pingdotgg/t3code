@@ -18,7 +18,7 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/clie
 import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../client/definition.ts";
-import { gitHubAccountFor } from "../client/definition.ts";
+import { gitHubAccountFor, gitHubAccountsFor } from "../client/definition.ts";
 
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
@@ -198,26 +198,26 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const cacheKey = (host: string, account: string | undefined) =>
-    account === undefined ? host : `${host}\u0000${account}`;
+  const cacheKey = (host: string, accounts: ReadonlyArray<string>) =>
+    [host, ...accounts].join("\u0000");
+
+  // The chosen logins in order, then the active one: a login gh no longer holds gives way.
+  const fromChoices = (host: string, accounts: ReadonlyArray<string>) =>
+    accounts.reduceRight(
+      (next, account) =>
+        fromGh(host, account).pipe(
+          Effect.map((token) => ({ token, account: account as string | undefined })),
+          Effect.catchTags({ GitHubNotSignedInError: () => next }),
+        ),
+      fromGh(host, undefined).pipe(
+        Effect.map((token) => ({ token, account: undefined as string | undefined })),
+      ),
+    );
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, ...accounts] = key.split("\u0000");
     const fromEnv = environmentToken(host, environment);
-    const fromCli =
-      fromEnv !== null
-        ? null
-        : yield* fromGh(host, choice).pipe(
-            Effect.map((token) => ({ token, account: choice })),
-            Effect.catchTags({
-              GitHubNotSignedInError: (error) =>
-                choice === undefined
-                  ? Effect.fail(error)
-                  : fromGh(host, undefined).pipe(
-                      Effect.map((token) => ({ token, account: undefined })),
-                    ),
-            }),
-          );
+    const fromCli = fromEnv !== null ? null : yield* fromChoices(host, accounts);
     const token = fromEnv ?? fromCli!.token;
     return {
       host,
@@ -256,7 +256,7 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      return yield* Cache.get(cache, cacheKey(host, gitHubAccountFor(choice, repository)));
+      return yield* Cache.get(cache, cacheKey(host, gitHubAccountsFor(choice, repository)));
     }),
     accountFor: (rawHost, repository) =>
       hostChoice(normalizeHost(rawHost)).pipe(

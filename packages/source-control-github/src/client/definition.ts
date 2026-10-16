@@ -42,18 +42,30 @@ export const GitHubHostChoice = Schema.Struct({
 export type GitHubHostChoice = typeof GitHubHostChoice.Type;
 
 /**
- * The login Settings choose for a repository on a host, given as `owner/name` or just its owner:
- * the repository's own rule, else its owner's, else the host's pinned account, else none, which
- * leaves the choice to `gh`.
+ * The logins Settings choose for a repository on a host, given as `owner/name` or just its owner,
+ * most specific first: the repository's own rule, its owner's, then the host's pinned account.
+ * None leaves the choice to `gh`; a login `gh` no longer holds gives way to the next.
  */
+export function gitHubAccountsFor(
+  choice: GitHubHostChoice | undefined,
+  repository: string | null | undefined,
+): ReadonlyArray<string> {
+  const key = repository?.trim().toLowerCase();
+  const owner = key?.split("/")[0];
+  const chosen = [
+    key && key.includes("/") ? choice?.repositories?.[key] : undefined,
+    owner ? choice?.owners?.[owner] : undefined,
+    choice?.account,
+  ].filter((account): account is string => account !== undefined);
+  return [...new Set(chosen)];
+}
+
+/** The most specific login Settings choose for a repository on a host, if any. */
 export function gitHubAccountFor(
   choice: GitHubHostChoice | undefined,
   repository: string | null | undefined,
 ): string | undefined {
-  const key = repository?.trim().toLowerCase();
-  if (!key) return choice?.account;
-  const owner = key.split("/")[0]!;
-  return choice?.repositories?.[key] ?? choice?.owners?.[owner] ?? choice?.account;
+  return gitHubAccountsFor(choice, repository)[0];
 }
 
 export const settings = makeProviderSettingsSchema({

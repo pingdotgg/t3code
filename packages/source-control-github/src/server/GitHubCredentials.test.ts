@@ -191,6 +191,29 @@ describe("GitHubCredentials", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("gives a rule whose login gh no longer holds way to the next choice", () => {
+    const { layer, calls } = harness(
+      {
+        "github.com": {
+          account: "personal",
+          owners: { acme: "work" },
+          repositories: { "acme/handbook": "gone" },
+        },
+      },
+      ["gone"],
+    );
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const handbook = yield* credentials.get("github.com", "acme/handbook");
+      expect(Redacted.value(handbook.token)).toBe("token-for-work");
+      expect(handbook.account).toBe("work");
+      expect(calls).toEqual([
+        ["auth", "token", "--hostname", "github.com", "--user", "gone"],
+        ["auth", "token", "--hostname", "github.com", "--user", "work"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reads an owner without a rule as the host's pinned account", () => {
     const { layer, calls } = harness({
       "github.com": { account: "personal", owners: { acme: "work" } },

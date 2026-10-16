@@ -59,6 +59,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
@@ -686,6 +687,28 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
+  });
+
+  it("invalidates live-query reuse when the agent's GitHub token changes, without holding it", () => {
+    const policyWith = (token: string) =>
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+        environment: { GH_TOKEN: Redacted.make(token) },
+      });
+    const keyFor = (token: string) => {
+      const policy = policyWith(token);
+      return ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+        ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(policy),
+        {},
+        ProviderAdapter.runtimePolicyEnvironmentKey(policy),
+      );
+    };
+
+    assert.strictEqual(keyFor("work-token"), keyFor("work-token"));
+    assert.notEqual(keyFor("work-token"), keyFor("personal-token"));
+    assert.notInclude(keyFor("work-token"), "work-token");
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {

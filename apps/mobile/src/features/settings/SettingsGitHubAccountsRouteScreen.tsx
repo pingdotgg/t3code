@@ -126,9 +126,11 @@ function EnvironmentGitHubAccounts({
     return (
       <SettingsSection title={`${prefix}GitHub`}>
         <Text className="p-4 text-foreground-muted">
-          {discovery.data === null
-            ? "Checking which GitHub logins this server holds…"
-            : "This server is signed in to one GitHub login per host. Run gh auth login on the server to add another."}
+          {discovery.error !== null
+            ? "Could not check which GitHub logins this server holds."
+            : discovery.data === null
+              ? "Checking which GitHub logins this server holds…"
+              : "This server is signed in to one GitHub login per host. Run gh auth login on the server to add another."}
         </Text>
       </SettingsSection>
     );

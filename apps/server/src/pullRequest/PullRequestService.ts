@@ -2725,6 +2725,7 @@ export const make = Effect.gen(function* () {
       project.repository.toLowerCase(),
       project.project.id,
       project.project.workspaceRoot,
+      project.credentialScope,
       String(input.number),
       input.expectedAccountId ?? "",
       input[credentialNamespace] ?? "",
@@ -3421,22 +3422,30 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  // Account choices decide who reads which repository, so a change to them drops the logins held
-  // per account at once rather than ten minutes later, and pages that are open read again.
+  // Account choices decide who reads which repository, so a change to them drops everything read
+  // as the previous account at once: held logins, listings, and every pull request's reads.
+  const forgetAccountReads = Effect.suspend(() => {
+    projectEpochFloor = ++epochCounter;
+    projectEpochs.clear();
+    mergedEpochs.clear();
+    refEpochs.clear();
+    return invalidate({}, { notifyReaders: true });
+  });
   const sourceControlHostsOf = (settings: { readonly sourceControlHosts: unknown }) =>
     JSON.stringify(settings.sourceControlHosts);
+  const settingsChanges = yield* serverSettings.subscribeChanges;
   let sourceControlHosts = yield* serverSettings.getSettings.pipe(
     Effect.map(sourceControlHostsOf),
     Effect.orElseSucceed(() => null),
   );
-  yield* serverSettings.streamChanges.pipe(
+  yield* settingsChanges.pipe(
     Stream.map(sourceControlHostsOf),
     Stream.filter((next) => {
       const changed = next !== sourceControlHosts;
       sourceControlHosts = next;
       return changed;
     }),
-    Stream.runForEach(() => invalidate({}, { notifyReaders: true })),
+    Stream.runForEach(() => forgetAccountReads),
     Effect.forkIn(scope),
   );
 

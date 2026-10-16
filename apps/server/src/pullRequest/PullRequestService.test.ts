@@ -539,7 +539,7 @@ function makeService(input: {
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
-          streamChanges: input.settingsChanges ?? Stream.empty,
+          subscribeChanges: Effect.succeed(input.settingsChanges ?? Stream.empty),
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,
@@ -4105,6 +4105,58 @@ it.effect("asks who each account is again once an account choice changes", () =>
     yield* TestClock.adjust("1 second");
     yield* service.list({ state: "open", involvement: "all" });
     assert.strictEqual(viewerCalls, 2);
+  }),
+);
+
+it.effect("reads an open pull request again once an account choice changes", () =>
+  Effect.gen(function* () {
+    let previews = 0;
+    let summaries = 0;
+    // The account the repository resolves to, as GitHub reads it from the same settings.
+    let account = "";
+    const changes = yield* Queue.unbounded<ServerSettings>();
+    const service = yield* makeService({
+      settingsChanges: Stream.fromQueue(changes),
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          credentialScope: () => Effect.sync(() => account),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previews += 1;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              summaries += 1;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const read = Effect.all([
+      service.preview(ref),
+      service.summary(ref, { recoverTransientFailure: false }),
+    ]);
+
+    yield* read;
+    // A settings change that leaves the account choices alone keeps what was read.
+    yield* Queue.offer(changes, { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true });
+    yield* TestClock.adjust("1 second");
+    yield* read;
+    assert.deepStrictEqual([previews, summaries], [1, 1]);
+
+    account = "work";
+    yield* Queue.offer(changes, {
+      ...DEFAULT_SERVER_SETTINGS,
+      sourceControlHosts: {
+        github: { hosts: { "github.com": { enabled: true, owners: { acme: "work" } } } },
+      },
+    });
+    yield* TestClock.adjust("1 second");
+    yield* read;
+    assert.deepStrictEqual([previews, summaries], [2, 2]);
   }),
 );
 
