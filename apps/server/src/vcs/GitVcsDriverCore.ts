@@ -1282,10 +1282,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
+    // Same absolute common-dir request as checkpoint capture. A relative
+    // answer joined with `path.resolve` walks `..` out of a symlinked
+    // subdirectory and can cache a missing path or another repository.
+    // `realPath` still runs afterward so Windows 8.3 short names collapse.
+    const gitCommonDirArgs = ["rev-parse", "--path-format=absolute", "--git-common-dir"] as const;
     const commonDirResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.resolveRepositoryPaths.commonDir",
       cwd,
-      ["rev-parse", "--git-common-dir"],
+      gitCommonDirArgs,
       {
         timeoutMs: 5_000,
         allowNonZeroExit: true,
@@ -1300,7 +1305,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.resolveRepositoryPaths.commonDir",
           cwd,
-          args: ["rev-parse", "--git-common-dir"],
+          args: gitCommonDirArgs,
         }),
         detail: "Failed to resolve the Git common directory.",
         exitCode: commonDirResult.exitCode,
@@ -1460,7 +1465,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...gitCommandContext({
         operation: "GitVcsDriver.resolveGitCommonDir",
         cwd,
-        args: ["rev-parse", "--git-common-dir"],
+        args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
       }),
       detail: "Cannot resolve a Git common directory outside a repository.",
     });
