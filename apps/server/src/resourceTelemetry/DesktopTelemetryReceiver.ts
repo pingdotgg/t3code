@@ -5,6 +5,7 @@ import * as NodeNet from "node:net";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
   DesktopHostTelemetryMessage,
+  type DesktopCuaDriverReport,
   type DesktopHostTelemetryMessage as DesktopHostTelemetryMessageValue,
   type DesktopHostTelemetrySnapshot,
   DesktopTelemetryControlMessage,
@@ -170,6 +171,11 @@ export class DesktopTelemetryReceiver extends Context.Service<
       never,
       Scope.Scope
     >;
+    readonly cuaReports: Stream.Stream<DesktopCuaDriverReport>;
+    readonly requestCuaDriver: (
+      requestId: string,
+      enabled: boolean,
+    ) => Effect.Effect<void, DesktopTelemetryControlError>;
     readonly setDiagnosticsDemand: (
       enabled: boolean,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
@@ -343,6 +349,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
+  const cuaReports = yield* PubSub.unbounded<DesktopCuaDriverReport>();
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
   const controlMutex = yield* Semaphore.make(1);
   const snapshotMutex = yield* Semaphore.make(1);
@@ -521,6 +528,13 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           );
         }
 
+        if (message.type === "cuaDriverReport") {
+          return recordContact.pipe(
+            Effect.andThen(PubSub.publish(cuaReports, message)),
+            Effect.asVoid,
+          );
+        }
+
         if (message.type === "desktopUpdateStatus") {
           return recordContact.pipe(
             Effect.andThen(Ref.set(latestUpdateReport, Option.some(message))),
@@ -637,6 +651,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     ),
     health: Ref.get(health),
     subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, Ref.get(health)),
+    cuaReports: Stream.fromPubSub(cuaReports),
+    requestCuaDriver: (requestId, enabled) =>
+      sendControlMessage({ version: 1, type: "cuaDriverRequest", requestId, enabled }),
     setDiagnosticsDemand,
     requestDesktopUpdate: (requestId) =>
       sendControlMessage({
@@ -695,6 +712,8 @@ export const layerTest = (
             changes: Stream.empty,
           })),
         ),
+      cuaReports: Stream.empty,
+      requestCuaDriver: () => Effect.void,
       setDiagnosticsDemand: () => Effect.void,
       requestDesktopUpdate: () => Effect.void,
       commitDesktopUpdate: () => Effect.void,

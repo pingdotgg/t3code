@@ -51,6 +51,8 @@ catalog:
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
+  "@trycua/cua-driver": 0.34.1
+  "@ubjs/node": 0.31.0-3
   "@types/node": 24.12.4
   "@types/plist": 3.0.5
   "@types/ws": 8.18.2
@@ -210,6 +212,13 @@ minimumReleaseAgeExclude:
   - "@react-native/normalize-colors@0.88.0"
   - "@react-native/virtualized-lists@0.88.0"
   - react-native-svg@15.16.0
+  - "@trycua/cua-driver-darwin-arm64@0.34.1"
+  - "@trycua/cua-driver-darwin-x64@0.34.1"
+  - "@trycua/cua-driver-linux-arm64-gnu@0.34.1"
+  - "@trycua/cua-driver-linux-x64-gnu@0.34.1"
+  - "@trycua/cua-driver-win32-arm64-msvc@0.34.1"
+  - "@trycua/cua-driver-win32-x64-msvc@0.34.1"
+  - "@trycua/cua-driver@0.34.1"
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
@@ -331,6 +340,7 @@ patchedDependencies:
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   "@expo/ui@58.0.18": patches/@expo__ui@58.0.18.patch
+  "@ubjs/node@0.31.0-3": patches/@ubjs__node@0.31.0-3.patch
 
 peerDependencyRules:
   allowAny:

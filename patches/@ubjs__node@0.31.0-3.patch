@@ -1,0 +1,22 @@
+diff --git a/typescript/dist/resolve-lib.js b/typescript/dist/resolve-lib.js
+index e8837bb2337c42eaffe15942923b8af39fca2b1a..b0806b7ebb9b4995ee6a318b66875a7ee9471219 100644
+--- a/typescript/dist/resolve-lib.js
++++ b/typescript/dist/resolve-lib.js
+@@ -166,5 +166,16 @@ function resolveNpmPackage(crateName, callerUrl, npmPackageBase, tripleStyle) {
+             attempted: [binaryPath],
+         });
+     }
+-    return binaryPath;
++    return resolveUnpackedAsarPath(binaryPath);
++}
++// dlopen cannot read inside an Electron asar archive. Packagers move native
++// libraries to the archive's `.asar.unpacked` sibling, so load them from there.
++function resolveUnpackedAsarPath(binaryPath) {
++    const segments = binaryPath.split(node_path_1.sep);
++    const asarIndex = segments.findLastIndex((segment) => segment.endsWith(".asar"));
++    if (asarIndex === -1)
++        return binaryPath;
++    segments[asarIndex] = `${segments[asarIndex]}.unpacked`;
++    const unpackedPath = segments.join(node_path_1.sep);
++    return (0, node_fs_1.existsSync)(unpackedPath) ? unpackedPath : binaryPath;
+ }

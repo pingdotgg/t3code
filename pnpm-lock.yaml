@@ -30,9 +30,15 @@ catalogs:
     '@pierre/diffs':
       specifier: 1.5.2
       version: 1.5.2
+    '@trycua/cua-driver':
+      specifier: 0.34.1
+      version: 0.34.1
     '@types/plist':
       specifier: 3.0.5
       version: 3.0.5
+    '@ubjs/node':
+      specifier: 0.31.0-3
+      version: 0.31.0-3
     electron-webauthn:
       specifier: 1.3.1
       version: 1.3.1
@@ -159,6 +165,7 @@ patchedDependencies:
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': a4866ecfcd44f318043de839d20110c17e14909004900f002ffe12050376f2ba
   '@react-navigation/native-stack@7.21.0': caae6552051bce91a85f567f3a08f9c8d25ce4c53f65a9391a67f016bb1d798e
+  '@ubjs/node@0.31.0-3': e97d224c08570d77cb1dbac63fbcde2cc62ec45e6466b508272bb174a6ad75d0
   alchemy@2.0.0-beta.80: bea1b6c0c0b23157fd5f439a1d7feff430f28ac1621ba135d8a13eeec60ccacd
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
   expo-audio@58.0.9: 2c2f8c73a23d48804c8b537b8cd73c25eb331aa47d82eaa481c6766cb81e5add
@@ -232,6 +239,12 @@ importers:
       '@t3tools/tailscale':
         specifier: workspace:*
         version: link:../../packages/tailscale
+      '@trycua/cua-driver':
+        specifier: 'catalog:'
+        version: 0.34.1
+      '@ubjs/node':
+        specifier: 'catalog:'
+        version: 0.31.0-3(patch_hash=e97d224c08570d77cb1dbac63fbcde2cc62ec45e6466b508272bb174a6ad75d0)
       dbus-next:
         specifier: 0.10.2
         version: 0.10.2(patch_hash=cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4)
@@ -685,6 +698,12 @@ importers:
       '@t3tools/source-control-gitlab':
         specifier: workspace:*
         version: link:../../packages/source-control-gitlab
+      '@trycua/cua-driver':
+        specifier: 'catalog:'
+        version: 0.34.1
+      '@ubjs/node':
+        specifier: 'catalog:'
+        version: 0.31.0-3(patch_hash=e97d224c08570d77cb1dbac63fbcde2cc62ec45e6466b508272bb174a6ad75d0)
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -6348,6 +6367,41 @@ packages:
   '@tiptap/starter-kit@3.31.3':
     resolution: {integrity: sha512-WKof9RewdmGHvWJ1wn0/HVNG2mV+HOgVRyJkKekuM9fgr6BZAAH/xZsWE1eon+94JnQ+KtK2ThydXQM/qc6b2A==}
 
+  '@trycua/cua-driver-darwin-arm64@0.34.1':
+    resolution: {integrity: sha512-GSTwGvNVkg7uMrdvaxwqD9m6cbknDpceaJAdL4bnVTPHjSIk1Jw5Sf/3DpYT1NSqzLgz1ipia306l0LxlsDpmQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@trycua/cua-driver-darwin-x64@0.34.1':
+    resolution: {integrity: sha512-9LNIqARZrdptxiAu3xRO45MPxUuvGtA7Na2yAaibI92p0kps9bRYGV+Rcm+yIxuupdg07Jwyo8Up+FO4rxrQNw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@trycua/cua-driver-linux-arm64-gnu@0.34.1':
+    resolution: {integrity: sha512-0UDbpOSyGCfq4w5kgKLzKOD7Ms2K5likULF4FY+T2nvmeL3Sf+LyhXEhs8TNuZ8fwgW5TauMq1kYb6LK5ofFGQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@trycua/cua-driver-linux-x64-gnu@0.34.1':
+    resolution: {integrity: sha512-RyrYm28rmi8cXzlrdaR5Qi8WQ+jRaZ3Qo8govoOyq5vcjqUefN3G5fPRjxl4MpqqanXs7pwUYVF+d4Gwjq7HoQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@trycua/cua-driver-win32-arm64-msvc@0.34.1':
+    resolution: {integrity: sha512-jmqDxZTL1+mAWMAnVKfZF+J5bEZok3SjwUOdA4o8hzD74mPLPJO8RUXsvPp4SYtMnnUO6JsDZvz4xrW5m99d6w==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@trycua/cua-driver-win32-x64-msvc@0.34.1':
+    resolution: {integrity: sha512-DBjd+cb8x+HM8xvTvhq4//5HxZm2+ZNS5ZENy969KZppwAN9jzdzXEy0qboWbutGGzFfFv1TglPBLGxRYA3UGA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@trycua/cua-driver@0.34.1':
+    resolution: {integrity: sha512-6r/s28tw2mf9PBawwzfHSSwdbx9kZ+rqy6Hpv4oTRsz2CwG/vl5oWLlNQu/YQy9zuZzCdwXGidmZR0tla2k+4w==}
+
   '@tsc-rs/darwin-arm64@0.7.0':
     resolution: {integrity: sha512-3execGkNh7DXNZr03dhQP2wqmsjB1Q4OJnTMgKIibjeQMsjNK8HTalJZPIG6PkiXeusXUweHP3+4yJjbi5auNw==}
     engines: {node: '>=16.20.0'}
@@ -6775,6 +6829,56 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@ubjs/core@0.31.0-3':
+    resolution: {integrity: sha512-39XrJgUZ2VVb561sSnkXPhczNoeBsNiSRArecsV0JE7CJq69ajFkcn9/tBAUS2NpgHkLIDU+z6Ks2+1wXnboxg==}
+
+  '@ubjs/node-darwin-arm64@0.31.0-3':
+    resolution: {integrity: sha512-GGQVPLkVo4Gc8qVLW4IGvS8bjl8eHXyeP4a97ntGmsAdXwE5gsS29o8xUEFROjhwHKD+9sgVeblCSWVG3CpHsw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@ubjs/node-darwin-x64@0.31.0-3':
+    resolution: {integrity: sha512-2sc47u4XFYOsbmP5EW+Gx8m/yGrYnfFDFQm6+kz7goSWTNg84eEiz3COs9HKJDVuNJ5Khv5XipTO8CFadMLXCw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-3':
+    resolution: {integrity: sha512-YStVXhYz/5jvlWf/p4fhiVT72unYAbGugifFC9QmO/+hnroQDAQ5t8SARbsc15G4olMcamdIB+GETiUB7gmaYg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-3':
+    resolution: {integrity: sha512-Izp4nvfy/LmibzFowAztkoDOksCR2fb2zl6fh1ojR1HEsg0rAGruxtI8d3fn8DI0lBXwqmn6SF///oD4mFNJPQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-3':
+    resolution: {integrity: sha512-Xdm21blyg5U/kW6s7OMvgrr8coGTkUlt26DVR9x8gKISif+E3YwdEskbFScWqystAiJnfjw7xHEc8UMu0Qlz7Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-x64-musl@0.31.0-3':
+    resolution: {integrity: sha512-fFQ9BWS6i2LUH9SJgD9oEiKXXo/say59vHy7usFe1t7C2xvwvP34f5SuxXmWP9R8fHyA0aC4kIZ+TTwyHSv1Kw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-3':
+    resolution: {integrity: sha512-ID6rSz1NmPsWTNBBNAw4OnJ5Dj8pcbtNJtdPB3OxcGigLBd/e0x7buhSI7os6Mo5iYtEdCynBRQHFJwub5XSPg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-3':
+    resolution: {integrity: sha512-wevs+Y+szwcCUT8IJFbB4/1nfxyRv/51l8oG7FGUPWD1xLPyuHfJBG27C+PDeC7KRzes/2n6aLo4DGZbr/LYTw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@ubjs/node@0.31.0-3':
+    resolution: {integrity: sha512-qNMpi2LICNwxGXZyRF8fSDBSpbezyZbEsydrbiMPJOmtOWr4tmZIEl7jkWGHVGShoBvHfFo4eHp5B4UVP928Cg==}
 
   '@ungap/structured-clone@1.3.1':
     resolution: {integrity: sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==}
@@ -16991,6 +17095,36 @@ snapshots:
       '@tiptap/extensions': 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
       '@tiptap/pm': 3.31.3
 
+  '@trycua/cua-driver-darwin-arm64@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver-darwin-x64@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver-linux-arm64-gnu@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver-linux-x64-gnu@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver-win32-arm64-msvc@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver-win32-x64-msvc@0.34.1':
+    optional: true
+
+  '@trycua/cua-driver@0.34.1':
+    dependencies:
+      '@ubjs/core': 0.31.0-3
+      '@ubjs/node': 0.31.0-3(patch_hash=e97d224c08570d77cb1dbac63fbcde2cc62ec45e6466b508272bb174a6ad75d0)
+    optionalDependencies:
+      '@trycua/cua-driver-darwin-arm64': 0.34.1
+      '@trycua/cua-driver-darwin-x64': 0.34.1
+      '@trycua/cua-driver-linux-arm64-gnu': 0.34.1
+      '@trycua/cua-driver-linux-x64-gnu': 0.34.1
+      '@trycua/cua-driver-win32-arm64-msvc': 0.34.1
+      '@trycua/cua-driver-win32-x64-msvc': 0.34.1
+
   '@tsc-rs/darwin-arm64@0.7.0':
     optional: true
 
@@ -17396,6 +17530,43 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@ubjs/core@0.31.0-3': {}
+
+  '@ubjs/node-darwin-arm64@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-darwin-x64@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-x64-musl@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-3':
+    optional: true
+
+  '@ubjs/node@0.31.0-3(patch_hash=e97d224c08570d77cb1dbac63fbcde2cc62ec45e6466b508272bb174a6ad75d0)':
+    optionalDependencies:
+      '@ubjs/node-darwin-arm64': 0.31.0-3
+      '@ubjs/node-darwin-x64': 0.31.0-3
+      '@ubjs/node-linux-arm64-gnu': 0.31.0-3
+      '@ubjs/node-linux-arm64-musl': 0.31.0-3
+      '@ubjs/node-linux-x64-gnu': 0.31.0-3
+      '@ubjs/node-linux-x64-musl': 0.31.0-3
+      '@ubjs/node-win32-arm64-msvc': 0.31.0-3
+      '@ubjs/node-win32-x64-msvc': 0.31.0-3
 
   '@ungap/structured-clone@1.3.1': {}
 
