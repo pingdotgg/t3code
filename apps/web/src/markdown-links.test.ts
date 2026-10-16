@@ -6,6 +6,7 @@ import {
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
+  withMarkdownFileLinkPath,
 } from "./markdown-links";
 
 describe("shouldOpenMarkdownFileLinkInEditor", () => {
@@ -264,6 +265,16 @@ describe("resolveInlineCodeFileLinkMeta", () => {
 
   it("ignores relative paths without a cwd to resolve against", () => {
     expect(resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md")).toBeNull();
+  });
+});
+
+describe("withMarkdownFileLinkPath", () => {
+  it("points every path field at the new file and keeps the position", () => {
+    const meta = resolveInlineCodeFileLinkMeta("docs/plan.md:12:3", "/repo");
+    expect(meta).not.toBeNull();
+    expect(withMarkdownFileLinkPath(meta!, "/repo/BudgetLens/docs/plan.md", "/repo")).toEqual(
+      resolveMarkdownFileLinkMeta("/repo/BudgetLens/docs/plan.md:12:3", "/repo"),
+    );
   });
 });
 

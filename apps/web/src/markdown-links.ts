@@ -5,7 +5,11 @@ import {
   normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkTarget,
 } from "@t3tools/shared/markdownLinks";
-import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import {
+  formatFilePathPosition,
+  parseFileUrlHref,
+  splitFilePathPosition,
+} from "@t3tools/shared/fileLinks";
 
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { isTerminalLinkActivation } from "./terminal-links";
@@ -82,6 +86,22 @@ export function resolveMarkdownFileLinkMeta(
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
   return buildFileLinkMetaFromTarget(targetPath, cwd);
+}
+
+/** The same link pointed at another file, keeping its line and column. */
+export function withMarkdownFileLinkPath(
+  meta: MarkdownFileLinkMeta,
+  filePath: string,
+  cwd?: string,
+): MarkdownFileLinkMeta {
+  return buildFileLinkMetaFromTarget(
+    formatFilePathPosition({
+      path: filePath,
+      ...(meta.line !== undefined ? { line: meta.line } : {}),
+      ...(meta.column !== undefined ? { column: meta.column } : {}),
+    }),
+    cwd,
+  );
 }
 
 function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {

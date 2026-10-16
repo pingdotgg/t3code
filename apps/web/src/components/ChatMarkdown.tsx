@@ -171,6 +171,7 @@ import {
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
+  withMarkdownFileLinkPath,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
@@ -191,8 +192,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import {
   claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
-  pickWorkspaceBasenameMatch,
+  findWorkspaceFileMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
 import {
@@ -1202,7 +1202,6 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  displayPath: string;
   /** What the files panel opens: workspace-relative inside the workspace, the
       absolute host path outside it, null when the panel cannot show the file. */
   panelPath: string | null;
@@ -1211,6 +1210,8 @@ interface MarkdownFileLinkProps {
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
+  /** The file the chip's actions target, which can differ from its literal path. */
+  resolveLink: () => Promise<Pick<MarkdownFileLinkMeta, "displayPath" | "targetPath">>;
   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
   openInEditorMenuLabel: string;
@@ -1953,13 +1954,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  displayPath,
   panelPath,
   line,
   label,
   copyMarkdown,
   theme,
   threadRef,
+  resolveLink,
   onOpen,
   onOpenInPanel,
   openInEditorMenuLabel,
@@ -2095,7 +2096,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [onReveal, targetPath]);
 
   const handleCopy = useCallback(
-    (value: string, title: string) => {
+    (value: string | Promise<string>, title: string) => {
       if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
         toastManager.add(
           stackedThreadToast({
@@ -2107,12 +2108,24 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
 
-      void navigator.clipboard.writeText(value).then(
-        () => {
+      // Start a pending value's write within the menu click, so the user
+      // gesture still counts when the path finishes resolving.
+      const write =
+        typeof value === "string"
+          ? navigator.clipboard.writeText(value)
+          : typeof ClipboardItem !== "undefined" && navigator.clipboard.write
+            ? navigator.clipboard.write([
+                new ClipboardItem({
+                  "text/plain": value.then((text) => new Blob([text], { type: "text/plain" })),
+                }),
+              ])
+            : value.then((text) => navigator.clipboard.writeText(text));
+      void Promise.all([value, write]).then(
+        ([copied]) => {
           toastManager.add({
             type: "success",
             title: `${title} copied`,
-            description: value,
+            description: copied,
           });
         },
         (error) => {
@@ -2170,11 +2183,17 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           return;
         }
         if (clicked === "copy-relative") {
-          handleCopy(displayPath, "Relative path");
+          handleCopy(
+            resolveLink().then((link) => link.displayPath),
+            "Relative path",
+          );
           return;
         }
         if (clicked === "copy-full") {
-          handleCopy(targetPath, "Full path");
+          handleCopy(
+            resolveLink().then((link) => link.targetPath),
+            "Full path",
+          );
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2184,7 +2203,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       }
     },
     [
-      displayPath,
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
@@ -2194,6 +2212,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       onOpen,
       onReveal,
       openInEditorMenuLabel,
+      resolveLink,
       revealLabel,
       targetPath,
     ],
@@ -2304,13 +2323,13 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
-    previous.displayPath === next.displayPath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
+    previous.resolveLink === next.resolveLink &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
@@ -2354,6 +2373,9 @@ function useChatMarkdownState({
     refresh: true,
   });
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
+    reportFailure: false,
+  });
+  const readFileMetadata = useAtomQueryRunner(projectEnvironment.fileMetadata, {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
@@ -2601,33 +2623,47 @@ function useChatMarkdownState({
     },
     [canOperatePreview, createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
-  const findWorkspaceBasenameMatch = useCallback(
+  const findWorkspaceMatch = useCallback(
     async (workspaceRelativePath: string) => {
       if (
         !cwd ||
         environmentId === null ||
-        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-        !needsWorkspaceBasenameLookup(workspaceRelativePath)
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
       ) {
         return null;
       }
-      const result = await searchProjectEntries({
-        environmentId,
-        input: {
-          cwd,
-          query: workspaceRelativePath,
-          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-          kind: "file",
+      return findWorkspaceFileMatch(workspaceRelativePath, {
+        literalExists: async () => {
+          const result = await readFileMetadata({
+            environmentId,
+            input: { path: resolvePathLinkTarget(workspaceRelativePath, cwd) },
+          });
+          return result._tag !== "Success" || result.value !== null;
+        },
+        searchFiles: async (query) => {
+          const result = await searchProjectEntries({
+            environmentId,
+            input: { cwd, query, limit: WORKSPACE_BASENAME_LOOKUP_LIMIT, kind: "file" },
+          });
+          return result._tag === "Success" ? result.value : null;
         },
       });
-      return result._tag === "Success"
-        ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-        : null;
     },
-    [cwd, environmentId, searchProjectEntries],
+    [cwd, environmentId, readFileMetadata, searchProjectEntries],
   );
-  // A bare filename resolves to the workspace root, which is rarely where the
-  // file is, so ask the index before opening. Absolute host paths open as-is.
+  // Every chip action opens the same file: the literal target, or the
+  // workspace file that findWorkspaceFileMatch picks in its place.
+  const resolveMarkdownFileLink = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta) => {
+      const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
+      const match = workspaceRelativePath ? await findWorkspaceMatch(workspaceRelativePath) : null;
+      return match && cwd
+        ? withMarkdownFileLinkPath(fileLinkMeta, resolvePathLinkTarget(match, cwd), cwd)
+        : fileLinkMeta;
+    },
+    [cwd, findWorkspaceMatch],
+  );
+  // Absolute host paths open as-is.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
@@ -2636,28 +2672,22 @@ function useChatMarkdownState({
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
         useRightPanelStore.getState().openFile(threadRef, path, line);
-      if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+      if (!cwd || isAbsolutePath(panelPath)) {
         openAt(panelPath);
         return;
       }
       void (async () => {
-        const match = await findWorkspaceBasenameMatch(panelPath);
+        const match = await findWorkspaceMatch(panelPath);
         if (!isLatestLookup()) return;
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, threadRef],
+    [cwd, findWorkspaceMatch, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
-    async (fileLinkMeta: MarkdownFileLinkMeta) => {
-      const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-      const match = workspaceRelativePath
-        ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-        : null;
-      const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-      return revealFileInFileManager(filePath);
-    },
-    [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
+    async (fileLinkMeta: MarkdownFileLinkMeta) =>
+      revealFileInFileManager((await resolveMarkdownFileLink(fileLinkMeta)).filePath),
+    [resolveMarkdownFileLink, revealFileInFileManager],
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
@@ -2671,6 +2701,7 @@ function useChatMarkdownState({
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
         (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      const resolveLink = () => resolveMarkdownFileLink(fileLinkMeta);
 
       return (
         <MarkdownFileLink
@@ -2678,7 +2709,6 @@ function useChatMarkdownState({
           href={fileLinkMeta.targetPath}
           targetPath={fileLinkMeta.targetPath}
           iconPath={fileLinkMeta.filePath}
-          displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
           line={fileLinkMeta.line}
           label={fileLinkLabel(
@@ -2692,11 +2722,24 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          resolveLink={resolveLink}
+          {...(canUseShellActions
+            ? {
+                onOpen: async () => openInPreferredEditor((await resolveLink()).targetPath),
+              }
+            : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
+              ? () => {
+                  // Claim the request before the lookup, so a later click or a
+                  // thread switch during it drops this open.
+                  const requestId = ++mediaRequestId.current;
+                  void resolveLink().then((resolved) => {
+                    if (mediaRequestId.current !== requestId) return;
+                    openMarkdownMedia(mediaPath, resolved.filePath);
+                  });
+                }
               : undefined
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}
@@ -2711,7 +2754,7 @@ function useChatMarkdownState({
             canOperatePreview &&
             isPreviewAvailableFor(threadRef.environmentId) &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
-              ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+              ? async () => openMarkdownFileInPreview((await resolveLink()).filePath)
               : undefined
           }
         />
@@ -2727,6 +2770,7 @@ function useChatMarkdownState({
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
+      resolveMarkdownFileLink,
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,
