@@ -6,7 +6,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type {
   EnvironmentConnectionPhase,
@@ -109,6 +109,31 @@ export function canPreloadBrowsePath(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
 ): boolean {
   return connectionPhase === "connected";
+}
+
+/** Share one session between the picker's preloads and rendered listings. */
+export function createFilesystemBrowseSession<T, A, E>(
+  browse: (target: T) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) {
+  const family = Atom.family((source: Atom.Atom<AsyncResult.AsyncResult<A, E>>) => {
+    const visited = new WeakSet<AtomRegistry.AtomRegistry>();
+    return Atom.transform(source, (get) => {
+      // Idle-TTL nodes survive closing the picker, so SWR's mount check does
+      // not run on reopen. Refresh settled cached data once per picker session.
+      // Check before reading: even a synchronous cold load needs only one fetch.
+      const cached = get.registry.getNodes().get(source)?.currentState() === "valid";
+      const result = get.once(source);
+      if (!visited.has(get.registry)) {
+        visited.add(get.registry);
+        if (cached && !result.waiting && !AsyncResult.isInitial(result)) {
+          get.refresh(source);
+        }
+      }
+      get.subscribe(source, (value) => get.setSelf(value));
+      return get.once(source);
+    });
+  });
+  return (target: T) => family(browse(target));
 }
 
 export function createFilesystemEnvironmentAtoms<R, E>(

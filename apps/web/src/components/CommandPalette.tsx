@@ -31,10 +31,12 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReferenc
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
+  createFilesystemBrowseSession,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
+  executeAtomQuery,
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
@@ -81,6 +83,7 @@ import {
 import { requestThreadFindOpen } from "./chat/threadFindActionBus";
 import {
   useCallback,
+  useContext,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -92,7 +95,7 @@ import {
   type ReactNode,
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
@@ -617,10 +620,10 @@ function OpenCommandPaletteDialog(props: {
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
-  const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
-    reportFailure: false,
-    reportDefect: false,
-  });
+  const registry = useContext(RegistryContext);
+  const [browse, setBrowse] = useState(() =>
+    createFilesystemBrowseSession(filesystemEnvironment.browse),
+  );
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -1060,7 +1063,7 @@ function OpenCommandPaletteDialog(props: {
     !relativePathNeedsActiveProject;
   const browseQuery = useEnvironmentQuery(
     browseAccess.canReadFiles && hasBrowseTarget
-      ? filesystemEnvironment.browse({
+      ? browse({
           environmentId: browseEnvironmentId,
           input: {
             partialPath: browsePath.directoryPath,
@@ -1094,6 +1097,7 @@ function OpenCommandPaletteDialog(props: {
       partialPath: string,
       environmentId: EnvironmentId | null = browseEnvironmentId,
       cwd: string | null = currentProjectCwdForBrowse,
+      session = browse,
     ): Promise<void> => {
       if (!environmentId) {
         return;
@@ -1108,15 +1112,19 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      await loadBrowsePath({
-        environmentId,
-        input: {
-          partialPath,
-          ...(cwd ? { cwd } : {}),
-        },
-      });
+      await executeAtomQuery(
+        registry,
+        session({
+          environmentId,
+          input: {
+            partialPath,
+            ...(cwd ? { cwd } : {}),
+          },
+        }),
+        { reportFailure: false, reportDefect: false },
+      );
     },
-    [browseEnvironmentId, currentProjectCwdForBrowse, environments, loadBrowsePath],
+    [browse, browseEnvironmentId, currentProjectCwdForBrowse, environments, registry],
   );
 
   useEffect(
@@ -1435,6 +1443,7 @@ function OpenCommandPaletteDialog(props: {
 
   const startAddProjectBrowse = useCallback(
     async (environmentId: EnvironmentId): Promise<void> => {
+      const session = createFilesystemBrowseSession(filesystemEnvironment.browse);
       const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
       const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
       const browseCwd = getBrowseCwdForEnvironment(environmentId);
@@ -1447,9 +1456,10 @@ function OpenCommandPaletteDialog(props: {
       await browseNavigation.run(
         () =>
           initialBrowsePath.length > 0
-            ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd)
+            ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd, session)
             : Promise.resolve(),
         () => {
+          setBrowse(() => session);
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
           pushPaletteView(view);
