@@ -388,6 +388,10 @@ describe("threadWokeAt", () => {
 });
 
 describe("resolveSnoozePresets", () => {
+  it("defaults the evening preset to 5 PM", () => {
+    const evening = resolveSnoozePresets(localDate(2026, 4, 8, 10)).find((preset) => preset.id === "at:today:17:00");
+    expect(evening?.snoozedUntil).toBe(localDate(2026, 4, 8, 17).toISOString());
+  });
   const formatTime = (date: Date) =>
     `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
   const menu = (now: Date, presets?: ReadonlyArray<SnoozePresetSetting>) =>

@@ -128,7 +128,7 @@ export const SnoozePresetSettings = Schema.Array(SnoozePresetSetting).check(
 export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
   { kind: "after", minutes: 60 },
   { kind: "after", minutes: 180 },
-  { kind: "at", day: "today", time: "18:00" },
+  { kind: "at", day: "today", time: "17:00" },
   { kind: "at", day: "tomorrow", time: "09:00" },
   { kind: "at", day: "monday", time: "09:00" },
 ];
