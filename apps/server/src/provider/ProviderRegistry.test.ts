@@ -3129,6 +3129,45 @@ it.layer(
   // ── checkClaudeProviderStatus tests ──────────────────────────
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("keeps the original usage timestamp when capabilities are cached", () =>
+      Effect.gen(function* () {
+        const usageCheckedAt = "1970-01-01T00:00:00.000Z";
+        const cachedCapabilities = () =>
+          Effect.succeed({
+            email: undefined,
+            subscriptionType: "max",
+            tokenSource: "oauth",
+            apiKeySource: undefined,
+            apiProvider: undefined,
+            slashCommands: [],
+            usageCheckedAt,
+            usage: {
+              rate_limits_available: true,
+              rate_limits: { five_hour: { utilization: 84, resets_at: null } },
+            },
+          });
+        const first = yield* checkClaudeProviderStatus(defaultClaudeSettings, cachedCapabilities);
+        yield* TestClock.adjust("1 minute");
+        const refreshed = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          cachedCapabilities,
+        );
+
+        assert.notStrictEqual(refreshed.checkedAt, first.checkedAt);
+        assert.strictEqual(first.usageLimits?.checkedAt, usageCheckedAt);
+        assert.strictEqual(refreshed.usageLimits?.checkedAt, usageCheckedAt);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            if (args.join(" ") === "--version") {
+              return { stdout: "2.1.288\n", stderr: "", code: 0 };
+            }
+            throw new Error(`Unexpected args: ${args.join(" ")}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("returns ready when claude is installed and authenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

@@ -114,13 +114,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  * established, so the last good snapshot stays; `unsupported` is
  * authoritative and replaces them.
  *
- * A successful probe replaces the published windows outright, including any
- * runtime update that landed while it was running. That is a deliberate
- * trade-off: the Codex and Claude reads take a few seconds at most, the
- * probe is the fresher full read in every case except that window, and the
- * per-window epoch bookkeeping needed to reconcile the two was more code
- * than the sub-second regression it prevented. The next runtime event
- * corrects it.
+ * A successful probe replaces the published windows only when its read is
+ * at least as recent. Finishing a probe does not make its usage read newer.
+ * Runtime updates only carry windows, so every other field still comes from
+ * the probe.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
@@ -129,6 +126,15 @@ export function resolveUsageLimitsAfterProbe(input: {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
+  }
+  if (
+    published &&
+    probed &&
+    !published.unavailable &&
+    !probed.unavailable &&
+    Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
+  ) {
+    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
   }
   return probed;
 }

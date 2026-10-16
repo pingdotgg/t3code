@@ -287,6 +287,7 @@ type ClaudeCapabilitiesProbe = {
    * otherwise successful response mean the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly usageCheckedAt?: string;
 };
 
 function parseClaudeInitializationCommands(
@@ -414,6 +415,7 @@ const probeClaudeCapabilities = (
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
+        const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
         const usageResult = includeUsage
           ? yield* Effect.tryPromise(() =>
               q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
@@ -442,7 +444,7 @@ const probeClaudeCapabilities = (
           apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
-          ...(usage ? { usage } : {}),
+          ...(usage ? { usage, usageCheckedAt } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
@@ -662,14 +664,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
-          checkedAt,
+          checkedAt: usageCheckedAt,
         })
-      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+      : claudeUsageResponseToLimits({
+          response: capabilities.usage,
+          checkedAt: usageCheckedAt,
+        }).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&
