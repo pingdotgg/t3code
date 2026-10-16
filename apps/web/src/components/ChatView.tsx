@@ -727,6 +727,8 @@ const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   '[contenteditable="true"]',
   '[contenteditable="plaintext-only"]',
   '[role="textbox"]',
+  // A device screen forwards its keystrokes to the simulator or emulator.
+  '[role="application"]',
 ].join(",");
 const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   "button",
