@@ -806,6 +806,9 @@ function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
   chips: ChipResolver,
 ): AtomJson | null {
+  if (segment.type === "application") {
+    return { type: "composer-application", attrs: { href: segment.href, source: segment.source } };
+  }
   if (segment.type === "mention") {
     return {
       type: "composer-mention",
@@ -1207,6 +1210,7 @@ function readAtomSource(node: ProseMirrorNode): string {
   switch (node.type.name) {
     case "composer-mention":
     case "composer-model":
+    case "composer-application":
     case "composer-citation":
     case "composer-context-reference":
       return typeof attrs.source === "string" ? attrs.source : "";

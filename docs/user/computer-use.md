@@ -28,7 +28,7 @@ What the host needs depends on its OS:
   at the computer may need to approve a screen capture prompt.
 
 The desktop app includes Cua Driver. A server started with `npx t3` downloads
-the same version into T3 Code's home the first time an agent session needs it.
+the same version into T3 Code's home the first time computer use needs it.
 To use your own build instead, set `T3CODE_CUA_DRIVER_PATH` to its executable
 before starting the server.
 
@@ -36,6 +36,11 @@ If you already configured a `cua-driver` MCP server for Codex yourself, Codex
 keeps yours and T3 Code does not add a second one.
 
 ## Watch the agent work
+
+In the web or desktop composer, type `@` followed by an app name, such as
+`@Helium`, and select it to tell the agent which app to use. With Computer use
+enabled, suggestions include apps on the selected environment's computer,
+including when you connect remotely. Selecting an app does not launch it.
 
 Each action an agent takes shows in the thread with the app's icon and a plain
 title, such as **Clicked in Safari**.

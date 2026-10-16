@@ -3,6 +3,23 @@ import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
+export const CuaApplication = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(160)),
+  bundleId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  launchPath: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+  pid: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+export type CuaApplication = typeof CuaApplication.Type;
+
+export class CuaApplicationsError extends Schema.TaggedError<CuaApplicationsError>()(
+  "CuaApplicationsError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Could not list applications on this computer.";
+  }
+}
+
 /** Native host descriptor, confined to the desktop/server control pipe. */
 export const CuaDriverMcpConfiguration = Schema.Struct({
   command: TrimmedNonEmptyString,
