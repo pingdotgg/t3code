@@ -38,7 +38,9 @@ export function deriveThreadTurnSubagents(
   );
   const runId = activeRun?.id ?? latestUpdated.runId;
   const subagents = copySorted(
-    projection.subagents.filter((subagent) => subagent.runId === runId),
+    projection.subagents.filter(
+      (subagent) => subagent.runId === runId || subagent.workflow !== undefined,
+    ),
     (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );
   if (subagents.length === 0) return null;
@@ -56,7 +58,13 @@ export function resolveSubagentPillSegment(
   turn: ThreadTurnSubagents | null,
 ): SubagentPillSegment | null {
   if (turn === null) return null;
-  if (!turn.turnActive && turn.liveCount === 0) return null;
+  if (
+    !turn.turnActive &&
+    turn.liveCount === 0 &&
+    !turn.subagents.some((subagent) => subagent.workflow !== undefined)
+  ) {
+    return null;
+  }
   const total = turn.subagents.length;
   if (turn.liveCount > 0) {
     return {
@@ -65,7 +73,7 @@ export function resolveSubagentPillSegment(
     };
   }
   return {
-    label: `${total} done`,
-    accessibilityLabel: `${total} ${total === 1 ? "agent" : "agents"} done`,
+    label: `${turn.settledCount} done`,
+    accessibilityLabel: `${turn.settledCount} ${turn.settledCount === 1 ? "agent" : "agents"} done`,
   };
 }

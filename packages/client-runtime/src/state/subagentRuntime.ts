@@ -51,6 +51,7 @@ export interface RuntimeSubagent {
   readonly role: string | null;
   readonly model: string | null;
   readonly effort: string | null;
+  readonly speed?: string | undefined;
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
   readonly usage: SubagentUsage | null;
@@ -106,6 +107,40 @@ export interface SubagentWorkflowGroup {
   readonly unphasedMembers: ReadonlyArray<RuntimeSubagent>;
 }
 
+/**
+ * Wall clock for the phase: its members run in parallel, so the span from the
+ * first start to the last finish is the time the phase actually took. Shaped
+ * for elapsed timers, which tick it while the phase is still running.
+ */
+export function workflowPhaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
+  const instants = (key: "startedAt" | "completedAt") =>
+    phase.members
+      .map((member) => member[key])
+      .filter((value) => value !== null)
+      .sort();
+  const running = phase.state === "running";
+  const startedAt = instants("startedAt")[0] ?? null;
+  const completedAt = running ? null : (instants("completedAt").at(-1) ?? null);
+  return {
+    status: running ? ("running" as const) : ("completed" as const),
+    // A settled phase whose members never reported an end has no span to show.
+    startedAt: running || completedAt !== null ? startedAt : null,
+    completedAt,
+  };
+}
+
+/** Phase state for the header's label; the tone and member badges show it visually. */
+export function workflowPhaseStatus(phase: SubagentWorkflowGroup["phases"][number]) {
+  if (phase.state === "running") return "running";
+  if (phase.members.some((member) => member.status === "failed")) return "failed";
+  if (
+    phase.members.some((member) => member.status === "cancelled" || member.status === "interrupted")
+  ) {
+    return "stopped";
+  }
+  return phase.state === "done" ? "done" : "not started";
+}
+
 function workflowUsage(source: {
   readonly totalTokens?: number | undefined;
   readonly toolCalls?: number | undefined;
@@ -148,6 +183,8 @@ function workflowMembersToRuntime(
       kind: "workflow_agent" as const,
       title: agent.label,
       model: agent.model ?? null,
+      effort: agent.effort ?? null,
+      ...(agent.speed === undefined ? {} : { speed: agent.speed }),
       status,
       activationCount: agent.attempt ?? 1,
       usage: workflowUsage(agent),

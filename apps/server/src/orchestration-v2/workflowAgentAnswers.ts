@@ -9,7 +9,10 @@
  */
 import * as NodePath from "node:path";
 
-import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
+import {
+  OrchestrationWorkflowFileError,
+  type OrchestrationV2WorkflowAgent,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { field, text } from "./unknownField.ts";
@@ -26,9 +29,11 @@ const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * lines sharing a `message.id`, so those are joined into a single turn rather
  * than read as separate ones.
  */
-export function parseWorkflowAgentAnswers(contents: string): ReadonlyArray<string> {
+export function parseWorkflowAgentTranscript(contents: string) {
   const turns: string[] = [];
   const turnIndexById = new Map<string, number>();
+  let metadata: Pick<OrchestrationV2WorkflowAgent, "effort" | "speed"> = {};
+  let lastMessageId: string | undefined;
 
   for (const line of contents.split("\n")) {
     if (line.trim().length === 0) continue;
@@ -43,6 +48,18 @@ export function parseWorkflowAgentAnswers(contents: string): ReadonlyArray<strin
     if (field(entry, "isMeta") === true) continue;
 
     const message = field(entry, "message");
+    const messageId = text(field(message, "id"));
+    if (field(entry, "isApiErrorMessage") !== true) {
+      if (messageId === undefined || messageId !== lastMessageId) metadata = {};
+      lastMessageId = messageId;
+      const effort = text(field(entry, "effort"));
+      const speed = text(field(field(message, "usage"), "speed"));
+      metadata = {
+        ...metadata,
+        ...(effort === undefined ? {} : { effort }),
+        ...(speed === undefined ? {} : { speed }),
+      };
+    }
     const content = field(message, "content");
     if (!Array.isArray(content)) continue;
     const body = content
@@ -52,7 +69,6 @@ export function parseWorkflowAgentAnswers(contents: string): ReadonlyArray<strin
       .join("\n\n");
     if (body.length === 0) continue;
 
-    const messageId = text(field(message, "id"));
     const existing = messageId === undefined ? undefined : turnIndexById.get(messageId);
     if (existing !== undefined) {
       turns[existing] = `${turns[existing]}\n\n${body}`;
@@ -62,10 +78,10 @@ export function parseWorkflowAgentAnswers(contents: string): ReadonlyArray<strin
     turns.push(body);
   }
 
-  return turns;
+  return { answers: turns, ...metadata };
 }
 
-export const readWorkflowAgentAnswers = Effect.fn("orchestration.readWorkflowAgentAnswers")(
+export const readWorkflowAgentTranscript = Effect.fn("orchestration.readWorkflowAgentTranscript")(
   function* (input: {
     readonly transcriptDir: string;
     readonly agentId: string;
@@ -84,7 +100,7 @@ export const readWorkflowAgentAnswers = Effect.fn("orchestration.readWorkflowAge
       tail: true,
       ...(input.configDir === undefined ? {} : { configDir: input.configDir }),
     });
-    return parseWorkflowAgentAnswers(
+    return parseWorkflowAgentTranscript(
       file.truncated ? file.contents.slice(file.contents.indexOf("\n") + 1) : file.contents,
     );
   },

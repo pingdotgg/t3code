@@ -1,6 +1,8 @@
-import type {
-  SubagentWorkflowGroup,
-  RuntimeSubagent,
+import {
+  workflowPhaseElapsed,
+  workflowPhaseStatus,
+  type SubagentWorkflowGroup,
+  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
@@ -18,33 +20,6 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
-
-function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
-  const instants = (key: "startedAt" | "completedAt") =>
-    phase.members
-      .map((member) => member[key])
-      .filter((value) => value !== null)
-      .sort();
-  const running = phase.state === "running";
-  const startedAt = instants("startedAt")[0] ?? null;
-  const completedAt = running ? null : (instants("completedAt").at(-1) ?? null);
-  return {
-    status: running ? ("running" as const) : ("completed" as const),
-    startedAt: running || completedAt !== null ? startedAt : null,
-    completedAt,
-  };
-}
-
-function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
-  if (phase.state === "running") return "running";
-  if (phase.members.some((member) => member.status === "failed")) return "failed";
-  if (
-    phase.members.some((member) => member.status === "cancelled" || member.status === "interrupted")
-  ) {
-    return "stopped";
-  }
-  return phase.state === "done" ? "done" : "not started";
-}
 
 function WorkflowMemberRow({
   member,
@@ -189,7 +164,7 @@ export function ThreadLineageWorkflowRow({
         <ul className="m-0 list-none p-0 ps-6.5">
           {phases.map((phase) => {
             const open = phaseOpen.get(phase.index) ?? phase.state === "running";
-            const status = phaseStatusLabel(phase);
+            const status = workflowPhaseStatus(phase);
             return (
               <li key={phase.index}>
                 <CollapsibleSectionHeader
@@ -208,7 +183,7 @@ export function ThreadLineageWorkflowRow({
                         {phase.members.length === 1 ? "agent" : "agents"}
                       </span>
                       <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
-                        <AgentElapsed agent={phaseElapsed(phase)} />
+                        <AgentElapsed agent={workflowPhaseElapsed(phase)} />
                       </span>
                     </>
                   }

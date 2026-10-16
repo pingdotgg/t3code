@@ -6,17 +6,63 @@ import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { parseWorkflowAgentAnswers, readWorkflowAgentAnswers } from "./workflowAgentAnswers.ts";
+import {
+  parseWorkflowAgentTranscript,
+  readWorkflowAgentTranscript,
+} from "./workflowAgentAnswers.ts";
 
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;
 
 const assistant = (id: string, content: ReadonlyArray<unknown>) =>
   line({ type: "assistant", message: { role: "assistant", id, content } });
 
-describe("parseWorkflowAgentAnswers", () => {
+const parseAnswers = (contents: string) => parseWorkflowAgentTranscript(contents).answers;
+
+describe("parseWorkflowAgentTranscript", () => {
+  it("reads reported effort and speed from assistant records without text", () => {
+    expect(
+      parseWorkflowAgentTranscript(
+        line({
+          type: "assistant",
+          effort: "xhigh",
+          message: { id: "a", content: [], usage: { speed: "standard" } },
+        }) + assistant("a", [{ type: "text", text: "Done" }]),
+      ),
+    ).toEqual({ answers: ["Done"], effort: "xhigh", speed: "standard" });
+  });
+
+  it("leaves unreported metadata absent and ignores bookkeeping and malformed values", () => {
+    expect(
+      parseWorkflowAgentTranscript(
+        line({ type: "user", effort: "max", message: { usage: { speed: "fast" } } }) +
+          line({ type: "assistant", isMeta: true, effort: "high" }) +
+          line({
+            type: "assistant",
+            effort: 1,
+            message: { id: "a", content: [], usage: { speed: false } },
+          }) +
+          assistant("a", [{ type: "text", text: "Done" }]),
+      ),
+    ).toEqual({ answers: ["Done"] });
+  });
+
+  it("clears metadata when a new assistant response omits it", () => {
+    expect(
+      parseWorkflowAgentTranscript(
+        line({
+          type: "assistant",
+          effort: "max",
+          message: { id: "a", content: [], usage: { speed: "standard" } },
+        }) + assistant("b", [{ type: "text", text: "New response" }]),
+      ),
+    ).toEqual({ answers: ["New response"] });
+  });
+});
+
+describe("parseWorkflowAgentTranscript answers", () => {
   it("returns one entry per assistant turn", () => {
     expect(
-      parseWorkflowAgentAnswers(
+      parseAnswers(
         assistant("a", [{ type: "text", text: "first" }]) +
           assistant("b", [{ type: "text", text: "second" }]),
       ),
@@ -25,7 +71,7 @@ describe("parseWorkflowAgentAnswers", () => {
 
   it("joins the lines of one split assistant message into a single turn", () => {
     expect(
-      parseWorkflowAgentAnswers(
+      parseAnswers(
         assistant("a", [{ type: "thinking", thinking: "weighing it up" }]) +
           assistant("a", [{ type: "text", text: "the answer" }]) +
           assistant("a", [{ type: "text", text: "and more" }]),
@@ -35,7 +81,7 @@ describe("parseWorkflowAgentAnswers", () => {
 
   it("ignores harness bookkeeping and the member's own prompt", () => {
     expect(
-      parseWorkflowAgentAnswers(
+      parseAnswers(
         line({ type: "attachment", attachment: { type: "skill_listing", content: "- adhd" } }) +
           line({ type: "user", message: { role: "user", content: "the prompt" } }) +
           line({
@@ -50,15 +96,13 @@ describe("parseWorkflowAgentAnswers", () => {
 
   it("skips a turn that produced no text", () => {
     expect(
-      parseWorkflowAgentAnswers(
-        assistant("a", [{ type: "tool_use", id: "t", name: "Bash", input: {} }]),
-      ),
+      parseAnswers(assistant("a", [{ type: "tool_use", id: "t", name: "Bash", input: {} }])),
     ).toEqual([]);
   });
 
   it("preserves answer indentation and ignores blank text", () => {
     expect(
-      parseWorkflowAgentAnswers(
+      parseAnswers(
         assistant("a", [{ type: "text", text: "    indented code" }]) +
           assistant("b", [{ type: "text", text: "   " }]),
       ),
@@ -67,7 +111,7 @@ describe("parseWorkflowAgentAnswers", () => {
 
   it("survives a trailing line the byte cap cut in half", () => {
     expect(
-      parseWorkflowAgentAnswers(
+      parseAnswers(
         assistant("a", [{ type: "text", text: "complete" }]) + '{"type":"assistant","mess',
       ),
     ).toEqual(["complete"]);
@@ -86,7 +130,7 @@ afterAll(() => {
   NodeFS.rmSync(configDir, { recursive: true, force: true });
 });
 
-describe("readWorkflowAgentAnswers", () => {
+describe("readWorkflowAgentTranscript", () => {
   effectIt.effect("reads final answers from both small and capped transcripts", () =>
     Effect.gen(function* () {
       const turn = assistant("a", [{ type: "text", text: "the answer" }]);
@@ -94,7 +138,9 @@ describe("readWorkflowAgentAnswers", () => {
       const write = (agentId: string, contents: string) =>
         NodeFS.writeFileSync(NodePath.join(transcriptDir, `agent-${agentId}.jsonl`), contents);
       const read = (agentId: string) =>
-        readWorkflowAgentAnswers({ transcriptDir, agentId, configDir });
+        readWorkflowAgentTranscript({ transcriptDir, agentId, configDir }).pipe(
+          Effect.map((transcript) => transcript.answers),
+        );
       write("small", turn);
       const edgeAnswer = "x".repeat(
         512 * 1024 + 1 - Buffer.byteLength(assistant("edge", [{ type: "text", text: "" }])),

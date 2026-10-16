@@ -6,7 +6,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { field, text } from "../unknownField.ts";
-import { readWorkflowAgentAnswers } from "../workflowAgentAnswers.ts";
+import { readWorkflowAgentTranscript } from "../workflowAgentAnswers.ts";
 import {
   CLAUDE_WORKFLOW_TASK_TYPE,
   hasClaudeWorkflowSnapshot,
@@ -4407,16 +4407,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const withWorkflowMemberThreadIds = (
           workflow: OrchestrationV2SubagentWorkflow,
           coordinatorChildThreadId: ThreadId,
-        ): OrchestrationV2SubagentWorkflow => ({
-          ...workflow,
-          agents: workflow.agents.map((member) => ({
-            ...member,
-            childThreadId: idAllocator.derive.threadFromProviderThread({
-              driver: CLAUDE_PROVIDER,
-              nativeThreadId: `${coordinatorChildThreadId}:agent:${member.index}`,
-            }),
-          })),
-        });
+          previous: OrchestrationV2SubagentWorkflow | undefined,
+        ): OrchestrationV2SubagentWorkflow => {
+          const runChanged =
+            previous?.runHandles?.runId !== undefined &&
+            workflow.runHandles?.runId !== undefined &&
+            previous.runHandles.runId !== workflow.runHandles.runId;
+          const previousThreads = new Map(
+            (runChanged ? [] : (previous?.agents ?? [])).map((member) => [
+              member.index,
+              member.childThreadId,
+            ]),
+          );
+          return {
+            ...workflow,
+            agents: workflow.agents.map((member) => ({
+              ...member,
+              childThreadId:
+                previousThreads.get(member.index) ??
+                idAllocator.derive.threadFromProviderThread({
+                  driver: CLAUDE_PROVIDER,
+                  nativeThreadId: `${coordinatorChildThreadId}${workflow.runHandles?.runId === undefined ? "" : `:run:${workflow.runHandles.runId}`}:agent:${member.index}`,
+                }),
+            })),
+          };
+        };
 
         const emitSubagentConversationMessage = Effect.fnUntraced(function* (input: {
           readonly nativeItemId: string;
@@ -4474,11 +4489,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const now = yield* DateTime.now;
           const seen = yield* Ref.get(workflowMemberStates);
           const transcriptDir = input.workflow.runHandles?.transcriptDir;
+          const membersWithMetadata = input.workflow.agents.slice();
 
-          for (const member of input.workflow.agents) {
+          for (const [memberIndex, member] of input.workflow.agents.entries()) {
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
               return;
-            const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
+            const childThreadId = member.childThreadId;
+            if (childThreadId === undefined) continue;
+            const memberKey = `${childThreadId}:agent:${member.index}`;
             const previous = seen.get(memberKey);
             const status =
               (member.state === "queued" || member.state === "running") &&
@@ -4529,9 +4547,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               driver: CLAUDE_PROVIDER,
               nativeItemId: `${memberKey}:thread-root`,
             });
-            const childThreadId = member.childThreadId;
-            if (childThreadId === undefined) continue;
-
             if (
               previous === undefined ||
               previous.label !== member.label ||
@@ -4646,8 +4661,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             let transcriptAnswerDigest = restarted ? undefined : previous?.transcriptAnswerDigest;
             let transcript: ReadonlyArray<string> = [];
             if (settled) {
-              transcript = readTranscript
-                ? yield* readWorkflowAgentAnswers({
+              const transcriptData = readTranscript
+                ? yield* readWorkflowAgentTranscript({
                     transcriptDir,
                     agentId,
                     ...(adapterOptions.environment.CLAUDE_CONFIG_DIR === undefined
@@ -4658,8 +4673,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                             adapterOptions.environment.CLAUDE_CONFIG_DIR,
                           ),
                         }),
-                  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
-                : [];
+                  }).pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+              transcript = transcriptData?.answers ?? [];
               const transcriptAnswer = transcript.length > 0 ? transcript.join("\n\n") : undefined;
               const answerDigest =
                 transcriptAnswer === undefined
@@ -4667,6 +4683,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : yield* sha256Hex(crypto, transcriptAnswer);
               if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
                 return;
+              if (
+                transcriptData !== undefined &&
+                (transcriptData.effort !== member.effort || transcriptData.speed !== member.speed)
+              ) {
+                const { effort: _effort, speed: _speed, ...memberWithoutMetadata } = member;
+                membersWithMetadata[memberIndex] = {
+                  ...memberWithoutMetadata,
+                  ...(transcriptData.effort === undefined ? {} : { effort: transcriptData.effort }),
+                  ...(transcriptData.speed === undefined ? {} : { speed: transcriptData.speed }),
+                };
+              }
               const previousDigest = transcriptAnswerDigest;
               if (answerDigest !== undefined) transcriptAnswerDigest = answerDigest;
               const answer =
@@ -4714,6 +4741,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt,
               }),
             );
+          }
+          if (
+            membersWithMetadata.some((member, index) => member !== input.workflow.agents[index])
+          ) {
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
+              return;
+            input.coordinator.task = {
+              ...input.coordinator.task,
+              workflow: { ...input.workflow, agents: membersWithMetadata },
+            };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: input.coordinator.task,
+            });
           }
         });
 
@@ -4858,7 +4900,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const workflowWithThreads =
             workflow === undefined
               ? undefined
-              : withWorkflowMemberThreadIds(workflow, childThreadId);
+              : withWorkflowMemberThreadIds(workflow, childThreadId, priorTask?.workflow);
           const effort =
             existingSubagent === undefined
               ? (input.effort ??
@@ -6020,6 +6062,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const workflowWithThreads = withWorkflowMemberThreadIds(
             workflow,
             registered.childThreadId,
+            registered.task.workflow,
           );
           const task = {
             ...registered.task,

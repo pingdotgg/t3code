@@ -953,6 +953,9 @@ describe("orchestration V2 contracts", () => {
               index: 1,
               label: "Member",
               state: "completed" as const,
+              model: "claude-opus-5[1m]",
+              effort: "xhigh",
+              speed: "standard",
               prompt: preview,
               result: preview,
             },
@@ -974,10 +977,16 @@ describe("orchestration V2 contracts", () => {
         expect(decode(json).workflow?.agents[0]).toMatchObject({
           prompt: preview,
           result: preview,
+          model: "claude-opus-5[1m]",
+          effort: "xhigh",
+          speed: "standard",
         });
         expect(decode(incoming).workflow?.agents[0]).toMatchObject({
           prompt: preview,
           result: preview,
+          model: "claude-opus-5[1m]",
+          effort: "xhigh",
+          speed: "standard",
         });
       }
     },

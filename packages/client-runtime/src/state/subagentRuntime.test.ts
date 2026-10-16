@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2Subagent, OrchestrationV2SubagentWorkflow } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentWorkflow,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { deriveWorkflowGroups, projectedSubagentsToRuntime } from "./subagentRuntime.ts";
+import {
+  deriveWorkflowGroups,
+  projectedSubagentsToRuntime,
+  workflowPhaseElapsed,
+  workflowPhaseStatus,
+} from "./subagentRuntime.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -82,6 +91,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
           agents: [
             member({
               state: "completed",
+              model: "claude-opus-5[1m]",
+              effort: "xhigh",
+              speed: "standard",
               startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
               durationMs: 1500,
               totalTokens: 71_141,
@@ -96,6 +108,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(settled?.status).toBe("completed");
     expect(settled?.completedAt).toBe("2026-08-01T10:00:01.500Z");
     expect(settled?.result).toBe("A1");
+    expect(settled?.model).toBe("claude-opus-5[1m]");
+    expect(settled?.effort).toBe("xhigh");
+    expect(settled?.speed).toBe("standard");
     expect(settled?.progress).toBe("Reply with exactly: A1");
     expect(settled?.usage).toEqual({ totalTokens: 71_141, toolUses: 3, durationMs: 1500 });
   });
@@ -121,6 +136,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       const members = groups[0]?.phases.flatMap((phase) => phase.members);
       expect(members?.map((agent) => agent.status)).toEqual([status, status, "completed"]);
       expect(members?.[0]?.completedAt).toBe("2026-08-01T10:00:09.000Z");
+      expect(members?.[0]?.model).toBeNull();
+      expect(members?.[0]?.effort).toBeNull();
+      expect(members?.[0]?.speed).toBeUndefined();
     },
   );
 
@@ -131,9 +149,71 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(retried?.activationCount).toBe(3);
     expect(retried?.attempt).toBe(3);
   });
+
+  it("preserves separate coordinator and member navigation when work settles", () => {
+    const rows = projectedSubagentsToRuntime([
+      subagent({ id: "ordinary", childThreadId: "ordinary-thread" }),
+      subagent({
+        childThreadId: "coordinator-thread",
+        status: "completed",
+        workflow: {
+          phases: [],
+          agents: [
+            member({
+              state: "completed",
+              childThreadId: ThreadId.make("member-thread"),
+              result: "Done",
+            }),
+            member({ index: 2, state: "failed", result: "Failed" }),
+          ],
+        },
+      }),
+    ]);
+
+    expect(rows.map((row) => [row.kind, row.childThreadId])).toEqual([
+      ["subagent", "ordinary-thread"],
+      ["workflow", "coordinator-thread"],
+      ["workflow_agent", "member-thread"],
+      ["workflow_agent", null],
+    ]);
+    const members = deriveWorkflowGroups(rows)[0]?.phases[0]?.members;
+    expect(members?.[0]?.result).toBe("Done");
+    expect(members?.[1]?.error).toBe("Failed");
+  });
 });
 
 describe("deriveWorkflowGroups over a dynamic workflow", () => {
+  it("uses the parallel phase span and hides unknown settled timing", () => {
+    const [group] = groupsOf([
+      subagent({
+        workflow: {
+          phases: [],
+          agents: [
+            member({ state: "completed", startedAt: Date.UTC(2026, 7, 1, 10), durationMs: 20000 }),
+            member({
+              index: 2,
+              state: "completed",
+              startedAt: Date.UTC(2026, 7, 1, 10, 0, 5),
+              durationMs: 5000,
+            }),
+          ],
+        },
+      }),
+    ]);
+    const phase = group!.phases[0]!;
+    expect(workflowPhaseElapsed(phase)).toEqual({
+      status: "completed",
+      startedAt: "2026-08-01T10:00:00.000Z",
+      completedAt: "2026-08-01T10:00:20.000Z",
+    });
+    expect(
+      workflowPhaseElapsed({
+        ...phase,
+        members: phase.members.map((agent) => ({ ...agent, completedAt: null })),
+      }),
+    ).toEqual({ status: "completed", startedAt: null, completedAt: null });
+  });
+
   it("groups members under their phases and counts the run", () => {
     const groups = groupsOf([
       subagent({
@@ -164,6 +244,7 @@ describe("deriveWorkflowGroups over a dynamic workflow", () => {
       ["Beta", "running"],
     ]);
     expect(group?.phases.map((phase) => phase.settledCount)).toEqual([2, 0]);
+    expect(group?.phases.map(workflowPhaseStatus)).toEqual(["failed", "running"]);
     expect(group?.phases.flatMap((phase) => phase.members)).toHaveLength(4);
     expect(group?.unphasedMembers).toEqual([]);
   });
