@@ -704,7 +704,9 @@ export const layerWithOptions = (
                 request.status === "pending" &&
                 request.responseCapability.type === "live" &&
                 request.responseCapability.providerSessionId === providerSessionId &&
-                DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt),
+                DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt) &&
+                // Restart recovery keeps questions answerable by message.
+                !(input.reason === "server_shutdown" && request.kind === "user_input"),
             );
 
             for (const request of releasedRequests) {

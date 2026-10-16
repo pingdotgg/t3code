@@ -4075,6 +4075,84 @@ it.effect("ProviderSessionManagerV2 terminalizes a pending input transcript item
   }),
 );
 
+it.effect("ProviderSessionManagerV2 leaves a pending question to restart recovery", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-question-shutdown",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-question-shutdown",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const pendingRequest = yield* makePendingRuntimeRequestEvents({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        providerThread,
+        now,
+      });
+      yield* eventSink.write({
+        events: pendingRequest.events.map((event) =>
+          event.type === "turn-item.updated"
+            ? {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  type: "user_input_request",
+                  questions: [
+                    { id: "color", header: "Color", question: "Which color?", options: [] },
+                  ],
+                },
+              }
+            : event.type === "runtime-request.updated"
+              ? { ...event, payload: { ...event.payload, kind: "user_input" } }
+              : event,
+        ),
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.release({ providerSessionId, reason: "server_shutdown" });
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const request = projection.runtimeRequests.at(-1);
+      const requestTurnItem = projection.turnItems.find(
+        (item) => item.type === "user_input_request" && item.requestId === request?.id,
+      );
+
+      assert.equal(request?.status, "pending");
+      assert.equal(request?.responseCapability.type, "live");
+      assert.equal(requestTurnItem?.status, "waiting");
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests without a run", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

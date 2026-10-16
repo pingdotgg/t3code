@@ -290,6 +290,147 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
   }).pipe(Effect.provide(layer));
 });
 
+const recoverQuestion = (input: {
+  readonly trigger: "startup" | "shutdown";
+  readonly creationSource?: "provider";
+  readonly withQuestionItem?: false;
+}) => {
+  const threadId = ThreadId.make("thread_question_restart");
+  const runId = RunId.make("run_question_restart");
+  const questionNodeId = NodeId.make("node_question_restart");
+  const approvalNodeId = NodeId.make("node_approval_restart");
+  const questionRequestId = RuntimeRequestId.make("request_question_restart");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: {
+      id: threadId,
+      creationSource: input.creationSource ?? "web",
+      lineage: { relationshipToParent: input.creationSource ? "subagent" : null },
+    },
+    runtimeRequests: [
+      {
+        id: questionRequestId,
+        nodeId: questionNodeId,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId: "session_question_restart" },
+      },
+      {
+        id: RuntimeRequestId.make("request_approval_restart"),
+        nodeId: approvalNodeId,
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId: "session_question_restart" },
+      },
+    ],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
+    attempts: [],
+    nodes: [
+      { id: questionNodeId, runId, status: "waiting" },
+      { id: approvalNodeId, runId, status: "waiting" },
+    ],
+    subagents: [],
+    messages: [],
+    turnItems:
+      input.withQuestionItem === false
+        ? []
+        : [
+            {
+              id: TurnItemId.make("turn_item_question_restart"),
+              threadId,
+              runId,
+              nodeId: questionNodeId,
+              type: "user_input_request",
+              requestId: questionRequestId,
+              status: "waiting",
+              questions: [{ id: "color", header: "Color", question: "Which color?", options: [] }],
+            },
+          ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (commit) => {
+            committedInput = commit;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const summary =
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(
+        input.trigger,
+      );
+    const events = committedInput?.events ?? [];
+    return {
+      summary,
+      events,
+      requestStates: events.flatMap((event) =>
+        event.type === "runtime-request.updated"
+          ? [[event.payload.kind, event.payload.status, event.payload.responseCapability.type]]
+          : [],
+      ),
+      cancelledNodeIds: events.flatMap((event) =>
+        event.type === "node.updated" && event.payload.status === "cancelled"
+          ? [event.payload.id]
+          : [],
+      ),
+      approvalNodeId,
+    };
+  }).pipe(Effect.provide(layer));
+};
+
+it.effect.each(["startup", "shutdown"] as const)(
+  "keeps a question answerable by message on $0",
+  (trigger) =>
+    Effect.gen(function* () {
+      const result = yield* recoverQuestion({ trigger });
+      assert.equal(result.summary.closedRequests, 1);
+      assert.deepStrictEqual(result.requestStates, [
+        ["user_input", "pending", "message"],
+        ["command", trigger === "startup" ? "expired" : "cancelled", "not_resumable"],
+      ]);
+      // The question card stays open while the run it interrupted ends.
+      assert.deepStrictEqual(result.cancelledNodeIds, [result.approvalNodeId]);
+      assert.isUndefined(result.events.find((event) => event.type === "turn-item.updated"));
+      const runEvent = result.events.find((event) => event.type === "run.updated");
+      assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
+    }),
+);
+
+it.effect.each([
+  { name: "without its question text", withQuestionItem: false as const },
+  { name: "in a native subagent thread", creationSource: "provider" as const },
+])("expires a question $name after a restart", (input) =>
+  Effect.gen(function* () {
+    const result = yield* recoverQuestion({ trigger: "startup", ...input });
+    assert.equal(result.summary.closedRequests, 2);
+    assert.deepStrictEqual(result.requestStates, [
+      ["user_input", "expired", "not_resumable"],
+      ["command", "expired", "not_resumable"],
+    ]);
+  }),
+);
+
 it.effect(
   "preserves a replayable waiting run while cancelling its process-bound background work",
   () => {

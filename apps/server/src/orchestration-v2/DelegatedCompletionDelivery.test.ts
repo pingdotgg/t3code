@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1240,6 +1241,115 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             );
           }
         }),
+    );
+
+    it.effect("tracks an answer to a question the restart left open as a follow-up", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:question-answer-parent");
+        const projectId = ProjectId.make("project:question-answer");
+        const parentRunId = RunId.make("run:question-answer-parent");
+        const rootNodeId = NodeId.make("node:question-answer-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:question-answer-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "question-answer-child",
+          completionWake: "always",
+          continuationPending: false,
+          now,
+        });
+        // The cancelled result is published before anyone answers the question.
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === child.taskId,
+          )?.result,
+        );
+        const requestId = RuntimeRequestId.make("request:question-answer");
+        const nodeId = NodeId.make("node:question-answer-request");
+        yield* eventSink.write({
+          commandId: CommandId.make("command:seed-question-answer"),
+          events: [
+            {
+              id: EventId.make("event:question-answer-request"),
+              type: "runtime-request.updated",
+              threadId: child.childThreadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId,
+                providerTurnId: null,
+                nativeRequestRef: null,
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "message" },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+            {
+              id: EventId.make("event:question-answer-item"),
+              type: "turn-item.updated",
+              threadId: child.childThreadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:question-answer"),
+                type: "user_input_request",
+                threadId: child.childThreadId,
+                runId: child.childRunId,
+                nodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "waiting",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                requestId,
+                questions: [
+                  { id: "color", header: "Color", question: "Which color?", options: [] },
+                ],
+              },
+            },
+          ],
+        });
+
+        yield* orchestrator.dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("command:question-answer"),
+          threadId: child.childThreadId,
+          requestId,
+          answers: { color: "Blue" },
+        });
+
+        const answerRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`async-answer:${requestId}`),
+        );
+        assert.isDefined(answerRun?.delegatedTaskId);
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === answerRun?.delegatedTaskId,
+        );
+        assert.equal(followup?.childThreadId, child.childThreadId);
+        assert.isNull(followup?.result);
+      }),
     );
   },
 );

@@ -1108,7 +1108,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
               updatedAt: now,
               requestId,
               responseMode: "message",
-              questions: [{ id: "color", header: "Color", question: "Which color?", options: [] }],
+              questions: [
+                { id: "color", header: "Color", question: "Which color?", options: [] },
+                {
+                  id: "sizes",
+                  header: "Sizes",
+                  question: "Which sizes?",
+                  options: [],
+                  multiSelect: true,
+                },
+              ],
             },
           },
         ],
@@ -1119,7 +1128,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           commandId: CommandId.make("runtime-async-question-blank"),
           threadId,
           requestId,
-          answers: { color: " " },
+          answers: { color: " ", sizes: ["Small"] },
         })
         .pipe(Effect.result);
       assert.equal(invalid._tag, "Failure");
@@ -1132,7 +1141,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         commandId: CommandId.make("runtime-async-question-answer"),
         threadId,
         requestId,
-        answers: { color: "  Blue  " },
+        answers: { color: "  Blue  ", sizes: ["Small", "Large"] },
       };
       const accepted = yield* orchestrator.dispatch(command);
       const repeated = yield* orchestrator.dispatch(command);
@@ -1149,11 +1158,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           requestId,
           answers: command.answers,
           attachmentsByQuestionId: {},
-          questionTextById: { color: "Which color?" },
+          questionTextById: { color: "Which color?", sizes: "Which sizes?" },
         });
       }
       assert.equal(answered.messages.length, 1);
-      assert.equal(answered.messages[0]?.text, "Which color?\nBlue");
+      assert.equal(answered.messages[0]?.text, "Which color?\nBlue\n\nWhich sizes?\nSmall, Large");
       assert.equal(answered.messages[0]?.role, "user");
       assert.equal(answered.runs.length, 1);
 
