@@ -89,6 +89,15 @@ describe("pair tailscale local target", () => {
       localPort: 3_773,
       localHost: "192.168.1.42",
     });
+    expect(resolveTailscaleLocalTarget({ ...baseState, host: "::1" })).toEqual({
+      localPort: 3_773,
+      localHost: "[::1]",
+    });
+    // Tailscale dials both loopback addresses for localhost, whichever one the server took.
+    expect(resolveTailscaleLocalTarget({ ...baseState, host: "localhost" })).toEqual({
+      localPort: 3_773,
+      localHost: "localhost",
+    });
   });
 });
 

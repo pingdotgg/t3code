@@ -1,8 +1,10 @@
 import { assert, expect, it } from "@effect/vitest";
+import * as NetAddress from "effect/net/NetAddress";
 
 import {
   buildPairingUrl,
   formatHeadlessServeOutput,
+  loopbackUrlHostForAddress,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
@@ -76,4 +78,15 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it.each([
+  ["::1", "[::1]"],
+  ["127.0.0.1", "127.0.0.1"],
+  ["0.0.0.0", "127.0.0.1"],
+  ["::", "127.0.0.1"],
+])("reaches a server bound to %s through %s", (bound, host) => {
+  expect(loopbackUrlHostForAddress(NetAddress.inetAddressFromIpStringUnsafe(bound, 3773))).toBe(
+    host,
+  );
 });
