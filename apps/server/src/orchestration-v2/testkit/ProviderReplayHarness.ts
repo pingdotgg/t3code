@@ -19,6 +19,7 @@ import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
@@ -41,6 +42,7 @@ import * as ProviderContinuationService from "../ProviderContinuationService.ts"
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
+import * as CommandOutputRecorder from "./CommandOutputRecorder.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
@@ -220,7 +222,11 @@ export function runOrchestratorV2ProviderReplayScenario<
     replayGate,
   });
 
-  return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
+  return Effect.gen(function* () {
+    const result = yield* runOrchestratorV2Scenario(scenario, { replayGate });
+    const recorder = yield* CommandOutputRecorder.CommandOutputRecorder;
+    return { ...result, commandOutput: yield* recorder.snapshot };
+  }).pipe(Effect.provide(layer));
 }
 
 export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
@@ -245,6 +251,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
+  | CommandOutputRecorder.CommandOutputRecorder
   | ProviderSessionManager.ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
@@ -280,7 +287,8 @@ export function layerWithRegistry<Error>(
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
-  | ProviderSessionManager.ProviderSessionManagerV2,
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | CommandOutputRecorder.CommandOutputRecorder,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -328,6 +336,10 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
+        GitVcsDriver.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provide(NodeServices.layer),
+        ),
       ),
     ),
   );
@@ -353,11 +365,16 @@ export function layerWithRegistry<Error>(
     IdAllocator.layer,
     layerProviderEventIngestorProvided,
   );
+  // The real hub, recording what each command streamed so fixtures can assert it.
+  const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
+    Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
+  );
   const layerProviderSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerCommandOutputHubProvided,
         layerProvidedRegistry,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -503,6 +520,7 @@ export function layerWithRegistry<Error>(
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
+    layerCommandOutputHubProvided,
   ).pipe(Layer.provide(ProviderTurnStartServiceTestkit.layer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the

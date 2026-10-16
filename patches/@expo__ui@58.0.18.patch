@@ -1,0 +1,511 @@
+diff --git a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
+index d58b54f..1920b1a 100644
+--- a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
++++ b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
+@@ -533,6 +533,10 @@ class ExpoUIModule : Module() {
+       }
+     }
+ 
++    ExpoUIView<TopAppBarProps>("TopAppBarView") {
++      Content { props -> TopAppBarContent(props) }
++    }
++
+     ExpoUIView<HorizontalFloatingToolbarProps>("HorizontalFloatingToolbarView") {
+       Content { props ->
+         HorizontalFloatingToolbarContent(props)
+diff --git a/android/src/main/java/expo/modules/ui/HostView.kt b/android/src/main/java/expo/modules/ui/HostView.kt
+index 4887034..6eaf039 100644
+--- a/android/src/main/java/expo/modules/ui/HostView.kt
++++ b/android/src/main/java/expo/modules/ui/HostView.kt
+@@ -69,6 +69,7 @@ internal enum class ExpoLayoutDirection(val value: String) : Enumerable {
+ internal data class HostProps(
+   val colorScheme: MutableState<ExpoColorScheme?> = mutableStateOf(null),
+   val seedColor: MutableState<android.graphics.Color?> = mutableStateOf(null),
++  val colorOverrides: MutableState<Map<String, android.graphics.Color>?> = mutableStateOf(null),
+   val layoutDirection: MutableState<ExpoLayoutDirection> = mutableStateOf(ExpoLayoutDirection.LeftToRight),
+   val useViewportSizeMeasurement: MutableState<Boolean> = mutableStateOf(false),
+   val ignoreSafeAreaKeyboardInsets: MutableState<Boolean> = mutableStateOf(false),
+@@ -153,9 +154,60 @@ internal class HostView(context: Context, appContext: AppContext) :
+     val seededScheme = remember(seedArgb, isDark) {
+       seedArgb?.let { seedColorScheme(it, isDark) }
+     }
+-    val colorScheme = seededScheme
++    val baseColorScheme = seededScheme
+       ?: props.colorScheme.value?.toColorScheme(context)
+       ?: ExpoColorScheme.defaultColorScheme(context, isSystemInDarkTheme())
++    val overrides = props.colorOverrides.value.orEmpty()
++    val colorScheme = baseColorScheme.copy(
++      primary = overrides["primary"]?.composeOrNull ?: baseColorScheme.primary,
++      onPrimary = overrides["onPrimary"]?.composeOrNull ?: baseColorScheme.onPrimary,
++      primaryContainer = overrides["primaryContainer"]?.composeOrNull ?: baseColorScheme.primaryContainer,
++      onPrimaryContainer = overrides["onPrimaryContainer"]?.composeOrNull ?: baseColorScheme.onPrimaryContainer,
++      inversePrimary = overrides["inversePrimary"]?.composeOrNull ?: baseColorScheme.inversePrimary,
++      secondary = overrides["secondary"]?.composeOrNull ?: baseColorScheme.secondary,
++      onSecondary = overrides["onSecondary"]?.composeOrNull ?: baseColorScheme.onSecondary,
++      secondaryContainer = overrides["secondaryContainer"]?.composeOrNull ?: baseColorScheme.secondaryContainer,
++      onSecondaryContainer = overrides["onSecondaryContainer"]?.composeOrNull ?: baseColorScheme.onSecondaryContainer,
++      tertiary = overrides["tertiary"]?.composeOrNull ?: baseColorScheme.tertiary,
++      onTertiary = overrides["onTertiary"]?.composeOrNull ?: baseColorScheme.onTertiary,
++      tertiaryContainer = overrides["tertiaryContainer"]?.composeOrNull ?: baseColorScheme.tertiaryContainer,
++      onTertiaryContainer = overrides["onTertiaryContainer"]?.composeOrNull ?: baseColorScheme.onTertiaryContainer,
++      background = overrides["background"]?.composeOrNull ?: baseColorScheme.background,
++      onBackground = overrides["onBackground"]?.composeOrNull ?: baseColorScheme.onBackground,
++      surface = overrides["surface"]?.composeOrNull ?: baseColorScheme.surface,
++      onSurface = overrides["onSurface"]?.composeOrNull ?: baseColorScheme.onSurface,
++      surfaceVariant = overrides["surfaceVariant"]?.composeOrNull ?: baseColorScheme.surfaceVariant,
++      onSurfaceVariant = overrides["onSurfaceVariant"]?.composeOrNull ?: baseColorScheme.onSurfaceVariant,
++      surfaceTint = overrides["surfaceTint"]?.composeOrNull ?: baseColorScheme.surfaceTint,
++      inverseSurface = overrides["inverseSurface"]?.composeOrNull ?: baseColorScheme.inverseSurface,
++      inverseOnSurface = overrides["inverseOnSurface"]?.composeOrNull ?: baseColorScheme.inverseOnSurface,
++      error = overrides["error"]?.composeOrNull ?: baseColorScheme.error,
++      onError = overrides["onError"]?.composeOrNull ?: baseColorScheme.onError,
++      errorContainer = overrides["errorContainer"]?.composeOrNull ?: baseColorScheme.errorContainer,
++      onErrorContainer = overrides["onErrorContainer"]?.composeOrNull ?: baseColorScheme.onErrorContainer,
++      outline = overrides["outline"]?.composeOrNull ?: baseColorScheme.outline,
++      outlineVariant = overrides["outlineVariant"]?.composeOrNull ?: baseColorScheme.outlineVariant,
++      scrim = overrides["scrim"]?.composeOrNull ?: baseColorScheme.scrim,
++      surfaceBright = overrides["surfaceBright"]?.composeOrNull ?: baseColorScheme.surfaceBright,
++      surfaceDim = overrides["surfaceDim"]?.composeOrNull ?: baseColorScheme.surfaceDim,
++      surfaceContainer = overrides["surfaceContainer"]?.composeOrNull ?: baseColorScheme.surfaceContainer,
++      surfaceContainerHigh = overrides["surfaceContainerHigh"]?.composeOrNull ?: baseColorScheme.surfaceContainerHigh,
++      surfaceContainerHighest = overrides["surfaceContainerHighest"]?.composeOrNull ?: baseColorScheme.surfaceContainerHighest,
++      surfaceContainerLow = overrides["surfaceContainerLow"]?.composeOrNull ?: baseColorScheme.surfaceContainerLow,
++      surfaceContainerLowest = overrides["surfaceContainerLowest"]?.composeOrNull ?: baseColorScheme.surfaceContainerLowest,
++      primaryFixed = overrides["primaryFixed"]?.composeOrNull ?: baseColorScheme.primaryFixed,
++      primaryFixedDim = overrides["primaryFixedDim"]?.composeOrNull ?: baseColorScheme.primaryFixedDim,
++      onPrimaryFixed = overrides["onPrimaryFixed"]?.composeOrNull ?: baseColorScheme.onPrimaryFixed,
++      onPrimaryFixedVariant = overrides["onPrimaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onPrimaryFixedVariant,
++      secondaryFixed = overrides["secondaryFixed"]?.composeOrNull ?: baseColorScheme.secondaryFixed,
++      secondaryFixedDim = overrides["secondaryFixedDim"]?.composeOrNull ?: baseColorScheme.secondaryFixedDim,
++      onSecondaryFixed = overrides["onSecondaryFixed"]?.composeOrNull ?: baseColorScheme.onSecondaryFixed,
++      onSecondaryFixedVariant = overrides["onSecondaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onSecondaryFixedVariant,
++      tertiaryFixed = overrides["tertiaryFixed"]?.composeOrNull ?: baseColorScheme.tertiaryFixed,
++      tertiaryFixedDim = overrides["tertiaryFixedDim"]?.composeOrNull ?: baseColorScheme.tertiaryFixedDim,
++      onTertiaryFixed = overrides["onTertiaryFixed"]?.composeOrNull ?: baseColorScheme.onTertiaryFixed,
++      onTertiaryFixedVariant = overrides["onTertiaryFixedVariant"]?.composeOrNull ?: baseColorScheme.onTertiaryFixedVariant
++    )
+     val layoutDirection = props.layoutDirection.value.toLayoutDirection()
+ 
+     // Material3's `MaterialTheme` does not provide `LocalContentColor` — only `Surface` does — so
+diff --git a/android/src/main/java/expo/modules/ui/TopAppBarView.kt b/android/src/main/java/expo/modules/ui/TopAppBarView.kt
+new file mode 100644
+index 0000000..4ed0132
+--- /dev/null
++++ b/android/src/main/java/expo/modules/ui/TopAppBarView.kt
+@@ -0,0 +1,47 @@
++@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
++
++package expo.modules.ui
++
++import android.graphics.Color
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.material3.TopAppBar
++import androidx.compose.material3.TopAppBarDefaults
++import androidx.compose.runtime.Composable
++import expo.modules.kotlin.records.Field
++import expo.modules.kotlin.records.Record
++import expo.modules.kotlin.types.OptimizedRecord
++import expo.modules.kotlin.views.ComposeProps
++import expo.modules.kotlin.views.FunctionalComposableScope
++import expo.modules.kotlin.views.OptimizedComposeProps
++
++@OptimizedRecord
++class TopAppBarColors : Record {
++  @Field val containerColor: Color? = null
++  @Field val titleContentColor: Color? = null
++  @Field val navigationIconContentColor: Color? = null
++  @Field val actionIconContentColor: Color? = null
++}
++
++@OptimizedComposeProps
++data class TopAppBarProps(
++  val colors: TopAppBarColors = TopAppBarColors(),
++  val applyWindowInsets: Boolean = true,
++  val modifiers: ModifierList = emptyList()
++) : ComposeProps
++
++@Composable
++fun FunctionalComposableScope.TopAppBarContent(props: TopAppBarProps) {
++  TopAppBar(
++    title = { Children(UIComposableScope(), filter = { isSlotWithName(it, "title") }) },
++    navigationIcon = { Children(UIComposableScope(), filter = { isSlotWithName(it, "navigationIcon") }) },
++    actions = { Children(UIComposableScope(), filter = { isSlotWithName(it, "actions") }) },
++    colors = TopAppBarDefaults.topAppBarColors(
++      containerColor = props.colors.containerColor.compose,
++      titleContentColor = props.colors.titleContentColor.compose,
++      navigationIconContentColor = props.colors.navigationIconContentColor.compose,
++      actionIconContentColor = props.colors.actionIconContentColor.compose
++    ),
++    windowInsets = if (props.applyWindowInsets) TopAppBarDefaults.windowInsets else WindowInsets(0, 0, 0, 0),
++    modifier = ModifierRegistry.applyModifiers(props.modifiers, appContext, composableScope, globalEventDispatcher)
++  )
++}
+diff --git a/build/jetpack-compose/Host/index.d.ts b/build/jetpack-compose/Host/index.d.ts
+index b586b65..e32f6e0 100644
+--- a/build/jetpack-compose/Host/index.d.ts
++++ b/build/jetpack-compose/Host/index.d.ts
+@@ -1,6 +1,7 @@
+ import { type Ref } from 'react';
+ import { type ColorSchemeName, type ColorValue, type StyleProp, type ViewStyle } from 'react-native';
+ import { type PrimitiveBaseProps } from '../layout';
++import type { MaterialColors } from '../colors';
+ export interface HostProps extends PrimitiveBaseProps {
+     /**
+      * When true, the host view will update its size in the React Native view tree to match the content's layout from Jetpack Compose.
+@@ -41,6 +42,7 @@ export interface HostProps extends PrimitiveBaseProps {
+      * available to descendants via `useMaterialColors()`.
+      */
+     seedColor?: ColorValue;
++    colorOverrides?: Partial<MaterialColors>;
+     /**
+      * The layout direction for the content.
+      * Defaults to the current locale direction from I18nManager.
+diff --git a/build/jetpack-compose/Host/index.js b/build/jetpack-compose/Host/index.js
+index 3985656..2b4a4f9 100644
+--- a/build/jetpack-compose/Host/index.js
++++ b/build/jetpack-compose/Host/index.js
+@@ -8,16 +8,17 @@ import { useMergeRefs } from '../../utils/useMergeRefs';
+ import { getMaterialColors, HostPaletteContext } from '../colors';
+ const HostNativeView = requireNativeView('ExpoUI', 'HostView');
+ export function Host(props) {
+-    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, ref, children, ...restProps } = props;
++    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, colorOverrides, ref, children, ...restProps } = props;
+     const schemeString = colorScheme === 'light' || colorScheme === 'dark' ? colorScheme : undefined;
+     const systemScheme = useRNColorScheme();
+     const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
+-    const palette = useMemo(()=>getMaterialColors({
++    const palette = useMemo(()=>({ ...getMaterialColors({
+             scheme: resolvedScheme,
+             seedColor
+-        }), [
++        }), ...colorOverrides }), [
+         resolvedScheme,
+-        seedColor
++        seedColor,
++        colorOverrides
+     ]);
+     const hostRef = useTextInputHostRef();
+     const mergedRef = useMergeRefs(ref, hostRef);
+@@ -33,6 +34,7 @@ export function Host(props) {
+                 matchContentsHorizontal: typeof matchContents === 'object' ? matchContents.horizontal : matchContents,
+                 colorScheme: schemeString,
+                 seedColor: seedColor,
++                colorOverrides: colorOverrides,
+                 onLayoutContent: onLayoutContent,
+                 layoutDirection: layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight'),
+                 ref: mergedRef,
+diff --git a/build/jetpack-compose/TopAppBar/index.d.ts b/build/jetpack-compose/TopAppBar/index.d.ts
+new file mode 100644
+index 0000000..63afa28
+--- /dev/null
++++ b/build/jetpack-compose/TopAppBar/index.d.ts
+@@ -0,0 +1,15 @@
++import type { ReactNode } from 'react';
++import type { ColorValue } from 'react-native';
++import type { ExpoModifier } from '../../types';
++export interface TopAppBarProps {
++  children: ReactNode;
++  colors?: { containerColor?: ColorValue; titleContentColor?: ColorValue; navigationIconContentColor?: ColorValue; actionIconContentColor?: ColorValue };
++  applyWindowInsets?: boolean;
++  modifiers?: ExpoModifier[];
++}
++export declare function TopAppBar(props: TopAppBarProps): import('react/jsx-runtime').JSX.Element;
++export declare namespace TopAppBar {
++  var Title: ({ children }: { children: ReactNode }) => import('react/jsx-runtime').JSX.Element;
++  var NavigationIcon: ({ children }: { children: ReactNode }) => import('react/jsx-runtime').JSX.Element;
++  var Actions: ({ children }: { children: ReactNode }) => import('react/jsx-runtime').JSX.Element;
++}
+diff --git a/build/jetpack-compose/TopAppBar/index.js b/build/jetpack-compose/TopAppBar/index.js
+new file mode 100644
+index 0000000..c6557fe
+--- /dev/null
++++ b/build/jetpack-compose/TopAppBar/index.js
+@@ -0,0 +1,11 @@
++import { jsx } from 'react/jsx-runtime';
++import { requireNativeView } from 'expo';
++import { createViewModifierEventListener } from '../modifiers/utils';
++const NativeTopAppBar = requireNativeView('ExpoUI', 'TopAppBarView');
++const Slot = requireNativeView('ExpoUI', 'SlotView');
++export function TopAppBar({ modifiers, ...props }) {
++  return jsx(NativeTopAppBar, { ...props, modifiers, ...(modifiers ? createViewModifierEventListener(modifiers) : undefined) });
++}
++TopAppBar.Title = function Title({ children }) { return jsx(Slot, { style: { position: 'absolute' }, slotName: 'title', children }); };
++TopAppBar.NavigationIcon = function NavigationIcon({ children }) { return jsx(Slot, { style: { position: 'absolute' }, slotName: 'navigationIcon', children }); };
++TopAppBar.Actions = function Actions({ children }) { return jsx(Slot, { style: { position: 'absolute' }, slotName: 'actions', children }); };
+diff --git a/build/jetpack-compose/index.d.ts b/build/jetpack-compose/index.d.ts
+index fa70b35..436a8b7 100644
+--- a/build/jetpack-compose/index.d.ts
++++ b/build/jetpack-compose/index.d.ts
+@@ -1,3 +1,4 @@
++export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ export * from './AlertDialog';
+ export * from './Badge';
+diff --git a/build/jetpack-compose/index.js b/build/jetpack-compose/index.js
+index 2457ed1..fdc8eb1 100644
+--- a/build/jetpack-compose/index.js
++++ b/build/jetpack-compose/index.js
+@@ -1,3 +1,4 @@
++export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ export * from './AlertDialog';
+ export * from './Badge';
+diff --git a/build/swift-ui/Picker/index.d.ts b/build/swift-ui/Picker/index.d.ts
+index 5a97352..01e095b 100644
+--- a/build/swift-ui/Picker/index.d.ts
++++ b/build/swift-ui/Picker/index.d.ts
+@@ -7,6 +7,15 @@ export type PickerProps<T extends SelectionValueType = any> = {
+      * For example: 'photo', 'heart.fill', 'star.circle'
+      */
+     systemImage?: SFSymbol;
++    /** Native options rendered by a scoped UISegmentedControl. */
++    segments?: { label: string; value: T }[];
++    /** Only used with segments. */
++    segmentColors?: {
++        background?: string;
++        selectedBackground?: string;
++        text?: string;
++        selectedText?: string;
++    };
+     /**
+      * A label displayed on the picker.
+      */
+diff --git a/ios/Picker/PickerView.swift b/ios/Picker/PickerView.swift
+index c78f278..9b6adf8 100644
+--- a/ios/Picker/PickerView.swift
++++ b/ios/Picker/PickerView.swift
+@@ -1,12 +1,27 @@
+ // Copyright 2025-present 650 Industries. All rights reserved.
+ 
+ import SwiftUI
++import UIKit
+ import ExpoModulesCore
+ 
++internal struct PickerSegment: Record {
++  @Field var label: String = ""
++  @Field var value: Either<String, Double>?
++}
++
++internal struct PickerSegmentColors: Record {
++  @Field var background: Color?
++  @Field var selectedBackground: Color?
++  @Field var text: Color?
++  @Field var selectedText: Color?
++}
++
+ internal final class PickerProps: UIBaseViewProps {
+   @Field var label: String?
+   @Field var systemImage: String?
+   @Field var selection: Either<String, Double>?
++  @Field var segments: [PickerSegment]?
++  @Field var segmentColors: PickerSegmentColors?
+   var onSelectionChange = EventDispatcher()
+ }
+ 
+@@ -25,7 +40,18 @@ internal struct PickerView: ExpoSwiftUI.View {
+ 
+     let labelContent = props.children?.slot("label")
+ 
+-    if let systemImage = props.systemImage, let label = props.label {
++    if let segments = props.segments {
++      NativeSegmentedPicker(
++        segments: segments,
++        colors: props.segmentColors,
++        selection: Self.getHashableFromEither(props.selection),
++        onSelectionChange: { index in
++          guard segments.indices.contains(index),
++            let value = Self.getHashableFromEither(segments[index].value) else { return }
++          props.onSelectionChange(["selection": value.base])
++        }
++      )
++    } else if let systemImage = props.systemImage, let label = props.label {
+       Picker(label, systemImage: systemImage, selection: $selection) { content }
+     } else if let labelContent {
+       Picker(selection: $selection) { content } label: { labelContent }
+@@ -63,7 +89,7 @@ internal struct PickerView: ExpoSwiftUI.View {
+     }
+   }
+ 
+-  private static func getHashableFromEither(_ either: Either<String, Double>?) -> AnyHashable? {
++  fileprivate static func getHashableFromEither(_ either: Either<String, Double>?) -> AnyHashable? {
+     guard let either else { return nil }
+     if let stringValue: String = either.get() {
+       return stringValue
+@@ -74,3 +100,64 @@ internal struct PickerView: ExpoSwiftUI.View {
+     return nil
+   }
+ }
++
++
++/// Instance-scoped styling: never changes UISegmentedControl.appearance().
++private struct NativeSegmentedPicker: UIViewRepresentable {
++  let segments: [PickerSegment]
++  let colors: PickerSegmentColors?
++  let selection: AnyHashable?
++  let onSelectionChange: (Int) -> Void
++
++  func makeCoordinator() -> Coordinator {
++    Coordinator(onSelectionChange: onSelectionChange)
++  }
++
++  func makeUIView(context: Context) -> UISegmentedControl {
++    let control = UISegmentedControl()
++    control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
++    control.setContentHuggingPriority(.defaultLow, for: .horizontal)
++    return control
++  }
++
++  func updateUIView(_ control: UISegmentedControl, context: Context) {
++    context.coordinator.onSelectionChange = onSelectionChange
++    let labels = segments.map(\.label)
++    if context.coordinator.labels != labels {
++      control.removeAllSegments()
++      for (index, label) in labels.enumerated() {
++        control.insertSegment(withTitle: label, at: index, animated: false)
++      }
++      context.coordinator.labels = labels
++    }
++    control.selectedSegmentIndex = segments.firstIndex {
++      PickerView.getHashableFromEither($0.value) == selection
++    } ?? UISegmentedControl.noSegment
++    control.backgroundColor = colors?.background.map { UIColor($0) }
++    control.selectedSegmentTintColor = colors?.selectedBackground.map { UIColor($0) }
++    control.setTitleTextAttributes(
++      colors?.text.map { [.foregroundColor: UIColor($0)] }, for: .normal
++    )
++    control.setTitleTextAttributes(
++      colors?.selectedText.map { [.foregroundColor: UIColor($0)] }, for: .selected
++    )
++    control.isEnabled = context.environment.isEnabled
++  }
++
++  func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISegmentedControl, context: Context) -> CGSize? {
++    CGSize(width: proposal.width ?? uiView.intrinsicContentSize.width, height: uiView.intrinsicContentSize.height)
++  }
++
++  final class Coordinator: NSObject {
++    var labels: [String] = []
++    var onSelectionChange: (Int) -> Void
++
++    init(onSelectionChange: @escaping (Int) -> Void) {
++      self.onSelectionChange = onSelectionChange
++    }
++
++    @objc func changed(_ control: UISegmentedControl) {
++      onSelectionChange(control.selectedSegmentIndex)
++    }
++  }
++}
+diff --git a/src/jetpack-compose/Host/index.tsx b/src/jetpack-compose/Host/index.tsx
+index e994f6e..d0ed70a 100644
+--- a/src/jetpack-compose/Host/index.tsx
++++ b/src/jetpack-compose/Host/index.tsx
+@@ -12,7 +12,7 @@ import {
+ import { NativeTreeContext, useWarnIfNestedHost } from '../../NativeTreeContext';
+ import { TextInputHostProvider, useTextInputHostRef } from '../../keyboard';
+ import { useMergeRefs } from '../../utils/useMergeRefs';
+-import { getMaterialColors, HostPaletteContext } from '../colors';
++import { getMaterialColors, HostPaletteContext, type MaterialColors } from '../colors';
+ import { type PrimitiveBaseProps } from '../layout';
+ 
+ export interface HostProps extends PrimitiveBaseProps {
+@@ -52,6 +52,9 @@ export interface HostProps extends PrimitiveBaseProps {
+    */
+   seedColor?: ColorValue;
+ 
++  /** Explicit Material roles, applied after the seed or system palette. */
++  colorOverrides?: Partial<MaterialColors>;
++
+   /**
+    * The layout direction for the content.
+    * Defaults to the current locale direction from I18nManager.
+@@ -93,6 +96,7 @@ export function Host(props: HostProps) {
+     layoutDirection,
+     colorScheme,
+     seedColor,
++    colorOverrides,
+     ref,
+     children,
+     ...restProps
+@@ -102,8 +106,8 @@ export function Host(props: HostProps) {
+   const systemScheme = useRNColorScheme();
+   const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
+   const palette = useMemo(
+-    () => getMaterialColors({ scheme: resolvedScheme, seedColor }),
+-    [resolvedScheme, seedColor]
++    () => ({ ...getMaterialColors({ scheme: resolvedScheme, seedColor }), ...colorOverrides }),
++    [resolvedScheme, seedColor, colorOverrides]
+   );
+   const hostRef = useTextInputHostRef();
+   const mergedRef = useMergeRefs(ref, hostRef);
+@@ -123,6 +127,7 @@ export function Host(props: HostProps) {
+           }
+           colorScheme={schemeString}
+           seedColor={seedColor}
++          colorOverrides={colorOverrides}
+           onLayoutContent={onLayoutContent}
+           layoutDirection={
+             layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight')
+diff --git a/src/jetpack-compose/TopAppBar/index.tsx b/src/jetpack-compose/TopAppBar/index.tsx
+new file mode 100644
+index 0000000..ca69824
+--- /dev/null
++++ b/src/jetpack-compose/TopAppBar/index.tsx
+@@ -0,0 +1,28 @@
++import { requireNativeView } from 'expo';
++import type { ReactNode, ComponentType } from 'react';
++import type { ColorValue, StyleProp, ViewStyle } from 'react-native';
++import type { ExpoModifier } from '../../types';
++import { createViewModifierEventListener } from '../modifiers/utils';
++
++export interface TopAppBarProps {
++  children: ReactNode;
++  colors?: {
++    containerColor?: ColorValue;
++    titleContentColor?: ColorValue;
++    navigationIconContentColor?: ColorValue;
++    actionIconContentColor?: ColorValue;
++  };
++  /** False when the React Native parent already applies safe-area padding. */
++  applyWindowInsets?: boolean;
++  modifiers?: ExpoModifier[];
++}
++const NativeTopAppBar: ComponentType<TopAppBarProps> = requireNativeView('ExpoUI', 'TopAppBarView');
++const Slot: ComponentType<{ slotName: string; children: ReactNode; style?: StyleProp<ViewStyle> }> = requireNativeView('ExpoUI', 'SlotView');
++
++/** Compose positions the slots; absolute Yoga layout avoids double-counting their offsets. */
++export function TopAppBar({ modifiers, ...props }: TopAppBarProps) {
++  return <NativeTopAppBar {...props} modifiers={modifiers} {...(modifiers ? createViewModifierEventListener(modifiers) : undefined)} />;
++}
++TopAppBar.Title = function Title({ children }: { children: ReactNode }) { return <Slot style={{ position: "absolute" }} slotName="title">{children}</Slot>; };
++TopAppBar.NavigationIcon = function NavigationIcon({ children }: { children: ReactNode }) { return <Slot style={{ position: "absolute" }} slotName="navigationIcon">{children}</Slot>; };
++TopAppBar.Actions = function Actions({ children }: { children: ReactNode }) { return <Slot style={{ position: "absolute" }} slotName="actions">{children}</Slot>; };
+diff --git a/src/jetpack-compose/index.ts b/src/jetpack-compose/index.ts
+index 77fe3d7..3fa0fb9 100644
+--- a/src/jetpack-compose/index.ts
++++ b/src/jetpack-compose/index.ts
+@@ -1,3 +1,4 @@
++export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ 
+ export * from './AlertDialog';
+diff --git a/src/swift-ui/Picker/index.tsx b/src/swift-ui/Picker/index.tsx
+index ab7d7ce..ceac7bf 100644
+--- a/src/swift-ui/Picker/index.tsx
++++ b/src/swift-ui/Picker/index.tsx
+@@ -13,6 +13,15 @@ export type PickerProps<T extends SelectionValueType = any> = {
+    * For example: 'photo', 'heart.fill', 'star.circle'
+    */
+   systemImage?: SFSymbol;
++  /** Native segmented options. Uses a scoped UISegmentedControl instead of SwiftUI Picker. */
++  segments?: { label: string; value: T }[];
++  /** Colors for the native segmented control. Only used with segments. */
++  segmentColors?: {
++    background?: string;
++    selectedBackground?: string;
++    text?: string;
++    selectedText?: string;
++  };
+   /**
+    * A label displayed on the picker.
+    */

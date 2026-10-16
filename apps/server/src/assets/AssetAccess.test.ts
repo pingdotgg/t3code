@@ -1029,6 +1029,34 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("signs the same HTML page URL within an expiry window", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000001-html";
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(config.attachmentsDir, `${attachmentId}.html`),
+        "<p>render</p>",
+      );
+      const bucketMs = 30 * 60 * 1000;
+      const issue = issueAssetUrl({
+        resource: { _tag: "attachment", attachmentId, disposition: "inline" },
+      });
+      yield* TestClock.setTime(bucketMs + 1);
+      const first = yield* issue;
+      yield* TestClock.adjust("20 minutes");
+      const second = yield* issue;
+      yield* TestClock.adjust("10 minutes");
+      const next = yield* issue;
+
+      expect(second.relativeUrl).toBe(first.relativeUrl);
+      expect(first.expiresAt).toBe(4 * bucketMs);
+      expect(next.expiresAt).toBe(5 * bucketMs);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves video attachments inline", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

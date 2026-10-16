@@ -592,8 +592,8 @@ function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
     filePath,
     size: Number(stats.size),
     mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
-    device: stats.dev,
-    inode: Option.getOrNull(stats.ino),
+    device: Number(stats.dev),
+    inode: Option.match(stats.ino, { onNone: () => null, onSome: Number }),
     birthtimeMs: Option.match(stats.birthtime, {
       onNone: () => null,
       onSome: (date) => date.getTime(),
@@ -671,12 +671,7 @@ export const make = Effect.gen(function* () {
   ) {
     const resolved = path.resolve(target);
     const stats = knownStats === undefined ? yield* statOption(resolved) : Option.some(knownStats);
-    if (
-      Option.isSome(stats) &&
-      Option.isSome(stats.value.ino) &&
-      Number.isSafeInteger(stats.value.ino.value) &&
-      stats.value.ino.value > 0
-    ) {
+    if (Option.isSome(stats) && Option.isSome(stats.value.ino) && stats.value.ino.value > 0n) {
       return `inode:${stats.value.dev}:${stats.value.ino.value}`;
     }
     const realPath = yield* fileSystem

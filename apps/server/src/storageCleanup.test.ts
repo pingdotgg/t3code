@@ -18,6 +18,7 @@ import {
   type WorktreeKeepWhen,
   type StorageCleanupSettings,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -265,6 +266,8 @@ const cleanupFixture = (
       storageCleanup,
     };
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
+    let storedWorktreePaths: string[] = [worktree];
+    let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
@@ -291,8 +294,14 @@ const cleanupFixture = (
         subscribeChanges: Effect.succeed(Stream.empty),
       } as unknown as Settings.ServerSettingsService["Service"]),
       Effect.provideService(ProjectStore.ProjectStoreV2, {
+        list: () => Effect.sync(() => projectRoots.map((workspaceRoot) => ({ workspaceRoot }))),
         listShells: () =>
-          Effect.succeed([{ id: ProjectId.make("project-1"), workspaceRoot: repo }]),
+          Effect.sync(() =>
+            projectRoots.map((workspaceRoot, index) => ({
+              id: ProjectId.make(`project-${index + 1}`),
+              workspaceRoot,
+            })),
+          ),
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
         getShellSnapshot: (input?: { location?: string }) =>
@@ -336,7 +345,12 @@ const cleanupFixture = (
                   }),
                 },
               ]
-            : [],
+            : strings.join("").includes('AS "worktreePath"')
+              ? [
+                  ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                  ...storedWorktreePaths,
+                ].map((worktreePath) => ({ worktreePath }))
+              : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -387,6 +401,12 @@ const cleanupFixture = (
       },
       setThreads: (next: typeof threads) => {
         threads = next;
+      },
+      setStoredWorktreePaths: (paths: string[]) => {
+        storedWorktreePaths = paths;
+      },
+      setProjectRoots: (roots: string[]) => {
+        projectRoots = roots;
       },
       setSessionLive: (live: boolean) => {
         sessionLive = live;
@@ -463,7 +483,728 @@ const runCleanupTest = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
+describe("subagent worktree ownership", () => {
+  it.effect.each([
+    "idle",
+    "grandchild",
+    "null-branch",
+    "stale-branch",
+    "isolated-owner",
+    "fork-owner",
+    "missing-parent",
+    "cycle",
+    "two-tops",
+    "wrong-root",
+    "running",
+    "pending",
+    "unrelated",
+    "fork",
+    "recent-activity",
+    "recent-inactive",
+    "recent-grace",
+    "recent-settle",
+    "child-settled-now",
+    "child-settled-only",
+  ] as const)("checks the whole owner group (%s)", (scenario) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      fixture.setSettings({
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSettledAfterDays: scenario === "recent-inactive" ? null : 8,
+          worktreeAfterDays: scenario === "recent-inactive" ? 8 : null,
+        },
+      });
+      const root = shell({
+        branch: "feature",
+        worktreePath: fixture.worktree,
+        settledAt: scenario === "child-settled-only" ? null : at(-20 * DAY_MS),
+        ...(scenario === "isolated-owner" || scenario === "fork-owner"
+          ? {
+              lineage: {
+                parentThreadId: ThreadId.make("ancestor"),
+                rootThreadId: ThreadId.make("ancestor"),
+                relationshipToParent:
+                  scenario === "fork-owner" ? ("fork" as const) : ("subagent" as const),
+              },
+            }
+          : {}),
+      });
+      const child = shell({
+        id: ThreadId.make("child"),
+        branch:
+          scenario === "null-branch"
+            ? null
+            : scenario === "stale-branch"
+              ? "t3/15a6e5ae"
+              : "feature",
+        worktreePath: fixture.worktree,
+        lineage: {
+          parentThreadId:
+            scenario === "missing-parent"
+              ? ThreadId.make("missing")
+              : scenario === "cycle"
+                ? ThreadId.make("child")
+                : scenario === "two-tops"
+                  ? null
+                  : root.id,
+          rootThreadId:
+            scenario === "wrong-root" ? ThreadId.make("other-root") : root.lineage.rootThreadId,
+          relationshipToParent:
+            scenario === "fork" ? "fork" : scenario === "unrelated" ? null : "subagent",
+        },
+        status: scenario === "running" ? "running" : "completed",
+        pendingBackgroundTasks: scenario === "pending" ? [{ taskId: "task", kind: "command" }] : [],
+        latestRunCompletedAt:
+          scenario === "recent-activity" || scenario === "recent-inactive"
+            ? at(-2 * DAY_MS)
+            : scenario === "recent-grace"
+              ? at(-30_000)
+              : null,
+        settledAt: scenario === "child-settled-only" ? at(-20 * DAY_MS) : null,
+      });
+      const grandchild = {
+        ...child,
+        id: ThreadId.make("grandchild"),
+        lineage: { ...child.lineage, parentThreadId: child.id },
+      };
+      // The worktree owner can follow its children in the snapshot.
+      fixture.setThreads(
+        scenario === "grandchild"
+          ? [grandchild, child, root]
+          : scenario === "isolated-owner" || scenario === "fork-owner"
+            ? [child, root, shell({ id: ThreadId.make("ancestor") })]
+            : [child, root],
+      );
+      if (scenario === "recent-settle" || scenario === "child-settled-now")
+        fixture.setThreads([
+          {
+            ...child,
+            settledAt: scenario === "recent-settle" ? at(0) : at(-20 * DAY_MS),
+            updatedAt: at(0),
+          },
+          root,
+        ]);
+      const report = yield* fixture.service.runNow;
+      const removed = ["idle", "grandchild", "isolated-owner", "fork-owner"].includes(scenario);
+      const shared = [
+        "unrelated",
+        "fork",
+        "missing-parent",
+        "cycle",
+        "two-tops",
+        "wrong-root",
+      ].includes(scenario);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(!removed);
+      expect(report.entries[0]).toMatchObject({
+        threadId: shared ? child.id : root.id,
+        outcome: removed ? "removed" : "kept",
+        reason: removed
+          ? "Settled for 20 days"
+          : scenario === "running" || scenario === "pending"
+            ? "Thread is running or has pending work"
+            : shared
+              ? "Shared by 2 threads"
+              : scenario === "null-branch" || scenario === "stale-branch"
+                ? "A subagent thread's branch differs from this worktree's branch"
+                : scenario === "recent-activity"
+                  ? "Settled for 2 of 8 days"
+                  : scenario === "recent-inactive"
+                    ? "Inactive for 2 of 8 days"
+                    : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
+                      ? "Settled moments ago"
+                      : "Not settled",
+      });
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  it.live.each([
+    "running",
+    "pending",
+    "activity",
+    "unrelated",
+    "settled",
+    "resettled",
+    "null-branch",
+    "stale-branch",
+  ] as const)("cancels removal when a child changes during measurement (%s)", (change) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const root = shell({ branch: "feature", worktreePath: fixture.worktree });
+        const child = {
+          ...root,
+          id: ThreadId.make("child"),
+          settledAt: change === "resettled" ? at(-20 * DAY_MS) : null,
+          lineage: {
+            parentThreadId: root.id,
+            rootThreadId: root.id,
+            relationshipToParent: "subagent" as const,
+          },
+        };
+        fixture.setThreads([child, root]);
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setThreads([
+          root,
+          {
+            ...child,
+            branch:
+              change === "null-branch"
+                ? null
+                : change === "stale-branch"
+                  ? "t3/15a6e5ae"
+                  : child.branch,
+            settledAt: change === "settled" ? at(-20 * DAY_MS) : child.settledAt,
+            updatedAt: change === "settled" || change === "resettled" ? at(0) : child.updatedAt,
+            status: change === "running" ? "running" : "idle",
+            pendingBackgroundTasks:
+              change === "pending" ? [{ taskId: "task", kind: "command" }] : [],
+            latestRunCompletedAt: change === "activity" ? at(-DAY_MS) : null,
+          },
+          ...(change === "unrelated" ? [shell({ ...root, id: ThreadId.make("other") })] : []),
+        ]);
+        yield* Deferred.succeed(fixture.resume, undefined);
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Thread activity or shared worktree changed since check",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+});
+
+describe("orphan worktree reports", () => {
+  it.live("keeps orphan results visible when thread results fill the report", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads(
+          Array.from({ length: 205 }, (_, index) =>
+            shell({
+              id: ThreadId.make(`busy-${index}`),
+              branch: "busy",
+              worktreePath: `${fixture.config.worktreesDir}/busy-${index}`,
+              status: "running",
+            }),
+          ),
+        );
+        for (let index = 0; index < 205; index++) {
+          yield* fixture.fs.makeDirectory(`${fixture.config.worktreesDir}/busy-${index}`);
+        }
+        const orphans = ["one", "two"].map(
+          (name) => `${fixture.config.worktreesDir}/repository/${name}`,
+        );
+        for (const orphan of orphans) {
+          yield* fixture.fs.makeDirectory(orphan, { recursive: true });
+          yield* fixture.fs.utimes(orphan, 1, 1);
+        }
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toHaveLength(200);
+        expect(
+          report.entries
+            .slice(0, 2)
+            .map((entry) => entry.path)
+            .sort(),
+        ).toEqual(orphans);
+        expect(report.counts).toEqual({ removed: 0, kept: 207, failed: 0 });
+        expect(report.omittedCount).toBe(7);
+      }),
+    ),
+  );
+
+  it.live.each(["canonical", "win32", "linux"] as const)(
+    "skips an ancestor of a referenced thread worktree (%s)",
+    (platform) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform === "win32" ? "win32" : "linux"),
+          );
+          fixture.setThreads([]);
+          const ancestor = `${fixture.config.worktreesDir}/repository/stack`;
+          const worktree = `${ancestor}/feature`;
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "nested", worktree]);
+          const alias = `${fixture.repo}/alias`;
+          if (platform === "canonical") yield* fixture.fs.symlink(worktree, alias);
+          fixture.setStoredWorktreePaths([
+            platform === "canonical"
+              ? alias
+              : platform === "win32"
+                ? worktree.toUpperCase()
+                : worktree,
+          ]);
+          yield* fixture.fs.utimes(ancestor, 1, 1);
+          expect((yield* fixture.service.runNow).entries).toEqual([]);
+          expect(yield* fixture.fs.exists(worktree)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live("waits an hour before reporting a folder without a thread row", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const folder = `${fixture.config.worktreesDir}/review-guide-123/checkout`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "review", folder]);
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
+        yield* fixture.fs.utimes(folder, 1, 1);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            reason: "No thread uses this worktree",
+          }),
+        ]);
+        expect(yield* fixture.fs.exists(`${folder}/tracked.txt`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("continues reporting when a project root cannot be probed", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const loop = `${fixture.repo}/loop`;
+        yield* fixture.fs.symlink(loop, loop);
+        fixture.setProjectRoots([fixture.repo, loop]);
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        yield* fixture.fs.makeDirectory(orphan, { recursive: true });
+        yield* fixture.fs.utimes(orphan, 1, 1);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: orphan, outcome: "kept", bytes: 0 }),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect.each(["walk-timeout", "sweep-budget"] as const)(
+    "caches walk timeouts and retries budget-cut orphan sizes (%s)",
+    (limit) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fs = yield* FileSystem.FileSystem;
+          const measuring = yield* Deferred.make<void>();
+          let orphan = "";
+          let walks = 0;
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readDirectory: (directory, options) =>
+                Effect.gen(function* () {
+                  if (directory.endsWith("/repository") && walks === 0)
+                    yield* TestClock.adjust("1 second");
+                  if (directory === orphan) {
+                    walks++;
+                    if (limit === "walk-timeout" || walks === 1) {
+                      yield* Deferred.succeed(measuring, undefined);
+                      return yield* Effect.never;
+                    }
+                  }
+                  return (yield* fs.readDirectory(directory, options)).sort();
+                }),
+            }),
+          );
+          fixture.setThreads([]);
+          orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+          yield* fs.makeDirectory(orphan, { recursive: true });
+          yield* fs.writeFileString(`${orphan}/file`, "x");
+          yield* fs.utimes(orphan, 1, 1);
+          const later = `${fixture.config.worktreesDir}/repository/z-later`;
+          yield* fs.makeDirectory(later);
+          yield* fs.utimes(later, 1, 1);
+          if (limit === "sweep-budget") {
+            const first = `${fixture.config.worktreesDir}/repository/a-first`;
+            yield* fs.makeDirectory(first);
+            yield* fs.utimes(first, 1, 1);
+          }
+          const orphanEntry = (report: StorageCleanupReport) =>
+            report.entries.find((entry) => entry.path === orphan);
+          const sweep = yield* fixture.service.runNow.pipe(Effect.forkChild);
+          yield* Deferred.await(measuring);
+          yield* TestClock.adjust(limit === "walk-timeout" ? "30 seconds" : "29 seconds");
+          const firstReport = yield* Fiber.join(sweep);
+          expect(orphanEntry(firstReport)?.bytes).toBeNull();
+          expect(firstReport.entries.find((entry) => entry.path === later)?.bytes).toBeNull();
+          const nextReport = yield* fixture.service.runNow;
+          expect(orphanEntry(nextReport)?.bytes).toBe(limit === "walk-timeout" ? null : 1);
+          expect(nextReport.entries.find((entry) => entry.path === later)?.bytes).toBe(0);
+          yield* fs.writeFileString(`${orphan}/file`, "changed");
+          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(
+            limit === "walk-timeout" ? null : 1,
+          );
+          expect(walks).toBe(limit === "walk-timeout" ? 1 : 2);
+          if (limit === "walk-timeout") return;
+          fixture.setStoredWorktreePaths([orphan]);
+          expect(orphanEntry(yield* fixture.service.runNow)).toBeUndefined();
+          fixture.setStoredWorktreePaths([]);
+          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(7);
+          expect(walks).toBe(3);
+        }),
+      ),
+  );
+
+  it.live.each(["nested", "direct"] as const)(
+    "reports a linked orphan's size without removing its files (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          fixture.setThreads([]);
+          const orphan = `${fixture.config.worktreesDir}/${location === "nested" ? "repository/" : ""}orphan`;
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+          const sizes = yield* Effect.forEach(yield* fixture.fs.readDirectory(orphan), (name) =>
+            fixture.fs.stat(`${orphan}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+          );
+          const outside = yield* fixture.fs.makeTempDirectoryScoped();
+          yield* fixture.fs.writeFileString(`${outside}/external`, "outside data");
+          yield* fixture.fs.symlink(outside, `${orphan}/linked-directory`);
+          yield* fixture.fs.symlink(`${outside}/missing`, `${orphan}/dangling-link`);
+          yield* fixture.fs.utimes(orphan, 1, 1);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries).toEqual([
+            {
+              kind: "worktree",
+              outcome: "kept",
+              reason: "No thread uses this worktree",
+              path: orphan,
+              threadId: null,
+              threadTitle: null,
+              bytes: sizes.reduce((sum, size) => sum + size, 0),
+              files: null,
+            },
+          ]);
+          expect(report.bytesFreed).toBe(0);
+          expect(yield* fixture.fs.readFileString(`${orphan}/tracked.txt`)).toBe("original\n");
+          expect(yield* fixture.fs.readFileString(`${outside}/external`)).toBe("outside data");
+          expect(
+            (yield* fixture.command(orphan, ["rev-parse", "--is-inside-work-tree"])).stdout.trim(),
+          ).toBe("true");
+        }),
+      ),
+  );
+
+  it.live.each(["active", "outside-active-snapshot"] as const)(
+    "does not report a folder referenced by a thread (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          const worktreePath = `${fixture.config.worktreesDir}/repository/referenced`;
+          yield* fixture.command(fixture.repo, [
+            "worktree",
+            "add",
+            "-b",
+            "referenced",
+            worktreePath,
+          ]);
+          fixture.setThreads(
+            location === "active"
+              ? [shell({ branch: "referenced", worktreePath, status: "running" })]
+              : [],
+          );
+          if (location !== "active")
+            fixture.setStoredWorktreePaths([fixture.worktree, worktreePath]);
+          yield* fixture.fs.utimes(worktreePath, 1, 1);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries.filter((entry) => entry.threadId === null)).toEqual([]);
+          expect(yield* fixture.fs.exists(worktreePath)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live.each(["exact", "nested", "symlink"] as const)(
+    "does not report a folder containing a project checkout (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          fixture.setThreads([]);
+          const worktreePath = `${fixture.config.worktreesDir}/repository/project-checkout`;
+          yield* fixture.fs.makeDirectory(`${worktreePath}/nested`, { recursive: true });
+          const alias = `${fixture.repo}/alias`;
+          if (location === "symlink") yield* fixture.fs.symlink(`${worktreePath}/nested`, alias);
+          fixture.setProjectRoots([
+            fixture.repo,
+            location === "exact"
+              ? worktreePath
+              : location === "nested"
+                ? `${worktreePath}/nested`
+                : alias,
+          ]);
+          yield* fixture.fs.utimes(worktreePath, 1, 1);
+          expect((yield* fixture.service.runNow).entries).toEqual([]);
+          expect(yield* fixture.fs.exists(worktreePath)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live.each(["exact", "contains", "symlink"] as const)(
+    "does not report project internals under a custom managed root (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          fixture.setThreads([]);
+          const source = `${fixture.repo}/src`;
+          yield* fixture.fs.makeDirectory(`${source}/nested/deep`, { recursive: true });
+          const alias = `${fixture.config.worktreesDir}/project-alias`;
+          if (location === "symlink") {
+            yield* fixture.fs.symlink(fixture.repo, alias);
+            fixture.setProjectRoots([alias]);
+          }
+          if (location === "contains") fixture.setProjectRoots([fixture.repo, `${source}/nested`]);
+          fixture.setSettings({
+            worktreesDirectory: location === "contains" ? source : fixture.repo,
+          });
+          expect((yield* fixture.service.runNow).entries).toEqual([]);
+          expect(yield* fixture.fs.exists(`${source}/nested/deep`)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live.each(["direct", "symlink"] as const)(
+    "reports an orphan under a managed root inside a project (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const walked: string[] = [];
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readDirectory: (directory, options) => {
+                walked.push(directory);
+                return fs.readDirectory(directory, options);
+              },
+            }),
+          );
+          fixture.setThreads([]);
+          const root = `${fixture.repo}/.worktrees`;
+          const orphan = `${root}/repository/orphan`;
+          const source = `${fixture.repo}/src`;
+          yield* fs.makeDirectory(`${source}/nested/deep`, { recursive: true });
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+          if (location === "symlink") {
+            const alias = `${fixture.config.worktreesDir}/project-alias`;
+            yield* fs.symlink(fixture.repo, alias);
+            fixture.setProjectRoots([alias]);
+          }
+          fixture.setSettings({ worktreesDirectory: root });
+          yield* fs.utimes(orphan, 1, 1);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries).toEqual([
+            expect.objectContaining({
+              path: orphan,
+              outcome: "kept",
+              reason: "No thread uses this worktree",
+            }),
+          ]);
+          expect(walked.some((directory) => directory.startsWith(source))).toBe(false);
+          expect(yield* fs.readFileString(`${orphan}/tracked.txt`)).toBe("original\n");
+        }),
+      ),
+  );
+
+  it.live("reports an orphan containing a removed project checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        const removed = `${orphan}/removed-checkout`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+        yield* fixture.fs.makeDirectory(removed);
+        yield* fixture.fs.remove(removed, { recursive: true });
+        fixture.setProjectRoots([fixture.repo, removed]);
+        yield* fixture.fs.utimes(orphan, 1, 1);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({
+            path: orphan,
+            outcome: "kept",
+            reason: "No thread uses this worktree",
+          }),
+        ]);
+        expect(yield* fixture.fs.readFileString(`${orphan}/tracked.txt`)).toBe("original\n");
+      }),
+    ),
+  );
+
+  it.live("skips project workspace internals while reporting a real orphan sibling", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const project = `${fixture.config.worktreesDir}/project-checkout`;
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        yield* fixture.fs.makeDirectory(`${project}/src/nested`, { recursive: true });
+        yield* fixture.fs.makeDirectory(orphan, { recursive: true });
+        yield* fixture.fs.writeFileString(`${orphan}/file`, "x");
+        fixture.setProjectRoots([fixture.repo, project]);
+        yield* fixture.fs.utimes(orphan, 1, 1);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: orphan, outcome: "kept", bytes: 1 }),
+        ]);
+        expect(yield* fixture.fs.exists(`${project}/src/nested`)).toBe(true);
+        expect(yield* fixture.fs.exists(orphan)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("skips symbolic links at both directory levels and disabled cleanup", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const outside = yield* fixture.fs.makeTempDirectoryScoped();
+        yield* fixture.fs.makeDirectory(`${outside}/checkout`);
+        const projectDirectory = `${fixture.config.worktreesDir}/repository`;
+        yield* fixture.fs.makeDirectory(projectDirectory);
+        yield* fixture.fs.symlink(outside, `${fixture.config.worktreesDir}/linked-project`);
+        yield* fixture.fs.symlink(`${outside}/checkout`, `${projectDirectory}/linked-checkout`);
+        yield* fixture.fs.symlink(`${outside}/missing`, `${projectDirectory}/dangling-link`);
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
+        const orphan = `${projectDirectory}/orphan`;
+        yield* fixture.fs.makeDirectory(orphan);
+        fixture.disable();
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
+        expect(yield* fixture.fs.exists(orphan)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("reports ordinary folders with an honest reason and keeps their files", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const folder = `${fixture.config.worktreesDir}/repository/leftover`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.fs.writeFileString(`${folder}/payload`, "leftover data");
+        yield* fixture.fs.utimes(folder, 1, 1);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            bytes: 13,
+            reason: "No thread uses this folder, and it isn't a git worktree",
+          }),
+        ]);
+        expect(report.bytesFreed).toBe(0);
+        expect(yield* fixture.fs.readFileString(`${folder}/payload`)).toBe("leftover data");
+      }),
+    ),
+  );
+
+  it.live("continues after an inaccessible directory's git probe", (context) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.isWindows) || (yield* HostProcess.UserId) === 0)
+          return context.skip();
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const blocked = `${fixture.config.worktreesDir}/a-inaccessible`;
+        const orphan = `${fixture.config.worktreesDir}/z-repository/orphan`;
+        yield* fixture.fs.makeDirectory(blocked);
+        yield* fixture.fs.makeDirectory(orphan, { recursive: true });
+        yield* fixture.fs.writeFileString(`${orphan}/file`, "x");
+        yield* fixture.fs.chmod(blocked, 0);
+        yield* fixture.fs.utimes(orphan, 1, 1);
+        const report = yield* fixture.service.runNow.pipe(
+          Effect.ensuring(fixture.fs.chmod(blocked, 0o700).pipe(Effect.orDie)),
+        );
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: orphan, outcome: "kept", bytes: 1 }),
+        ]);
+        expect(yield* fixture.fs.exists(orphan)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live.each(["win32", "linux"] as const)(
+    "compares thread paths with host casing rules and excludes existing projects (%s)",
+    (platform) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+          );
+          fixture.setThreads([]);
+          const parent = `${fixture.config.worktreesDir}/repository`;
+          const referenced = `${parent}/Referenced`;
+          const project = `${parent}/Project`;
+          const nested = `${parent}/Nested`;
+          for (const folder of [referenced, project, nested]) {
+            yield* fixture.fs.makeDirectory(`${folder}/child`, { recursive: true });
+            yield* fixture.fs.utimes(folder, 1, 1);
+          }
+          fixture.setStoredWorktreePaths([fixture.worktree, referenced.toUpperCase()]);
+          fixture.setProjectRoots([fixture.repo, project, `${nested}/child`]);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries.map((entry) => entry.path).sort()).toEqual(
+            platform === "win32" ? [] : [referenced],
+          );
+        }),
+      ),
+  );
+
+  it.live("caps orphan entries while preserving kept totals", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        for (let i = 0; i < 205; i++) {
+          const orphan = `${fixture.config.worktreesDir}/repository/orphan-${i}`;
+          yield* fixture.fs.makeDirectory(orphan, { recursive: true });
+          yield* fixture.fs.writeFileString(`${orphan}/file`, "x");
+          yield* fixture.fs.utimes(orphan, 1, 1);
+        }
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toHaveLength(200);
+        expect(report.entries.every((entry) => entry.bytes === 1)).toBe(true);
+        expect(report.omittedCount).toBe(5);
+        expect(report.counts).toEqual({ removed: 0, kept: 205, failed: 0 });
+        expect(report.bytesFreed).toBe(0);
+      }),
+    ),
+  );
+});
+
 describe("storage cleanup reports and local file policies", () => {
+  it.live.each(["before-check", "while-measuring"] as const)(
+    "keeps a worktree protected by a missing project root (%s)",
+    (timing) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* pausedMeasurementFixture();
+          if (timing === "before-check")
+            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+          const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+          if (timing === "while-measuring") {
+            yield* Deferred.await(fixture.measuring);
+            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+          }
+          yield* Deferred.succeed(fixture.resume, undefined);
+          const report = yield* Fiber.join(cleanup);
+          expect(report.entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Contains a project checkout",
+          });
+          expect(yield* fixture.fs.readFileString(`${fixture.worktree}/tracked.txt`)).toBe(
+            "original\n",
+          );
+        }),
+      ),
+  );
+
   it.live("measures nested regular files without following symlinks", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -505,6 +1246,14 @@ describe("storage cleanup reports and local file policies", () => {
     ),
   );
   it.live.each([
+    [
+      "its owner's branch is cleared",
+      (worktree: string) => [shell({ branch: null, worktreePath: worktree, updatedAt: at(0) })],
+    ],
+    [
+      "its owner's branch changes",
+      (worktree: string) => [shell({ branch: "other", worktreePath: worktree, updatedAt: at(0) })],
+    ],
     [
       "its thread starts",
       (worktree: string) => [

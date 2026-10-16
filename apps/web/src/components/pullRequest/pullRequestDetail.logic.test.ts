@@ -1165,6 +1165,13 @@ describe("asking about a change rather than working on it", () => {
     expect(context.text).not.toContain("Walk through this pull request");
   });
 
+  it("gives the same number in another repository its own chip", () => {
+    const fork = { ...base, url: "https://github.com/someone/t3code/pull/42" };
+    expect(buildPullRequestReferenceContext(fork).id).not.toBe(
+      buildPullRequestReferenceContext(base).id,
+    );
+  });
+
   it("leaves the composer empty, and everything the agent needs in the chip", () => {
     const handoff = buildAskAboutPullRequestHandoff(base);
     expect(handoff.prompt).toBe("");

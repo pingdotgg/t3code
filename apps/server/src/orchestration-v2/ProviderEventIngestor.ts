@@ -27,8 +27,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -307,6 +309,7 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
   | EventSink.EventSinkV2
+  | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
@@ -314,6 +317,7 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -690,6 +694,9 @@ export const layer: Layer.Layer<
               }),
             ];
           }
+          case "command_output.delta":
+            // Live output is routed to the command output hub before ingestion.
+            return [];
           case "turn.terminal":
             const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
             if (input.event.status !== "failed") {
@@ -780,6 +787,43 @@ export const layer: Layer.Layer<
             .pipe(Effect.mapError(mapWriteError));
           return result.storedEvents;
         }).pipe(
+          Effect.flatMap((storedEvents) =>
+            Effect.gen(function* () {
+              if (input.event.type !== "app_thread.created") return storedEvents;
+              const created = storedEvents.find((stored) => stored.event.type === "thread.created");
+              if (created?.event.type !== "thread.created") return storedEvents;
+              const child = created.event.payload;
+              if (
+                child.worktreePath === null ||
+                child.branch === null ||
+                !isTemporaryWorktreeBranch(child.branch)
+              )
+                return storedEvents;
+              // Git renames before scanning committed threads. If that scan missed this
+              // creation, HEAD already has the new name, even if the parent moved away.
+              const branch = yield* git.resolveBranchName(child.worktreePath, "HEAD");
+              if (branch === null || branch === child.branch) return storedEvents;
+              const now = yield* DateTime.now;
+              const event = yield* makeDomainEvent(input, {
+                type: "thread.metadata-updated",
+                threadId: child.id,
+                payload: { ...child, branch, updatedAt: now },
+                occurredAt: now,
+              });
+              const synced = yield* eventSink.write({ events: [event] });
+              return [...storedEvents, ...synced];
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Native thread worktree branch recheck failed", {
+                  threadId:
+                    input.event.type === "app_thread.created"
+                      ? input.event.appThread.id
+                      : input.threadId,
+                  cause,
+                }).pipe(Effect.as(storedEvents)),
+              ),
+            ),
+          ),
           Effect.flatMap((storedEvents) =>
             storedEvents.length === 0 || input.event.type !== "subagent.updated"
               ? Effect.succeed(storedEvents)

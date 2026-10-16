@@ -1,3 +1,6 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
@@ -8,12 +11,12 @@ import {
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Platform, TextInput, View } from "react-native";
+import { AppState, Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPill } from "../../components/ControlPill";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { AppBar } from "../../components/ui/AppBar";
+
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserTabMenu } from "./BrowserTabMenu";
@@ -104,7 +107,7 @@ function BrowserPreviewScreen({
   }, [focused, loaded, tabs.length, onClose]);
   const onPictureInPicture = useCallback((state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
-    if (detail) Alert.alert("Picture in picture is unavailable", detail);
+    if (detail) Dialog.alert("Picture in picture is unavailable", detail);
   }, []);
   const selectTab = (next: string) => {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
@@ -115,7 +118,7 @@ function BrowserPreviewScreen({
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
-      <ScreenHeader
+      <AppBar
         title={tab ? browserTabTitle(tab) : "Browser"}
         sidebar={false}
         onBack={onClose}
@@ -157,14 +160,14 @@ function BrowserPreviewScreen({
         }
       />
       {Platform.OS === "ios" ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
+        <Toolbar placement="left">
+          <Toolbar.Button
             icon="xmark"
             accessibilityLabel="Close browser"
             onPress={onClose}
             separateBackground
           />
-        </NativeHeaderToolbar>
+        </Toolbar>
       ) : null}
       {tab ? (
         <>
@@ -196,7 +199,7 @@ function BrowserPreviewScreen({
       ) : (
         <View className="flex-1 items-center justify-center">
           {focused && foreground ? (
-            <ActivityIndicator color={themeVariables["--color-icon"]} />
+            <AppActivityIndicator color={themeVariables["--color-icon"]} />
           ) : null}
         </View>
       )}
@@ -228,7 +231,7 @@ function BrowserAddressBar({
     try {
       onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
     } catch {
-      Alert.alert("Could not open this address", "Enter an http or https URL.");
+      Dialog.alert("Could not open this address", "Enter an http or https URL.");
     }
   };
   return (

@@ -1,3 +1,5 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -5,7 +7,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -15,12 +16,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScrollViewMarker } from "react-native-screens";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
-import { SymbolView } from "../../components/AppSymbol";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -140,13 +141,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   return (
     <View className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="left">
+        <Toolbar.Button
           icon="xmark"
           accessibilityLabel="Close request review"
           onPress={() => navigation.goBack()}
         />
-      </NativeHeaderToolbar>
+      </Toolbar>
       <NativeStackScreenOptions
         options={{
           title: "Request review",
@@ -231,7 +232,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   </Text>
                 </View>
                 {pending === id ? (
-                  <ActivityIndicator />
+                  <AppActivityIndicator />
                 ) : item.isRequested ? (
                   <View className="flex-row items-center gap-1.5">
                     <Text className="text-xs text-foreground-muted">Requested</Text>
@@ -245,7 +246,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           }}
           ListEmptyComponent={
             result.isPending && !result.data ? (
-              <ActivityIndicator className="my-8" />
+              <AppActivityIndicator className="my-8" />
             ) : (
               <View className="px-4 py-6">
                 <EmptyState
@@ -259,7 +260,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   detail={result.error ?? "Search people and teams with access to this repository."}
                   variant="plain"
                 />
-                {result.error ? <MaterialButton label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
               </View>
             )
           }
@@ -281,7 +282,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         >
           {!pr ? (
             detail.isPending ? (
-              <ActivityIndicator />
+              <AppActivityIndicator />
             ) : (
               <Text className="text-danger-foreground">
                 {detail.error ?? "Couldn't load this pull request."}
@@ -302,13 +303,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 autoCorrect={false}
                 className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
               />
-              <MaterialButton
+              <Button
                 label="Request review"
                 fullWidth
                 disabled={!allowed || !query.trim() || pending !== null}
                 onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
               />
-              <MaterialButton
+              <Button
                 label="Remove review request"
                 fullWidth
                 tone="text"

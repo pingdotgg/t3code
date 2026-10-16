@@ -1,8 +1,8 @@
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";

@@ -1,5 +1,5 @@
-// Mirrors the newest build on a Google Play track to a rolling GitHub
-// prerelease as a universal APK. Play generates and signs that APK from the
+// Publishes closed-testing betas, or downloads the internal APK for a normal
+// nightly release. Play generates and signs the APK from the
 // uploaded bundle with the app signing key, so it carries the same signature
 // as the Play Store install. Run by .github/workflows/mobile-android-apk.yml.
 const { execFileSync } = require("node:child_process");
@@ -77,109 +77,151 @@ function gh(...args) {
 
 function readRelease(tag) {
   try {
-    return JSON.parse(gh("release", "view", tag, "--json", "assets,body"));
+    return JSON.parse(gh("release", "view", tag, "--json", "assets,body,isDraft"));
   } catch {
     return undefined;
   }
 }
 
-// Downloads the build's universal APK and uploads it, creating the release on
-// first use. Returns false when Play lists no universal APK, which happens
-// while it is still processing a fresh upload.
-async function uploadApk({ token, appUrl, build, tag, apkName, notes, release }) {
+// Download to a temporary directory so a failed request cannot leave a partial
+// APK among the release assets.
+async function downloadApk({ token, appUrl, build, apkName }) {
   const generated = await (
     await play(token, "GET", `${appUrl}/generatedApks/${build.versionCode}`)
   ).json();
-  // One entry per app signing key. More than one means a key rotation, so
-  // fail rather than guess which signature testers should get.
   const universal = (generated.generatedApks ?? []).filter((entry) => entry.generatedUniversalApk);
-  if (universal.length === 0) return false;
+  if (universal.length === 0) return undefined;
   if (universal.length > 1) {
     throw new Error(`Play returned ${universal.length} universal APKs, one per signing key.`);
   }
   const { downloadId } = universal[0].generatedUniversalApk;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "apk-"));
+  const apkPath = path.join(directory, apkName);
+  try {
+    const download = await play(
+      token,
+      "GET",
+      `${appUrl}/generatedApks/${build.versionCode}/downloads/${encodeURIComponent(downloadId)}:download?alt=media`,
+    );
+    await pipeline(Readable.fromWeb(download.body), fs.createWriteStream(apkPath));
+    return apkPath;
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
 
-  const apkPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "apk-")), apkName);
-  const download = await play(
-    token,
-    "GET",
-    `${appUrl}/generatedApks/${build.versionCode}/downloads/${encodeURIComponent(downloadId)}:download?alt=media`,
-  );
-  await pipeline(Readable.fromWeb(download.body), fs.createWriteStream(apkPath));
-
+function publishBeta(tag, apkPath, notes, title) {
+  const release = readRelease(tag);
+  if (
+    release &&
+    !release.isDraft &&
+    release.assets.some(
+      (asset) =>
+        asset.name === path.basename(apkPath) && asset.state === "uploaded" && asset.size > 0,
+    )
+  )
+    return;
   if (!release) {
-    // Prerelease with a non-v tag: release.yml, the desktop updater, the CLI,
-    // and the marketing site's latest-release lookup all ignore it.
     gh(
       "release",
       "create",
       tag,
+      "--draft",
       "--prerelease",
       "--latest=false",
       "--title",
-      "T3 Code for Android (nightly)",
+      title,
       "--notes",
       notes,
     );
   }
-  // --clobber replaces an asset a failed upload left behind.
   gh("release", "upload", tag, apkPath, "--clobber");
-  return true;
+  gh(
+    "release",
+    "edit",
+    tag,
+    "--draft=false",
+    "--prerelease",
+    "--latest=false",
+    "--title",
+    title,
+    "--notes",
+    notes,
+  );
 }
 
 async function main() {
   const packageName = requireEnv("PACKAGE_NAME");
-  const trackName = requireEnv("PLAY_TRACK");
-  const tag = requireEnv("RELEASE_TAG");
-  const key = JSON.parse(requireEnv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"));
-  const summary = (line) =>
-    process.env.GITHUB_STEP_SUMMARY &&
-    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
-
-  const token = await playAccessToken(key);
+  const outputDirectory = process.env.APK_OUTPUT_DIR;
+  const channel = outputDirectory ? "internal" : "beta";
+  const track = outputDirectory ? "internal" : "alpha";
+  const token = await playAccessToken(JSON.parse(requireEnv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON")));
   const appUrl = `${PLAY_API}/${packageName}`;
-  const build = await newestTrackBuild(token, appUrl, trackName);
+  const build = await newestTrackBuild(token, appUrl, track);
   if (!build) {
-    console.log(`The ${trackName} track has no live release.`);
+    console.log(`The ${track} track has no live release.`);
     return;
   }
-
   const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
-  const apkName = `t3code-android-${safeName}-${build.versionCode}.apk`;
-  const notes = [
-    `T3 Code for Android that works with nightly servers, mirrored from the Google Play ${trackName} track. Current build: ${build.versionName} (${build.versionCode}).`,
-    "",
-    "The Play Store release can't connect to a nightly server yet. Install this APK if you can't join the Play testing group. Only the newest build is kept here.",
-  ].join("\n");
-
-  const release = readRelease(tag);
-  const assets = release?.assets ?? [];
-  // A failed upload can leave an empty asset under the final name.
-  const published = assets.some(
-    (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
-  );
-  if (published) {
-    console.log(`${apkName} is already published.`);
-  } else if (await uploadApk({ token, appUrl, build, tag, apkName, notes, release })) {
-    console.log(`Published ${apkName}.`);
-    summary(`:white_check_mark: Published \`${apkName}\` to the \`${tag}\` release.`);
-  } else {
-    // The next run retries.
-    console.log(`Play lists no universal APK for ${build.versionCode}.`);
-    summary(
-      `:hourglass: Play lists no universal APK for ${build.versionName} (${build.versionCode}).`,
+  const apkName = `t3code-android-${channel}-${safeName}-${build.versionCode}.apk`;
+  const tag = outputDirectory ? undefined : requireEnv("RELEASE_TAG");
+  const snapshotTag = `android-beta-${build.versionCode}`;
+  const release = tag ? readRelease(tag) : undefined;
+  const snapshot = tag ? readRelease(snapshotTag) : undefined;
+  const hasApk = (value) =>
+    value &&
+    !value.isDraft &&
+    value.assets.some(
+      (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
     );
+  const pruneBetaAssets = () => {
+    for (const stale of release?.assets ?? []) {
+      if (stale.name.endsWith(".apk") && stale.name !== apkName) {
+        gh("release", "delete-asset", tag, stale.name, "--yes");
+      }
+    }
+  };
+  if (hasApk(release) && hasApk(snapshot)) {
+    pruneBetaAssets();
+    console.log(`${apkName} is already published.`);
     return;
   }
-
-  // Reconciled on every run so an interrupted cleanup finishes on the next one.
-  for (const stale of assets) {
-    if (stale.name.endsWith(".apk") && stale.name !== apkName) {
-      gh("release", "delete-asset", tag, stale.name, "--yes");
-    }
+  const apkPath = await downloadApk({ token, appUrl, build, apkName });
+  if (!apkPath) {
+    console.log(`Play is still processing the ${track} APK for ${build.versionCode}.`);
+    return;
   }
-  if (release && release.body.replace(/\r\n/g, "\n").trim() !== notes) {
-    gh("release", "edit", tag, "--notes", notes);
+  try {
+    if (outputDirectory) {
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      const destination = path.join(outputDirectory, apkName);
+      const temporary = `${destination}.tmp`;
+      try {
+        fs.copyFileSync(apkPath, temporary);
+        fs.renameSync(temporary, destination);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+      return;
+    }
+    const notes = [
+      `T3 Code for Android beta, mirrored from Google Play closed testing. Build: ${build.versionName} (${build.versionCode}).`,
+      "",
+      "These builds have been promoted for wider testing, but may still contain bugs. The beta is optional; the store app also works with Nightly servers.",
+    ].join("\n");
+    // Publish the versioned beta first, then advance the stable download page.
+    // The build number makes retries and unchanged hourly checks idempotent.
+    publishBeta(
+      snapshotTag,
+      apkPath,
+      notes,
+      `Android beta ${build.versionName} (${build.versionCode})`,
+    );
+    publishBeta(tag, apkPath, notes, "T3 Code for Android (beta)");
+    pruneBetaAssets();
+  } finally {
+    fs.rmSync(path.dirname(apkPath), { recursive: true, force: true });
   }
 }
 

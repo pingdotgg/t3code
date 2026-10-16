@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/ui/Toolbar";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
@@ -5,7 +6,7 @@ import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -101,8 +102,8 @@ export function WorkspaceToolbar(props: {
         }}
       />
       {/* UIKit lays trailing items out from the edge inward. */}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="right">
+        <Toolbar.Button
           accessibilityLabel="Settings"
           icon="gearshape"
           onPress={() =>
@@ -113,7 +114,7 @@ export function WorkspaceToolbar(props: {
           }
         />
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
-          <NativeHeaderToolbar.Button
+          <Toolbar.Button
             accessibilityLabel={
               selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
             }
@@ -121,11 +122,11 @@ export function WorkspaceToolbar(props: {
             onPress={focusSearch}
           />
         )}
-      </NativeHeaderToolbar>
-      <NativeHeaderToolbar placement="bottom">
-        {nativeToolbarCompose ? <NativeHeaderToolbar.Spacer flexible /> : null}
+      </Toolbar>
+      <Toolbar placement="bottom">
+        {nativeToolbarCompose ? <Toolbar.Spacer flexible /> : null}
         {nativeToolbarCompose ? (
-          <NativeHeaderToolbar.Button
+          <Toolbar.Button
             identifier="workspace-compose"
             accessibilityLabel="New chat"
             icon="square.and.pencil"
@@ -133,7 +134,7 @@ export function WorkspaceToolbar(props: {
             separateBackground
           />
         ) : null}
-      </NativeHeaderToolbar>
+      </Toolbar>
     </>
   );
 }

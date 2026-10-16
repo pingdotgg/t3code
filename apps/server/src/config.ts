@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import packageJson from "../package.json" with { type: "json" };
 
 export const DEFAULT_PORT = 3773;
 
@@ -118,14 +119,21 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
 
 /**
  * Resource attributes shared by every OTLP exporter, so traces, metrics, and
- * logs report the same service identity to the collector.
+ * logs report the same service identity to the collector. `host.name` keeps
+ * servers apart when several export to one collector; a `host.name` set in
+ * `OTEL_RESOURCE_ATTRIBUTES` wins, since explicit attributes override it.
  */
-export const otlpResource = (config: ServerConfig["Service"]) => ({
+export const otlpResource = (
+  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
+  hostName: string,
+) => ({
   serviceName: "t3code-server",
+  serviceVersion: packageJson.version,
   attributes: {
     "service.namespace": "t3code",
     "service.runtime": "t3-server",
     "service.mode": config.mode,
+    "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
   },
 });
 

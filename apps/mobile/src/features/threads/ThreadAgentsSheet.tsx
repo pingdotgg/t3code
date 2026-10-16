@@ -9,27 +9,36 @@ import {
 import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
+import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
+import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { environmentThreadDetails } from "../../state/threads";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { SubagentRow } from "./SubagentRow";
-import { MaterialScreenContent } from "../../components/MaterialScreenContent";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 type AgentsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
-export function useThreadTurnSubagents(target: AgentsTarget): ThreadTurnSubagents | null {
-  return useAtomValue(environmentThreadDetails.turnSubagentsAtom(target));
+const EMPTY_TURN_SUBAGENTS_ATOM = Atom.make<ThreadTurnSubagents | null>(null).pipe(
+  Atom.withLabel("mobile-thread-turn-subagents:empty"),
+);
+
+export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnSubagents | null {
+  return useAtomValue(
+    target === null
+      ? EMPTY_TURN_SUBAGENTS_ATOM
+      : environmentThreadDetails.turnSubagentsAtom(target),
+  );
 }
 
 export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
@@ -118,9 +127,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AndroidSheetHeader title="Agents" onBack={() => navigation.goBack()} />
-      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
-        {content}
-      </MaterialScreenContent>
+      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );
 }

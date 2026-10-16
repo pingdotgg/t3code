@@ -1,3 +1,5 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -7,7 +9,7 @@ import {
   pastedTextDisposition,
   replaceTextSelection,
 } from "@t3tools/client-runtime/text-paste";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   CommonActions,
   StackActions,
@@ -17,7 +19,7 @@ import {
   type NavigationAction,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
   KeyboardStickyView,
@@ -50,9 +52,9 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { MaterialScreenContent } from "../../components/MaterialScreenContent";
-import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -64,8 +66,8 @@ import {
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
@@ -110,7 +112,7 @@ import { useProjectClone } from "../../state/projectClones";
 import { projectEnvironment } from "../../state/projects";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
+import { ProjectCloneBanner } from "./ProjectCloneBanner";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
@@ -277,7 +279,7 @@ export function NewTaskDraftScreen(props: {
     const result = await action();
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      Alert.alert(title, error instanceof Error ? error.message : "An error occurred.");
+      Dialog.alert(title, error instanceof Error ? error.message : "An error occurred.");
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -296,7 +298,7 @@ export function NewTaskDraftScreen(props: {
     });
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      Alert.alert(
+      Dialog.alert(
         "Failed to remove project",
         error instanceof Error ? error.message : "An error occurred.",
       );
@@ -816,7 +818,7 @@ export function NewTaskDraftScreen(props: {
     if (!incomingShare) {
       if (isIncomingShareUnavailable && alertedUnavailableIncomingShareIdRef.current !== shareId) {
         alertedUnavailableIncomingShareIdRef.current = shareId;
-        Alert.alert(
+        Dialog.alert(
           "Shared content unavailable",
           "The shared content is no longer in the inbox. You can continue editing this task draft.",
         );
@@ -907,7 +909,7 @@ export function NewTaskDraftScreen(props: {
         );
       }
       if (warnings.length > 0) {
-        Alert.alert("Some shared content was skipped", warnings.join("\n"));
+        Dialog.alert("Some shared content was skipped", warnings.join("\n"));
       }
       shareImportDraftBackupRef.current.delete(importKey);
     })()
@@ -915,7 +917,7 @@ export function NewTaskDraftScreen(props: {
         if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
           return;
         }
-        Alert.alert(
+        Dialog.alert(
           "Could not import shared content",
           error instanceof Error ? error.message : "The shared content could not be saved.",
           [
@@ -960,7 +962,7 @@ export function NewTaskDraftScreen(props: {
                     if (!shareImportMountedRef.current) {
                       return;
                     }
-                    Alert.alert(
+                    Dialog.alert(
                       "Could not cancel import",
                       cancelError instanceof Error
                         ? cancelError.message
@@ -1075,7 +1077,7 @@ export function NewTaskDraftScreen(props: {
         : []),
     ];
     if (problems.length > 0) {
-      Alert.alert("Could not attach photo or video", problems.join("\n\n"));
+      Dialog.alert("Could not attach photo or video", problems.join("\n\n"));
     }
   }
 
@@ -1086,7 +1088,7 @@ export function NewTaskDraftScreen(props: {
     const maxBytes =
       selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) {
-      Alert.alert("File attachments are not available on this server.");
+      Dialog.alert("File attachments are not available on this server.");
       return;
     }
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
@@ -1108,7 +1110,7 @@ export function NewTaskDraftScreen(props: {
         : []),
     ];
     if (problems.length > 0) {
-      Alert.alert("Could not attach file", problems.join("\n\n"));
+      Dialog.alert("Could not attach file", problems.join("\n\n"));
     }
   }
 
@@ -1194,13 +1196,13 @@ export function NewTaskDraftScreen(props: {
             }
             if (flow.appendAttachments([attachment], insertion) > 0) {
               await removePersistedComposerAttachmentFile(attachment.fileUri);
-              Alert.alert(
+              Dialog.alert(
                 "Could not attach pasted text",
                 `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
               );
             }
           } catch (error) {
-            Alert.alert(
+            Dialog.alert(
               "Could not attach pasted text",
               error instanceof Error ? error.message : "Try again.",
             );
@@ -1214,7 +1216,7 @@ export function NewTaskDraftScreen(props: {
         } else if (!wouldExceedInputLimit) {
           insertPaste();
         } else {
-          Alert.alert(
+          Dialog.alert(
             wouldExceedInputLimit
               ? "Pasted text is too large for this message"
               : "Could not attach pasted text",
@@ -1280,7 +1282,7 @@ export function NewTaskDraftScreen(props: {
         modelSelection,
         selectedProject.id,
       );
-      Alert.alert(title, detail);
+      Dialog.alert(title, detail);
       return;
     }
     // T3's own limits command is answered by the thread composer; a new task would
@@ -1291,7 +1293,7 @@ export function NewTaskDraftScreen(props: {
       isUsageLimitsCommand(initialMessageText) &&
       draft.attachments.length === 0
     ) {
-      Alert.alert(
+      Dialog.alert(
         "Usage limits",
         "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
       );
@@ -1301,7 +1303,7 @@ export function NewTaskDraftScreen(props: {
     // never drops the user's files); starting anyway would upload everything
     // and have the server reject the turn.
     if (draft.attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-      Alert.alert(
+      Dialog.alert(
         "Too many attachments",
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
@@ -1310,7 +1312,7 @@ export function NewTaskDraftScreen(props: {
 
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
-      Alert.alert("Too much context", contextBlockReason);
+      Dialog.alert("Too much context", contextBlockReason);
       return;
     }
 
@@ -1359,7 +1361,7 @@ export function NewTaskDraftScreen(props: {
     try {
       await enqueueThreadOutboxMessage(message);
     } catch (error) {
-      Alert.alert(
+      Dialog.alert(
         "Could not queue task",
         error instanceof Error ? error.message : "The task could not be saved to the outbox.",
       );
@@ -1872,7 +1874,7 @@ export function NewTaskDraftScreen(props: {
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
-        <MaterialScreenContent>
+        <ScreenContent>
           {heroViewport}
 
           <KeyboardStickyView
@@ -1881,7 +1883,7 @@ export function NewTaskDraftScreen(props: {
           >
             {composerDock}
           </KeyboardStickyView>
-        </MaterialScreenContent>
+        </ScreenContent>
       </View>
     );
   }
@@ -1895,13 +1897,13 @@ export function NewTaskDraftScreen(props: {
           title: "New thread",
         }}
       />
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="left">
+        <Toolbar.Button
           accessibilityLabel="Cancel new task"
           label="Cancel"
           onPress={closeNewTask}
         />
-      </NativeHeaderToolbar>
+      </Toolbar>
 
       {heroViewport}
       <KeyboardStickyView

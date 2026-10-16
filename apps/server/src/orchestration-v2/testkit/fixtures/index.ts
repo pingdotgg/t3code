@@ -128,6 +128,8 @@ import { skillInvocationInput } from "./skill_invocation/input.ts";
 import { assertSimpleOutput } from "./simple/codex_output.ts";
 import { assertPiSimpleOutput } from "./simple/pi_output.ts";
 import { simpleInput } from "./simple/input.ts";
+import { malformedSessionUpdateInput } from "./malformed_session_update/input.ts";
+import { assertMalformedSessionUpdateOutput } from "./malformed_session_update/output.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
@@ -184,6 +186,8 @@ import { assertToolCallWorkspaceNeverClaudeOutput } from "./tool_call_workspace_
 import { assertToolCallWorkspaceNeverOutput } from "./tool_call_workspace_never/codex_output.ts";
 import { toolCallWorkspaceNeverInput } from "./tool_call_workspace_never/input.ts";
 import { assertTurnInterruptClaudeOutput } from "./turn_interrupt/claude_output.ts";
+import { assertCommandOutputStreamingOutput } from "./command_output_streaming/output.ts";
+import { commandOutputStreamingInput } from "./command_output_streaming/input.ts";
 import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
@@ -591,6 +595,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
+      },
+    ],
+  },
+  {
+    name: "malformed_session_update",
+    buildInput: malformedSessionUpdateInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./malformed_session_update/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertMalformedSessionUpdateOutput,
       },
     ],
   },
@@ -1547,6 +1566,31 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./turn_interrupt/muse_transcript.ndjson", import.meta.url),
         modelSelection: MUSE_MODEL_SELECTION,
         assertOutput: assertMuseTurnInterruptOutput,
+      },
+    ],
+  },
+  {
+    name: "command_output_streaming",
+    buildInput: commandOutputStreamingInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./command_output_streaming/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertCommandOutputStreamingOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./command_output_streaming/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertCommandOutputStreamingOutput,
       },
     ],
   },

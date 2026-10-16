@@ -1,3 +1,4 @@
+import * as Dialog from "./ui/Dialog";
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -10,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -23,8 +24,8 @@ import { contextImageGallery } from "../lib/contextImageGallery";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { VideoPreviewModal } from "./VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
-import { AppText as Text } from "./AppText";
-import { AppSheet } from "./AppSheet";
+import { AppText as Text } from "./ui/AppText";
+import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
 
@@ -183,7 +184,7 @@ export function ComposerContextSheet(props: {
       : undefined;
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
-    <AppSheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
+    <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
@@ -354,7 +355,7 @@ export function ComposerContextSheet(props: {
             onPress={() => {
               props.onClose();
               void openPullRequest(pullRequestUrl).catch(() =>
-                Alert.alert("Could not open pull request", "Try again when connected."),
+                Dialog.alert("Could not open pull request", "Try again when connected."),
               );
             }}
             className="rounded-xl bg-subtle p-4"
@@ -390,6 +391,6 @@ export function ComposerContextSheet(props: {
           </Pressable>
         ) : null}
       </ScrollView>
-    </AppSheet>
+    </Sheet>
   );
 }

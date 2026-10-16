@@ -1,7 +1,7 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { useAuth } from "@clerk/expo";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   type EnvironmentId,
@@ -13,9 +13,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
 import { Pressable, type TextLayoutEvent, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";

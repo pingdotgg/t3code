@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import type { AcpRegistryDistributionPreference } from "../settings.ts";
 import type { AcpRegistrySettings } from "../settings.ts";
+import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   mergePathEntries,
@@ -238,6 +239,18 @@ export function resolveAcpRegistryPlatformTarget(
   return os && arch ? (`${os}-${arch}` as AcpRegistryPlatformTarget) : undefined;
 }
 
+function resolveAcpRegistryPlatformTargetCandidates(
+  platformTarget: AcpRegistryPlatformTarget | undefined,
+): ReadonlyArray<AcpRegistryPlatformTarget> {
+  if (platformTarget === undefined) return [];
+  // Windows 11 on ARM executes windows-x86_64 binaries under Prism emulation
+  // when an agent does not publish a native windows-aarch64 binary.
+  if (platformTarget === "windows-aarch64") {
+    return ["windows-aarch64", "windows-x86_64"];
+  }
+  return [platformTarget];
+}
+
 interface ExactPackageSpec {
   readonly name: string;
   readonly version: string;
@@ -375,18 +388,22 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
         (left, right) => right.localeCompare(left, undefined, { numeric: true }),
       );
       for (const version of versions) {
-        const installRoot = path.join(installsDirectory, agent, version, target);
-        if (yield* fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
-          const binaryTarget = cachedAgentByInstall.get(`${agent}\0${version}`)?.distribution
-            .binary?.[target];
-          const commandSegments =
-            binaryTarget === undefined ? undefined : normalizeRegistryCommandPath(binaryTarget.cmd);
-          const directory =
-            commandSegments === undefined
-              ? installRoot
-              : path.join(installRoot, ...commandSegments.slice(0, -1));
-          if (yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
-            directories.push(directory);
+        for (const candidateTarget of resolveAcpRegistryPlatformTargetCandidates(target)) {
+          const installRoot = path.join(installsDirectory, agent, version, candidateTarget);
+          if (yield* fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
+            const binaryTarget = cachedAgentByInstall.get(`${agent}\0${version}`)?.distribution
+              .binary?.[candidateTarget];
+            const commandSegments =
+              binaryTarget === undefined
+                ? undefined
+                : normalizeRegistryCommandPath(binaryTarget.cmd);
+            const directory =
+              commandSegments === undefined
+                ? installRoot
+                : path.join(installRoot, ...commandSegments.slice(0, -1));
+            if (yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
+              directories.push(directory);
+            }
           }
         }
       }
@@ -409,7 +426,9 @@ export function resolveAcpRegistryDistribution(input: {
   readonly platformTarget: AcpRegistryPlatformTarget | undefined;
 }): ResolvedAcpRegistryDistribution | undefined {
   const { agent, platformTarget } = input;
-  const binary = platformTarget ? agent.distribution.binary?.[platformTarget] : undefined;
+  const binary = resolveAcpRegistryPlatformTargetCandidates(platformTarget)
+    .map((candidate) => agent.distribution.binary?.[candidate])
+    .find((entry) => entry !== undefined);
   const candidates: ReadonlyArray<AcpRegistryDistributionKind> =
     input.preference === "auto" ? ["binary", "npx", "uvx"] : [input.preference];
 
@@ -1336,11 +1355,16 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const binaryPaths = (agent: AcpRegistryAgent, target: typeof AcpRegistryBinaryTarget.Type) => {
     const commandSegments = normalizeRegistryCommandPath(target.cmd);
-    if (platformTarget === undefined || commandSegments === undefined) return undefined;
-    const installRoot = path.join(agentInstallRoot(agent), platformTarget);
+    const matchedPlatformTarget =
+      resolveAcpRegistryPlatformTargetCandidates(platformTarget).find(
+        (candidate) => agent.distribution.binary?.[candidate] === target,
+      ) ?? platformTarget;
+    if (matchedPlatformTarget === undefined || commandSegments === undefined) return undefined;
+    const installRoot = path.join(agentInstallRoot(agent), matchedPlatformTarget);
     return {
       commandSegments,
       installRoot,
+      platformTarget: matchedPlatformTarget,
       executablePath: path.join(installRoot, ...commandSegments),
     };
   };
@@ -1487,6 +1511,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
         yield* fileSystem.rename(archivePath, targetPath);
       } else {
+        // The new Windows ARM fallback must extract x64 ZIPs even when Git's GNU tar wins PATH.
+        // Keep archive selection for existing native distributions unchanged in this PR.
+        const tarCommand =
+          platformTarget === "windows-aarch64" &&
+          paths.platformTarget === "windows-x86_64" &&
+          kind === "zip"
+            ? cliArchiveTarCommand(platform, hostEnvironment)
+            : "tar";
         const listArgs =
           kind === "tar_gz"
             ? ["-tzf", archivePath]
@@ -1498,7 +1530,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const entries =
           listArgs === undefined
             ? yield* runCommand("unzip", ["-Z1", archivePath])
-            : yield* runCommand("tar", listArgs);
+            : yield* runCommand(tarCommand, listArgs);
         if (!validateArchiveEntries(entries)) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
@@ -1509,7 +1541,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot]);
         } else {
           const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand("tar", [extractFlag, archivePath, "-C", extractionRoot]);
+          yield* runCommand(tarCommand, [extractFlag, archivePath, "-C", extractionRoot]);
         }
       }
 

@@ -1,10 +1,10 @@
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  ActivityIndicator,
   Keyboard,
   Platform,
   Pressable,
@@ -16,8 +16,8 @@ import {
 import { ScrollViewMarker } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
@@ -43,7 +43,7 @@ import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSe
 function PullRequestScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
   return (
-    <ScrollViewMarker>
+    <ScrollViewMarker style={{ flex: 1 }}>
       <ScrollView
         {...props}
         automaticallyAdjustContentInsets={false}
@@ -317,7 +317,7 @@ export function PullRequestsScreen(
         ListFooterComponent={
           result.loadingMore ? (
             <View className="items-center py-5">
-              <ActivityIndicator
+              <AppActivityIndicator
                 colorClassName="accent-icon"
                 accessibilityLabel="Loading more pull requests"
               />
@@ -337,7 +337,7 @@ export function PullRequestsScreen(
         ListEmptyComponent={
           result.isPending && connectedTargets.length > 0 ? (
             <View className="items-center py-12">
-              <ActivityIndicator colorClassName="accent-icon" />
+              <AppActivityIndicator colorClassName="accent-icon" />
             </View>
           ) : (
             <View className="px-8 py-12">

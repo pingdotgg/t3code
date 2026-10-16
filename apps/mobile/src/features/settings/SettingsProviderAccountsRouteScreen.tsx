@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -5,11 +6,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert, Linking, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -333,7 +334,7 @@ function ProviderAccount({
           tone="danger"
           disabled={disabled || state === null}
           onPress={() =>
-            Alert.alert(
+            Dialog.alert(
               "Sign out?",
               `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
               [

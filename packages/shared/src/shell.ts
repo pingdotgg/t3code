@@ -805,13 +805,26 @@ function readWindowsEnvironmentSafely(
   }
 }
 
+/** Keep one PATH spelling in copied Windows environment records. */
+export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === "PATH") {
+      delete env[key];
+    }
+  }
+  env.PATH = value;
+}
+
 function mergeWindowsEnv(
   currentEnv: NodeJS.ProcessEnv,
   patch: Partial<Record<string, string>>,
 ): NodeJS.ProcessEnv {
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) {
+    if (value === undefined) continue;
+    if (key === "PATH") {
+      setWindowsPath(nextEnv, value);
+    } else {
       nextEnv[key] = value;
     }
   }

@@ -192,7 +192,7 @@ export function cursorRuntimeAgentPolicy(
   return {
     autoReview:
       runtimePolicy.approvalPolicy === undefined
-        ? runtimePolicy.runtimeMode === "approval-required"
+        ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
         : runtimePolicy.approvalPolicy !== "never",
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
@@ -787,6 +787,10 @@ interface CursorProjectionTarget {
   readonly providerThreadId: OrchestrationV2ProviderThread["id"] | null;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"] | null;
 }
+
+// Fallback final output when Cursor's result carries none. The persisted row only
+// ever shows a bounded tail, so keep a little more than that.
+const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 
 interface ActiveCursorToolCall {
   readonly callId: string;
@@ -1922,8 +1926,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               if (shell === undefined) {
                 return;
               }
-              shell.streamedOutput += shellOutputText(update.event);
-              yield* emitToolArtifacts({ active: shell, completed: false });
+              const chunk = shellOutputText(update.event);
+              if (chunk.length === 0) return;
+              // The completed call persists the final output once. Re-emitting the
+              // whole accumulated output on every delta grew the event store
+              // quadratically; live output goes to the command output hub instead.
+              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
+                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+              );
+              yield* emitProviderEvent({
+                type: "command_output.delta",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                threadId: shell.target.threadId,
+                itemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeItemId: shell.callId,
+                }),
+                chunk,
+              });
               return;
             }
             default:

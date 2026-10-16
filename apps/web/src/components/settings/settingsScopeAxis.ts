@@ -1,19 +1,58 @@
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
+export function settingsScopeEnvironmentAddress(environment: ScopeEnvironment) {
+  if (!environment.displayUrl) return environment.environmentId;
+  try {
+    return new URL(environment.displayUrl).host || environment.displayUrl;
+  } catch {
+    return environment.displayUrl;
+  }
+}
+
+export function settingsScopeEnvironmentLabels(
+  environment: ScopeEnvironment,
+  environments?: readonly ScopeEnvironment[],
+) {
+  const duplicates = environments?.filter(
+    (other) =>
+      other.environmentId !== environment.environmentId && other.label === environment.label,
+  );
+  const address = settingsScopeEnvironmentAddress(environment);
+  const secondary = duplicates?.some((other) => settingsScopeEnvironmentAddress(other) === address)
+    ? environment.displayUrl || environment.environmentId
+    : address;
+  return {
+    primary: environment.label,
+    secondary: environments === undefined || duplicates?.length ? secondary : "",
+  };
+}
+
 export function settingsScopeEnvironmentLabel(
   environment: ScopeEnvironment,
   environments: readonly ScopeEnvironment[],
 ) {
-  const duplicate = environments.some(
-    (other) =>
-      other.environmentId !== environment.environmentId && other.label === environment.label,
-  );
-  return duplicate
-    ? `${environment.label} · ${environment.displayUrl ?? environment.environmentId}`
-    : environment.label;
+  const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+  return secondary ? `${primary} · ${secondary}` : primary;
+}
+
+export function settingsScopeProjectMachines(
+  group: SidebarProjectSnapshot,
+  environments: readonly ScopeEnvironment[],
+  includeAddresses = false,
+) {
+  const machines = group.memberProjects.map((member) => {
+    const environment = environments.find((entry) => entry.environmentId === member.environmentId);
+    if (!environment) return member.environmentLabel ?? member.environmentId;
+    const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+    const address =
+      secondary || (includeAddresses ? settingsScopeEnvironmentAddress(environment) : "");
+    return includeAddresses || address ? `${primary} · ${address}` : primary;
+  });
+  return Array.from(new Set(machines));
 }
 
 export const ALL_ENVIRONMENTS_VALUE = "all";

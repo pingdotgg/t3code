@@ -14,9 +14,9 @@ import {
 } from "react-native";
 
 import { cn } from "../lib/cn";
-import { AppText as Text } from "./AppText";
-import { SymbolView } from "./AppSymbol";
-import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { AppText as Text } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
+import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
@@ -232,7 +232,7 @@ export function ComposerActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
-  // Forwarded so a ControlPillMenu can drive this button as its long-press
+  // Forwarded so a Menu can drive this button as its long-press
   // anchor: Android injects onLongPress, iOS injects onTouchStart and onPress.
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];

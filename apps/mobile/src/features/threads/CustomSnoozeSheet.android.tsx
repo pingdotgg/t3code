@@ -1,4 +1,4 @@
-import { MaterialSegmentedButtons } from "../../components/MaterialSegmentedButtons.android";
+import { SegmentedControl } from "../../components/ui/SegmentedControl.android";
 import {
   BasicAlertDialog,
   Column,
@@ -29,7 +29,7 @@ import { requireNativeModule } from "expo";
 import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
 
-import { OverlayPortal } from "../../components/OverlayPortal";
+import { OverlayPortal } from "../../components/ui/OverlayPortal";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { CustomSnoozeSheet as SharedCustomSnoozeSheet } from "./CustomSnoozeSheet.shared";
@@ -141,7 +141,7 @@ export function CustomSnoozeSheet(props: Props) {
                 modifiers={[fillMaxWidth(), padding(24, 24, 24, 16)]}
               >
                 <Text style={titleTypography}>Custom snooze</Text>
-                <MaterialSegmentedButtons
+                <SegmentedControl.Content
                   options={modes}
                   selected={mode}
                   onSelect={(value) => {
@@ -150,7 +150,7 @@ export function CustomSnoozeSheet(props: Props) {
                   }}
                 />
                 {mode === "date" ? (
-                  <MaterialSegmentedButtons
+                  <SegmentedControl.Content
                     options={[
                       {
                         value: "date",
@@ -224,7 +224,7 @@ export function CustomSnoozeSheet(props: Props) {
                       <Text style={titleTypography}>+</Text>
                     </FilledTonalIconButton>
                   </Row>
-                  <MaterialSegmentedButtons options={units} selected={unit} onSelect={setUnit} />
+                  <SegmentedControl.Content options={units} selected={unit} onSelect={setUnit} />
                 </Column>
               )}
               <Column

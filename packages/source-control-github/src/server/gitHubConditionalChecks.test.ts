@@ -6,7 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import type { PullRequestCheck } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -29,7 +30,7 @@ it.effect(
       const known: Array<unknown> = [];
       const revalidate = yield* makeChecksRevalidator.pipe(
         Effect.provide(
-          Layer.mock(GitHubApi.GitHubApi)({
+          Layer.mock(GitHubRest.GitHubRest)({
             rest: ({ path, ifNoneMatch }) =>
               Effect.sync(() => {
                 requests.push(path);
@@ -78,7 +79,7 @@ it.effect(
       });
       const poll = (identity = credential) =>
         revalidate(reference, read).pipe(
-          Effect.provideService(GitHubApi.PinnedGitHubCredential, identity),
+          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, identity),
         );
       yield* poll();
       expect(reads).toBe(1);
@@ -132,11 +133,11 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubApi.GitHubApi)({
+        Layer.mock(GitHubRest.GitHubRest)({
           rest: ({ path, ifNoneMatch }) =>
             unavailable
               ? Effect.fail(
-                  new GitHubApi.GitHubApiResponseError({
+                  new GitHubRequestPolicy.GitHubApiResponseError({
                     host: "github.com",
                     operation: "revalidateChecks",
                     status: 502,
@@ -165,7 +166,7 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
       reads++;
       return fail
         ? Effect.fail(
-            new GitHubApi.GitHubApiResponseError({
+            new GitHubRequestPolicy.GitHubApiResponseError({
               host: "github.com",
               operation: "read",
               status: 500,
@@ -180,7 +181,7 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
     });
     const poll = () =>
       revalidate(reference, read).pipe(
-        Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
       );
     yield* poll().pipe(Effect.flip);
     fail = false;
@@ -218,11 +219,11 @@ it.effect("falls back when REST checks are unavailable without retrying unsuppor
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubApi.GitHubApi)({
+        Layer.mock(GitHubRest.GitHubRest)({
           rest: () => {
             probes++;
             return Effect.fail(
-              new GitHubApi.GitHubApiNotFoundError({
+              new GitHubRequestPolicy.GitHubApiNotFoundError({
                 host: "github.com",
                 operation: "revalidateChecks",
               }),
@@ -237,7 +238,7 @@ it.effect("falls back when REST checks are unavailable without retrying unsuppor
     });
     for (let tick = 0; tick < 2; tick++)
       yield* revalidate(reference, read).pipe(
-        Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
       );
     expect(probes).toBe(1);
     expect(reads).toBe(2);

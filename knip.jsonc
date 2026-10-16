@@ -110,5 +110,10 @@
       "entry": ["test/fixtures/*.ts"],
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
     },
+    "packages/source-control-github": {
+      // graphqlgen reads its config; the generated operations export every selection's class.
+      "entry": ["graphql.config.ts"],
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
+    },
   },
 }

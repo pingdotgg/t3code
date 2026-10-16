@@ -10,7 +10,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
-const { refresh, showError, openLink, openChangeRequestLink } = vi.hoisted(() => ({
+const { cachedUrl, refresh, showError, openLink, openChangeRequestLink } = vi.hoisted(() => ({
+  cachedUrl: { lifeMs: 60 * 60_000 },
   refresh: vi.fn(),
   showError: vi.fn(),
   openLink: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({
     _tag: "Success",
     url: "https://environment.test/original.html",
-    expiresAt: Date.now() + 60 * 60_000,
+    expiresAt: Date.now() + cachedUrl.lifeMs,
   }),
   useAssetUrlRefresh: () => refresh,
 }));
@@ -50,6 +51,7 @@ beforeEach(async () => {
     },
   );
   refresh.mockReset();
+  cachedUrl.lifeMs = 60 * 60_000;
   openLink.mockReset().mockResolvedValue(undefined);
   openChangeRequestLink.mockReset().mockReturnValue(false);
   showError.mockClear();
@@ -109,7 +111,8 @@ it("closes with the close button or Escape", async () => {
 });
 
 async function renderInline() {
-  await act(() =>
+  // Async so a URL minted at mount lands inside act.
+  await act(async () =>
     root.render(
       <HtmlRenderFrame
         environmentId={EnvironmentId.make("environment")}
@@ -123,7 +126,7 @@ async function renderInline() {
   );
 }
 
-it("offers only full screen and opens with a fresh URL while keeping the inline page loaded", async () => {
+it("offers only full screen and opens with the inline URL while keeping the inline page loaded", async () => {
   await renderInline();
   expect(document.querySelector('[aria-label="Open in panel"]')).toBeNull();
   const inlineFrame = document.querySelector("iframe")!;
@@ -132,11 +135,10 @@ it("offers only full screen and opens with a fresh URL while keeping the inline 
     '[aria-label="Open full screen"]',
   )!;
   expandButton.focus();
-  refresh.mockResolvedValue("https://environment.test/renewed.html");
   await click("Open full screen");
-  expect(refresh).toHaveBeenCalledOnce();
+  expect(refresh).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"] iframe')?.getAttribute("src")).toContain(
-    "https://environment.test/renewed.html#",
+    "https://environment.test/original.html#",
   );
   expect(inlineFrame.src).toBe(originalSrc);
   await click("Close");
@@ -145,9 +147,26 @@ it("offers only full screen and opens with a fresh URL while keeping the inline 
   expect(document.activeElement).toBe(expandButton);
 });
 
+// An inline URL near expiry is minted at mount, and full screen mints another.
+async function renderInlineNearExpiry() {
+  cachedUrl.lifeMs = 60_000;
+  refresh.mockResolvedValueOnce("https://environment.test/inline.html");
+  await renderInline();
+  expect(refresh).toHaveBeenCalledOnce();
+}
+
+it("opens full screen with a fresh URL when the inline one is near expiry", async () => {
+  await renderInlineNearExpiry();
+  refresh.mockResolvedValue("https://environment.test/renewed.html");
+  await click("Open full screen");
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('[role="dialog"] iframe')?.getAttribute("src")).toContain(
+    "https://environment.test/renewed.html#",
+  );
+});
+
 it("routes links from the expanded page through its thread", async () => {
   await renderInline();
-  refresh.mockResolvedValue("https://environment.test/renewed.html");
   openChangeRequestLink.mockReturnValue(true);
   await click("Open full screen");
   const frame = document.querySelector<HTMLIFrameElement>('[role="dialog"] iframe')!;
@@ -173,7 +192,7 @@ it("routes links from the expanded page through its thread", async () => {
 it.each([null, new Error("Disconnected")])(
   "reports an unavailable URL instead of opening a blank page: %s",
   async (failure) => {
-    await renderInline();
+    await renderInlineNearExpiry();
     if (failure === null) refresh.mockResolvedValue(null);
     else refresh.mockRejectedValue(failure);
     await click("Open full screen");

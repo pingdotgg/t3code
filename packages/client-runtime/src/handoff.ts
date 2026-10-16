@@ -25,7 +25,10 @@ export function resolvePendingHandoff(
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
-  const from = projection?.runs.findLast(
+  // A thread with an empty timeline has nothing to hand off. Any loaded row
+  // counts: paging can leave a window of only tool rows.
+  if (!projection?.visibleTurnItems.length) return null;
+  const from = projection.runs.findLast(
     (run) => run.startedAt !== null && run.status !== "rolled_back",
   )?.modelSelection;
   if (from === undefined || selection == null) return null;

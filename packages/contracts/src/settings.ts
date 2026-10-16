@@ -1074,6 +1074,29 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sidebarAutoSettleAfterDays",
 ]);
 
+/** Reclaimable bytes from which the offline `t3 doctor` repair is worth suggesting. */
+export const DATABASE_COMPACTION_RECOMMENDED_BYTES = 1024 ** 3;
+
+/** Live SQLite file accounting for the environment's state database. */
+export const DatabaseStorageStatus = Schema.Struct({
+  databaseBytes: Schema.Number,
+  /** Free pages inside the file that an offline VACUUM (or incremental auto_vacuum) returns to disk. */
+  reclaimableBytes: Schema.Number,
+  /** False on databases created before incremental auto_vacuum; `t3 doctor` converts them. */
+  incrementalVacuumEnabled: Schema.Boolean,
+  /** Command to run on the host to reclaim the space offline. */
+  compactCommand: Schema.String,
+});
+export type DatabaseStorageStatus = typeof DatabaseStorageStatus.Type;
+
+/** Only suggest the offline conversion when it can reclaim enough to matter. */
+export function shouldRecommendDatabaseCompaction(status: DatabaseStorageStatus): boolean {
+  return (
+    !status.incrementalVacuumEnabled &&
+    status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES
+  );
+}
+
 export const StorageCleanupReportEntry = Schema.Struct({
   kind: Schema.Literals(["worktree", "browser-artifacts", "logs"]),
   outcome: Schema.Literals(["removed", "kept", "failed"]),

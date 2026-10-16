@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -7,7 +8,7 @@ import {
   getThreadListV2NewBranchMenuTitle,
   getThreadListV2RowAppearance,
 } from "./thread-list-v2-row-appearance";
-import { RowPressable } from "../../components/RowPressable";
+import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
@@ -21,13 +22,13 @@ import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3t
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import { Alert, Pressable, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
@@ -450,7 +451,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
       {props.showPendingDivider ? (
         <ThreadListV2SectionDivider label="Unsent" pane={props.pane} />
       ) : null}
-      <ControlPillMenu
+      <Menu
         actions={isDraft ? DRAFT_TASK_MENU_ACTIONS : PENDING_TASK_MENU_ACTIONS}
         onPressAction={handleMenuAction}
         shouldOpenOnLongPress
@@ -488,7 +489,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             </View>
           )}
         </RowPressable>
-      </ControlPillMenu>
+      </Menu>
     </>
   );
 });
@@ -881,7 +882,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
       } else if (snoozeSelection._tag === "expired") {
-        Alert.alert("Could not snooze thread", "That snooze time has passed. Choose another time.");
+        Dialog.alert(
+          "Could not snooze thread",
+          "That snooze time has passed. Choose another time.",
+        );
       }
     },
     [
@@ -1329,7 +1333,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         threadTitle={thread.title}
       >
         {(close) => (
-          <ControlPillMenu
+          <Menu
             actions={[
               ...(thread.branch
                 ? [
@@ -1355,7 +1359,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             shouldOpenOnLongPress
           >
             {rowContent(close)}
-          </ControlPillMenu>
+          </Menu>
         )}
       </ThreadSwipeable>
     </View>

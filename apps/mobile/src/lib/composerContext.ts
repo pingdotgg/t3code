@@ -20,6 +20,7 @@ import {
   isImageReferencesOnly,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
@@ -110,7 +111,7 @@ export function threadComposerContext(ref: ScopedThreadRef, title: string): Thre
   return {
     version: 1,
     kind: "thread",
-    contextId: ComposerContextId.make(`thread_${ref.threadId}`),
+    contextId: toKindScopedComposerContextId("thread", ref.threadId),
     label,
     environmentId: ref.environmentId,
     threadId: ref.threadId,

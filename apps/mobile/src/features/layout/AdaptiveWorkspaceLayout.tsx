@@ -57,7 +57,7 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
   AndroidWorkspaceNavigation,
   ANDROID_WORKSPACE_RAIL_WIDTH,

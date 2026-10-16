@@ -1,3 +1,4 @@
+import { Toolbar } from "../../components/ui/Toolbar";
 import {
   DatePicker,
   Host,
@@ -32,7 +33,7 @@ import { NavigationContainer, NavigationIndependentTree } from "@react-navigatio
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { ScrollView, useWindowDimensions, View } from "react-native";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
@@ -249,16 +250,16 @@ function SnoozePopoverNavigation(props: {
                 <SnoozeStack.Screen name="CustomSnooze">
                   {() => (
                     <>
-                      <NativeHeaderToolbar placement="left">
-                        <NativeHeaderToolbar.Button
+                      <Toolbar placement="left">
+                        <Toolbar.Button
                           accessibilityLabel="Cancel custom snooze"
                           icon="xmark"
                           onPress={props.onClose}
                         />
-                      </NativeHeaderToolbar>
-                      <NativeHeaderToolbar placement="right">
-                        <NativeHeaderToolbar.Button label="Snooze" onPress={props.onSubmit} />
-                      </NativeHeaderToolbar>
+                      </Toolbar>
+                      <Toolbar placement="right">
+                        <Toolbar.Button label="Snooze" onPress={props.onSubmit} />
+                      </Toolbar>
                       <ScrollView
                         contentInsetAdjustmentBehavior="automatic"
                         showsVerticalScrollIndicator={false}

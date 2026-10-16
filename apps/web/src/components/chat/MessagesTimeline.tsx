@@ -1766,6 +1766,24 @@ function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
   return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
 }
 
+// Calls `onRelease` once no mouse button is held. A release outside the window
+// can skip `mouseup`, so the next button-free `mousemove` also counts. Returns a
+// function that stops listening.
+function onMouseButtonsReleased(onRelease: () => void): () => void {
+  const check = (event: globalThis.MouseEvent) => {
+    if (event.buttons !== 0) return;
+    stop();
+    onRelease();
+  };
+  const stop = () => {
+    window.removeEventListener("mouseup", check);
+    window.removeEventListener("mousemove", check);
+  };
+  window.addEventListener("mouseup", check);
+  window.addEventListener("mousemove", check);
+  return stop;
+}
+
 function TimelineMinimap({
   hasPersistentGutter,
   hitStripWidth,
@@ -1793,6 +1811,18 @@ function TimelineMinimap({
     [onWheel],
   );
 
+  // A held drag that started on the minimap (the strip or its turn buttons) is a
+  // scrub; one that started anywhere else is a text selection. While a selection
+  // crosses the minimap, the minimap lets the pointer through so the selection
+  // keeps following the text underneath, until the button is released.
+  const pressedOnStripRef = useRef(false);
+  const [passThrough, setPassThrough] = useState(false);
+
+  useEffect(() => {
+    if (!passThrough) return;
+    return onMouseButtonsReleased(() => setPassThrough(false));
+  }, [passThrough]);
+
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
   const activeItem = useMemo(
@@ -1802,7 +1832,8 @@ function TimelineMinimap({
       ),
     [items, resolvedActiveIndex],
   );
-  const navigationInteractive = resolveTimelineMinimapNavigationInteractive(hitStripWidth);
+  const navigationInteractive =
+    resolveTimelineMinimapNavigationInteractive(hitStripWidth) && !passThrough;
   const activeTopPercent =
     resolvedActiveIndex === null
       ? 0
@@ -1874,8 +1905,18 @@ function TimelineMinimap({
             "absolute top-1/2 left-3 -translate-y-1/2",
             // The strip is width-capped to the side gutter so it never overlays
             // the centered content column; with no usable gutter it goes inert.
-            hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+            hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
+          onMouseDown={() => {
+            if (pressedOnStripRef.current) return;
+            pressedOnStripRef.current = true;
+            onMouseButtonsReleased(() => {
+              pressedOnStripRef.current = false;
+            });
+          }}
+          onMouseMove={(event) => {
+            if (event.buttons !== 0 && !pressedOnStripRef.current) setPassThrough(true);
+          }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
             width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
@@ -1926,7 +1967,10 @@ function TimelineMinimap({
               }
             }}
             onMouseLeave={() => setActiveIndex(null)}
-            onMouseMove={updateActiveIndexFromPointer}
+            onMouseMove={(event) => {
+              if (event.buttons !== 0 && !pressedOnStripRef.current) return;
+              updateActiveIndexFromPointer(event);
+            }}
             onMouseDown={(event) => {
               if (timelineMinimapEventTargetsPreview(event.target)) {
                 return;
@@ -2654,7 +2698,7 @@ function UserMessageIntentMarker({
   const presentation =
     intent === "queued_turn"
       ? {
-          label: "Queued",
+          label: "From queue",
           icon: null,
         }
       : intent === "promoted_queued_to_steer"
@@ -2682,7 +2726,7 @@ function UserMessageIntentMarker({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {intent === "queued_turn"
-          ? "Queued behind the active turn"
+          ? "Queued while the agent was busy"
           : intent === "promoted_queued_to_steer"
             ? "Originally queued, then promoted to steer the active turn"
             : "Steered the active turn"}

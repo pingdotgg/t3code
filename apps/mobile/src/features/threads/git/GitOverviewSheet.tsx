@@ -1,3 +1,4 @@
+import * as Dialog from "../../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -16,9 +17,9 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,11 +28,11 @@ import { useUniwindTheme } from "../../../lib/useUniwindTheme";
 import {
   AndroidHeaderIconButton,
   AndroidSheetHeader,
-} from "../../../components/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../../components/AndroidAnchoredMenu";
-import { MaterialScreenContent } from "../../../components/MaterialScreenContent";
+} from "../../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../../components/ui/AndroidAnchoredMenu";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import {
   NativeStackScreenOptions,
   nativeHeaderScrollEdgeEffects,
@@ -140,11 +141,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
+      Dialog.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+      Dialog.alert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus.data, openPullRequest]);
 
@@ -389,7 +390,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                     onPress={() => {
                       void openPullRequest(link.url).then((opened) => {
                         if (!opened)
-                          Alert.alert("Unable to open PR", "The pull request could not be opened.");
+                          Dialog.alert(
+                            "Unable to open PR",
+                            "The pull request could not be opened.",
+                          );
                       });
                     }}
                   />
@@ -573,9 +577,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         />
       )}
 
-      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
-        {content}
-      </MaterialScreenContent>
+      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );
 }

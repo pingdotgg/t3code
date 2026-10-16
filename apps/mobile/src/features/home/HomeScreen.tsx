@@ -1,5 +1,5 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
@@ -30,8 +30,8 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { cn } from "../../lib/cn";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
@@ -77,7 +77,7 @@ import {
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
-import { useMaterialFabScroll } from "./MaterialFabScrollContext";
+import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 
@@ -344,7 +344,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleScrollBeginDrag = useCallback(() => {
     openSwipeableRef.current?.close();
   }, []);
-  const onMaterialFabScroll = useMaterialFabScroll();
+  const onFabScroll = useFabScroll();
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
   const restoredOffset = workspace?.state.tabs.threads.scrollOffset;
@@ -372,7 +372,7 @@ export function HomeScreen(props: HomeScreenProps) {
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
   const handleListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      onMaterialFabScroll?.(event);
+      onFabScroll?.(event);
       if (workspace)
         workspace.recordScrollOffset(
           "threads",
@@ -384,7 +384,7 @@ export function HomeScreen(props: HomeScreenProps) {
         200,
       );
     },
-    [activateVisibleRows, onMaterialFabScroll, workspace, insets.top],
+    [activateVisibleRows, onFabScroll, workspace, insets.top],
   );
   const trackListTouches = useCallback(
     (event: GestureResponderEvent, started: boolean) => {
@@ -956,7 +956,7 @@ export function HomeScreen(props: HomeScreenProps) {
               onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
               action={
                 Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
-                  <MaterialFloatingActionButton
+                  <FloatingActionButton
                     label="Add environment"
                     icon="plus"
                     variant="extended"

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import {
   deviceToolVersionLabels,
   deviceToolUpdateOwnership,
@@ -9,20 +10,21 @@ import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Alert, AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
+import { AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText } from "../../components/AppText";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
-import { GlassSurface } from "../../components/GlassSurface";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText } from "../../components/ui/AppText";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import {
   androidHeaderMenuActions,
   findHeaderMenuAction,
-} from "../../components/headerMenu.android";
-import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+} from "../../components/ui/headerMenu.android";
+import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -138,14 +140,14 @@ function DevicePreviewScreen({
         },
       });
       if (result._tag === "Failure") {
-        Alert.alert("Could not shut down device", String(Cause.squash(result.cause)));
+        Dialog.alert("Could not shut down device", String(Cause.squash(result.cause)));
       }
     } finally {
       setShuttingDown(false);
     }
   };
 
-  const controls: ScreenHeaderMenuItem[] = [
+  const controls: AppBarMenuItem[] = [
     ...(state.data?.hosts
       .filter(
         (host) =>
@@ -176,7 +178,7 @@ function DevicePreviewScreen({
       title: "Device tool versions",
       icon: "info.circle",
       onPress: () =>
-        Alert.alert(
+        Dialog.alert(
           "Device tool versions",
           deviceToolUpdateOwnership +
             "\n\n" +
@@ -242,7 +244,7 @@ function DevicePreviewScreen({
     },
   ];
   const pressHome = () => streamRef.current?.home();
-  const menuItems: ScreenHeaderMenuItem[] = [
+  const menuItems: AppBarMenuItem[] = [
     ...(previews.length > 1
       ? [
           {
@@ -343,9 +345,9 @@ function DevicePreviewScreen({
   );
 }
 
-function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<ScreenHeaderMenuItem> }) {
+function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenuItem> }) {
   return (
-    <ControlPillMenu
+    <Menu
       actions={androidHeaderMenuActions(items)}
       isAnchoredToRight
       title="Device options"
@@ -361,7 +363,7 @@ function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<ScreenHead
       >
         <SymbolView name="ellipsis" size={18} tintColorClassName="accent-icon" />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }
 

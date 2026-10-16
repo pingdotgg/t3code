@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { cascadeRebaseStack } from "@t3tools/source-control-github/server/githubStackRebase";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -15,7 +15,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
 const layer = Layer.mergeAll(
-  Layer.mock(GitHubApi.GitHubApi)({
+  Layer.mock(GitHubRest.GitHubRest)({
     credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
   }),
   // The cascade runs real git through the server's host; the git driver itself is never asked.

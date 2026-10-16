@@ -4,6 +4,7 @@ import {
   makeTraceSink,
   type SignalExport,
 } from "@t3tools/shared/observability";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
@@ -625,12 +626,16 @@ const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
+    // `host.name` keeps machines apart on a shared collector; one set in
+    // `OTEL_RESOURCE_ATTRIBUTES` wins, since explicit attributes override it.
     const resource = {
       serviceName: "t3code-desktop",
+      serviceVersion: environment.appVersion,
       attributes: {
         "service.namespace": "t3code",
         "service.runtime": "desktop",
         "service.mode": environment.isDevelopment ? "development" : "packaged",
+        "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),
       },
     };
 

@@ -48,8 +48,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
@@ -544,6 +546,9 @@ function layerTest(input: {
         IdAllocator.layer,
         layerTestStores,
         ThreadCommandExecutor.layer,
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          resolveBranchName: () => Effect.succeed(null),
+        }),
       ),
     ),
   );
@@ -560,6 +565,9 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          CommandOutputHub.layer.pipe(
+            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+          ),
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
@@ -1746,7 +1754,7 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
   }),
 );
 
-it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
+it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -1781,7 +1789,10 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
 
       yield* manager.shutdown;
 
-      assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
+      // Buffered events are dropped and the consumer sees an interruption, not
+      // a clean end, so it leaves run settlement to restart recovery.
+      const exit = yield* bufferedSubscription.events.pipe(Stream.runCollect, Effect.exit);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));

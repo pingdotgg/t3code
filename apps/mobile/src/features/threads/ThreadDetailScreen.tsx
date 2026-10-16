@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
@@ -26,6 +27,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   RuntimeRequestId,
+  ScopedThreadRef,
   ServerConfig as T3ServerConfig,
   ThreadId,
   UsageLimitsReport,
@@ -61,7 +63,6 @@ import {
   useState,
 } from "react";
 import {
-  Alert,
   AppState,
   Keyboard,
   Platform,
@@ -157,6 +158,11 @@ export interface ThreadDetailScreenProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
   readonly selectedThread: EnvironmentThreadShell;
+  /**
+   * Read thread details through this, not `selectedThread.id`: it stays null until
+   * a queued creation reaches the server; see `useThreadSelection`.
+   */
+  readonly selectedThreadDetailRef: ScopedThreadRef | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -333,10 +339,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
-  const reportedModelSelection = useThreadReportedModelSelection({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
+  const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
@@ -414,14 +417,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
-  const queuedCount = useThreadQueuedCount({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
-  const turnSubagents = useThreadTurnSubagents({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
+  const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
+  const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   // A provider-native subagent shows status instead of a composer.
@@ -1056,7 +1053,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         composerEditorRef.current?.focus();
       }
     } catch (error) {
-      Alert.alert(
+      Dialog.alert(
         "Could not edit message",
         error instanceof Error ? error.message : "Please try again.",
       );

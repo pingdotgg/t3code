@@ -4,7 +4,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 /** One open layer of a stack, bottom to top, with the head the reader reviewed. */
@@ -57,7 +57,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   /** Where to fetch and push; the repository's own URL on its host unless a test points elsewhere. */
   readonly remote?: string;
 }) {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const { token } = yield* api.credential(input.host);

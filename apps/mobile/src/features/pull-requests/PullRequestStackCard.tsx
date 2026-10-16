@@ -2,7 +2,7 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, View } from "react-native";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
 import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";

@@ -20,7 +20,7 @@ export function FoldedSettingsSection({
   children,
 }: {
   readonly id: string;
-  readonly title: string;
+  readonly title: ReactNode;
   readonly summary?: string | null;
   readonly control?: ReactNode;
   readonly headerPlacement?: "inside" | "outside";

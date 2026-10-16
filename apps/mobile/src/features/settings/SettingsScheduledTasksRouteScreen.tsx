@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
@@ -36,20 +37,21 @@ import {
 } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Alert, AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
+import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { Button } from "../../components/ui/Button";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import {
   EnvironmentMachineSymbol,
   ENVIRONMENT_MACHINE_SYMBOLS,
 } from "../../components/EnvironmentMachineSymbol";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { SegmentedControl } from "../../components/SegmentedControl";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
@@ -202,7 +204,7 @@ function SelectRow(props: {
     );
   }
   return (
-    <ControlPillMenu
+    <Menu
       actions={props.actions}
       onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
     >
@@ -224,7 +226,7 @@ function SelectRow(props: {
           type="monochrome"
         />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }
 
@@ -446,10 +448,10 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
   const preventRemove = !saved && (hasChanges || saving);
   usePreventRemove(preventRemove, ({ data }) => {
     if (saving) {
-      Alert.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
       return;
     }
-    Alert.alert("Discard changes?", "Your unsaved changes will be lost.", [
+    Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
       { text: "Keep editing", style: "cancel" },
       {
         text: "Discard changes",
@@ -608,7 +610,7 @@ function TaskForm({
 
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Alert.alert(title, String(squashAtomCommandFailure(result)));
+      Dialog.alert(title, String(squashAtomCommandFailure(result)));
     }
   };
 
@@ -634,7 +636,7 @@ function TaskForm({
       draft.schedule.mode === "webhook" &&
       parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
     ) {
-      Alert.alert(
+      Dialog.alert(
         "Invalid age limit",
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
       );
@@ -648,14 +650,14 @@ function TaskForm({
       !schedule ||
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
-      Alert.alert(
+      Dialog.alert(
         "Incomplete task",
         "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
       );
       return;
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
-      Alert.alert("Project unavailable", "Choose a project in this environment.");
+      Dialog.alert("Project unavailable", "Choose a project in this environment.");
       return;
     }
     const input: ScheduledTaskUpsertInput = {
@@ -695,338 +697,338 @@ function TaskForm({
   };
 
   return (
-    <View
-      className="gap-5"
-      pointerEvents={saving ? "none" : "auto"}
-      accessibilityElementsHidden={saving}
-      importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
-    >
-      {taskMissing ? (
-        <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
-      ) : null}
-
-      {environmentUnavailable ? (
-        <Text className="px-1 text-base text-danger-foreground">
-          This environment is disconnected. Reconnect before saving.
-        </Text>
-      ) : null}
-      <SettingsSection>
-        <SelectRow
-          label="Runs on"
-          value={environmentLabel}
-          valueIcon={
-            <EnvironmentMachineSymbol
-              kind={resolveEnvironmentMachineKind(config)}
-              size={18}
-              tintColorClassName="accent-foreground-muted"
-            />
-          }
-          actions={
-            draft.task || saving || dictationPending
-              ? []
-              : availableTargets.map((target) => ({
-                  id: target.environmentId,
-                  title: target.label,
-                  image:
-                    ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(target.serverConfig)],
-                  state: target.environmentId === environmentId ? "on" : undefined,
-                }))
-          }
-          onSelect={(id) => {
-            const target = availableTargets.find((entry) => entry.environmentId === id);
-            if (target) onChangeEnvironment(target);
-          }}
-        />
-      </SettingsSection>
-      <SettingsSection title="Task">
-        <FormField
-          label="Name"
-          disabled={saving}
-          value={draft.title}
-          placeholder="Check for issues"
-          onChange={(title) => setDraft({ ...draft, title })}
-        />
-        {promptField}
-      </SettingsSection>
-
-      <SettingsSection title="Context">
-        <SelectRow
-          label="Project"
-          value={
-            projects.find((project) => project.id === draft.projectId)?.title ??
-            (projects.length ? "Choose project" : "No projects available")
-          }
-          actions={projects.map((project) => ({
-            id: project.id,
-            title: project.title,
-            state: project.id === draft.projectId ? "on" : undefined,
-          }))}
-          onSelect={(id) => {
-            const project = projects.find((item) => item.id === id);
-            if (!project) return;
-            const keepsExplicitModel =
-              draft.modelSelectionIsExplicit &&
-              (draft.modelSelection === null ||
-                !config?.settings ||
-                resolveProjectProviderInstanceEnabled(
-                  config.settings,
-                  project.id,
-                  draft.modelSelection.instanceId,
-                ));
-            setDraft({
-              ...draft,
-              projectId: project.id,
-              modelSelection: keepsExplicitModel
-                ? draft.modelSelection
-                : scheduledTaskDefaultModel(config, project),
-              modelSelectionIsExplicit: keepsExplicitModel,
-            });
-          }}
-        />
-        <PickerRow
-          label="Model"
-          borderTop
-          value={
-            modelOptions.find(
-              (option) =>
-                option.selection.instanceId === draft.modelSelection?.instanceId &&
-                option.selection.model === draft.modelSelection?.model,
-            )?.label ??
-            draft.modelSelection?.model ??
-            (modelOptions.length ? "Choose model" : "No models available")
-          }
-          onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-          disabled={saving || dictationPending || environmentUnavailable}
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Workspace">
-        <SelectRow
-          label="Run in"
-          value={
-            draft.workspace === "worktree"
-              ? "New worktree"
-              : draft.workspace === "root"
-                ? "Project checkout"
-                : "Specific checkout"
-          }
-          actions={[
-            {
-              id: "worktree",
-              title: "New worktree",
-              state: draft.workspace === "worktree" ? "on" : undefined,
-            },
-            {
-              id: "root",
-              title: "Project checkout",
-              state: draft.workspace === "root" ? "on" : undefined,
-            },
-            {
-              id: "existing_worktree",
-              title: "Specific checkout",
-              state: draft.workspace === "existing_worktree" ? "on" : undefined,
-            },
-          ]}
-          onSelect={(id) => {
-            if (id === "worktree" || id === "root" || id === "existing_worktree")
-              setDraft({ ...draft, workspace: id });
-          }}
-        />
-        {draft.workspace === "worktree" ? (
-          <PickerRow
-            label="Base branch"
-            value={resolveNewTaskBranchLabel({
-              branchName: draft.baseRef,
-              startFromOrigin: draft.startFromOrigin,
-              workspaceMode: "worktree",
-            })}
-            borderTop
-            disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-            onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
-          />
+    <View className="gap-5">
+      <View
+        className="gap-5"
+        pointerEvents={saving ? "none" : "auto"}
+        accessibilityElementsHidden={saving}
+        importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
+      >
+        {taskMissing ? (
+          <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
         ) : null}
-        {draft.workspace === "existing_worktree" ? (
+
+        {environmentUnavailable ? (
+          <Text className="px-1 text-base text-danger-foreground">
+            This environment is disconnected. Reconnect before saving.
+          </Text>
+        ) : null}
+        <SettingsSection>
+          <SelectRow
+            label="Runs on"
+            value={environmentLabel}
+            valueIcon={
+              <EnvironmentMachineSymbol
+                kind={resolveEnvironmentMachineKind(config)}
+                size={18}
+                tintColorClassName="accent-foreground-muted"
+              />
+            }
+            actions={
+              draft.task || saving || dictationPending
+                ? []
+                : availableTargets.map((target) => ({
+                    id: target.environmentId,
+                    title: target.label,
+                    image:
+                      ENVIRONMENT_MACHINE_SYMBOLS[
+                        resolveEnvironmentMachineKind(target.serverConfig)
+                      ],
+                    state: target.environmentId === environmentId ? "on" : undefined,
+                  }))
+            }
+            onSelect={(id) => {
+              const target = availableTargets.find((entry) => entry.environmentId === id);
+              if (target) onChangeEnvironment(target);
+            }}
+          />
+        </SettingsSection>
+        <SettingsSection title="Task">
           <FormField
-            label="Checkout path"
+            label="Name"
             disabled={saving}
-            value={draft.checkoutPath}
-            borderTop
-            onChange={(checkoutPath) => setDraft({ ...draft, checkoutPath })}
+            value={draft.title}
+            placeholder="Check for issues"
+            onChange={(title) => setDraft({ ...draft, title })}
           />
-        ) : null}
-      </SettingsSection>
+          {promptField}
+        </SettingsSection>
 
-      <SettingsSection title="Schedule">
-        <View className="px-4 py-3">
-          <SegmentedControl
-            options={[
-              { value: "fixed_time", label: "At a time" },
-              { value: "interval", label: "Interval" },
-              { value: "webhook", label: "On webhook" },
-            ]}
-            selected={draft.schedule.mode}
-            onSelect={(mode) => {
-              setTimePickerOpen(false);
+        <SettingsSection title="Context">
+          <SelectRow
+            label="Project"
+            value={
+              projects.find((project) => project.id === draft.projectId)?.title ??
+              (projects.length ? "Choose project" : "No projects available")
+            }
+            actions={projects.map((project) => ({
+              id: project.id,
+              title: project.title,
+              state: project.id === draft.projectId ? "on" : undefined,
+            }))}
+            onSelect={(id) => {
+              const project = projects.find((item) => item.id === id);
+              if (!project) return;
+              const keepsExplicitModel =
+                draft.modelSelectionIsExplicit &&
+                (draft.modelSelection === null ||
+                  !config?.settings ||
+                  resolveProjectProviderInstanceEnabled(
+                    config.settings,
+                    project.id,
+                    draft.modelSelection.instanceId,
+                  ));
               setDraft({
                 ...draft,
-                prompt:
-                  mode === "webhook" && !draft.prompt.trim()
-                    ? DEFAULT_WEBHOOK_PROMPT
-                    : draft.prompt,
-                schedule: { ...draft.schedule, mode },
+                projectId: project.id,
+                modelSelection: keepsExplicitModel
+                  ? draft.modelSelection
+                  : scheduledTaskDefaultModel(config, project),
+                modelSelectionIsExplicit: keepsExplicitModel,
               });
             }}
           />
-        </View>
-        {draft.schedule.mode === "fixed_time" ? (
-          <>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
-              onPress={() => setTimePickerOpen((open) => !open)}
-              className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-            >
-              <Text className="text-lg text-foreground">Time</Text>
-              <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
-                {formatTime(draft.schedule.timeOfDay)}
-              </Text>
-              <SymbolView
-                name="chevron.right"
-                size={14}
-                tintColorClassName="accent-chevron"
-                type="monochrome"
-              />
-            </Pressable>
-            {timePickerOpen ? (
-              <DateTimePicker
-                value={timePickerValue(draft.schedule.timeOfDay)}
-                mode="time"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                onDismiss={() => setTimePickerOpen(false)}
-                onValueChange={(_, selected) => {
-                  const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
-                  setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
-                }}
-              />
-            ) : null}
-            <SelectRow
-              label="Repeat"
-              value={repeatLabel(draft.schedule.weekdays)}
+          <PickerRow
+            label="Model"
+            borderTop
+            value={
+              modelOptions.find(
+                (option) =>
+                  option.selection.instanceId === draft.modelSelection?.instanceId &&
+                  option.selection.model === draft.modelSelection?.model,
+              )?.label ??
+              draft.modelSelection?.model ??
+              (modelOptions.length ? "Choose model" : "No models available")
+            }
+            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+            disabled={saving || dictationPending || environmentUnavailable}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Workspace">
+          <SelectRow
+            label="Run in"
+            value={
+              draft.workspace === "worktree"
+                ? "New worktree"
+                : draft.workspace === "root"
+                  ? "Project checkout"
+                  : "Specific checkout"
+            }
+            actions={[
+              {
+                id: "worktree",
+                title: "New worktree",
+                state: draft.workspace === "worktree" ? "on" : undefined,
+              },
+              {
+                id: "root",
+                title: "Project checkout",
+                state: draft.workspace === "root" ? "on" : undefined,
+              },
+              {
+                id: "existing_worktree",
+                title: "Specific checkout",
+                state: draft.workspace === "existing_worktree" ? "on" : undefined,
+              },
+            ]}
+            onSelect={(id) => {
+              if (id === "worktree" || id === "root" || id === "existing_worktree")
+                setDraft({ ...draft, workspace: id });
+            }}
+          />
+          {draft.workspace === "worktree" ? (
+            <PickerRow
+              label="Base branch"
+              value={resolveNewTaskBranchLabel({
+                branchName: draft.baseRef,
+                startFromOrigin: draft.startFromOrigin,
+                workspaceMode: "worktree",
+              })}
               borderTop
-              actions={[
-                {
-                  id: "every_day",
-                  title: "Every day",
-                  state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
-                },
-                {
-                  id: "weekdays",
-                  title: "Weekdays",
-                  state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
-                },
-                ...DAYS.map((day) => ({
-                  id: String(day.index),
-                  title: day.label,
-                  attributes: { keepsMenuPresented: true },
-                  state: draft.schedule.weekdays.includes(day.index) ? ("on" as const) : undefined,
-                })),
+              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+              onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
+            />
+          ) : null}
+          {draft.workspace === "existing_worktree" ? (
+            <FormField
+              label="Checkout path"
+              disabled={saving}
+              value={draft.checkoutPath}
+              borderTop
+              onChange={(checkoutPath) => setDraft({ ...draft, checkoutPath })}
+            />
+          ) : null}
+        </SettingsSection>
+
+        <SettingsSection title="Schedule">
+          <View className="px-4 py-3">
+            <SegmentedControl
+              options={[
+                { value: "fixed_time", label: "At a time" },
+                { value: "interval", label: "Interval" },
+                { value: "webhook", label: "On webhook" },
               ]}
-              onSelect={(id) => {
-                const weekdays =
-                  id === "every_day"
-                    ? DAYS.map((day) => day.index)
-                    : id === "weekdays"
-                      ? [1, 2, 3, 4, 5]
-                      : (() => {
-                          const day = DAYS.find((item) => String(item.index) === id);
-                          if (!day) return draft.schedule.weekdays;
-                          return draft.schedule.weekdays.includes(day.index)
-                            ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                            : [...draft.schedule.weekdays, day.index];
-                        })();
-                setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+              selected={draft.schedule.mode}
+              onSelect={(mode) => {
+                setTimePickerOpen(false);
+                setDraft({
+                  ...draft,
+                  prompt:
+                    mode === "webhook" && !draft.prompt.trim()
+                      ? DEFAULT_WEBHOOK_PROMPT
+                      : draft.prompt,
+                  schedule: { ...draft.schedule, mode },
+                });
               }}
             />
-          </>
-        ) : draft.schedule.mode === "webhook" ? (
-          <>
-            <WebhookScheduleDetails
-              environmentId={environmentId}
-              // The live row, so a rotated URL shows up without reopening the form.
-              // Once the list has loaded, a missing task is gone; don't keep showing its URL.
-              task={
-                tasks.data
-                  ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
-                  : draft.task
-              }
-              signatureConfigured={draft.schedule.signature !== null}
-              disabled={!canOperate || saving || environmentUnavailable}
+          </View>
+          {draft.schedule.mode === "fixed_time" ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
+                onPress={() => setTimePickerOpen((open) => !open)}
+                className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+              >
+                <Text className="text-lg text-foreground">Time</Text>
+                <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                  {formatTime(draft.schedule.timeOfDay)}
+                </Text>
+                <SymbolView
+                  name="chevron.right"
+                  size={14}
+                  tintColorClassName="accent-chevron"
+                  type="monochrome"
+                />
+              </Pressable>
+              {timePickerOpen ? (
+                <DateTimePicker
+                  value={timePickerValue(draft.schedule.timeOfDay)}
+                  mode="time"
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onDismiss={() => setTimePickerOpen(false)}
+                  onValueChange={(_, selected) => {
+                    const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                    setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
+                  }}
+                />
+              ) : null}
+              <SelectRow
+                label="Repeat"
+                value={repeatLabel(draft.schedule.weekdays)}
+                borderTop
+                actions={[
+                  {
+                    id: "every_day",
+                    title: "Every day",
+                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
+                  },
+                  {
+                    id: "weekdays",
+                    title: "Weekdays",
+                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                  },
+                  ...DAYS.map((day) => ({
+                    id: String(day.index),
+                    title: day.label,
+                    attributes: { keepsMenuPresented: true },
+                    state: draft.schedule.weekdays.includes(day.index)
+                      ? ("on" as const)
+                      : undefined,
+                  })),
+                ]}
+                onSelect={(id) => {
+                  const weekdays =
+                    id === "every_day"
+                      ? DAYS.map((day) => day.index)
+                      : id === "weekdays"
+                        ? [1, 2, 3, 4, 5]
+                        : (() => {
+                            const day = DAYS.find((item) => String(item.index) === id);
+                            if (!day) return draft.schedule.weekdays;
+                            return draft.schedule.weekdays.includes(day.index)
+                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
+                              : [...draft.schedule.weekdays, day.index];
+                          })();
+                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+                }}
+              />
+            </>
+          ) : draft.schedule.mode === "webhook" ? (
+            <>
+              <WebhookScheduleDetails
+                environmentId={environmentId}
+                // The live row, so a rotated URL shows up without reopening the form.
+                // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+                task={
+                  tasks.data
+                    ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
+                    : draft.task
+                }
+                signatureConfigured={draft.schedule.signature !== null}
+                disabled={!canOperate || saving || environmentUnavailable}
+              />
+              <FormField
+                label="Skip requests older than (minutes)"
+                value={draft.schedule.maxDeliveryAgeMinutes}
+                placeholder="Run every request"
+                keyboardType="number-pad"
+                disabled={saving}
+                borderTop
+                onChange={(maxDeliveryAgeMinutes) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
+                }
+              />
+            </>
+          ) : (
+            <>
+              <FormField
+                label="Minutes between runs"
+                value={draft.schedule.intervalMinutes}
+                keyboardType="decimal-pad"
+                disabled={saving}
+                borderTop
+                onChange={(intervalMinutes) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
+                }
+              />
+              {Number(draft.schedule.intervalMinutes) < 1 ? (
+                <Text className="px-4 pb-3 text-sm text-danger-foreground">
+                  Intervals must be at least 1 minute. Update this interval before saving.
+                </Text>
+              ) : draft.task?.schedule.type === "interval" &&
+                draft.task.schedule.everyMs < 60_000 ? (
+                <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                  This task previously ran more than once per minute. Saving requires an interval of
+                  at least 1 minute.
+                </Text>
+              ) : null}
+            </>
+          )}
+          <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+            <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
+            <ThemedSwitch
+              accessibilityLabel="Task enabled"
+              value={draft.enabled}
+              onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />
-            <FormField
-              label="Skip requests older than (minutes)"
-              value={draft.schedule.maxDeliveryAgeMinutes}
-              placeholder="Run every request"
-              keyboardType="number-pad"
-              disabled={saving}
-              borderTop
-              onChange={(maxDeliveryAgeMinutes) =>
-                setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
-              }
-            />
-          </>
-        ) : (
-          <>
-            <FormField
-              label="Minutes between runs"
-              value={draft.schedule.intervalMinutes}
-              keyboardType="decimal-pad"
-              disabled={saving}
-              borderTop
-              onChange={(intervalMinutes) =>
-                setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
-              }
-            />
-            {Number(draft.schedule.intervalMinutes) < 1 ? (
-              <Text className="px-4 pb-3 text-sm text-danger-foreground">
-                Intervals must be at least 1 minute. Update this interval before saving.
-              </Text>
-            ) : draft.task?.schedule.type === "interval" && draft.task.schedule.everyMs < 60_000 ? (
-              <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                This task previously ran more than once per minute. Saving requires an interval of
-                at least 1 minute.
-              </Text>
-            ) : null}
-          </>
-        )}
-        <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-          <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
-          <ThemedSwitch
-            accessibilityLabel="Task enabled"
-            value={draft.enabled}
-            onValueChange={(enabled) => setDraft({ ...draft, enabled })}
-          />
-        </View>
-      </SettingsSection>
-      {draft.schedule.mode === "fixed_time" ? (
-        <Text className="px-2 text-sm text-foreground-muted">
-          Time uses the environment's time zone, which may differ from your phone's.
-        </Text>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{
-          disabled: saving || dictationPending || taskMissing || environmentUnavailable,
-        }}
-        disabled={
-          !canOperate || saving || dictationPending || taskMissing || environmentUnavailable
-        }
+          </View>
+        </SettingsSection>
+        {draft.schedule.mode === "fixed_time" ? (
+          <Text className="px-2 text-sm text-foreground-muted">
+            Time uses the environment's time zone, which may differ from your phone's.
+          </Text>
+        ) : null}
+      </View>
+      <Button
+        tone="primary"
+        fullWidth
+        loading={saving}
+        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
         onPress={() => void save()}
-        className="min-h-12 items-center justify-center rounded-[14px] bg-primary px-4 disabled:opacity-50"
-      >
-        <Text className="text-base font-t3-medium text-primary-foreground">
-          {saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
-        </Text>
-      </Pressable>
+        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+      />
     </View>
   );
 }
@@ -1088,7 +1090,7 @@ function WebhookScheduleDetails({
             accessibilityState={{ disabled: disabled || rotating }}
             disabled={disabled || rotating}
             onPress={() =>
-              Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
+              Dialog.alert("Rotate URL?", "The current URL stops working immediately.", [
                 { text: "Cancel", style: "cancel" },
                 {
                   text: "Rotate",
@@ -1098,7 +1100,7 @@ function WebhookScheduleDetails({
                     void rotate({ environmentId, input: { id: task.id } }).then((result) => {
                       setRotating(false);
                       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                        Alert.alert(
+                        Dialog.alert(
                           "Could not rotate URL",
                           String(squashAtomCommandFailure(result)),
                         );
@@ -1160,7 +1162,7 @@ function EnvironmentTasks({
   });
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Alert.alert(title, String(squashAtomCommandFailure(result)));
+      Dialog.alert(title, String(squashAtomCommandFailure(result)));
     }
   };
 
@@ -1231,7 +1233,7 @@ function EnvironmentTasks({
                 </Text>
               ) : null}
             </Pressable>
-            <ControlPillMenu
+            <Menu
               actions={[
                 { id: "edit", title: "Edit" },
                 {
@@ -1253,7 +1255,7 @@ function EnvironmentTasks({
                 if (action === "edit") {
                   onEdit(task);
                 } else if (action === "delete") {
-                  Alert.alert("Delete task?", task.title, [
+                  Dialog.alert("Delete task?", task.title, [
                     { text: "Cancel", style: "cancel" },
                     {
                       text: "Delete",
@@ -1278,7 +1280,7 @@ function EnvironmentTasks({
                   type="monochrome"
                 />
               </Pressable>
-            </ControlPillMenu>
+            </Menu>
           </View>
         ))
       )}

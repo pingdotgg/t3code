@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback } from "react";
 import { View } from "react-native";
 
-import { EmptyState } from "../../components/EmptyState";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { environmentCatalog } from "../../connection/catalog";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import { useAtomCommand } from "../../state/use-atom-command";

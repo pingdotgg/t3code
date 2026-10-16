@@ -15,6 +15,8 @@ export interface FileTreeDragStartEvent {
 export interface FileTreeDragMentionHost {
   /** Drop the tree's gesture-applied selection of the dragged row. */
   deselect(treePath: string): void;
+  /** The path a dragged row mentions; defaults to the tree path itself. */
+  mentionPath?(treePath: string): string;
 }
 
 export interface FileTreeDragMentionController {
@@ -74,7 +76,12 @@ export function createFileTreeDragMentionController(
       // part of the current selection drags the whole selection.
       const dragged = selection.includes(itemPath) ? selection : [itemPath];
       const mentions = dragged
-        .map((path) => composerMentionFromTreePath(path))
+        .map((path) => {
+          const treePath = path.replace(/\/+$/, "");
+          return composerMentionFromTreePath(
+            treePath && host.mentionPath ? host.mentionPath(treePath) : path,
+          );
+        })
         .filter((mention): mention is string => mention !== null);
       if (mentions.length === 0) {
         return;

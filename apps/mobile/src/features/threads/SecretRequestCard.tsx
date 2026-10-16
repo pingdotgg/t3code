@@ -14,8 +14,8 @@ import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/c
 import { useRef, useState } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RequestActionButton } from "./RequestActionButton";

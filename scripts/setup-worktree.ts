@@ -21,7 +21,9 @@ const worktree = NodePath.dirname(import.meta.dirname);
 // `shell` resolves `vp` through PATH, including Windows command shims.
 // Setup has no one answering install prompts. Pass pnpm's confirmation flag
 // through vp and leave stdin closed so other prompts fail instead of hanging.
-const install = NodeChildProcess.spawnSync("vp i -- --yes", {
+// Install exactly the locked dependencies so setup never rewrites the lockfile.
+// A stale lockfile must fail setup rather than silently resolving a new one.
+const install = NodeChildProcess.spawnSync("vp i --frozen-lockfile -- --yes", {
   cwd: worktree,
   shell: true,
   stdio: ["ignore", "inherit", "inherit"],

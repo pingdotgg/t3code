@@ -9,6 +9,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import {
+  encodeHtmlRenderOutline,
+  HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_OUTLINE_MAX_BOXES,
+} from "@t3tools/shared/htmlRender";
 
 import { publicProxy } from "./publicProxy.ts";
 
@@ -156,6 +161,90 @@ const SETTLE_EXPRESSION =
 // reports its own box height instead.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
+
+// The page's main blocks in document order, for a client's loading skeleton:
+// media and solid shapes, text with its line count, and tables with their row
+// count. Boxes that only wrap other blocks are walked through, not drawn.
+// Past the detail budget, remaining blocks are kept whole, and once the outline
+// is full, one block of text lines stands in for the rest of the page, so the
+// skeleton still reaches the bottom.
+const OUTLINE_MAX_VISITS = 2_000;
+const OUTLINE_EXPRESSION = `(() => {
+  const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
+  const media = "canvas,svg,img,video,picture,iframe,object,embed,input,select,textarea,button";
+  const pageBackground = getComputedStyle(document.documentElement).backgroundColor;
+  const filled = (s) => (s.backgroundColor !== "rgba(0, 0, 0, 0)" && s.backgroundColor !== pageBackground) || s.backgroundImage !== "none" || parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth) + parseFloat(s.borderLeftWidth) > 0;
+  const add = (kind, r, lines) => boxes.push([kind, r.left + scrollX, r.top + scrollY, r.width, r.height, lines]);
+  const lineCount = (s, r) => Math.max(1, Math.round(r.height / (parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.5 || 20)));
+  // Text's own extent, so a short heading in a wide block stays short.
+  const addText = (el, s, r) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const t = range.getBoundingClientRect();
+    const box = t.width >= 2 && t.height >= 2 ? t : r;
+    add("text", box, lineCount(s, box));
+  };
+  // Visits are capped too, so a huge generated DOM costs no more than a page.
+  let full = false, visits = 0;
+  // Whether an element holds text of its own, looking at its first few children only.
+  const hasOwnText = (el) => {
+    let n = el.firstChild;
+    for (let i = 0; n && i < 64; n = n.nextSibling, i++) if (n.nodeType === 3 && n.data.trim() !== "") return true;
+    return false;
+  };
+  const walk = (parent, ps) => {
+    for (const el of parent.childNodes) {
+      // The last slot is kept for whatever the outline has no room left for.
+      if (boxes.length >= max - 1 || ++visits > ${OUTLINE_MAX_VISITS}) { full = true; return; }
+      // Bare text only reaches here under body or a display: contents element.
+      if (el.nodeType === 3) {
+        if (el.data.trim() === "") continue;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const t = range.getBoundingClientRect();
+        if (t.width >= 2 && t.height >= 2) add("text", t, lineCount(ps, t));
+        continue;
+      }
+      if (el.nodeType !== 1) continue;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
+      if (s.display === "contents") { walk(el, s); continue; }
+      const r = el.getBoundingClientRect();
+      // A zero-size box can still show positioned children, unless it clips them.
+      if (r.width < 2 || r.height < 2) { if (s.overflow === "visible") walk(el, s); continue; }
+      const tag = el.localName;
+      if (el.matches(media)) { add("media", r, 1); continue; }
+      if (tag === "table") { add("table", r, el.rows.length); continue; }
+      const text = hasOwnText(el);
+      if (boxes.length >= detail) { if (el.querySelector(media) || (!text && !el.firstElementChild)) add("media", r, 1); else addText(el, s, r); continue; }
+      if (text) { addText(el, s, r); continue; }
+      if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
+      walk(el, s);
+    }
+  };
+  walk(document.body, getComputedStyle(document.body));
+  if (full) {
+    const top = Math.max(0, ...boxes.map((b) => b[2] + b[4]));
+    const root = document.documentElement;
+    const rest = (root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height) - top;
+    if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
+  }
+  return boxes;
+})()`;
+const Outlined = Schema.Struct({
+  result: Schema.Struct({
+    value: Schema.Array(
+      Schema.Tuple([
+        Schema.Literals(["text", "media", "table"]),
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+      ]),
+    ),
+  }),
+});
 
 const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
@@ -511,7 +600,28 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    /** The loaded page's outline, encoded for an `HtmlRenderReference`. */
+    const outline = send(
+      "Runtime.evaluate",
+      { expression: OUTLINE_EXPRESSION, returnByValue: true },
+      Outlined,
+      sessionId,
+    ).pipe(
+      Effect.map(({ result }) =>
+        encodeHtmlRenderOutline(
+          result.value.map(([kind, x, y, boxWidth, height, lines]) => ({
+            kind,
+            x,
+            y,
+            width: boxWidth,
+            height,
+            lines,
+          })),
+        ),
+      ),
+    );
+
+    return { load, outline, screenshot, consoleMessages, close };
   });
 
   return { openPage };
@@ -568,7 +678,8 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 /**
  * Content heights of the page at each width, each from a fresh load, since
  * pages often lay themselves out from the width once at load. One browser,
- * a few widths at a time.
+ * a few widths at a time. The load at the column width also reads the page's
+ * outline; an outline that cannot be read is left out.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
@@ -585,15 +696,27 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);
-  return yield* Effect.forEach(
+  let outline: string | undefined;
+  const heights = yield* Effect.forEach(
     input.widths,
     (width) =>
       browser.openPage(width).pipe(
         Effect.flatMap((page) =>
-          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
+          page.load(body, input.urlFragment).pipe(
+            Effect.tap(() =>
+              width === HTML_RENDER_COLUMN_WIDTH
+                ? page.outline.pipe(
+                    Effect.tap((value) => Effect.sync(() => (outline = value))),
+                    Effect.ignore,
+                  )
+                : Effect.void,
+            ),
+            Effect.ensuring(page.close),
+          ),
         ),
         Effect.map((height) => [width, height] as const),
       ),
     { concurrency: MEASURE_CONCURRENCY },
   );
+  return { heights, outline };
 }, Effect.scoped);

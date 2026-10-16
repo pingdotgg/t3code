@@ -13,8 +13,8 @@ import { Platform, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText } from "../../components/AppText";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText } from "../../components/ui/AppText";
 
 import {
   deviceStreamDocument,

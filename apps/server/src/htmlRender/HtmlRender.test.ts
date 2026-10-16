@@ -391,7 +391,7 @@ describe("HtmlRender", () => {
           // Like a D3 chart, the page sizes itself from the width once, at load.
           const reference = yield* htmlRender.publish({
             threadId: ThreadId.make("thread-html-measure"),
-            html: '<div id="chart"></div><script>document.getElementById("chart").style.height = innerWidth / 2 + "px";</script>',
+            html: '<div id="chart" style="background:#888"></div><script>document.getElementById("chart").style.height = innerWidth / 2 + "px";</script>',
             title: "Chart",
             height: 600,
           });
@@ -399,6 +399,8 @@ describe("HtmlRender", () => {
           expect(reference.heights).toEqual(
             HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
           );
+          // The chart as the column-width load laid it out, in 4px units.
+          expect(reference.outline).toBe("m0,0,182,91,1");
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,

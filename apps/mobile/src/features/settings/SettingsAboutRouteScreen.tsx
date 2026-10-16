@@ -1,11 +1,12 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import * as Dialog from "../../components/ui/Dialog";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import Constants from "expo-constants";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import {
   type AppUpdateCheckState,
   isAppUpdateCheckAvailable,
@@ -67,7 +68,7 @@ function AppSettingsSection() {
       // apply immediately instead of prompting.
       await runAppUpdateCheck({
         applyMode: "immediate",
-        onFailure: (message) => Alert.alert("Update failed", message),
+        onFailure: (message) => Dialog.alert("Update failed", message),
         onStateChange: setUpdateState,
       });
     } finally {

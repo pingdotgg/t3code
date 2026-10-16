@@ -1089,7 +1089,7 @@ export const make = Effect.gen(function* () {
             configured.delete(id);
             removed.push({ id, scope: previous.scope });
           }
-          yield* service.refreshHosts;
+          if (removed.length > 0) yield* service.refreshHosts;
           return removed;
         }),
       );
@@ -1105,8 +1105,10 @@ export const make = Effect.gen(function* () {
       );
       yield* service.withLifecycleLock(
         Effect.gen(function* () {
+          let added = false;
           for (const host of next) {
             if (configured.has(host.id)) continue;
+            added = true;
             const hostScope = yield* Scope.fork(scope);
             const instance = yield* SshDeviceHost.make(
               host,
@@ -1130,7 +1132,8 @@ export const make = Effect.gen(function* () {
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
           }
-          yield* service.refreshHosts;
+          // Refresh again after removed scopes closed so a late status write from an old host cannot linger.
+          if (added || removed.length > 0) yield* service.refreshHosts;
         }),
       );
     });

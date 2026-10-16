@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { ComponentProps } from "react";
 import { Platform } from "react-native";
 
-import { ListRow } from "../../../components/ListRow";
+import { ListRow } from "../../../components/ui/ListRow";
 import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
 
 export function SettingsRow(props: {

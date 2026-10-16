@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 

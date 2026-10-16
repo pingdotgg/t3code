@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -13,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -26,6 +28,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
+const STAGING_STALE_AFTER_MS = 24 * 60 * 60_000;
 const Version = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/u));
 const ActiveRelease = Schema.Struct({ version: Version });
 const InstalledRelease = Schema.Struct({
@@ -512,8 +515,10 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             message: "Extracting Codex.",
           }) satisfies ProviderInstallState,
       );
-      const entries = (yield* runCommand("tar", ["-tzf", archivePath])).trim().split("\n");
-      const types = (yield* runCommand("tar", ["-tvzf", archivePath])).trim().split("\n");
+      // Bare `tar` on Windows can resolve to Git's MSYS tar, which reads `C:\...` as a remote host.
+      const tarCommand = cliArchiveTarCommand(platform, environment);
+      const entries = (yield* runCommand(tarCommand, ["-tzf", archivePath])).trim().split(/\r?\n/u);
+      const types = (yield* runCommand(tarCommand, ["-tvzf", archivePath])).trim().split(/\r?\n/u);
       if (
         entries.length > 10000 ||
         entries.length !== types.length ||
@@ -529,7 +534,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         })
       )
         return yield* installationError("extract", "The Codex archive contains unsafe entries.");
-      yield* runCommand("tar", ["-xzf", archivePath, "-C", runtime]);
+      yield* runCommand(tarCommand, ["-xzf", archivePath, "-C", runtime]);
       yield* SubscriptionRef.update(
         state,
         (current) =>
@@ -553,7 +558,12 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      yield* fs.rename(runtime, destination);
+      // On Windows, Defender and kernel process rundown can briefly hold the
+      // verified codex.exe handle open right after `--version` exits.
+      const renameRuntime = fs.rename(runtime, destination);
+      yield* platform === "win32"
+        ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
+        : renameRuntime;
       yield* activate();
     },
     Effect.scoped,
@@ -692,7 +702,34 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   yield* Effect.gen(function* () {
-    const canRemove = yield* fs.exists(managedDirectory);
+    // Clear staging directories left behind by an interrupted install so they
+    // neither leak disk nor make an otherwise empty runtime look removable. Two
+    // servers can share a home, and writes below a staging directory do not
+    // refresh its mtime, so only directories far older than any real install
+    // (download is capped at 45 minutes) are treated as abandoned.
+    let canRemove = false;
+    if (yield* fs.exists(managedDirectory)) {
+      const entries = yield* fs
+        .readDirectory(managedDirectory)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const now = yield* Clock.currentTimeMillis;
+      for (const entry of entries) {
+        if (!entry.startsWith(".install-") && !entry.startsWith(".active-")) continue;
+        const target = path.join(managedDirectory, entry);
+        const info = yield* fs.stat(target).pipe(Effect.option);
+        if (Option.isNone(info)) continue;
+        const modifiedAt = Option.match(info.value.mtime, {
+          onNone: () => now,
+          onSome: (date) => date.getTime(),
+        });
+        if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
+        yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
+      }
+      // The empty root itself stays: deleting it could race another server
+      // creating a staging directory inside. An unreadable root stays removable.
+      const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
+      canRemove = Option.isNone(remaining) || remaining.value.length > 0;
+    }
     yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove }));
     if (yield* reuseLocal()) return;
     if (!(yield* fs.exists(activePath))) return;

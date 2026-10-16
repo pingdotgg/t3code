@@ -1,7 +1,7 @@
 import { Keyboard, Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { GlassSurface } from "../../components/GlassSurface";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_DOCK } from "./workspace-tabs-state";
 

@@ -4,6 +4,11 @@
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
+Beta is the product label, not a release channel or version suffix. Release channels
+remain stable and nightly. To ship 0.1.0 Beta, use `channel=stable` and
+`version=0.1.0`. Removing the Beta label later is a branding change independent of
+the version.
+
 ## What the workflow does
 
 - Workflow: `.github/workflows/release.yml`
@@ -291,12 +296,42 @@ and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
 variable. The Vercel project's root directory must be `apps/marketing`.
 Git deployments remain disabled in `apps/marketing/vercel.ts`.
 
+## Mobile TestFlight and store releases
+
+Merges to main publish compatible OTAs and build iOS prereleases with the `testflight`
+profile at version `3.0.0`. Build numbers increment automatically. The committed app
+version remains the App Store release version; Android keeps using that version.
+
+To release iOS, dispatch **Mobile EAS Production** with `mode=build`,
+`profile=production`, `platform=ios`, and the intended version, such as `2.0.1`.
+The workflow commits and pushes the version before building and uploading it.
+Select that build in App Store Connect for App Store review.
+
+To force a TestFlight rebuild, select `profile=testflight`, `platform=ios`, and
+leave the version blank. Submit the first `3.0.0` build for external beta review
+in App Store Connect. Later builds may still require review; uploads alone do
+not guarantee external approval. TestFlight builds expire after 90 days.
+
+Both release and TestFlight binaries receive compatible production-channel OTAs,
+separated by their major-version fingerprints. Manual `mode=update` uses the
+selected profile's version. Before releasing `3.0.0` to the App Store, advance
+`build.testflight.env.T3CODE_MOBILE_VERSION` in `apps/mobile/eas.json` to the next
+unreleased major and get its first beta build approved.
+
 ## Android APK mirror
 
-`.github/workflows/mobile-android-apk.yml` checks Google Play hourly and publishes the newest
-build on the `v2` closed testing track to the rolling `android-nightly` prerelease, for nightly
-users who can't join the Play testing group. Those v2-preview builds are the only Android builds that can
-connect to a nightly server. The APK is the universal APK Play generates and signs from the
+`.github/workflows/mobile-android-apk.yml` checks the Google Play Alpha closed-testing
+track hourly. A new beta gets an `android-beta-<build-number>` prerelease and updates
+the `android-beta` download page. Both contain only the beta APK. Unchanged checks
+publish nothing, and interrupted draft uploads resume on the next check.
+
+Normal Nightly releases include the newest processed internal-testing APK available
+when the release publishes. Internal builds do not create separate Android releases.
+If Play credentials or a processed APK are unavailable, the Nightly can still publish
+without an APK. Android submissions continue to go to internal testing; promote a
+build to Alpha to publish it as a beta.
+
+The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until
 `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
 production, exclude devices, and use Play App Signing" permission, which downloading generated

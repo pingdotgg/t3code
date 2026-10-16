@@ -1,8 +1,9 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { MaterialListRow } from "../../components/MaterialListRow";
+import * as Dialog from "../../components/ui/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { NavigationRow } from "../../components/ui/NavigationRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { MaterialButton } from "../../components/MaterialButton";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { Button } from "../../components/ui/Button";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -54,9 +55,9 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Platform, Alert, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -70,12 +71,12 @@ import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { ErrorBanner } from "../../components/ErrorBanner";
-import { SourceControlIcon } from "../../components/SourceControlIcon";
+import { ErrorBanner } from "../../components/ui/ErrorBanner";
+import { SourceControlIcon } from "./SourceControlIcon";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -201,7 +202,7 @@ function ListRow(props: {
 }) {
   if (Platform.OS === "android") {
     return (
-      <MaterialListRow
+      <NavigationRow
         className="bg-grouped-card"
         title={props.title}
         subtitle={props.subtitle}
@@ -263,7 +264,7 @@ function PrimaryActionButton(props: {
   readonly loading?: boolean;
   readonly onPress: () => void;
 }) {
-  if (Platform.OS === "android") return <MaterialButton {...props} tone="primary" fullWidth />;
+  if (Platform.OS === "android") return <Button {...props} tone="primary" fullWidth />;
   return (
     <Pressable
       disabled={props.disabled}
@@ -718,7 +719,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         !canCreateProjectInEnvironment(environment.connectionState) ||
         !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
       ) {
-        Alert.alert(
+        Dialog.alert(
           "Project not added",
           `This connection cannot add projects right now. Any existing files remain at ${workspaceRoot}.`,
         );
@@ -731,7 +732,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         path: workspaceRoot,
       });
       if (existing) {
-        Alert.alert("Project already exists", existing.title);
+        Dialog.alert("Project already exists", existing.title);
         navigation.dispatch(
           CommonActions.reset({
             index: 0,
@@ -1092,7 +1093,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       }
       const { projectId, workspaceRoot, commitError } = result.value;
       if (commitError !== undefined) {
-        Alert.alert("Created without a first commit", commitError);
+        Dialog.alert("Created without a first commit", commitError);
       }
       if (publishes && publishTarget !== null) {
         void publishRepository({
@@ -1105,7 +1106,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           },
         }).then((publishResult) => {
           if (AsyncResult.isFailure(publishResult)) {
-            Alert.alert(
+            Dialog.alert(
               `Could not create the ${publishTarget.definition.label} repository`,
               errorMessage(Cause.squash(publishResult.cause)),
             );

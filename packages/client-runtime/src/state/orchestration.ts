@@ -1,9 +1,12 @@
 import { ORCHESTRATION_V2_WS_METHODS, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
+
+import { applyCommandOutputFrame, EMPTY_COMMAND_OUTPUT } from "./commandOutput.ts";
 
 import {
   createEnvironmentRpcCommand,
@@ -63,6 +66,19 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         label: "environment-data:orchestration-v2:thread",
         tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread,
         idleTtlMs: 0,
+      }),
+      // One expanded command row's output. Mounted only while the row is open,
+      // and released as soon as it closes, so hidden rows receive nothing.
+      commandOutput: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:command-output",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
+        idleTtlMs: 0,
+        // `scan` emits its seed first; skipping it keeps the row "loading" until the first frame.
+        transform: (frames) =>
+          frames.pipe(
+            Stream.scan(() => EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame),
+            Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
+          ),
       }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {

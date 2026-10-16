@@ -21,7 +21,7 @@ import {
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import { rankModelPickerSearch } from "./modelPickerSearch";
 import {
   Combobox,
   ComboboxEmpty,
@@ -451,77 +451,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
+    // When searching, we only respect locked provider (by driver kind),
+    // ignoring sidebar selection so account-scoped searches can find a
+    // model before the user chooses a specific instance rail item.
     if (searchQuery.trim()) {
-      const rankedMatches = result
-        .map((model) => ({
-          model,
-          score: scoreModelPickerSearch(
-            {
-              name: model.name,
-              ...(model.shortName ? { shortName: model.shortName } : {}),
-              ...(model.subProvider ? { subProvider: model.subProvider } : {}),
-              driverKind: model.driverKind,
-              providerDisplayName: model.instanceDisplayName,
-              isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-            },
-            searchQuery,
-          ),
-          isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-          tieBreaker: buildModelPickerSearchText({
-            name: model.name,
-            ...(model.shortName ? { shortName: model.shortName } : {}),
-            ...(model.subProvider ? { subProvider: model.subProvider } : {}),
-            driverKind: model.driverKind,
-            providerDisplayName: model.instanceDisplayName,
-          }),
-        }))
-        .filter(
-          (
-            rankedModel,
-          ): rankedModel is {
-            model: ModelPickerItem;
-            score: number;
-            isFavorite: boolean;
-            tieBreaker: string;
-          } => rankedModel.score !== null,
-        );
-
-      // When searching, we only respect locked provider (by driver kind),
-      // ignoring sidebar selection so account-scoped searches can find a
-      // model before the user chooses a specific instance rail item.
-      if (props.lockedProvider !== null) {
-        const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
-        for (const rankedModel of rankedMatches) {
-          if (matchesLockedProvider(rankedModel.model)) {
-            lockedProviderMatches.push(rankedModel);
-          }
-        }
-        return lockedProviderMatches
-          .toSorted((a, b) => {
-            const scoreDelta = a.score - b.score;
-            if (scoreDelta !== 0) {
-              return scoreDelta;
-            }
-            if (a.isFavorite !== b.isFavorite) {
-              return a.isFavorite ? -1 : 1;
-            }
-            return a.tieBreaker.localeCompare(b.tieBreaker);
-          })
-          .map((rankedModel) => rankedModel.model);
-      }
-
-      return rankedMatches
-        .toSorted((a, b) => {
-          const scoreDelta = a.score - b.score;
-          if (scoreDelta !== 0) {
-            return scoreDelta;
-          }
-          if (a.isFavorite !== b.isFavorite) {
-            return a.isFavorite ? -1 : 1;
-          }
-          return a.tieBreaker.localeCompare(b.tieBreaker);
-        })
-        .map((rankedModel) => rankedModel.model);
+      const candidates =
+        props.lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
+      return rankModelPickerSearch(candidates, searchQuery, (model) => ({
+        name: model.name,
+        ...(model.shortName ? { shortName: model.shortName } : {}),
+        ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+        driverKind: model.driverKind,
+        providerDisplayName: model.instanceDisplayName,
+        isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+      }));
     }
 
     if (props.lockedProvider !== null) {
