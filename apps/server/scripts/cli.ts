@@ -19,7 +19,6 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
-import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -155,17 +154,15 @@ const buildExeCmd = Command.make(
 );
 
 /**
- * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
- * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
- * the launcher is never installable before the executables it depends on.
- * Tarballs rather than directories because `npm publish <dir>` strips the
- * `node_modules/` the executable loads its native addons from.
+ * Publishes the `t3.tgz` launcher scripts/build-npm-launcher.ts produced. The
+ * launcher downloads its executable from the GitHub Release, so the release
+ * workflow runs this only after that release is published.
  */
 const publishCmd = Command.make(
   "publish",
   {
     packagesDir: Flag.String("packages-dir").pipe(
-      Flag.withDescription("Output dir of scripts/build-npm-platform-packages.ts."),
+      Flag.withDescription("Output dir of scripts/build-npm-launcher.ts."),
     ),
     tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
     access: Flag.String("access").pipe(Flag.withDefault("public")),
@@ -178,19 +175,7 @@ const publishCmd = Command.make(
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
       const packagesDir = path.resolve(config.packagesDir);
-      const scopeDir = path.join(packagesDir, "@t3code");
       const launcherTarball = path.join(packagesDir, "t3.tgz");
-      const platformTarballs = (yield* fs
-        .readDirectory(scopeDir)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-        .filter((entry) => entry.startsWith("t3-") && entry.endsWith(".tgz"))
-        .sort()
-        .map((entry) => path.join(scopeDir, entry));
-      if (platformTarballs.length === 0) {
-        return yield* new ServerCliBuildAssetMissingError({
-          assetPath: path.join(scopeDir, "t3-<platform>.tgz"),
-        });
-      }
       if (!(yield* fs.exists(launcherTarball))) {
         return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
       }
@@ -198,27 +183,18 @@ const publishCmd = Command.make(
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
       if (config.dryRun) args.push("--dry-run");
-
-      const publish = Effect.fn("publish")(function* (tarball: string) {
-        const spawnCommand = yield* resolveSpawnCommand("npm", [...args, tarball]);
-        yield* Effect.log(`[cli] npm ${args.join(" ")} ${path.basename(tarball)}`);
-        yield* runCommand(
-          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-            cwd: packagesDir,
-            stdout: config.verbose ? "inherit" : "ignore",
-            stderr: "inherit",
-            shell: spawnCommand.shell,
-          }),
-        );
-      });
-
-      yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
+      const spawnCommand = yield* resolveSpawnCommand("npm", [...args, launcherTarball]);
+      yield* Effect.log(`[cli] npm ${args.join(" ")} t3.tgz`);
+      yield* runCommand(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: packagesDir,
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          shell: spawnCommand.shell,
+        }),
+      );
     }),
-).pipe(
-  Command.withDescription(
-    "Publish the @t3code/t3-<platform> tarballs and then the t3 launcher to npm.",
-  ),
-);
+).pipe(Command.withDescription("Publish the t3 launcher to npm."));
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),

@@ -15,10 +15,6 @@
       "types": "./src/orchestrationV2ThreadError.ts",
       "import": "./src/orchestrationV2ThreadError.ts"
     },
-    "./legacyCliLauncher": {
-      "types": "./src/legacyCliLauncher.ts",
-      "import": "./src/legacyCliLauncher.ts"
-    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"

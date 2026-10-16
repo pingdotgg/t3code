@@ -35,22 +35,45 @@ const InstallManifest = Schema.Struct({
   name: Schema.String,
   version: Schema.String,
   bin: Schema.optionalKey(Schema.Struct({ t3: Schema.String })),
-  optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
+
+/**
+ * The script this CLI was started through: the `t3` npm launcher that
+ * downloaded and ran this executable (it names itself in
+ * `T3CODE_NPM_LAUNCHER_PATH`), or the Node entry script of a build run from
+ * source. A standalone executable has none and reports its own path.
+ *
+ * The variable is inherited by everything the server spawns, so a launcher
+ * counts only when its package is this exact version: a different `t3` run
+ * from an agent's shell must not claim to be the npm install.
+ */
+const resolveEntryPath = Effect.gen(function* () {
+  const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();
+  if (npmLauncher) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifest = yield* fs
+      .readFileString(path.join(path.dirname(npmLauncher), "../package.json"))
+      .pipe(Effect.flatMap(decodeInstallManifest), Effect.option);
+    if (
+      Option.isSome(manifest) &&
+      manifest.value.name === "t3" &&
+      manifest.value.version === packageJson.version
+    ) {
+      return npmLauncher;
+    }
+  }
+  if (yield* HostProcess.IsExecutable) return yield* HostProcess.ExecutablePath;
+  return (yield* HostProcess.Arguments)[1] ?? "";
+});
 
 export const resolveServerInstallation = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const args = yield* HostProcess.Arguments;
-  const executable = yield* HostProcess.IsExecutable;
-  const executablePath = yield* HostProcess.ExecutablePath;
   const platform = yield* HostProcess.Platform;
-  const entry = yield* fs.realPath(executable ? executablePath : (args[1] ?? ""));
-  const match =
-    /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.js|node_modules\/@t3code\/t3-[^/]+\/t3)$/.exec(
-      entry,
-    );
+  const entry = yield* fs.realPath(yield* resolveEntryPath);
+  const match = /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.mjs)$/.exec(entry);
   if (!match) {
     const runner = detectCliRunner(entry);
     return runner === null
@@ -73,20 +96,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
   if (manifest.name !== "t3" || !manifest.bin) return null;
   const bin = yield* fs.realPath(path.join(packageRoot, manifest.bin.t3));
   const globalBin = yield* fs.realPath(path.join(prefix, "bin/t3"));
-  if (globalBin !== bin) return null;
-  if (executable) {
-    const nativeManifest = yield* fs
-      .readFileString(path.join(path.dirname(entry), "package.json"))
-      .pipe(Effect.flatMap(decodeInstallManifest));
-    if (
-      manifest.bin.t3 !== "./bin/t3.js" ||
-      manifest.optionalDependencies?.[nativeManifest.name] !== nativeManifest.version ||
-      nativeManifest.version !== manifest.version
-    )
-      return null;
-  } else if (bin !== entry) {
-    return null;
-  }
+  if (globalBin !== bin || bin !== entry) return null;
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
 }).pipe(Effect.orElseSucceed(() => null));
 
@@ -113,12 +123,8 @@ export function formatCliCommand(input: {
 }
 
 export const resolveCliCommand = (subcommand: string) =>
-  Effect.map(HostProcess.Arguments, (processArguments) =>
-    formatCliCommand({
-      subcommand,
-      entryPath: processArguments[1] ?? "",
-      version: packageJson.version,
-    }),
+  Effect.map(resolveEntryPath, (entryPath) =>
+    formatCliCommand({ subcommand, entryPath, version: packageJson.version }),
   );
 
 const shellWord = (value: string) =>
