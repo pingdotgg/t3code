@@ -1,13 +1,17 @@
-import { StoredOrchestrationShellSnapshot } from "@t3tools/client-runtime/platform";
 import { OrchestrationV2ThreadShellJson } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { StoredOrchestrationShellSnapshot } from "./orchestrationCache.ts";
+
 const ROWS_PER_CHUNK = 32;
 
-// Effect's cooperative yield resumes through microtasks on React Native. A host
-// timer lets input and rendering run between chunks of shell rows instead.
-const yieldToHost = Effect.callback<void>((resume) => {
+// Effect's own yield resumes through `setImmediate` where the host defines it and a
+// zero-delay timer otherwise. React Native's `setImmediate` is a microtask shim, so
+// nothing from the host runs before the fiber resumes. A timer yields on every host;
+// a browser can pass a yield that its timer clamping and throttling do not slow.
+const yieldToHostTimer = Effect.callback<void>((resume) => {
+  // @effect-diagnostics-next-line globalTimersInEffect:off - A host timer, not Effect.sleep, is the point.
   const timer = setTimeout(() => resume(Effect.void), 0);
   return Effect.sync(() => clearTimeout(timer));
 });
@@ -38,8 +42,13 @@ const encodeEnvelope = Schema.encodeEffect(
  * Shell rows are immutable and the shell reducer keeps unchanged rows by
  * reference, so each encoder remembers the canonical encoding of rows it has
  * already encoded successfully and only runs the row codec for new rows.
+ *
+ * `yieldToHost` defaults to a zero-delay timer.
  */
-export function makeStoredShellSnapshotEncoder() {
+export function makeStoredShellSnapshotEncoder(
+  options: { readonly yieldToHost?: Effect.Effect<void> } = {},
+) {
+  const yieldToHost = options.yieldToHost ?? yieldToHostTimer;
   const encodedRows = new WeakMap<OrchestrationV2ThreadShellJson, unknown>();
 
   return Effect.fnUntraced(function* (stored: typeof StoredOrchestrationShellSnapshot.Type) {
