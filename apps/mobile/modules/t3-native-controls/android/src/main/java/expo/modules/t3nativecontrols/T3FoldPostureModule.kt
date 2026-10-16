@@ -52,6 +52,12 @@ class T3FoldPostureView(
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
+    observeFold()
+  }
+
+  // The activity can be missing when the view first attaches, so layout passes retry.
+  private fun observeFold() {
+    if (scope != null || !isAttachedToWindow) return
     val activity = appContext.currentActivity ?: return
     scope = MainScope().also { scope ->
       scope.launch {
@@ -75,6 +81,7 @@ class T3FoldPostureView(
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
     super.onLayout(changed, left, top, right, bottom)
+    observeFold()
     if (changed) report()
   }
 
