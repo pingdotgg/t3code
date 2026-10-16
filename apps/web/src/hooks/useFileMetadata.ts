@@ -13,6 +13,15 @@ export function useFileMetadata(
   path: string,
   cwd?: string,
 ) {
+  return useFileMetadataQuery(environmentId, path, cwd).data;
+}
+
+/** The whole query, for callers that must tell a missing file from one still loading. */
+export function useFileMetadataQuery(
+  environmentId: EnvironmentId | null | undefined,
+  path: string,
+  cwd?: string,
+) {
   const canRead = useEnvironmentScope(environmentId ?? null, AuthFilesystemReadScope);
   const threadRef = useContext(FileMetadataThreadContext);
   const hostPath = splitFilePathPosition(path).path;
@@ -30,5 +39,5 @@ export function useFileMetadata(
           },
         })
       : null,
-  ).data;
+  );
 }

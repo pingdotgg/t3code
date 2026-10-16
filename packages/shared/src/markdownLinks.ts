@@ -6,6 +6,7 @@ import {
   resolvePathLinkTarget,
   splitFilePathPosition,
 } from "./fileLinks.ts";
+import { matchThreadFilePath, type ThreadFilePathIndex } from "./threadFilePaths.ts";
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
@@ -376,10 +377,18 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
   return hrefs;
 }
 
+/**
+ * `threadFilePaths` points a chat message's relative link at a file the
+ * thread's tool activity named, since an agent writes links relative to
+ * wherever it was working. Callers use that file only once the joined path is
+ * confirmed missing and it is confirmed present. A markdown file's links are
+ * relative to the file, so they never consult it.
+ */
 export function resolveMarkdownFileLinkTarget(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  threadFilePaths?: ThreadFilePathIndex | null,
 ): string | null {
   if (!href) return null;
   const target = parseMarkdownFileLink(href);
@@ -387,8 +396,33 @@ export function resolveMarkdownFileLinkTarget(
 
   const pathWithPosition = formatFilePathPosition(target);
   if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
-  if (!baseDir) return null;
-  return resolvePathLinkTarget(pathWithPosition, baseDir);
+  const threadPath =
+    threadFilePaths && baseDir === cwd
+      ? threadFileLinkTarget(target, baseDir, threadFilePaths)
+      : null;
+  if (threadPath !== null) return threadPath;
+  return baseDir ? resolvePathLinkTarget(pathWithPosition, baseDir) : null;
+}
+
+/** The thread file a relative link names, with its position, or null to keep the usual join. */
+export function resolveMarkdownFileLinkThreadTarget(
+  href: string,
+  baseDir: string | null | undefined,
+  threadFilePaths: ThreadFilePathIndex,
+): string | null {
+  const target = parseMarkdownFileLink(href);
+  if (!target || !isRelativeFilePath(target.path)) return null;
+  return threadFileLinkTarget(target, baseDir ?? undefined, threadFilePaths);
+}
+
+function threadFileLinkTarget(
+  target: FilePathPosition,
+  baseDir: string | undefined,
+  threadFilePaths: ThreadFilePathIndex,
+): string | null {
+  const rootJoined = baseDir ? resolvePathLinkTarget(target.path, baseDir) : null;
+  const threadPath = matchThreadFilePath(target.path, rootJoined, baseDir ?? null, threadFilePaths);
+  return threadPath === null ? null : formatFilePathPosition({ ...target, path: threadPath });
 }
 
 export function isWindowsDrivePathHref(href: string): boolean {

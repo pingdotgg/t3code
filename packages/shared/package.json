@@ -471,6 +471,10 @@
       "types": "./src/fileLinks.ts",
       "import": "./src/fileLinks.ts"
     },
+    "./threadFilePaths": {
+      "types": "./src/threadFilePaths.ts",
+      "import": "./src/threadFilePaths.ts"
+    },
     "./inlineSkills": {
       "types": "./src/inlineSkills.ts",
       "import": "./src/inlineSkills.ts"
