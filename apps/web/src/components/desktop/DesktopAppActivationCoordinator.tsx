@@ -70,7 +70,7 @@ export function DesktopAppActivationCoordinator() {
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: (projectRef) => openThread(projectRef),
+      openThread: (projectRef) => openThread(projectRef, { environmentSelection: "manual" }),
     }),
   );
 

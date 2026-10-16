@@ -121,6 +121,7 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useNewThreadProjectTarget } from "../hooks/useNewThreadProjectTarget";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -1135,6 +1136,7 @@ interface SidebarProjectItemProps {
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
+  resolveProjectTarget: ReturnType<typeof useNewThreadProjectTarget>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   markThreadUnread: ReturnType<typeof useThreadActions>["markThreadUnread"];
@@ -1157,6 +1159,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     handleNewThread,
+    resolveProjectTarget,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -2046,13 +2049,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const createThreadForProjectMember = useCallback(
-    (member: SidebarProjectGroupMember) => {
+    (member: SidebarProjectGroupMember, options?: { readonly manual?: boolean }) => {
       if (isMobile) {
         setOpenMobile(false);
       }
       void (async () => {
         const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(member.environmentId, member.id)),
+          handleNewThread(
+            scopeProjectRef(member.environmentId, member.id),
+            options?.manual !== false ? { environmentSelection: "manual" } : undefined,
+          ),
         );
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
@@ -2073,6 +2079,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+
+      const target = resolveProjectTarget(scopeProjectRef(project.environmentId, project.id));
+      if (target.environmentSelection === "project-default") {
+        const member = project.memberProjects.find(
+          (candidate) =>
+            candidate.environmentId === target.projectRef?.environmentId &&
+            candidate.id === target.projectRef.projectId,
+        );
+        if (member) {
+          createThreadForProjectMember(member, { manual: false });
+          return;
+        }
+      }
 
       if (project.memberProjects.length === 1) {
         createThreadForProjectMember(project.memberProjects[0]!);
@@ -2120,7 +2139,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         createThreadForProjectMember(targetMember);
       })();
     },
-    [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
+    [
+      createThreadForProjectMember,
+      project.environmentId,
+      project.id,
+      project.groupedProjectCount,
+      project.memberProjects,
+      resolveProjectTarget,
+    ],
   );
 
   const attemptArchiveThread = useCallback(
@@ -2940,6 +2966,7 @@ interface SidebarProjectsContentProps {
   handleProjectDragEnd: (event: DragEndEvent) => void;
   handleProjectDragCancel: (event: DragCancelEvent) => void;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
+  resolveProjectTarget: ReturnType<typeof useNewThreadProjectTarget>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   markThreadUnread: ReturnType<typeof useThreadActions>["markThreadUnread"];
@@ -2983,6 +3010,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleProjectDragEnd,
     handleProjectDragCancel,
     handleNewThread,
+    resolveProjectTarget,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -3122,6 +3150,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         openPullRequestsInRightPanel={openPullRequestsInRightPanel}
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
+                        resolveProjectTarget={resolveProjectTarget}
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         markThreadUnread={markThreadUnread}
@@ -3156,6 +3185,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 openPullRequestsInRightPanel={openPullRequestsInRightPanel}
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
+                resolveProjectTarget={resolveProjectTarget}
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 markThreadUnread={markThreadUnread}
@@ -3194,6 +3224,7 @@ export default function LegacySidebar() {
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
+  const resolveProjectTarget = useNewThreadProjectTarget();
   const { archiveThread, deleteThread, markThreadUnread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
   const routeTarget = useParams({
@@ -3837,6 +3868,7 @@ export default function LegacySidebar() {
         handleProjectDragEnd={handleProjectDragEnd}
         handleProjectDragCancel={handleProjectDragCancel}
         handleNewThread={handleNewThread}
+        resolveProjectTarget={resolveProjectTarget}
         archiveThread={archiveThread}
         deleteThread={deleteThread}
         markThreadUnread={markThreadUnread}

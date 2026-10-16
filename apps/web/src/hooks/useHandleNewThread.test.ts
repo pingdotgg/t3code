@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
@@ -16,6 +16,9 @@ const testState = vi.hoisted(() => {
     readonly environmentId: string;
     readonly promotedTo: null;
     readonly threadId: string;
+    readonly projectId?: string;
+    readonly logicalProjectKey?: string;
+    readonly environmentSelection?: "auto" | "manual" | "project-default";
   } | null = null;
   const router = {
     state: {
@@ -29,7 +32,7 @@ const testState = vi.hoisted(() => {
   const draftStore = {
     getComposerDraft: vi.fn(() => ({})),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
+    getDraftSession: vi.fn(() => storedDraft),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
@@ -38,6 +41,9 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    projectDefaultEnabled: false,
+    connectedEnvironmentIds: ["environment-primary", "environment-ssh"],
+    routeDraftId: null as string | null,
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
     get projectFileRead() {
@@ -89,21 +95,19 @@ vi.mock("@effect/atom-react", () => ({
             {
               settings: {
                 ...testState.targetSettings,
+                projectSettingsOverrides: testState.projectDefaultEnabled
+                  ? { "project-primary": { defaultEnvironmentId: "environment-ssh" } }
+                  : {},
+                defaultRuntimeMode: "approval-required",
                 newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
               },
             },
           ],
-          ["environment-ssh", { settings: testState.targetSettings }],
+          [
+            "environment-ssh",
+            { settings: { ...testState.targetSettings, projectSettingsOverrides: {} } },
+          ],
         ]),
-}));
-vi.mock("@t3tools/client-runtime/environment", () => ({
-  scopedProjectKey: () => "remote-project",
-  scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
-  scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
-}));
-vi.mock("@t3tools/contracts", () => ({
-  DEFAULT_RUNTIME_MODE: "default",
-  DEFAULT_SERVER_SETTINGS: {},
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
@@ -164,33 +168,65 @@ vi.mock("../logicalProject", () => ({
   selectProjectGroupingSettings: () => ({}),
 }));
 vi.mock("../state/entities", () => {
-  const project = {
-    id: "project-remote",
-    environmentId: "environment-ssh",
-    workspaceRoot: "/remote/project",
+  const projects = [
+    ["environment-primary", "project-primary", "/primary/project"],
+    ["environment-ssh", "project-remote", "/remote/project"],
+  ].map(([environmentId, id, workspaceRoot]) => ({
+    environmentId,
+    id,
+    workspaceRoot,
+    title: "Project",
+    repositoryIdentity: {
+      canonicalKey: "github.com/t3tools/project",
+      name: "project",
+      displayName: "Project",
+    },
     defaultThreadEnvMode: null,
     defaultModelSelection: null,
-  };
+    scripts: [],
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  }));
   return {
-    readProject: () => (testState.projectRemoved ? null : project),
-    readProjects: () => (testState.projectRemoved ? [] : [project]),
+    readProject: (ref: { environmentId: string; projectId: string }) =>
+      testState.projectRemoved
+        ? null
+        : projects.find(
+            (project) =>
+              project.environmentId === ref.environmentId && project.id === ref.projectId,
+          ),
+    readProjects: () => (testState.projectRemoved ? [] : projects),
     readThreadShell: () => null,
     readThreadShells: () => [],
-    useProjects: () => [],
+    useProjects: () => projects,
     useThread: () => null,
+    useThreadShell: () => null,
   };
 });
+vi.mock("../state/environments", () => ({
+  useConnectedEnvironmentIds: () => testState.connectedEnvironmentIds,
+  usePrimaryEnvironmentId: () => "environment-primary",
+}));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({
+  resolveThreadRouteTarget: () =>
+    testState.routeDraftId ? { kind: "draft", draftId: testState.routeDraftId } : null,
+}));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+vi.mock("./useSettings", () => ({
+  useClientSettings: () => ({
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
+  }),
+}));
 
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
@@ -312,4 +348,110 @@ describe.each([
       );
     },
   );
+});
+
+describe("new threads routed by a project default", () => {
+  beforeEach(() => {
+    testState.projectDefaultEnabled = true;
+  });
+  afterEach(() => {
+    testState.projectDefaultEnabled = false;
+    testState.routeDraftId = null;
+    testState.connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
+  });
+
+  it("starts on the project default when New thread is invoked from a thread on another environment", async () => {
+    testState.reset(null);
+    await startNewThreadFromContext({
+      activeThread: {
+        environmentId: "environment-primary",
+        projectId: "project-primary",
+      } as never,
+      activeDraftThread: null,
+      defaultProjectRef: null,
+      handleNewThread: useNewThreadHandler(),
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      "draft-delayed",
+      expect.objectContaining({
+        environmentSelection: "project-default",
+        runtimeMode: "full-access",
+      }),
+    );
+  });
+
+  it("keeps explicit checkout requests on the selected environment", async () => {
+    testState.reset(null);
+    const projectRef = {
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+    } as never;
+    const opened = await useNewThreadHandler()(projectRef, {
+      branch: "feature",
+      worktreePath: "/checkout",
+      envMode: "worktree",
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      opened!.draftId,
+      expect.objectContaining({
+        environmentSelection: "manual",
+        branch: "feature",
+        worktreePath: "/checkout",
+      }),
+    );
+  });
+
+  it.each(["manual", "auto", "project-default"] as const)(
+    "keeps the connected environment of the current empty %s draft ahead of the project default",
+    async (environmentSelection) => {
+      testState.reset({
+        draftId: "draft-existing",
+        environmentId: "environment-primary",
+        projectId: "project-primary",
+        logicalProjectKey: "remote-project",
+        environmentSelection,
+        promotedTo: null,
+        threadId: "thread-existing",
+      });
+      testState.routeDraftId = "draft-existing";
+      const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+      const opened = await useNewThreadHandler()(projectRef);
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        { environmentId: "environment-primary", projectId: "project-primary" },
+        opened!.draftId,
+        expect.objectContaining({ environmentSelection }),
+      );
+      expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+    },
+  );
+
+  it("moves an automatic draft to the connected default when its environment disconnects", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+      logicalProjectKey: "remote-project",
+      environmentSelection: "auto",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    testState.routeDraftId = "draft-existing";
+    testState.connectedEnvironmentIds = ["environment-ssh"];
+    const opened = await useNewThreadHandler()({
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+    } as never);
+
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      opened!.draftId,
+      expect.objectContaining({ environmentSelection: "project-default" }),
+    );
+  });
 });
