@@ -23,6 +23,12 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+// AVD enumeration failures leave Android discovery incomplete independently of hub diagnostics.
+export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some(
+    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  );
+
 /**
  * `hostStatus` only tracks this machine. A machine without simulator tooling never
  * starts its own hub, so setup and the panel must also count remote device hosts.
@@ -39,6 +45,13 @@ export function deviceHubReadiness(state: DeviceServiceState) {
 }
 
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
+  const hasDevices = state.devices.some((device) => device.platform === platform);
+  if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
+    return {
+      ready: false,
+      message: "The Android device list may be incomplete. Check the device host and try again.",
+    };
+  }
   const availabilities = state.hosts.flatMap((host) =>
     host.platforms
       .filter((candidate) => candidate.platform === platform)
@@ -58,7 +71,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       state.hostStatuses[host.id]?.status === "ready" ||
       (host.kind === "local" && state.hostStatus === "ready"),
   );
-  if (readyHosts.length > 0 && !state.devices.some((device) => device.platform === platform)) {
+  if (readyHosts.length > 0 && !hasDevices) {
     return {
       ready: false,
       message:

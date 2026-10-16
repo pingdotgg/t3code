@@ -398,6 +398,16 @@ describe("Android SDK availability", () => {
   );
 });
 
+it("treats local command timeouts and signal termination as failures", () => {
+  const output = { ...processOutput(0), code: null };
+  expect(LocalDeviceHost.__testing.commandResult({ ...output, timedOut: true }, 20_000)).toEqual({
+    stdout: "",
+    stderr: "Timed out after 20000 ms.",
+    code: 124,
+  });
+  expect(LocalDeviceHost.__testing.commandResult(output, 20_000).code).not.toBe(0);
+});
+
 it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
